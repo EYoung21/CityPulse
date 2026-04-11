@@ -128,3 +128,84 @@
     @apply font-sans;
   }
 }
+
+/* Pulse ring animation for new incidents */
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+@keyframes glow-breathe {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+@keyframes scan-line {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+@keyframes ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+@keyframes fade-up {
+  0% { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes count-up {
+  0% { opacity: 0; transform: scale(0.5); }
+  50% { transform: scale(1.15); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+.animate-glow-breathe {
+  animation: glow-breathe 3s ease-in-out infinite;
+}
+.animate-scan-line {
+  animation: scan-line 8s linear infinite;
+}
+.animate-ticker-scroll {
+  animation: ticker-scroll 30s linear infinite;
+}
+.animate-fade-up {
+  animation: fade-up 0.5s ease-out both;
+}
+.animate-count-up {
+  animation: count-up 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* Glass panel base */
+.glass-panel {
+  background: rgba(15, 15, 25, 0.75);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.glass-panel-light {
+  background: rgba(15, 15, 25, 0.55);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Gradient text */
+.text-gradient-brand {
+  background: linear-gradient(135deg, #60a5fa, #a78bfa, #f472b6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.text-gradient-safe {
+  background: linear-gradient(135deg, #34d399, #22d3ee);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.text-gradient-danger {
+  background: linear-gradient(135deg, #f87171, #fb923c);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}

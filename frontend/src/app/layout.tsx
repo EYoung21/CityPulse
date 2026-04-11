@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PhillyPulse — Real-Time Community Safety",
+  title: "PHLPulse — AI-Powered Community Safety for Philadelphia",
   description:
-    "AI-powered community safety awareness for Philadelphia. Live scanner data visualized on an interactive map.",
+    "Real-time AI-powered safety awareness for Philadelphia. Live police scanner transcription, incident mapping, and safe routing.",
 };
 
 export default function RootLayout({
