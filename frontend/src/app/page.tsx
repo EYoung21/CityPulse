@@ -34,6 +34,26 @@ import {
   type StatsResponse,
 } from "@/lib/api";
 import { useTheme } from "@/lib/theme";
+import AuthBar from "@/components/AuthBar";
+import { isFirebaseConfigured } from "@/lib/firebase";
+import { subscribeIncidents } from "@/lib/firestore";
+import { enrichIncidents } from "@/lib/incident-weights";
+import { buildLocalSummary } from "@/lib/local-summary";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+const WEIGHT_REFRESH_MS = 60000;
+
+function statsFromIncidents(incidents: Incident[]): StatsResponse {
+  const inhibitor_stats: Record<string, number> = {};
+  for (const i of incidents) {
+    const s = i.inhibitor_status;
+    inhibitor_stats[s] = (inhibitor_stats[s] ?? 0) + 1;
+  }
+  return {
+    total_incidents: incidents.length,
+    inhibitor_stats,
+  };
+}
 
 const CATEGORY_PILLS = [
   { label: "Violent", icon: Siren, cats: ["violent_weapon", "violent_no_weapon", "shots_heard", "robbery", "burglary_in_progress"], color: "#ef4444" },
@@ -73,6 +93,7 @@ const THEME_OPTIONS = [
 export default function Home() {
   const { mode, resolved, setMode } = useTheme();
   const isDark = resolved === "dark";
+  const useFirestoreData = isFirebaseConfigured();
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -93,7 +114,7 @@ export default function Home() {
   const [showTheme, setShowTheme] = useState(false);
   const mapRef = useRef<MapHandle>(null);
 
-  const loadData = useCallback(async () => {
+  const loadFromApi = useCallback(async () => {
     try {
       const [inc, sum, st] = await Promise.all([
         fetchIncidents(),
@@ -109,10 +130,45 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    loadData();
-    const timer = setInterval(loadData, POLL_INTERVAL);
+    if (useFirestoreData) {
+      const unsub = subscribeIncidents(
+        (next) => setIncidents(next),
+        (e) => console.error("Firestore incidents:", e)
+      );
+      return unsub;
+    }
+    void loadFromApi();
+    const timer = setInterval(loadFromApi, POLL_INTERVAL);
     return () => clearInterval(timer);
-  }, [loadData]);
+  }, [useFirestoreData, loadFromApi]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setIncidents((prev) => enrichIncidents(prev));
+    }, WEIGHT_REFRESH_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (!API_BASE) return;
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const [sum, st] = await Promise.all([fetchSummary(), fetchStats()]);
+        if (!cancelled) { setSummary(sum.summary); setStats(st); }
+      } catch (e) { console.error("Summary/stats:", e); }
+    };
+    void pull();
+    const t = setInterval(pull, POLL_INTERVAL);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
+  useEffect(() => {
+    if (API_BASE) return;
+    if (!useFirestoreData) return;
+    setSummary(buildLocalSummary(incidents));
+    setStats(statsFromIncidents(incidents));
+  }, [useFirestoreData, incidents]);
 
   const toggleCat = useCallback((cats: readonly string[]) => {
     setActiveCats((prev) => {
@@ -229,6 +285,7 @@ export default function Home() {
 
       {/* === BOTTOM-RIGHT CONTROLS === */}
       <div className="absolute bottom-6 right-3 z-[999] flex flex-col items-end gap-2 pointer-events-auto">
+        <AuthBar />
         {/* Theme toggle */}
         <div className="relative">
           <button
