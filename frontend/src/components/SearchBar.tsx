@@ -23,8 +23,12 @@ import {
   Flame,
   Clock,
   Route,
+  Star,
+  Trash2,
+  Plus,
 } from "lucide-react";
 import { geocodePhilly, assessSafety } from "@/lib/search";
+import { useSavedDestinations } from "@/hooks/useSavedDestinations";
 import {
   getRoute,
   buildAvoidZones,
@@ -109,6 +113,7 @@ export default function SearchBar({
   const [gpsStatus, setGpsStatus] = useState<"idle" | "loading" | "found" | "denied">("idle");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const previewAbortRef = useRef<AbortController | null>(null);
+  const { destinations: savedDests, canSave, addDestination, removeDestination } = useSavedDestinations();
 
   useEffect(() => {
     if (gpsStatus !== "idle") return;
@@ -416,6 +421,45 @@ export default function SearchBar({
               </div>
             )}
 
+            {/* Saved destinations */}
+            {canSave && savedDests.length > 0 && activeDropdown !== "search" && (
+              <div className="px-4 pb-2">
+                <h3 className="text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1.5 mb-1.5" style={{ color: "var(--panel-text-muted)" }}>
+                  <Star className="w-3 h-3" /> Saved Places
+                </h3>
+                <div className="space-y-1">
+                  {savedDests.map((dest) => (
+                    <div
+                      key={dest.id}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg transition-colors cursor-pointer group"
+                      style={{ background: "var(--panel-input-bg)" }}
+                      onClick={() => { onFlyTo(dest.lat, dest.lng); }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
+                      onMouseLeave={(e) => e.currentTarget.style.background = "var(--panel-input-bg)"}
+                    >
+                      <Star className="w-3.5 h-3.5 text-amber-500 shrink-0 fill-amber-500" />
+                      <span className="text-xs truncate flex-1" style={{ color: "var(--panel-text)" }}>{dest.name}</span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openDirections(dest.name, { lat: dest.lat, lng: dest.lng }); }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-blue-500/50 hover:text-blue-500 shrink-0"
+                        title="Get directions"
+                      >
+                        <Navigation className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); void removeDestination(dest.id); }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                        style={{ color: "var(--panel-text-muted)" }}
+                        title="Remove"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Live status */}
             <div className="px-4 py-2 flex items-center gap-2" style={{ borderBottom: "1px solid var(--panel-border)" }}>
               <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
@@ -627,18 +671,54 @@ export default function SearchBar({
               )}
 
               {/* GO button */}
-              <button
-                onClick={startTrip}
-                disabled={!originLoc || !destLoc || !previewRoute}
-                className={`mt-3 w-full flex items-center justify-center gap-2 py-3 rounded-full text-sm font-semibold transition-all ${
-                  originLoc && destLoc && previewRoute
-                    ? "bg-blue-500 hover:bg-blue-400 text-white shadow-lg shadow-blue-500/25 active:scale-[0.98]"
-                    : "cursor-not-allowed"
-                }`}
-                style={!(originLoc && destLoc && previewRoute) ? { background: "var(--panel-input-bg)", color: "var(--panel-text-muted)" } : {}}
-              >
-                <Play className="w-4 h-4 fill-current" /> Start Navigation
-              </button>
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={startTrip}
+                  disabled={!originLoc || !destLoc || !previewRoute}
+                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-full text-sm font-semibold transition-all ${
+                    originLoc && destLoc && previewRoute
+                      ? "bg-blue-500 hover:bg-blue-400 text-white shadow-lg shadow-blue-500/25 active:scale-[0.98]"
+                      : "cursor-not-allowed"
+                  }`}
+                  style={!(originLoc && destLoc && previewRoute) ? { background: "var(--panel-input-bg)", color: "var(--panel-text-muted)" } : {}}
+                >
+                  <Play className="w-4 h-4 fill-current" /> Start Navigation
+                </button>
+                {canSave && destLoc && (
+                  <button
+                    onClick={() => {
+                      if (destLoc) {
+                        void addDestination(destLoc.display_name.split(",")[0], destLoc.lat, destLoc.lng);
+                      }
+                    }}
+                    className="flex items-center justify-center w-12 py-3 rounded-full transition-all border"
+                    style={{
+                      background: savedDests.some(d => Math.abs(d.lat - destLoc.lat) < 0.0001 && Math.abs(d.lng - destLoc.lng) < 0.0001)
+                        ? "rgba(245,158,11,0.15)"
+                        : "var(--panel-input-bg)",
+                      borderColor: savedDests.some(d => Math.abs(d.lat - destLoc.lat) < 0.0001 && Math.abs(d.lng - destLoc.lng) < 0.0001)
+                        ? "rgba(245,158,11,0.3)"
+                        : "var(--panel-border)",
+                    }}
+                    title={savedDests.some(d => Math.abs(d.lat - destLoc.lat) < 0.0001 && Math.abs(d.lng - destLoc.lng) < 0.0001)
+                      ? "Saved"
+                      : "Save destination"}
+                  >
+                    <Star
+                      className={`w-4 h-4 ${
+                        savedDests.some(d => Math.abs(d.lat - destLoc.lat) < 0.0001 && Math.abs(d.lng - destLoc.lng) < 0.0001)
+                          ? "text-amber-500 fill-amber-500"
+                          : ""
+                      }`}
+                      style={
+                        !savedDests.some(d => Math.abs(d.lat - destLoc.lat) < 0.0001 && Math.abs(d.lng - destLoc.lng) < 0.0001)
+                          ? { color: "var(--panel-text-muted)" }
+                          : {}
+                      }
+                    />
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Origin suggestions dropdown */}
