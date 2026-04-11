@@ -1,12 +1,16 @@
 "use client";
 
+import { useState } from "react";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import LoginScreen from "@/components/LoginScreen";
+import AdminLauncher from "@/components/AdminLauncher";
+import AdminPanel from "@/app/admin/AdminPanel";
 import type { ReactNode } from "react";
 
 function AuthGate({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, isAdmin } = useAuth();
+  const [adminMode, setAdminMode] = useState<"launcher" | "dashboard" | "admin" | null>(null);
 
   if (!isFirebaseConfigured()) {
     return <>{children}</>;
@@ -22,6 +26,19 @@ function AuthGate({ children }: { children: ReactNode }) {
 
   if (!user) {
     return <LoginScreen />;
+  }
+
+  if (isAdmin) {
+    if (!adminMode || adminMode === "launcher") {
+      return (
+        <AdminLauncher
+          onChoose={(mode) => setAdminMode(mode)}
+        />
+      );
+    }
+    if (adminMode === "admin") {
+      return <AdminPanel onBack={() => setAdminMode("launcher")} />;
+    }
   }
 
   return <>{children}</>;
