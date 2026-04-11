@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { Activity, Mail, Eye, EyeOff, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Mail, Eye, EyeOff, AlertCircle, CheckCircle2 } from "lucide-react";
 
 type Mode = "login" | "signup";
 
@@ -105,11 +105,8 @@ export default function LoginScreen() {
       >
         {/* Logo */}
         <div className="text-center space-y-2">
-          <div className="flex items-center justify-center gap-2">
-            <div className="relative">
-              <Activity className="w-8 h-8 text-red-400" />
-              <div className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-            </div>
+          <div className="flex items-center justify-center gap-3">
+            <img src="/logo.png" alt="PHLPulse" className="w-12 h-12" />
             <span className="text-2xl font-bold tracking-tight" style={{ color: "var(--panel-text, white)" }}>PHLPulse</span>
           </div>
           <p className="text-xs" style={{ color: "var(--panel-text-muted, #666)" }}>
