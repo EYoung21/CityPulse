@@ -21,6 +21,14 @@ export interface MapHandle {
   flyTo: (lat: number, lng: number, zoom?: number) => void;
 }
 
+export interface WaypointPin {
+  label: string;
+  lat: number;
+  lng: number;
+  color: string;
+  glowColor: string;
+}
+
 interface Props {
   incidents: Incident[];
   selectedId: string | null;
@@ -31,6 +39,7 @@ interface Props {
   tripRouteGeometry?: [number, number][] | null;
   previewOrigin?: { lat: number; lng: number } | null;
   previewDest?: { lat: number; lng: number } | null;
+  previewWaypoints?: WaypointPin[] | null;
   tripMode?: string | null;
   heatmapEnabled?: boolean;
   isDark?: boolean;
@@ -218,7 +227,7 @@ const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.pn
 const LIGHT_TILES = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
 
 const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
-  { incidents, selectedId, onSelectIncident, routes, onMapTap, userLocation, tripRouteGeometry, previewOrigin, previewDest, tripMode, heatmapEnabled = true, isDark = true, onTripProgress },
+  { incidents, selectedId, onSelectIncident, routes, onMapTap, userLocation, tripRouteGeometry, previewOrigin, previewDest, previewWaypoints, tripMode, heatmapEnabled = true, isDark = true, onTripProgress },
   ref
 ) {
   const mapRef = useRef<L.Map | null>(null);
@@ -237,6 +246,9 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       mapRef.current?.flyTo([lat, lng], zoom, { duration: 0.8 });
     },
   }));
+
+  const onMapTapRef = useRef(onMapTap);
+  onMapTapRef.current = onMapTap;
 
   useEffect(() => {
     if (mapRef.current) return;
@@ -260,14 +272,15 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     mapRef.current = map;
 
     map.on("click", (e: L.LeafletMouseEvent) => {
-      if (onMapTap) onMapTap(e.latlng.lat, e.latlng.lng);
+      onMapTapRef.current?.(e.latlng.lat, e.latlng.lng);
     });
 
     return () => {
       map.remove();
       mapRef.current = null;
     };
-  }, [onMapTap]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Switch tiles when theme changes
   useEffect(() => {
@@ -302,17 +315,18 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       const heatData: [number, number, number][] = [];
       for (const inc of incidents) {
         if (inc.lat == null || inc.lng == null) continue;
+        const weight = Math.max(inc.w_eff, 0.15);
         if (isTripMode) {
           const dist = minDistToRouteKm([inc.lat, inc.lng], tripRouteGeometry);
-          if (dist <= TRIP_PROXIMITY_KM) heatData.push([inc.lat, inc.lng, inc.w_eff]);
+          if (dist <= TRIP_PROXIMITY_KM) heatData.push([inc.lat, inc.lng, weight]);
         } else {
-          heatData.push([inc.lat, inc.lng, inc.w_eff]);
+          heatData.push([inc.lat, inc.lng, weight]);
         }
       }
       if (heatData.length > 0) {
         const heat = L.heatLayer(heatData, {
-          radius: 35, blur: 25, maxZoom: 17, max: 1.0, minOpacity: 0.25,
-          gradient: { 0.0: "#0d1b2a", 0.2: "#1b263b", 0.4: "#e09f3e", 0.6: "#e76f51", 0.8: "#e63946", 1.0: "#ff006e" },
+          radius: 55, blur: 35, maxZoom: 17, max: 1.0, minOpacity: 0.3,
+          gradient: { 0.0: "rgba(13,27,42,0)", 0.15: "#1b263b", 0.3: "#e09f3e", 0.5: "#e76f51", 0.7: "#e63946", 1.0: "#ff006e" },
         });
         heat.addTo(map);
         heatRef.current = heat;
@@ -409,28 +423,36 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
     const primary = routes.safe || routes.normal;
     if (primary?.geometry && primary.geometry.length >= 2) {
-      const startPt = primary.geometry[0];
-      const endPt = primary.geometry[primary.geometry.length - 1];
-
-      L.marker(startPt, {
-        icon: createBigPinIcon("A", "#22c55e", "rgba(34,197,94,0.5)"),
-        zIndexOffset: 2000,
-        interactive: false,
-      }).addTo(routeLayer);
-
-      L.marker(endPt, {
-        icon: createBigPinIcon("B", "#ef4444", "rgba(239,68,68,0.5)"),
-        zIndexOffset: 2000,
-        interactive: false,
-      }).addTo(routeLayer);
+      if (previewWaypoints && previewWaypoints.length > 0) {
+        for (const wp of previewWaypoints) {
+          L.marker([wp.lat, wp.lng], {
+            icon: createBigPinIcon(wp.label, wp.color, wp.glowColor),
+            zIndexOffset: 2000,
+            interactive: false,
+          }).addTo(routeLayer);
+        }
+      } else {
+        const startPt = primary.geometry[0];
+        const endPt = primary.geometry[primary.geometry.length - 1];
+        L.marker(startPt, {
+          icon: createBigPinIcon("A", "#22c55e", "rgba(34,197,94,0.5)"),
+          zIndexOffset: 2000,
+          interactive: false,
+        }).addTo(routeLayer);
+        L.marker(endPt, {
+          icon: createBigPinIcon("B", "#ef4444", "rgba(239,68,68,0.5)"),
+          zIndexOffset: 2000,
+          interactive: false,
+        }).addTo(routeLayer);
+      }
 
       const allPts = primary.geometry.map((p) => L.latLng(p[0], p[1]));
       const bounds = L.latLngBounds(allPts);
       map.fitBounds(bounds, { padding: [100, 100], maxZoom: 15 });
     }
-  }, [routes]);
+  }, [routes, previewWaypoints]);
 
-  // Preview A/B pins (before GO is pressed)
+  // Preview waypoint pins (before GO is pressed)
   useEffect(() => {
     const map = mapRef.current;
     const layer = previewLayerRef.current;
@@ -438,34 +460,44 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
     layer.clearLayers();
 
-    // Don't show preview pins if routes are active (trip started)
     if (routes) return;
 
-    if (previewOrigin) {
-      L.marker([previewOrigin.lat, previewOrigin.lng], {
-        icon: createBigPinIcon("A", "#22c55e", "rgba(34,197,94,0.5)"),
-        zIndexOffset: 1800,
-        interactive: false,
-      }).addTo(layer);
-    }
-
-    if (previewDest) {
-      L.marker([previewDest.lat, previewDest.lng], {
-        icon: createBigPinIcon("B", "#ef4444", "rgba(239,68,68,0.5)"),
-        zIndexOffset: 1800,
-        interactive: false,
-      }).addTo(layer);
-
-      // If both exist, fit bounds to show both
-      if (previewOrigin) {
-        const bounds = L.latLngBounds([
-          L.latLng(previewOrigin.lat, previewOrigin.lng),
-          L.latLng(previewDest.lat, previewDest.lng),
-        ]);
+    if (previewWaypoints && previewWaypoints.length > 0) {
+      for (const wp of previewWaypoints) {
+        L.marker([wp.lat, wp.lng], {
+          icon: createBigPinIcon(wp.label, wp.color, wp.glowColor),
+          zIndexOffset: 1800,
+          interactive: false,
+        }).addTo(layer);
+      }
+      if (previewWaypoints.length >= 2) {
+        const bounds = L.latLngBounds(previewWaypoints.map(wp => L.latLng(wp.lat, wp.lng)));
         map.fitBounds(bounds, { padding: [100, 100], maxZoom: 14 });
       }
+    } else {
+      if (previewOrigin) {
+        L.marker([previewOrigin.lat, previewOrigin.lng], {
+          icon: createBigPinIcon("A", "#22c55e", "rgba(34,197,94,0.5)"),
+          zIndexOffset: 1800,
+          interactive: false,
+        }).addTo(layer);
+      }
+      if (previewDest) {
+        L.marker([previewDest.lat, previewDest.lng], {
+          icon: createBigPinIcon("B", "#ef4444", "rgba(239,68,68,0.5)"),
+          zIndexOffset: 1800,
+          interactive: false,
+        }).addTo(layer);
+        if (previewOrigin) {
+          const bounds = L.latLngBounds([
+            L.latLng(previewOrigin.lat, previewOrigin.lng),
+            L.latLng(previewDest.lat, previewDest.lng),
+          ]);
+          map.fitBounds(bounds, { padding: [100, 100], maxZoom: 14 });
+        }
+      }
     }
-  }, [previewOrigin, previewDest, routes]);
+  }, [previewOrigin, previewDest, previewWaypoints, routes]);
 
   // User location "A" (before any location is selected)
   useEffect(() => {

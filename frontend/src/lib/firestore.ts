@@ -13,10 +13,25 @@ import { enrichIncidents } from "@/lib/incident-weights";
 const COLLECTION = "incidents";
 const MAX_DOCS = 500;
 
+function toISOString(val: unknown): string {
+  if (!val) return new Date().toISOString();
+  if (typeof val === "string") {
+    const d = new Date(val);
+    return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+  }
+  if (typeof val === "object" && val !== null && "toDate" in val && typeof (val as { toDate: () => Date }).toDate === "function") {
+    return (val as { toDate: () => Date }).toDate().toISOString();
+  }
+  if (typeof val === "object" && val !== null && "seconds" in val) {
+    return new Date((val as { seconds: number }).seconds * 1000).toISOString();
+  }
+  return new Date().toISOString();
+}
+
 function mapDoc(id: string, data: Record<string, unknown>): Incident {
   return {
     id,
-    reported_at: String(data.reported_at ?? ""),
+    reported_at: toISOString(data.reported_at),
     raw_text: String(data.raw_text ?? ""),
     severity_category: String(data.severity_category ?? ""),
     s_base: Number(data.s_base ?? 0),

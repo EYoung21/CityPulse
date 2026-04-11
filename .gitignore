@@ -5,6 +5,8 @@ config.yaml
 .env.production
 *.key
 *.pem
+.secrets/
+*-firebase-adminsdk-*.json
 
 # Output directories (transcription logs may contain sensitive content)
 46018_Belchertown/
@@ -36,3 +38,4 @@ frontend/out/
 # OS files
 .DS_Store
 Thumbs.db
+.vercel
