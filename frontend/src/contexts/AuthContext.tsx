@@ -11,9 +11,12 @@ import {
 } from "react";
 import {
   GoogleAuthProvider,
+  createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
+  sendEmailVerification,
   signInAnonymously,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
   type User,
@@ -26,10 +29,15 @@ type AuthState = {
   loading: boolean;
   signInWithGoogle: () => Promise<void>;
   signInAsGuest: () => Promise<void>;
+  signUpWithEmail: (email: string, password: string) => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  resendVerification: () => Promise<void>;
   signOutUser: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
+
+const noop = async () => {};
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -50,6 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!isFirebaseConfigured() || !user || user.isAnonymous) return;
+    if (!user.email) return;
     const db = getFirestore(getFirebaseApp());
     void setDoc(
       doc(db, "users", user.uid),
@@ -74,6 +83,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await signInAnonymously(auth);
   }, []);
 
+  const signUpWithEmail = useCallback(async (email: string, password: string) => {
+    const auth = getAuth(getFirebaseApp());
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    await sendEmailVerification(cred.user);
+  }, []);
+
+  const signInWithEmail = useCallback(async (email: string, password: string) => {
+    const auth = getAuth(getFirebaseApp());
+    await signInWithEmailAndPassword(auth, email, password);
+  }, []);
+
+  const resendVerification = useCallback(async () => {
+    const auth = getAuth(getFirebaseApp());
+    if (auth.currentUser && !auth.currentUser.emailVerified) {
+      await sendEmailVerification(auth.currentUser);
+    }
+  }, []);
+
   const signOutUser = useCallback(async () => {
     const auth = getAuth(getFirebaseApp());
     await signOut(auth);
@@ -85,9 +112,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       signInWithGoogle,
       signInAsGuest,
+      signUpWithEmail,
+      signInWithEmail,
+      resendVerification,
       signOutUser,
     }),
-    [user, loading, signInWithGoogle, signInAsGuest, signOutUser]
+    [user, loading, signInWithGoogle, signInAsGuest, signUpWithEmail, signInWithEmail, resendVerification, signOutUser]
   );
 
   if (!isFirebaseConfigured()) {
@@ -96,9 +126,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         value={{
           user: null,
           loading: false,
-          signInWithGoogle: async () => {},
-          signInAsGuest: async () => {},
-          signOutUser: async () => {},
+          signInWithGoogle: noop,
+          signInAsGuest: noop,
+          signUpWithEmail: noop,
+          signInWithEmail: noop,
+          resendVerification: noop,
+          signOutUser: noop,
         }}
       >
         {children}
