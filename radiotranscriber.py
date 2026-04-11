@@ -21,6 +21,12 @@ try:
 except Exception:
     MqttPublisher = None
 
+# Optional PhillyPulse bridge
+try:
+    from philly_pulse.bridge import post_transcript as _pp_post
+except Exception:
+    _pp_post = None
+
 
 # Load configuration
 with open("config.yaml", "r", encoding="utf-8") as f:
@@ -59,6 +65,13 @@ if MqttPublisher is not None and isinstance(MQTT_CFG, dict) and MQTT_CFG.get("en
     except Exception as e:
         mqtt_pub = None
         print(f"MQTT init failed (continuing without MQTT): {e}")
+
+# --- PhillyPulse bridge (optional) ---
+PP_CFG = config.get("philly_pulse", {})
+PP_ENABLED = PP_CFG.get("enabled", False) and _pp_post is not None
+PP_BRIDGE_URL = PP_CFG.get("bridge_url", "http://127.0.0.1:8765/api/ingest")
+if PP_ENABLED:
+    print(f"PhillyPulse bridge enabled → posting to {PP_BRIDGE_URL}")
 
 # --- SETTINGS ---
 STREAM_URL = f"http://{USERNAME}:{PASSWORD}@audio.broadcastify.com/{FEED_NUMBER}.mp3"
@@ -287,6 +300,9 @@ def transcriber_worker(model, device):
                         )
                     except Exception as e:
                         print(f" (MQTT publish failed: {e})")
+                # POST to PhillyPulse ingest (non-blocking daemon thread)
+                if PP_ENABLED:
+                    _pp_post(PP_BRIDGE_URL, text, timestamp)
             else:
                 print(f"   (Empty after cleanup — discarded)")
 
