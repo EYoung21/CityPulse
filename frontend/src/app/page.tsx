@@ -261,6 +261,16 @@ export default function Home() {
 
           <div className="w-px h-6 shrink-0" style={{ background: "var(--pill-border)" }} />
 
+          <button
+            onClick={() => setActiveCats(new Set())}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
+              activeCats.size === 0 ? "bg-blue-500/15 text-blue-500 ring-1 ring-blue-500/30" : "opacity-70 hover:opacity-100"
+            }`}
+            style={activeCats.size > 0 ? { background: "var(--pill-bg)", border: "1px solid var(--pill-border)", color: "var(--pill-text)" } : { background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.3)" }}
+          >
+            All
+          </button>
+
           {CATEGORY_PILLS.map((pill) => {
             const Icon = pill.icon;
             const isActive = pill.cats.some((c) => activeCats.has(c));
