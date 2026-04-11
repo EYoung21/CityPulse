@@ -47,13 +47,8 @@ class IngestRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup():
-    """Seed the database with demo data if empty."""
-    if store.incident_count() == 0 and SEED_PATH.exists():
-        s_base_map = {
-            cat: weights.get_s_base(cat) for cat in llm.SEVERITY_CATEGORIES
-        }
-        count = store.seed_from_json(str(SEED_PATH), s_base_map)
-        logger.info("Seeded %d demo incidents", count)
+    """Ensure the database table exists (but don't auto-seed)."""
+    store.get_conn()  # creates table if missing
 
 
 @app.get("/api/health")
@@ -82,6 +77,8 @@ async def ingest(req: IngestRequest):
     category = extraction["severity_category"]
     location_text = extraction["location_text"]
     confidence = extraction["confidence"]
+    llm_lat = extraction.get("llm_lat")
+    llm_lng = extraction.get("llm_lng")
     s_base = weights.get_s_base(category)
 
     # Step 2: Inhibitor ethical guardrail
@@ -108,7 +105,7 @@ async def ingest(req: IngestRequest):
             "incident_id": incident["id"],
         }
 
-    # Step 3: Geocode
+    # Step 3: Geocode (Nominatim first, LLM coordinates as fallback)
     lat, lng = None, None
     geocode_status = "failed"
     if location_text:
@@ -116,8 +113,14 @@ async def ingest(req: IngestRequest):
         if coords:
             lat, lng = coords
             geocode_status = "success"
+        elif llm_lat is not None and llm_lng is not None:
+            lat, lng = llm_lat, llm_lng
+            geocode_status = "llm_fallback"
         else:
             geocode_status = "no_result"
+    elif llm_lat is not None and llm_lng is not None:
+        lat, lng = llm_lat, llm_lng
+        geocode_status = "llm_fallback"
 
     # Step 4: Store
     incident = store.insert_incident(
@@ -146,6 +149,17 @@ async def get_incidents(
     incidents = store.list_incidents(since=since, category=category)
     incidents = weights.enrich_incidents(incidents)
     return {"incidents": incidents}
+
+
+@app.post("/api/seed")
+async def seed():
+    """Load pre-built demo incidents into the database. Idempotent panic button."""
+    if not SEED_PATH.exists():
+        raise HTTPException(status_code=404, detail="Seed data file not found")
+    s_base_map = {cat: weights.get_s_base(cat) for cat in llm.SEVERITY_CATEGORIES}
+    count = store.seed_from_json(str(SEED_PATH), s_base_map)
+    logger.info("Seeded %d demo incidents on demand", count)
+    return {"status": "seeded", "count": count}
 
 
 @app.post("/api/simulate")
