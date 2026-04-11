@@ -150,7 +150,7 @@ def transcriber_worker(worker_id):
     print(f"   [Worker-{worker_id}] Transcriber thread started")
     while True:
         try:
-            feed_label, timestamp, audio_data = transcription_queue.get()
+            feed_id, feed_label, timestamp, audio_data = transcription_queue.get()
             if audio_data is None:
                 break
 
@@ -188,7 +188,7 @@ def transcriber_worker(worker_id):
                 f.write(output + "\n")
 
             if PP_ENABLED:
-                _pp_post(PP_BRIDGE_URL, text, timestamp)
+                _pp_post(PP_BRIDGE_URL, text, timestamp, feed_id=feed_id)
 
             transcription_queue.task_done()
         except Exception as e:
@@ -275,7 +275,7 @@ def feed_capture_thread(feed_id, feed_label):
 
                     if duration >= MIN_SPEECH_SECONDS:
                         ts = datetime.datetime.now().strftime("%H:%M:%S")
-                        transcription_queue.put((feed_label, ts, full_audio.copy()))
+                        transcription_queue.put((feed_id, feed_label, ts, full_audio.copy()))
 
                     audio_buffer = []
                     is_recording = False
@@ -335,7 +335,7 @@ def main():
     except KeyboardInterrupt:
         print("\nShutting down...")
         for _ in workers:
-            transcription_queue.put(("", "", None))
+            transcription_queue.put(("", "", "", None))
         for w in workers:
             w.join(timeout=5)
         print("Done.")

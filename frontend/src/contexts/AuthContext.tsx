@@ -24,9 +24,12 @@ import {
 import { doc, getFirestore, serverTimestamp, setDoc } from "firebase/firestore";
 import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
 
+const ADMIN_EMAILS = ["eliyoung4now@gmail.com", "kethansany@gmail.com"];
+
 type AuthState = {
   user: User | null;
   loading: boolean;
+  isAdmin: boolean;
   signInWithGoogle: () => Promise<void>;
   signInAsGuest: () => Promise<void>;
   signUpWithEmail: (email: string, password: string) => Promise<void>;
@@ -106,10 +109,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await signOut(auth);
   }, []);
 
+  const isAdmin = !!user?.email && ADMIN_EMAILS.includes(user.email.toLowerCase());
+
   const value = useMemo(
     () => ({
       user,
       loading,
+      isAdmin,
       signInWithGoogle,
       signInAsGuest,
       signUpWithEmail,
@@ -117,7 +123,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       resendVerification,
       signOutUser,
     }),
-    [user, loading, signInWithGoogle, signInAsGuest, signUpWithEmail, signInWithEmail, resendVerification, signOutUser]
+    [user, loading, isAdmin, signInWithGoogle, signInAsGuest, signUpWithEmail, signInWithEmail, resendVerification, signOutUser]
   );
 
   if (!isFirebaseConfigured()) {
@@ -126,6 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         value={{
           user: null,
           loading: false,
+          isAdmin: false,
           signInWithGoogle: noop,
           signInAsGuest: noop,
           signUpWithEmail: noop,

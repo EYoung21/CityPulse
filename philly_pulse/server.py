@@ -4,13 +4,16 @@ import json
 import logging
 import os
 import random
+import subprocess
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+import yaml
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import geocode, inhibitor, llm, persistence as store, verifier, weights
+from . import admin_events, geocode, inhibitor, llm, persistence as store, verifier, weights
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,6 +27,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Load Broadcastify config for audio proxy
+_config_path = Path(__file__).resolve().parent.parent / "config.yaml"
+_bf_username = ""
+_bf_password = ""
+PHILLY_FEEDS = [
+    {"feed_id": "4603",  "label": "PPD Citywide"},
+    {"feed_id": "17310", "label": "PPD Central"},
+    {"feed_id": "21297", "label": "PPD East"},
+    {"feed_id": "45495", "label": "PPD Northeast"},
+    {"feed_id": "18836", "label": "PPD Northwest"},
+    {"feed_id": "15102", "label": "PPD South"},
+    {"feed_id": "15195", "label": "PPD Southwest/West"},
+    {"feed_id": "34250", "label": "PFD South Fire/Medics"},
+    {"feed_id": "15747", "label": "PFD North Fire"},
+    {"feed_id": "44308", "label": "SEPTA Transit Police"},
+]
+if _config_path.exists():
+    try:
+        with open(_config_path, "r") as f:
+            _cfg = yaml.safe_load(f)
+        _bf_username = _cfg.get("credentials", {}).get("username", "")
+        _bf_password = _cfg.get("credentials", {}).get("password", "")
+    except Exception:
+        pass
 
 DATA_DIR = Path(__file__).parent / "data"
 SEED_PATH = DATA_DIR / "seed_incidents.json"
@@ -43,6 +71,7 @@ CANNED_TRANSCRIPTS = [
 class IngestRequest(BaseModel):
     text: str
     timestamp: str | None = None
+    feed_id: str | None = None
 
 
 @app.on_event("startup")
@@ -65,13 +94,46 @@ async def health():
 async def ingest(req: IngestRequest):
     """Ingest a scanner transcript: LLM extract -> Inhibitor check -> geocode -> store."""
 
+    feed_id = req.feed_id or "unknown"
+    correlation = f"{feed_id}_{req.timestamp or ''}"
+
+    # Broadcast: transcript received
+    await admin_events.broadcast({
+        "type": "transcript_received",
+        "correlation": correlation,
+        "feed_id": feed_id,
+        "text": req.text,
+        "timestamp": req.timestamp,
+    })
+
     # Step 1: LLM extraction
+    await admin_events.broadcast({
+        "type": "llm_started",
+        "correlation": correlation,
+        "feed_id": feed_id,
+    })
+
     try:
         extraction = await llm.extract_incident(req.text)
     except llm.LLMError as e:
+        await admin_events.broadcast({
+            "type": "llm_error",
+            "correlation": correlation,
+            "feed_id": feed_id,
+            "error": str(e),
+        })
         raise HTTPException(status_code=502, detail=f"LLM error: {e}")
 
     if extraction is None:
+        await admin_events.broadcast({
+            "type": "llm_result",
+            "correlation": correlation,
+            "feed_id": feed_id,
+            "is_relevant": False,
+            "category": "admin_or_noise",
+            "confidence": 0,
+            "location_text": None,
+        })
         return {"status": "rejected", "reason": "Not dispatch-relevant"}
 
     category = extraction["severity_category"]
@@ -81,6 +143,19 @@ async def ingest(req: IngestRequest):
     llm_lng = extraction.get("llm_lng")
     s_base = weights.get_s_base(category)
 
+    await admin_events.broadcast({
+        "type": "llm_result",
+        "correlation": correlation,
+        "feed_id": feed_id,
+        "is_relevant": True,
+        "category": category,
+        "confidence": confidence,
+        "location_text": location_text,
+        "llm_lat": llm_lat,
+        "llm_lng": llm_lng,
+        "s_base": s_base,
+    })
+
     # Step 2: Inhibitor ethical guardrail
     inh = await inhibitor.check_incident(
         raw_transcript=req.text,
@@ -88,6 +163,14 @@ async def ingest(req: IngestRequest):
         location_text=location_text,
         confidence=confidence,
     )
+
+    await admin_events.broadcast({
+        "type": "inhibitor_result",
+        "correlation": correlation,
+        "feed_id": feed_id,
+        "status": inh.status,
+        "reason": inh.reason,
+    })
 
     if inh.status == "blocked":
         incident = store.insert_incident(
@@ -99,6 +182,13 @@ async def ingest(req: IngestRequest):
             inhibitor_status="blocked",
             inhibitor_reason=inh.reason,
         )
+        await admin_events.broadcast({
+            "type": "incident_stored",
+            "correlation": correlation,
+            "feed_id": feed_id,
+            "outcome": "blocked",
+            "incident_id": incident["id"],
+        })
         return {
             "status": "blocked",
             "reason": inh.reason,
@@ -122,6 +212,15 @@ async def ingest(req: IngestRequest):
         lat, lng = llm_lat, llm_lng
         geocode_status = "llm_fallback"
 
+    await admin_events.broadcast({
+        "type": "geocode_result",
+        "correlation": correlation,
+        "feed_id": feed_id,
+        "lat": lat,
+        "lng": lng,
+        "method": geocode_status,
+    })
+
     # Step 4: Store
     incident = store.insert_incident(
         raw_text=req.text,
@@ -136,6 +235,19 @@ async def ingest(req: IngestRequest):
         inhibitor_reason=inh.reason,
         reported_at=req.timestamp,
     )
+
+    await admin_events.broadcast({
+        "type": "incident_stored",
+        "correlation": correlation,
+        "feed_id": feed_id,
+        "outcome": "created",
+        "incident_id": incident["id"],
+        "category": category,
+        "confidence": confidence,
+        "location_text": location_text,
+        "lat": lat,
+        "lng": lng,
+    })
 
     return {"status": "created", "incident": incident}
 
@@ -241,3 +353,60 @@ async def stats():
         "total_incidents": store.incident_count(),
         "inhibitor_stats": store.inhibitor_stats(),
     }
+
+
+# ── Admin endpoints ─────────────────────────────────────────────────
+
+@app.websocket("/ws/admin")
+async def admin_ws(ws: WebSocket):
+    """WebSocket stream of all pipeline events for the admin panel."""
+    await admin_events.connect(ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await admin_events.disconnect(ws)
+
+
+@app.get("/api/admin/feeds")
+async def admin_feeds():
+    """List of available Broadcastify feeds."""
+    return {"feeds": PHILLY_FEEDS}
+
+
+@app.get("/api/admin/stream/{feed_id}")
+async def admin_stream(feed_id: str):
+    """Proxy a Broadcastify MP3 stream for the admin audio player."""
+    if not _bf_username or not _bf_password:
+        raise HTTPException(status_code=503, detail="Broadcastify credentials not configured")
+
+    valid_ids = {f["feed_id"] for f in PHILLY_FEEDS}
+    if feed_id not in valid_ids:
+        raise HTTPException(status_code=404, detail=f"Unknown feed_id: {feed_id}")
+
+    url = f"http://{_bf_username}:{_bf_password}@audio.broadcastify.com/{feed_id}.mp3"
+
+    def stream_audio():
+        proc = subprocess.Popen(
+            [
+                "ffmpeg", "-reconnect", "1", "-reconnect_streamed", "1",
+                "-reconnect_delay_max", "5", "-i", url,
+                "-acodec", "libmp3lame", "-ab", "64k", "-ar", "22050", "-ac", "1",
+                "-f", "mp3", "-loglevel", "quiet", "-",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            proc.kill()
+            proc.wait()
+
+    return StreamingResponse(stream_audio(), media_type="audio/mpeg")

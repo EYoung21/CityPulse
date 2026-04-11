@@ -9,7 +9,7 @@ from urllib.error import URLError
 logger = logging.getLogger(__name__)
 
 
-def post_transcript(bridge_url: str, text: str, timestamp: str | None = None):
+def post_transcript(bridge_url: str, text: str, timestamp: str | None = None, feed_id: str | None = None):
     """Fire-and-forget POST of a transcript line to the ingest endpoint.
 
     Runs in a daemon thread so it never blocks the transcriber main loop.
@@ -18,6 +18,8 @@ def post_transcript(bridge_url: str, text: str, timestamp: str | None = None):
         payload = {"text": text}
         if timestamp:
             payload["timestamp"] = timestamp
+        if feed_id:
+            payload["feed_id"] = feed_id
         body = json.dumps(payload).encode("utf-8")
         req = Request(
             bridge_url,
