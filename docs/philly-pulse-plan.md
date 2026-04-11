@@ -1,183 +1,201 @@
 ---
 name: Philly Pulse MVP
-overview: "Add a `philly_pulse` FastAPI app: the map shows incidents sourced only from live (or logged) scanner transcripts—Whisper text is sent to an LLM (required) to extract structured fields; results are geocoded and stored; time/decay weights apply to those pins only. No OpenDataPhilly/Carto crime API. Optional OSRM for route scoring over the same pin set. `radiotranscriber.py` POSTs each finalized transcript line to the server when enabled."
+overview: "AI-powered community safety awareness for Philadelphia. Broadcastify scanner audio → Whisper transcription → LLM structured extraction → geocoded map pins on a polished Next.js frontend. Built for Philly Codefest 2026 ('Building AI for Philly's Future')."
 todos:
-  - id: store-ingest-llm
-    content: Add incident store (SQLite or in-memory + optional persist), required LLM extract step, geocode location_text (Nominatim Philly bbox)
+  - id: phase1-backend
+    content: "Core backend pipeline: store.py (SQLite), llm.py (OpenAI structured extraction), geocode.py (Nominatim + Philly bbox), weights.py (severity + time decay), server.py (FastAPI: /api/ingest, /api/incidents, /api/simulate, /api/summary)"
     status: pending
-  - id: weights-decay
-    content: severity_categories.yaml + weights.py (Weff formula); district_fade from cited public T_d by dc_dist → F_d=T_median/T_d, clip; JSON _meta + district_fade_SOURCES.md; optional build_district_fade.py
+  - id: phase2-frontend
+    content: "Next.js + Tailwind + shadcn/ui frontend: map view (react-map-gl or react-leaflet), incident feed sidebar/bottom-sheet, incident detail modal, neighborhood AI summary, about/transparency page, mobile-first responsive, dark mode"
     status: pending
-  - id: api-ui
-    content: FastAPI server.py (ingest + GET incidents only from store), routing.py + static Leaflet map
+  - id: phase3-bridge
+    content: "bridge.py + radiotranscriber.py config.yaml.example philly_pulse block — POST every accepted transcript to ingest endpoint (daemon thread)"
     status: pending
-  - id: transcriber-bridge
-    content: bridge.py + radiotranscriber.py + config.yaml.example — POST every accepted transcript to ingest endpoint (daemon thread)
+  - id: phase4-demo
+    content: "Demo resilience: seed SQLite with 15-20 realistic Philly incidents, /api/simulate endpoint with canned transcripts, simulate button in UI, pre-built slide deck"
     status: pending
-  - id: deps-docs
-    content: requirements-philly-pulse.txt; README — OPENAI_API_KEY, Broadcastify allowlist + terms, geocoder, fade refresh tiers (manual / CI manifest / future URL)
-    status: pending
-  - id: philly-feeds-fade-refresh
-    content: philly_broadcastify_feeds.json + optional BROADCASTIFY_FEEDS.md; document semi-auto fade refresh; optional refresh_district_fade.py when stable upstream exists
+  - id: phase5-polish
+    content: "Deps, docs, final polish: requirements-philly-pulse.txt, package.json, README, PWA manifest, responsive QA on phone, presentation rehearsal"
     status: pending
 isProject: false
 ---
 
-# Philly Pulse — build plan (scanner + LLM only; no crime open-data API)
+# Philly Pulse — Hackathon Build Plan
 
-> **Canonical copy in this repo:** [docs/philly-pulse-plan.md](philly-pulse-plan.md) — keep in sync with work; Cursor may also hold a copy under `~/.cursor/plans/`.
+> **Philly Codefest 2026** | April 11-12 | Theme: *Building AI for Philly's Future*
+>
+> Canonical copy: [docs/philly-pulse-plan.md](philly-pulse-plan.md)
 
-## Data source (locked)
+## The Pitch
 
-- **Map pins:** **Only** from **Broadcastify stream → [radiotranscriber.py](../radiotranscriber.py) (Whisper) → HTTP ingest → **LLM structured extraction** (required). There is **no** OpenDataPhilly / Carto / PPD bulk crime API in the pipeline.
-- **LLM is not optional:** If the API key is missing or the model fails, **do not** silently fall back to another incident source; return a clear error / empty map with explanation.
-- **Coordinates:** The LLM should output a human `location_text` (intersection, block, landmark). Resolve to `lat`/`lng` with a **geocoder** (recommended: **OpenStreetMap Nominatim**, restricted to a **Philadelphia bounding box**). That is **not** the same as ingesting a city crime dataset—it turns the transcript-derived place name into a point for the map. If you ever forbid all non-LLM HTTP, the alternative is accepting lat/lng from the model only (high hallucination risk); **not recommended** for a demo.
+**Philadelphia residents deserve to know what's happening in their neighborhoods in real time.** Police scanner audio is inaccessible — jargon-heavy, requires expensive equipment, and impossible to visualize spatially. **PhillyPulse** uses AI at every layer to turn raw radio audio into an interactive, real-time safety map that any Philadelphian can use from their phone.
 
-## Risks / disclaimers (unchanged, stronger)
+## Hackathon Judging Alignment
 
-- Audio + STT + LLM + geocode = **high false positive / wrong-pin** rate. UI must label pins **unverified** and cite **Broadcastify [terms](https://www.broadcastify.com/terms/)** (personal / non-redistribution).
-- **Not** real-time 911; **not** official police data.
+| Criterion | Points | How we score |
+|-----------|--------|--------------|
+| Addresses the challenge | 25 | AI at every pipeline stage; Philly-specific; responsible AI transparency |
+| How much built during event | 20 | Full-stack: Python backend + Next.js frontend + live transcriber integration |
+| Market viability | 10 | Comparable to Citizen app ($1B+); free map + premium alerts; B2B for real estate/insurance |
+| Presentation quality | 15 | Polished mobile UI, live demo with simulate fallback, clear narrative arc |
 
-## What already exists in this repo
+### Sponsor Prize Targets
 
-- [radiotranscriber.py](../radiotranscriber.py): stream, VAD, faster-whisper, cleanup, log write, optional [mqtt_publisher.py](../mqtt_publisher.py).
+- **Applied AI Studio** — The project IS applied AI (speech-to-text + LLM extraction + geocoding + decay model).
+- **DEI** — Democratizes safety information: scanner intel was historically gatekept behind equipment and jargon. PhillyPulse makes it accessible to ALL Philadelphians. Stretch: add Spanish language toggle via LLM translation.
+- **Comcast** — Explore integration angle if Comcast APIs available at event.
+
+## Data Source (locked)
+
+- **Map pins** come **only** from: Broadcastify stream -> [radiotranscriber.py](../radiotranscriber.py) (Whisper STT) -> HTTP ingest -> **LLM structured extraction** (required). There is **no** OpenDataPhilly / Carto / PPD bulk crime API.
+- **LLM is not optional.** If the API key is missing or the model fails, return a clear error / empty map with explanation. Never silently fall back to another source.
+- **Coordinates:** LLM outputs a human `location_text` (intersection, block, landmark). Resolved to lat/lng via **Nominatim geocoder** restricted to a **Philadelphia bounding box** — this is not the same as ingesting a city crime dataset.
+
+## Risks / Disclaimers
+
+- Audio + STT + LLM + geocode = **high false-positive / wrong-pin rate**. The UI must label every pin **"UNVERIFIED"** and cite **Broadcastify [terms](https://www.broadcastify.com/terms/)**.
+- **Not** real-time 911. **Not** official police data. The transparency page must make this unmistakably clear.
+
+## What Already Exists
+
+- [radiotranscriber.py](../radiotranscriber.py) — Broadcastify stream, VAD, faster-whisper, hallucination cleanup, log write, optional MQTT ([mqtt_publisher.py](../mqtt_publisher.py)).
 
 ## Architecture
 
 ```mermaid
-flowchart LR
-  subgraph ingest [Ingest]
-    RT[radiotranscriber.py]
-    API[POST /api/ingest]
-    LLM[LLM extract JSON]
-    GEO[Geocode Philly]
-    DB[(incident store)]
+flowchart TB
+  subgraph backend ["Python Backend (FastAPI)"]
+    RT[radiotranscriber.py] -->|POST transcript| Ingest["/api/ingest"]
+    Sim["/api/simulate"] -->|canned transcript| Ingest
+    Ingest --> LLM["OpenAI LLM\n(structured JSON)"]
+    LLM --> Geo["Nominatim Geocoder\n(Philly bbox)"]
+    Geo --> DB["SQLite Store"]
+    DB --> IncAPI["/api/incidents"]
+    DB --> SumAPI["/api/summary"]
   end
-  RT -->|transcript line| API
-  API --> LLM
-  LLM --> GEO
-  GEO --> DB
-  UI[Leaflet map] -->|GET /api/incidents| DB
+
+  subgraph frontend ["Next.js Frontend (Tailwind + shadcn/ui)"]
+    Map["Interactive Map\n(Mapbox GL / Leaflet)"]
+    Feed["Incident Feed\n(sidebar / bottom sheet)"]
+    Detail["Incident Detail\n(modal)"]
+    Summary["AI Neighborhood\nSummary"]
+    About["Transparency +\nResponsible AI"]
+  end
+
+  IncAPI --> Map
+  IncAPI --> Feed
+  IncAPI --> Detail
+  SumAPI --> Summary
 ```
 
-## Severity and time decay (heatmap + routing)
+## Severity and Time Decay
 
-This is the concrete version of the “danger fades over time, faster where response is historically quicker” idea, adapted to **scanner + LLM** as the only incident source.
+### Severity Categories (LLM -> preset mapping)
 
-### Time since reported
+The LLM classifies each dispatch-relevant transcript line into a **closed enum**. A deterministic mapping converts that to a numeric severity — no free-floating "model picks 1-10."
 
-- Each stored incident has **`reported_at`** (UTC): prefer the **transcriber timestamp** in the ingest body; if missing, use **server receive time**.
-- **Age** at display time: $\Delta t$ in **hours** (configurable to minutes for a snappier demo).
-- **Recency decay** (exponential — same family as your earlier `exp(-age_hours / …)` idea):
+**LLM structured output fields:**
+- `is_dispatch_relevant` (bool)
+- `severity_category` — one of: `violent_weapon`, `violent_no_weapon`, `shots_heard`, `robbery`, `burglary_in_progress`, `medical_priority`, `medical_other`, `fire_hazmat`, `traffic_crash_injury`, `traffic_crash_no_injury`, `disorder`, `admin_or_noise`
+- `location_text` — intersection, block, or landmark
+- `confidence` — 0.0 to 1.0
 
-$$W_{\mathrm{time}}(\Delta t) = \exp\left(-\frac{\Delta t}{\lambda_{\mathrm{eff}}}\right)$$
+`philly_pulse/data/severity_categories.yaml` maps each category to an **S_base** on [0, 1].
 
-- $\lambda_{\mathrm{eff}}$ = effective time constant (how long a pin stays “hot”). A base **`tau_hours`** in config sets the default scale (e.g. 6–24h for a hackathon demo).
+### Time Decay
 
-### Severity (LLM + preset category → severity level)
+Each incident has `reported_at` (UTC). The recency weight decays exponentially:
 
-Avoid a free-floating “model picks 1–10.” Use a **closed enum** the LLM must output, then a **deterministic** mapping to numbers (auditable, easy to tune without re-prompting).
+$$W_{\mathrm{time}}(\Delta t) = \exp\left(-\frac{\Delta t}{\tau}\right)$$
 
-1. **LLM JSON** (after marking the line dispatch-relevant):
-   - **`severity_category`**, one fixed enum (examples — tune for Philly radio):
-     - `violent_weapon`, `violent_no_weapon`, `shots_heard`, `robbery`, `burglary_in_progress`, `medical_priority`, `medical_other`, `fire_hazmat`, `traffic_crash_injury`, `traffic_crash_no_injury`, `disorder`, `admin_or_noise` (usually dropped as non-map noise).
-   - Optional **`severity_adjustment`**: only `-1`, `0`, or `+1`, with prompt rules (“0 unless clearly more/less serious than the category default”).
-2. **Code** loads `philly_pulse/data/severity_categories.yaml`: each category → **`S_base`** on $[0, 1]$ (or 0–10 then normalized).
-3. **Severity $S$** used in the heatmap (before time decay):
+where $\tau$ = configurable time constant (`tau_hours` in config, e.g. 6-12h for demo).
 
-$$S = \mathrm{clip}\bigl(S_{\mathrm{base}}(\text{severity\_category}) + k \cdot \text{severity\_adjustment},\, S_{\min},\, S_{\max}\bigr)$$
+### Effective Pin Weight
 
-- $k$, $S_{\min}$, $S_{\max}$ in config (e.g. $k = 0.15$ on a 0–1 scale).
+$$W_{\mathrm{eff}} = S_{\mathrm{base}} \cdot \exp\left(-\frac{\Delta t}{\tau}\right) \cdot C$$
 
-**Net:** the LLM **classifies** into buckets and applies a **small nudge**; **numeric severity is mostly preset**.
+where $C = \mathrm{clip}(\texttt{confidence}, 0.3, 1.0)$. This drives pin opacity/color intensity and heatmap aggregation.
 
-### District / response-time fade (ties $\lambda_{\mathrm{eff}}$ to your formula)
+### Future Work (mention in slides, don't build during hackathon)
 
-Interpretation: pins **lose influence faster** in districts where you assume **quicker typical response**. The app does **not** ingest live per-call response times.
+Priority is getting incident data accurately onto the map first. Everything below depends on that foundation being solid.
 
-- Lookup **`fade_multiplier`** $F > 0$ from **`dc_dist`** when the LLM (or metadata) supplies a district: `philly_pulse/data/district_fade_multipliers.json`. Values are **precomputed from cited public data** (see below), not guessed at runtime.
-- Tie-in:
+- **Safe route generation** — The headline post-MVP feature. Given an origin and destination, query a routing engine (OSRM or Mapbox Directions) for candidate walking/biking/driving routes, then score each route segment by proximity to active incident pins (sum of $W_{\mathrm{eff}}$ within a kernel radius along the polyline). Surface the safest option to the user, or color-code segments of a single route by relative danger level. This is the feature that turns PhillyPulse from a passive map into an active decision-making tool — and it's a strong "what's next" demo slide.
+- **District-level fade multipliers** from published PPD response-time data (faster response area -> faster pin decay).
+- These are compelling product vision slides but not worth building until the core map + ingest pipeline is proven accurate and reliable.
 
-$$\lambda_{\mathrm{eff}} = \frac{\tau_{\mathrm{hours}}}{F}$$
+## Frontend (Next.js + Tailwind + shadcn/ui)
 
-- **Larger $F$** → **smaller** $\lambda_{\mathrm{eff}}$ → **faster** decay. If unknown district: $F = 1$.
+### Stack
 
-### How response times by area inform fade (public “previous data,” not live inference)
+| Tool | Purpose |
+|------|---------|
+| Next.js (App Router) | React framework, SSR, easy Vercel deploy |
+| Tailwind CSS | Utility-first styling, dark mode, mobile-first |
+| shadcn/ui | Beautiful pre-built components (cards, dialogs, sheets, badges) |
+| react-map-gl or react-leaflet | Map rendering with smooth animations |
+| Framer Motion | Subtle UI animations for demo polish |
 
-**Goal:** Longer **published** typical response in an area → pin influence should **fade more slowly** (the situation stays “active” longer in the model); **shorter** published response → **faster** fade. That matches “response times from a given area inform how long it takes to fade.”
+### Key Screens
 
-**Still true:** the **running app does not estimate** response times. It **looks up** $F_d$ from JSON. The **research and math happen once**, before the demo, using **sources you find on the internet** (government PDFs, City Controller / PPD reports, reputable news citing those reports, etc.).
+1. **Landing / Hero** — Philly skyline imagery, tagline ("Real-time community safety awareness, powered by AI"), prominent "Open Map" CTA. Brief explanation of what PhillyPulse does.
 
-**Offline procedure (required for this project’s narrative):**
+2. **Live Map** (main screen) — Full-screen interactive map of Philadelphia. Pins color-coded by severity (red = violent, orange = property, yellow = traffic, blue = medical). Pulsing animation on recent incidents. Cluster markers when zoomed out. Filter toggles by category.
 
-1. **Collect $T_d$:** For each PPD **`dc_dist`** (or the finest geography you can map to `dc_dist`), record **published** $T_d$ = mean or median **response time in minutes** (or whatever the report gives — convert consistently). If a report only has citywide or PSA-level data, **document the mapping** (e.g. PSA → district) and any imputation; prefer **under-claim** over precision you cannot cite.
-2. **Derive $F_d$** (monotonic with “faster response ⇒ faster fade”). One simple choice:
+3. **Incident Feed** — Desktop: scrollable sidebar. Mobile: swipeable bottom sheet (like Google Maps). Each item shows: timestamp, category icon, location text, AI confidence badge. Tapping scrolls to the pin on the map.
 
-$$F_d = \frac{T_{\mathrm{median}}}{T_d}$$
+4. **Incident Detail Modal** — Tap a pin or feed item. Shows: original transcript excerpt, AI-extracted fields, severity category + confidence, "UNVERIFIED — sourced from public radio scanner via AI transcription" badge, timestamp.
 
-where $T_{\mathrm{median}}$ is the **median** of the $T_d$ you have (so typical district gets $F \approx 1$). Then **shorter** $T_d$ ⇒ **larger** $F$ ⇒ **smaller** $\lambda_{\mathrm{eff}}$ ⇒ **faster** exponential decay. **Longer** $T_d$ ⇒ **smaller** $F$ ⇒ **slower** fade. Clip $F_d$ to a sane band (e.g. `[0.5, 1.8]`) so one outlier report does not break the map.
-3. **Ship** the result as `philly_pulse/data/district_fade_multipliers.json` including **`_meta`** (or a sibling `philly_pulse/data/district_fade_SOURCES.md`): for each source, **title, publisher, year, URL, and which table/figure** you used. The **UI** should link or summarize: “Fade by district uses published response-time statistics from: … (not live).”
+5. **Neighborhood Summary** — AI-generated natural language (via `/api/summary`): "Center City has seen 3 incidents in the last 2 hours, including a traffic crash and a medical call. Overall activity is moderate." Refreshes periodically.
 
-**Implementation note:** Optional small script `philly_pulse/scripts/build_district_fade.py` that reads a hand-maintained CSV (`dc_dist`, `T_minutes`, `source_id`) and writes the JSON + validates clips — or do the calculation in a spreadsheet once and paste JSON; either is fine for Codefest.
+6. **About / Transparency** — How the AI pipeline works (diagram), data source explanation, Broadcastify terms link, responsible AI statement, "not a replacement for 911" disclaimer, link to GitHub repo.
 
-**Explicitly out of scope:** Deriving $T_d$ from scanner audio, 911 feeds, or any non-cited scraper at runtime.
+### Mobile-First Design
 
-**Fallback if no per-district table exists:** Use **one** citywide published statistic plus a **single** breakdown the internet does provide (e.g. a report comparing two regions) and interpolate remaining districts **only** with clear “partial data / uniform default” labeling — still cite the source; do not imply full precision.
+- Bottom sheet for incident feed (swipe up)
+- Floating action buttons for category filters
+- Touch-friendly map interactions (tap pin -> detail sheet)
+- Responsive breakpoints: mobile-first, then tablet, then desktop sidebar layout
+- PWA manifest: installable on phone home screens (great demo moment — "add to home screen")
 
-### Keeping fade data updated (semi-automatic vs fully automatic)
+### Dark Mode
 
-**Fully automatic** refresh is only realistic if you have a **stable, machine-readable source** that updates on a known cadence (e.g. a recurring **OpenDataPhilly / city dataset** with response times by district, or a fixed **CSV URL** that the city replaces when numbers change). Many controller/audit reports are **PDF-only** or **one-off pages** — there is often **no API**, so “always up to date” without human review is **not** dependable.
+Default to dark mode for the map view — looks dramatically better in demos and is easier on the eyes for a safety app used at night.
 
-**Practical tiers (pick one for the product; document in README):**
+## Backend (FastAPI)
 
-1. **Manual + versioned (simplest, safest):** When a new report appears, a human updates the source CSV / `district_fade_SOURCES.md`, runs `build_district_fade.py`, commits new JSON. `_meta.last_built` records the date.
-2. **Semi-automatic (recommended):** A **scheduled job** (cron, GitHub Actions weekly) that:
-   - **HEAD** or **GET** a **small manifest** you control (e.g. raw JSON in your repo or a gist) listing `source_url`, `content_sha256` or `last_modified`; if unchanged, exit.
-   - If a **curated** upstream URL is listed and **ETag/Last-Modified** changed, **download** the new file → run the **same** transform script → write `district_fade_multipliers.json` → open a PR or notify a human to **review** before deploy. Avoid blind trust of scraped PDFs.
-3. **“Automatic” only with guardrails:** If the city ever publishes a **documented API** or **stable CSV** for $T_d$ by district, add `philly_pulse/scripts/refresh_district_fade.py` that fetches, validates schema, clips $F_d$, and atomically replaces JSON; log `_meta.fetched_at` and source version. On validation failure, **keep previous** JSON and alert.
-4. **Runtime pick-up (optional):** `philly_pulse/server.py` may **reload** `district_fade_multipliers.json` when its file **`mtime`** changes (or every N minutes) so a host cron or sidecar that writes a new JSON updates fade behavior **without** restarting uvicorn.
-
-**Do not:** scrape controller PDFs nightly without human review (layout drift breaks parsers; legal/ToS vary). **Do:** treat automation as **detect change → rebuild → optional human gate**.
-
-### Combined effective weight (per pin)
-
-$$W_{\mathrm{eff}} = S \cdot \exp\left(-\frac{\Delta t}{\lambda_{\mathrm{eff}}}\right) \cdot C$$
-
-- **$C$**: confidence scale from the LLM, e.g. $C = \mathrm{clip}(\texttt{confidence}, 0.3, 1.0)$; default $1$ if omitted.
-
-### “Crime frequency” on the map
-
-There is no separate counter. **Intensity** = **sum of $W_{\mathrm{eff}}$** over incidents that contribute within radius $r$ (or via kernel $K(d)$). More **recent**, **higher-severity**, **higher-confidence**, and **spatially clustered** pins → hotter cells — that is your effective “frequency” signal.
-
-**Routing:** Sample the OSRM walking polyline; at each sample point compute $\sum_i W_{\mathrm{eff},i} K(\mathrm{dist}(p,i))$; optionally flag segments above a threshold.
-
-### Persistence in the store
-
-Persist: `reported_at`, `severity_category`, `severity_adjustment`, `s_base`, `s_final`, `dc_dist`, `fade_multiplier`, `confidence`, optional `weight_at_ingest` for debugging.
-
-## New package layout
+### Package Layout
 
 | File | Role |
 |------|------|
-| `philly_pulse/store.py` | Append/list incidents: `id`, `reported_at`, `raw_text`, `severity_category`, `severity_adjustment`, `s_base`, `s_final`, `location_text`, `lat`, `lng`, `dc_dist`, `fade_multiplier`, `confidence`, `geocode_status`, optional `weight_at_ingest`. SQLite under `philly_pulse/data/` or `/tmp`. |
-| `philly_pulse/llm.py` | **Required:** strict JSON — `is_dispatch_relevant`, `severity_category` (closed enum), optional `severity_adjustment` in {-1,0,1}, `location_text`, optional `dc_dist`, `confidence`. Reject or no-pin if not relevant. |
-| `philly_pulse/geocode.py` | Nominatim `search` with `viewbox`/`bounded=1` for Philly; rate-limit friendly (1 req/s); cache by normalized `location_text`. |
-| `philly_pulse/weights.py` | Load `S_base` from YAML; compute $S$, $\lambda_{\mathrm{eff}}$, $W_{\mathrm{eff}}$; helpers for heatmap aggregation and route kernel scoring. |
-| `philly_pulse/data/severity_categories.yaml` | Preset **`S_base`** per `severity_category` + rubric text for the LLM prompt. |
-| `philly_pulse/data/district_fade_multipliers.json` | **`by_dc_dist` → $F_d$** from published $T_d$; **`_meta.sources`**, **`_meta.last_built`**, optional **`_meta.fetched_at`** if refresh script runs. |
-| `philly_pulse/data/district_fade_SOURCES.md` | Human-readable bibliography + how $T_d$ was mapped to `dc_dist` and the formula $F_d = T_{\mathrm{median}}/T_d$ (and clip range). |
-| `philly_pulse/scripts/build_district_fade.py` | Read CSV (`dc_dist`, `T_minutes`, `source_id`) → write JSON + validate clips. |
-| `philly_pulse/scripts/refresh_district_fade.py` | Optional: if a **stable** upstream URL or manifest exists — fetch, validate, rebuild JSON; else no-op / document manual tier. |
-| `philly_pulse/data/philly_broadcastify_feeds.json` | Allowlisted **Philadelphia** Broadcastify `feed_id` values + labels. |
-| `philly_pulse/data/BROADCASTIFY_FEEDS.md` | Optional human checklist + verification dates (no scraper). |
-| `philly_pulse/routing.py` | OSRM foot route; score using **only** stored pins (same kernel as before). |
-| `philly_pulse/server.py` | `POST /api/ingest`, `GET /api/incidents`, `GET /api/health`, `POST /api/route-score`; **optional** reload `district_fade_multipliers.json` on `mtime`/interval. **No Carto client.** |
-| `philly_pulse/static/index.html` | Leaflet; disclaimers for scanner+LLM pins; note + link that district fade uses **cited published** response-time stats (not live). |
-| `philly_pulse/bridge.py` | Non-blocking `urllib` POST from transcriber to `bridge_url`. |
+| `philly_pulse/__init__.py` | Package init |
+| `philly_pulse/server.py` | FastAPI app: `POST /api/ingest`, `GET /api/incidents`, `GET /api/health`, `POST /api/simulate`, `GET /api/summary` |
+| `philly_pulse/store.py` | SQLite CRUD. Schema: `id`, `reported_at`, `raw_text`, `severity_category`, `s_base`, `location_text`, `lat`, `lng`, `confidence`, `geocode_status` |
+| `philly_pulse/llm.py` | OpenAI structured extraction. Strict JSON: `is_dispatch_relevant`, `severity_category` (closed enum), `location_text`, `confidence`. Reject non-relevant lines. |
+| `philly_pulse/geocode.py` | Nominatim `search` with `viewbox`/`bounded=1` for Philly. Rate-limit friendly (1 req/s). Cache by normalized `location_text`. |
+| `philly_pulse/weights.py` | Load S_base from YAML, compute W_eff per pin at query time. |
+| `philly_pulse/data/severity_categories.yaml` | Preset S_base per category. |
+| `philly_pulse/data/philly_broadcastify_feeds.json` | Allowlisted Philadelphia feed IDs + labels. |
+| `philly_pulse/data/seed_incidents.json` | Pre-built demo data: 15-20 realistic incidents across Philly neighborhoods. |
+| `philly_pulse/bridge.py` | Non-blocking POST from transcriber to bridge_url. |
 
-**Removed from plan:** `philly_pulse/carto_client.py` and any dependency on `phl.carto.com` for incidents.
+### API Endpoints
 
-## Wire transcriber (expected path for map updates)
+**`POST /api/ingest`** — Accepts `{ "text": "...", "timestamp": "..." }`. Runs LLM extraction -> geocode -> store. Returns the created incident or a rejection reason.
+
+**`GET /api/incidents`** — Returns all incidents with computed `w_eff` for the current time. Supports `?since=` (ISO timestamp) and `?category=` filters. Powers the map and feed.
+
+**`POST /api/simulate`** — Triggers ingest with a random canned Philadelphia dispatch transcript. For demo reliability.
+
+**`GET /api/summary`** — Returns an AI-generated natural language summary of recent incident activity by neighborhood. Simple: query last N incidents, pass to LLM with a summarization prompt.
+
+**`GET /api/health`** — Returns service status + whether LLM key is configured.
+
+### CORS
+
+Enable CORS for the Next.js dev server (`localhost:3000`) and the production domain.
+
+## Transcriber Bridge
 
 Extend `config.yaml.example`:
 
@@ -187,51 +205,141 @@ philly_pulse:
   bridge_url: "http://127.0.0.1:8765/api/ingest"
 ```
 
-In `radiotranscriber.py`, after writing a line to the log, if `philly_pulse.enabled`, **POST** the transcript text in a **daemon thread**.
+In `radiotranscriber.py`, after writing a line to the log, if `philly_pulse.enabled`, POST the transcript text via `bridge.py` in a **daemon thread** (non-blocking, fire-and-forget with retry).
 
-### Philadelphia-only Broadcastify feed identifiers
+### Philadelphia Broadcastify Feeds
 
-**Goal:** Use **only** Broadcastify streams for **Philadelphia** public-safety audio (PPD districts, citywide, fire/EMS as chosen). Store **numeric feed IDs** in-repo so the project is not tied to a random Belchertown example.
+Store curated feed IDs in `philly_pulse/data/philly_broadcastify_feeds.json`:
 
-**Artifacts:**
+```json
+[
+  { "feed_id": "NNNNN", "label": "Philadelphia Police - Citywide", "verified_date": "2026-04-11" }
+]
+```
 
-- `philly_pulse/data/philly_broadcastify_feeds.json` — curated `{ "feed_id", "label", "verified_date", "notes" }[]`.
-- Optional `philly_pulse/data/BROADCASTIFY_FEEDS.md` — same IDs, “last verified,” links to Broadcastify listing pages (for humans, not scraped in CI).
+Populated manually from [broadcastify.com](https://www.broadcastify.com) (PA -> Philadelphia). No automated scraping.
 
-**Population (ToS-safe):** Manually from [broadcastify.com](https://www.broadcastify.com) (e.g. PA → Philadelphia / search “Philadelphia Police”); copy feed ID from the feed URL. **No** automated bulk scraping of Broadcastify in scheduled jobs — risks [terms](https://www.broadcastify.com/terms/) and brittle HTML.
+## Demo Strategy (Critical for Winning)
 
-**Config:** `feed_specific.feed_number` in `config.yaml.example` **must** match a `feed_id` in `philly_broadcastify_feeds.json`. Optional: startup check in `radiotranscriber.py` warns if the configured ID is not in the allowlist.
+### The Problem
+
+Broadcastify streams can lag, Whisper takes seconds per segment, LLM calls can timeout. If any link fails during a 2-minute live demo, the presentation is dead.
+
+### The Solution
+
+1. **Seed data** — Pre-load SQLite with 15-20 realistic incidents spread across Philadelphia neighborhoods (Center City, University City, Kensington, North Philly, etc.) with varied categories and timestamps.
+2. **Simulate endpoint** — `POST /api/simulate` picks a random canned dispatch transcript, runs it through the REAL LLM + geocode pipeline, and the new pin appears on the map in real time. This proves the AI works without depending on Broadcastify.
+3. **Simulate button** — In the UI (behind an admin toggle or just a floating button), click to fire `/api/simulate` and watch a new pin appear with animation.
+4. **Demo flow script:**
+   - Open the app on laptop (show desktop view)
+   - "Here's what Philadelphia looks like right now" (seeded data on map)
+   - Click simulate -> watch new incident appear -> tap into detail -> show AI extraction
+   - Pull up the app on phone -> show mobile layout, bottom sheet, installable PWA
+   - Switch to neighborhood summary -> show AI-generated text
+   - Show transparency page -> responsible AI
+5. **Backup plan** — If the API is down: pre-recorded 30-second screen capture video embedded in slides.
+
+## Presentation Outline (5 min + 3 min Q&A)
+
+| Slide | Duration | Content |
+|-------|----------|---------|
+| 1. The Problem | 30s | "Scanner audio is inaccessible. Philadelphians deserve real-time neighborhood awareness." |
+| 2. PhillyPulse | 30s | Product overview + architecture diagram. "AI at every layer." |
+| 3. Live Demo | 120s | Map walkthrough, simulate an incident, mobile view, AI summary. |
+| 4. AI Pipeline Deep Dive | 30s | Whisper -> LLM extraction -> geocoding -> severity decay. Show the structured JSON. |
+| 5. Responsible AI | 30s | Unverified labels, confidence scores, transparency page, not-911 disclaimers. |
+| 6. Market + Future | 30s | User personas (residents, drivers, tourists). Citizen app comparable. Premium alerts, B2B for real estate/insurance. Future: district-level decay, route scoring, multi-city expansion. |
+
+## Market Viability (10 judging points)
+
+- **Primary users:** Philadelphia residents, commuters, delivery/rideshare drivers, tourists, community organizations.
+- **Comparable:** Citizen app (valued $1B+), Nextdoor safety alerts — but PhillyPulse is AI-first, Philly-specific, and transparent about its data sources.
+- **Free tier:** Map view, incident feed, neighborhood summaries.
+- **Premium tier:** Push notifications for your area, route safety scoring, historical trend analysis.
+- **B2B:** Neighborhood safety scores for real estate platforms, risk data for insurance (Penn Mutual is a sponsor), city government dashboards.
+- **Domain:** philladelphiapulse.com — deploy on Vercel for the demo.
 
 ## Dependencies
 
-- `requirements-philly-pulse.txt`: `fastapi`, `uvicorn[standard]`, `httpx` (LLM + Nominatim + OSRM). Transcriber deps unchanged.
-
-## Run commands (README)
-
-```bash
-pip install -r requirements-philly-pulse.txt
-export OPENAI_API_KEY=...   # required for ingest + map population
-uvicorn philly_pulse.server:app --reload --port 8765
-python radiotranscriber.py   # with philly_pulse.enabled and Philly-tuned config.yaml
+**Backend** (`requirements-philly-pulse.txt`):
+```
+fastapi
+uvicorn[standard]
+httpx
+openai
+pyyaml
 ```
 
-## Philly / Codefest pitch (revised)
+**Frontend** (`frontend/package.json`):
+```
+next, react, react-dom, tailwindcss, @radix-ui/*, react-map-gl (or react-leaflet),
+framer-motion, lucide-react
+```
 
-- **Philly-specific** via **feed + prompt + geocode bbox** (only Philadelphia coordinates accepted or snap-to-city).
-- **Responsible AI:** unverified, aggregated cautiously, transparency on pipeline, no official crime claims.
+Transcriber deps unchanged: `numpy`, `scipy`, `faster-whisper`, `webrtcvad`, `pyyaml`, `paho-mqtt`.
 
-## Verification
+## Run Commands
 
-- Ingest a synthetic `POST /api/ingest` with realistic dispatch text → LLM returns JSON → geocode returns a Philly point → `GET /api/incidents` shows one pin.
-- With transcriber running, confirm new lines create new pins (or “rejected” logs when LLM marks non-relevant).
+```bash
+# Backend
+pip install -r requirements-philly-pulse.txt
+export OPENAI_API_KEY=...
+uvicorn philly_pulse.server:app --reload --port 8765
 
-## Implementation order (when you run in Agent mode)
+# Frontend
+cd frontend
+npm install
+npm run dev          # localhost:3000
 
-1. **Data + config:** `severity_categories.yaml`, `philly_broadcastify_feeds.json` (Philly IDs only) + optional `BROADCASTIFY_FEEDS.md`, `district_fade_multipliers.json` + `_meta.sources` / `last_built`, `district_fade_SOURCES.md`, `build_district_fade.py` + sample CSV; document **fade refresh** tier (manual vs scheduled manifest vs future `refresh_district_fade.py`).
-2. **Core library:** `store.py` (SQLite schema), `llm.py` (strict JSON, required key), `geocode.py` (Nominatim + Philly bbox), `weights.py` ($S$, $F_d$, $W_{\mathrm{eff}}$).
-3. **API + UI:** `server.py` (`POST /api/ingest`, `GET /api/incidents`, `GET /api/health`, `POST /api/route-score`), `routing.py`, `static/index.html` (Leaflet + disclaimers + link to sources doc).
-4. **Transcriber bridge:** `bridge.py`, `config.yaml.example` `philly_pulse` block + **feed_number must match** `philly_broadcastify_feeds.json`, optional allowlist warning in `radiotranscriber.py`, non-blocking POST after log write.
-5. **Deps + docs:** `requirements-philly-pulse.txt`, README section (run, env vars, Broadcastify terms, “fade from cited public $T_d$”).
-6. **Research pass (parallel):** Replace stub $T_d$ / $F_d$ with values + citations from real reports; re-run optional build script; update UI copy if needed.
+# Transcriber (optional — for live data beyond seeded demo)
+python radiotranscriber.py   # with philly_pulse.enabled in config.yaml
+```
 
-**To generate code:** use Agent mode and ask to **implement the plan** (or follow this checklist).
+## Implementation Order (Hackathon Sprint)
+
+### Phase 1: Core Backend (3-4 hours)
+1. `severity_categories.yaml` with S_base values.
+2. `store.py` — SQLite schema + CRUD.
+3. `llm.py` — OpenAI structured extraction with closed enum.
+4. `geocode.py` — Nominatim with Philly bounding box.
+5. `weights.py` — S_base lookup + W_eff computation.
+6. `server.py` — FastAPI with `/api/ingest`, `/api/incidents`, `/api/health`, `/api/simulate`, `/api/summary`.
+7. `seed_incidents.json` — 15-20 realistic Philly incidents.
+8. Verify: POST a synthetic transcript -> LLM -> geocode -> GET shows pin.
+
+### Phase 2: Frontend (4-5 hours)
+1. Scaffold Next.js + Tailwind + shadcn/ui.
+2. Map component with pins from `/api/incidents` (color-coded, animated).
+3. Incident feed (sidebar on desktop, bottom sheet on mobile).
+4. Incident detail modal.
+5. Neighborhood summary panel (from `/api/summary`).
+6. About / transparency page.
+7. Dark mode, responsive breakpoints, PWA manifest.
+
+### Phase 3: Transcriber Bridge (1 hour)
+1. `bridge.py` — non-blocking POST.
+2. `config.yaml.example` — add `philly_pulse` block.
+3. Wire into `radiotranscriber.py` after log write.
+4. `philly_broadcastify_feeds.json` with Philly feed IDs.
+
+### Phase 4: Demo + Polish (2-3 hours)
+1. Simulate button in UI wired to `/api/simulate`.
+2. Test full pipeline end-to-end.
+3. Mobile testing on actual phone.
+4. Seed database with demo data for judging.
+5. Prepare slides (6 slides max).
+6. Rehearse demo flow (time it to 5 min).
+7. Record backup demo video.
+
+## Verification Checklist
+
+- [ ] `POST /api/ingest` with realistic dispatch text -> LLM returns structured JSON -> geocode returns Philly point -> `GET /api/incidents` shows pin with correct fields.
+- [ ] `POST /api/simulate` creates a new incident visible on the map within seconds.
+- [ ] Frontend loads, displays seeded incidents on map, color-coded by severity.
+- [ ] Tapping a pin opens detail modal with transcript, category, confidence, UNVERIFIED badge.
+- [ ] Incident feed updates in real time (or on polling interval).
+- [ ] `/api/summary` returns a coherent AI-generated neighborhood summary.
+- [ ] Mobile layout works: bottom sheet, touch interactions, no horizontal scroll.
+- [ ] Dark mode renders correctly on map and all components.
+- [ ] Transparency page explains the full pipeline honestly.
+- [ ] With transcriber running (if Broadcastify available), new lines create new pins on the map.
