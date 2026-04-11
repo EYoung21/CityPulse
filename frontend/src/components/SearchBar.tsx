@@ -287,11 +287,13 @@ export default function SearchBar({
 
     (async () => {
       try {
-        let directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
+        const directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
         if (controller.signal.aborted) return;
 
         if (!directRoute) {
-          directRoute = { geometry: waypoints, distanceKm: 0, durationMin: 0, isSafe: false };
+          onRoutesChange(null);
+          setPreviewRoute(null);
+          return;
         }
 
         if (safety.nearbyCount === 0) {
@@ -350,7 +352,7 @@ export default function SearchBar({
       safety.nearbyCount > 0 ? buildAvoidPolygons(buildAvoidZones(incidents)) : undefined
     );
 
-    onTripActive?.(true, route?.geometry ?? waypoints, activeMode);
+    onTripActive?.(true, route?.geometry, activeMode);
   }, [originLoc, destLoc, stops, activeMode, incidents, previewRoute, onTripActive]);
 
   const resetTrip = useCallback(() => {
