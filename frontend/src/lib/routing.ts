@@ -1,7 +1,6 @@
 import type { Incident } from "./api";
 
 const ORS_URL = "https://api.openrouteservice.org/v2/directions";
-const OSRM_URL = "https://router.project-osrm.org/route/v1";
 
 export type TransportMode = "foot-walking" | "cycling-regular" | "driving-car";
 
@@ -90,38 +89,35 @@ function decodePolyline(encoded: string): [number, number][] {
   return points;
 }
 
-/** OSRM profiles */
-const OSRM_PROFILES: Record<TransportMode, string> = {
-  "foot-walking": "foot",
-  "cycling-regular": "bike",
-  "driving-car": "car",
-};
-
-/** Free street-level routing via OSRM (no API key required) */
+/**
+ * Street-level routing via OSRM, proxied through PhillyPulse API (/api/route-directions).
+ * Direct browser calls to router.project-osrm.org are blocked by CORS, so we never hit OSRM from the client.
+ */
 async function getRouteOSRM(
   mode: TransportMode,
   waypoints: [number, number][],
   isSafe = false
 ): Promise<RouteResult | null> {
   if (waypoints.length < 2) return null;
-  const coords = waypoints.map(([lat, lng]) => `${lng},${lat}`).join(";");
-  const profile = OSRM_PROFILES[mode] || "car";
   try {
-    const res = await fetch(
-      `${OSRM_URL}/${profile}/${coords}?overview=full&geometries=geojson`,
-      { headers: { "User-Agent": "PHLPulse/0.1" } }
-    );
+    const res = await fetch("/api/route-directions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ waypoints, mode }),
+    });
     if (!res.ok) return null;
-    const data = await res.json();
-    const route = data.routes?.[0];
-    if (!route) return null;
-    const geometry: [number, number][] = route.geometry.coordinates.map(
-      ([lng, lat]: [number, number]) => [lat, lng]
-    );
+    const data = (await res.json()) as {
+      geometry?: [number, number][];
+      distanceKm?: number;
+      durationMin?: number;
+    };
+    if (!data.geometry || !Array.isArray(data.geometry) || data.geometry.length < 2) {
+      return null;
+    }
     return {
-      geometry,
-      distanceKm: route.distance / 1000,
-      durationMin: route.duration / 60,
+      geometry: data.geometry,
+      distanceKm: data.distanceKm ?? 0,
+      durationMin: data.durationMin ?? 0,
       isSafe,
     };
   } catch {

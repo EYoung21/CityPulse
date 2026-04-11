@@ -7,6 +7,7 @@ import random
 import subprocess
 from pathlib import Path
 
+import httpx
 import yaml
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -74,6 +75,21 @@ class IngestRequest(BaseModel):
     feed_id: str | None = None
 
 
+class RouteDirectionsRequest(BaseModel):
+    """Waypoints as [lat, lng] pairs; mode matches frontend TransportMode."""
+
+    waypoints: list[list[float]]
+    mode: str = "driving-car"
+
+
+OSRM_BASE = "https://router.project-osrm.org/route/v1"
+OSRM_PROFILES = {
+    "foot-walking": "foot",
+    "cycling-regular": "bike",
+    "driving-car": "car",
+}
+
+
 @app.on_event("startup")
 async def startup():
     """Ensure the database table exists (but don't auto-seed)."""
@@ -87,6 +103,50 @@ async def health():
         "llm_configured": bool(llm.OPENAI_API_KEY),
         "inhibitor_configured": bool(inhibitor.INHIBITOR_API_KEY),
         "incident_count": store.incident_count(),
+    }
+
+
+@app.post("/api/route-directions")
+async def route_directions(body: RouteDirectionsRequest):
+    """Proxy to OSRM so the browser gets street geometry (avoids public OSRM CORS blocks)."""
+    if len(body.waypoints) < 2:
+        raise HTTPException(status_code=400, detail="Need at least two waypoints")
+    for w in body.waypoints:
+        if len(w) != 2:
+            raise HTTPException(status_code=400, detail="Each waypoint must be [lat, lng]")
+    profile = OSRM_PROFILES.get(body.mode, "car")
+    # OSRM expects lon,lat;lon,lat;...
+    coord_str = ";".join(f"{w[1]},{w[0]}" for w in body.waypoints)
+    url = f"{OSRM_BASE}/{profile}/{coord_str}"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                url,
+                params={"overview": "full", "geometries": "geojson"},
+                headers={"User-Agent": "PhillyPulse/1.0"},
+            )
+    except httpx.RequestError as e:
+        logger.warning("OSRM request failed: %s", e)
+        raise HTTPException(status_code=502, detail="Routing service unreachable") from e
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502, detail=f"OSRM error HTTP {resp.status_code}"
+        )
+    data = resp.json()
+    routes = data.get("routes") or []
+    if not routes:
+        raise HTTPException(status_code=404, detail="No route found for these waypoints")
+    route = routes[0]
+    coords = route.get("geometry", {}).get("coordinates") or []
+    if len(coords) < 2:
+        raise HTTPException(status_code=502, detail="Invalid route geometry")
+    # GeoJSON is [lng, lat]; frontend / Leaflet expect [lat, lng]
+    geometry = [[float(pt[1]), float(pt[0])] for pt in coords]
+    return {
+        "geometry": geometry,
+        "distanceKm": route["distance"] / 1000.0,
+        "durationMin": route["duration"] / 60.0,
     }
 
 
