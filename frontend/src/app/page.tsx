@@ -7,10 +7,8 @@ import {
   Activity,
   ChevronUp,
   Radio,
-  Zap,
   Info,
   Shield,
-  Database,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,8 +18,6 @@ import {
   fetchIncidents,
   fetchSummary,
   fetchStats,
-  simulateIncident,
-  seedDemoData,
   type Incident,
   type StatsResponse,
 } from "@/lib/api";
@@ -44,8 +40,6 @@ export default function Home() {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [feedOpen, setFeedOpen] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
-  const [simulating, setSimulating] = useState(false);
-  const [seeding, setSeeding] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -67,30 +61,6 @@ export default function Home() {
     const timer = setInterval(loadData, POLL_INTERVAL);
     return () => clearInterval(timer);
   }, [loadData]);
-
-  const handleSimulate = async () => {
-    setSimulating(true);
-    try {
-      await simulateIncident();
-      await loadData();
-    } catch (e) {
-      console.error("Simulate failed:", e);
-    } finally {
-      setSimulating(false);
-    }
-  };
-
-  const handleSeed = async () => {
-    setSeeding(true);
-    try {
-      await seedDemoData();
-      await loadData();
-    } catch (e) {
-      console.error("Seed failed:", e);
-    } finally {
-      setSeeding(false);
-    }
-  };
 
   const selected = incidents.find((i) => i.id === selectedId) || null;
 
@@ -115,28 +85,6 @@ export default function Home() {
           </div>
 
           <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              className="bg-card/90 backdrop-blur-sm border border-border/50"
-              onClick={handleSimulate}
-              disabled={simulating}
-            >
-              <Zap className="w-4 h-4 mr-1" />
-              {simulating ? "Simulating..." : "Simulate"}
-            </Button>
-            {incidents.length === 0 && (
-              <Button
-                size="sm"
-                variant="secondary"
-                className="bg-card/90 backdrop-blur-sm border border-amber-500/40 text-amber-400 hover:text-amber-300"
-                onClick={handleSeed}
-                disabled={seeding}
-              >
-                <Database className="w-4 h-4 mr-1" />
-                {seeding ? "Loading..." : "Demo Data"}
-              </Button>
-            )}
             <Button
               size="sm"
               variant="secondary"
