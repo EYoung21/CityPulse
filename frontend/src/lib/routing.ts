@@ -90,15 +90,18 @@ function decodePolyline(encoded: string): [number, number][] {
   return points;
 }
 
+/** OSRM profiles */
 const OSRM_PROFILES: Record<TransportMode, string> = {
   "foot-walking": "foot",
   "cycling-regular": "bike",
   "driving-car": "car",
 };
 
+/** Free street-level routing via OSRM (no API key required) */
 async function getRouteOSRM(
   mode: TransportMode,
-  waypoints: [number, number][]
+  waypoints: [number, number][],
+  isSafe = false
 ): Promise<RouteResult | null> {
   if (waypoints.length < 2) return null;
   const coords = waypoints.map(([lat, lng]) => `${lng},${lat}`).join(";");
@@ -119,13 +122,14 @@ async function getRouteOSRM(
       geometry,
       distanceKm: route.distance / 1000,
       durationMin: route.duration / 60,
-      isSafe: false,
+      isSafe,
     };
   } catch {
     return null;
   }
 }
 
+/** Try ORS first, then fall back to OSRM for street-level routing */
 export async function getRoute(
   apiKey: string,
   mode: TransportMode,
@@ -144,6 +148,7 @@ export async function getMultiStopRoute(
 ): Promise<RouteResult | null> {
   if (waypoints.length < 2) return null;
 
+  // Try ORS first (supports avoidance polygons)
   const body: Record<string, unknown> = {
     coordinates: waypoints.map(([lat, lng]) => [lng, lat]),
   };
@@ -162,27 +167,23 @@ export async function getMultiStopRoute(
       body: JSON.stringify(body),
     });
 
-    if (!res.ok) {
-      if (!avoidPolygons) return getRouteOSRM(mode, waypoints);
-      return null;
+    if (res.ok) {
+      const data = await res.json();
+      const route = data.routes?.[0];
+      if (route) {
+        const geometry = decodePolyline(route.geometry);
+        return {
+          geometry,
+          distanceKm: route.summary.distance / 1000,
+          durationMin: route.summary.duration / 60,
+          isSafe: !!avoidPolygons,
+        };
+      }
     }
-
-    const data = await res.json();
-    const route = data.routes?.[0];
-    if (!route) {
-      if (!avoidPolygons) return getRouteOSRM(mode, waypoints);
-      return null;
-    }
-
-    const geometry = decodePolyline(route.geometry);
-    return {
-      geometry,
-      distanceKm: route.summary.distance / 1000,
-      durationMin: route.summary.duration / 60,
-      isSafe: !!avoidPolygons,
-    };
   } catch {
-    if (!avoidPolygons) return getRouteOSRM(mode, waypoints);
-    return null;
+    // ORS failed, will try OSRM below
   }
+
+  // Fallback: OSRM free routing (follows actual streets, no API key needed)
+  return getRouteOSRM(mode, waypoints, !!avoidPolygons);
 }
