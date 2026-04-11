@@ -142,25 +142,24 @@ function createCircleIcon(color: string, wEff: number, isHighSev: boolean, greye
 function createBigPinIcon(
   letter: string,
   bgColor: string,
-  glowColor: string
+  _glowColor: string
 ): L.DivIcon {
   return L.divIcon({
     className: "",
-    iconSize: [44, 56],
-    iconAnchor: [22, 56],
+    iconSize: [32, 46],
+    iconAnchor: [16, 46],
     html: `
-      <div style="position:relative;width:44px;height:56px;filter:drop-shadow(0 3px 8px ${glowColor});">
-        <svg width="44" height="56" viewBox="0 0 44 56" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M22 54C22 54 42 34.5 42 20C42 9.507 33.046 2 22 2C10.954 2 2 9.507 2 20C2 34.5 22 54 22 54Z"
-            fill="${bgColor}" stroke="#fff" stroke-width="3"/>
-          <circle cx="22" cy="20" r="14" fill="rgba(255,255,255,0.2)"/>
+      <div style="position:relative;width:32px;height:46px;filter:drop-shadow(0 2px 6px rgba(0,0,0,0.35));">
+        <svg width="32" height="46" viewBox="0 0 32 46" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="16" cy="14" r="13" fill="${bgColor}" stroke="#fff" stroke-width="2"/>
+          <polygon points="10,25 16,45 22,25" fill="${bgColor}"/>
+          <line x1="16" y1="27" x2="16" y2="45" stroke="#fff" stroke-width="0" />
         </svg>
         <div style="
-          position:absolute;top:6px;left:0;right:0;
+          position:absolute;top:2px;left:0;right:0;
           display:flex;align-items:center;justify-content:center;
-          height:28px;
-          font-size:17px;font-weight:800;color:#fff;
-          text-shadow:0 1px 3px rgba(0,0,0,0.4);
+          height:24px;
+          font-size:13px;font-weight:800;color:#fff;
           font-family:ui-monospace,SFMono-Regular,monospace;
         ">${letter}</div>
       </div>
@@ -171,27 +170,19 @@ function createBigPinIcon(
 function createUserIcon(): L.DivIcon {
   return L.divIcon({
     className: "",
-    iconSize: [52, 64],
-    iconAnchor: [26, 64],
+    iconSize: [32, 46],
+    iconAnchor: [16, 46],
     html: `
-      <div style="position:relative;width:52px;height:64px;filter:drop-shadow(0 4px 12px rgba(34,197,94,0.6));">
-        <div style="
-          position:absolute;top:0;left:2px;
-          width:48px;height:48px;border-radius:50%;
-          border:2px solid rgba(34,197,94,0.3);
-          animation:pulse-ring 2s cubic-bezier(0.215,0.61,0.355,1) infinite;
-        "></div>
-        <svg width="52" height="64" viewBox="0 0 52 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M26 62C26 62 48 40 48 24C48 11.85 38.15 2 26 2C13.85 2 4 11.85 4 24C4 40 26 62 26 62Z"
-            fill="#22c55e" stroke="#fff" stroke-width="3"/>
-          <circle cx="26" cy="23" r="15" fill="rgba(255,255,255,0.2)"/>
+      <div style="position:relative;width:32px;height:46px;filter:drop-shadow(0 2px 6px rgba(34,197,94,0.4));">
+        <svg width="32" height="46" viewBox="0 0 32 46" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="16" cy="14" r="13" fill="#22c55e" stroke="#fff" stroke-width="2"/>
+          <polygon points="10,25 16,45 22,25" fill="#22c55e"/>
         </svg>
         <div style="
-          position:absolute;top:8px;left:0;right:0;
+          position:absolute;top:2px;left:0;right:0;
           display:flex;align-items:center;justify-content:center;
-          height:30px;
-          font-size:18px;font-weight:900;color:#fff;
-          text-shadow:0 1px 4px rgba(0,0,0,0.4);
+          height:24px;
+          font-size:13px;font-weight:800;color:#fff;
           font-family:ui-monospace,SFMono-Regular,monospace;
         ">A</div>
       </div>
