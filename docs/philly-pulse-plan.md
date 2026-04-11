@@ -1,9 +1,9 @@
 ---
 name: Philly Pulse MVP
-overview: "AI-powered community safety awareness for Philadelphia. Broadcastify scanner audio → Whisper transcription → LLM structured extraction → geocoded map pins on a polished Next.js frontend. Built for Philly Codefest 2026 ('Building AI for Philly's Future')."
+overview: "AI-powered community safety awareness for Philadelphia. Broadcastify scanner audio → Whisper transcription → LLM structured extraction → Inhibitor ethical guardrail → geocoded map pins on a polished Next.js frontend. Built for Philly Codefest 2026 ('Building AI for Philly's Future'). Competing for Advanced Track + Applied AI Studio Inhibitor Innovation prize ($1,000)."
 todos:
   - id: phase1-backend
-    content: "Core backend pipeline: store.py (SQLite), llm.py (OpenAI structured extraction), geocode.py (Nominatim + Philly bbox), weights.py (severity + time decay), server.py (FastAPI: /api/ingest, /api/incidents, /api/simulate, /api/summary)"
+    content: "Core backend pipeline: store.py (SQLite), llm.py (OpenAI structured extraction), inhibitor.py (Applied AI Studio ethical guardrail), geocode.py (Nominatim + Philly bbox), weights.py (severity + time decay), server.py (FastAPI: /api/ingest, /api/incidents, /api/simulate, /api/summary)"
     status: pending
   - id: phase2-frontend
     content: "Next.js + Tailwind + shadcn/ui frontend: map view (react-map-gl or react-leaflet), incident feed sidebar/bottom-sheet, incident detail modal, neighborhood AI summary, about/transparency page, mobile-first responsive, dark mode"
@@ -41,7 +41,7 @@ isProject: false
 
 ### Sponsor Prize Targets
 
-- **Applied AI Studio** — The project IS applied AI (speech-to-text + LLM extraction + geocoding + decay model).
+- **Applied AI Studio — Challenge 2: Inhibitor Innovation ($1,000)** — "Build an AI system using Inhibitor." We integrate the [Inhibitor API](https://iaas.appliedai.studio/) into our ingest pipeline as a real-time ethical guardrail between LLM extraction and map display. Every incident is evaluated for privacy risks, potential public harm, and hallucination before it becomes a pin. Submission: single PR to [appliedaistudio/inhibitor-lab](https://github.com/appliedaistudio/inhibitor-lab) team workspace.
 - **DEI** — Democratizes safety information: scanner intel was historically gatekept behind equipment and jargon. PhillyPulse makes it accessible to ALL Philadelphians. Stretch: add Spanish language toggle via LLM translation.
 - **Comcast** — Explore integration angle if Comcast APIs available at event.
 
@@ -56,6 +56,64 @@ isProject: false
 - Audio + STT + LLM + geocode = **high false-positive / wrong-pin rate**. The UI must label every pin **"UNVERIFIED"** and cite **Broadcastify [terms](https://www.broadcastify.com/terms/)**.
 - **Not** real-time 911. **Not** official police data. The transparency page must make this unmistakably clear.
 
+## Inhibitor Integration (Applied AI Studio — Challenge 2)
+
+The [Inhibitor API](https://iaas.appliedai.studio/) is an ethical guardrail service from Applied AI Studio. It evaluates an AI system's "thought chain" for risks **before** the system acts. We integrate it as a gate between LLM extraction and map pin creation.
+
+### API Details
+
+- **Endpoint:** `POST https://iaas.appliedai.studio/check`
+- **Auth:** `X-API-Key` header (request from Applied AI Studio on Discord)
+- **Mode:** `performance` (fast, flag-only — suitable for real-time ingest pipeline)
+- **Logs:** `GET /logs` returns an audit trail of all evaluations (useful for the transparency page)
+
+### Integration Point
+
+After the LLM extracts structured incident data from a transcript, and **before** geocoding + storing it, pass the extraction through Inhibitor:
+
+```python
+response = httpx.post("https://iaas.appliedai.studio/check",
+    headers={"X-API-Key": INHIBITOR_API_KEY},
+    json={
+        "thought_chain": [
+            {
+                "role": "human",
+                "content": f"Police scanner transcript: '{raw_transcript}'"
+            },
+            {
+                "role": "agent",
+                "content": (
+                    f"Extracted incident: category={severity_category}, "
+                    f"location={location_text}, confidence={confidence}. "
+                    f"Preparing to display on public safety map as UNVERIFIED incident."
+                )
+            }
+        ],
+        "mode": "performance"
+    })
+```
+
+### What Inhibitor Catches
+
+- **PII exposure** — Transcript mentions a victim's name, specific apartment number, or other identifying details that shouldn't be on a public map.
+- **Potential public harm** — Unverified active shooter with low confidence that could cause panic if displayed.
+- **Hallucinated content** — LLM extraction that doesn't match the transcript or contains fabricated details.
+- **Ethically sensitive content** — Incidents involving minors, mental health crises, or other situations where public display could cause harm.
+
+### Behavior on Flag
+
+- If Inhibitor **passes**: proceed to geocode and store. The incident appears on the map.
+- If Inhibitor **blocks**: store the incident with `inhibitor_status: "blocked"` and the Inhibitor reasoning. Do NOT display on the map. Log it for the audit dashboard.
+- If Inhibitor is **unavailable** (timeout/error): fall back to displaying with an extra caution badge, or queue for retry. Don't silently skip the check — log the bypass.
+
+### Audit Trail (Transparency Page)
+
+The Inhibitor `/logs` endpoint returns a paginated audit trail of all evaluations. Surface this on the transparency page: "X incidents evaluated, Y blocked by ethical guardrail, Z displayed." This is a powerful demo moment — show the judges that the AI system has real-time ethical oversight, not just disclaimers.
+
+### Store Schema Addition
+
+Add to the incidents table: `inhibitor_status` (enum: `passed`, `blocked`, `bypassed`), `inhibitor_reason` (text, nullable).
+
 ## What Already Exists
 
 - [radiotranscriber.py](../radiotranscriber.py) — Broadcastify stream, VAD, faster-whisper, hallucination cleanup, log write, optional MQTT ([mqtt_publisher.py](../mqtt_publisher.py)).
@@ -68,7 +126,9 @@ flowchart TB
     RT[radiotranscriber.py] -->|POST transcript| Ingest["/api/ingest"]
     Sim["/api/simulate"] -->|canned transcript| Ingest
     Ingest --> LLM["OpenAI LLM\n(structured JSON)"]
-    LLM --> Geo["Nominatim Geocoder\n(Philly bbox)"]
+    LLM --> Inhibitor["Inhibitor API\n(ethical guardrail)"]
+    Inhibitor -->|pass| Geo["Nominatim Geocoder\n(Philly bbox)"]
+    Inhibitor -->|"block (PII, harm, hallucination)"| Reject["Rejected / Quarantined"]
     Geo --> DB["SQLite Store"]
     DB --> IncAPI["/api/incidents"]
     DB --> SumAPI["/api/summary"]
@@ -148,7 +208,7 @@ Priority is getting incident data accurately onto the map first. Everything belo
 
 5. **Neighborhood Summary** — AI-generated natural language (via `/api/summary`): "Center City has seen 3 incidents in the last 2 hours, including a traffic crash and a medical call. Overall activity is moderate." Refreshes periodically.
 
-6. **About / Transparency** — How the AI pipeline works (diagram), data source explanation, Broadcastify terms link, responsible AI statement, "not a replacement for 911" disclaimer, link to GitHub repo.
+6. **About / Transparency** — How the AI pipeline works (diagram), data source explanation, Broadcastify terms link, responsible AI statement, "not a replacement for 911" disclaimer, link to GitHub repo. **Inhibitor audit stats**: "X incidents evaluated, Y blocked by ethical guardrail" — pulled from Inhibitor `/logs` or local store counts.
 
 ### Mobile-First Design
 
@@ -170,8 +230,9 @@ Default to dark mode for the map view — looks dramatically better in demos and
 |------|------|
 | `philly_pulse/__init__.py` | Package init |
 | `philly_pulse/server.py` | FastAPI app: `POST /api/ingest`, `GET /api/incidents`, `GET /api/health`, `POST /api/simulate`, `GET /api/summary` |
-| `philly_pulse/store.py` | SQLite CRUD. Schema: `id`, `reported_at`, `raw_text`, `severity_category`, `s_base`, `location_text`, `lat`, `lng`, `confidence`, `geocode_status` |
+| `philly_pulse/store.py` | SQLite CRUD. Schema: `id`, `reported_at`, `raw_text`, `severity_category`, `s_base`, `location_text`, `lat`, `lng`, `confidence`, `geocode_status`, `inhibitor_status`, `inhibitor_reason` |
 | `philly_pulse/llm.py` | OpenAI structured extraction. Strict JSON: `is_dispatch_relevant`, `severity_category` (closed enum), `location_text`, `confidence`. Reject non-relevant lines. |
+| `philly_pulse/inhibitor.py` | Wrapper for Applied AI Studio Inhibitor API. Builds thought chain from transcript + extraction, calls `POST /check` in performance mode. Returns pass/block + reason. Graceful fallback on timeout. |
 | `philly_pulse/geocode.py` | Nominatim `search` with `viewbox`/`bounded=1` for Philly. Rate-limit friendly (1 req/s). Cache by normalized `location_text`. |
 | `philly_pulse/weights.py` | Load S_base from YAML, compute W_eff per pin at query time. |
 | `philly_pulse/data/severity_categories.yaml` | Preset S_base per category. |
@@ -181,7 +242,7 @@ Default to dark mode for the map view — looks dramatically better in demos and
 
 ### API Endpoints
 
-**`POST /api/ingest`** — Accepts `{ "text": "...", "timestamp": "..." }`. Runs LLM extraction -> geocode -> store. Returns the created incident or a rejection reason.
+**`POST /api/ingest`** — Accepts `{ "text": "...", "timestamp": "..." }`. Runs LLM extraction -> Inhibitor check -> geocode -> store. Returns the created incident, an Inhibitor block reason, or an LLM rejection reason.
 
 **`GET /api/incidents`** — Returns all incidents with computed `w_eff` for the current time. Supports `?since=` (ISO timestamp) and `?category=` filters. Powers the map and feed.
 
@@ -234,9 +295,10 @@ Broadcastify streams can lag, Whisper takes seconds per segment, LLM calls can t
    - Open the app on laptop (show desktop view)
    - "Here's what Philadelphia looks like right now" (seeded data on map)
    - Click simulate -> watch new incident appear -> tap into detail -> show AI extraction
+   - Show Inhibitor in action: simulate a transcript with PII or harmful content -> show it being blocked, explain the ethical guardrail
    - Pull up the app on phone -> show mobile layout, bottom sheet, installable PWA
    - Switch to neighborhood summary -> show AI-generated text
-   - Show transparency page -> responsible AI
+   - Show transparency page -> responsible AI + Inhibitor audit stats
 5. **Backup plan** — If the API is down: pre-recorded 30-second screen capture video embedded in slides.
 
 ## Presentation Outline (5 min + 3 min Q&A)
@@ -247,7 +309,7 @@ Broadcastify streams can lag, Whisper takes seconds per segment, LLM calls can t
 | 2. PhillyPulse | 30s | Product overview + architecture diagram. "AI at every layer." |
 | 3. Live Demo | 120s | Map walkthrough, simulate an incident, mobile view, AI summary. |
 | 4. AI Pipeline Deep Dive | 30s | Whisper -> LLM extraction -> geocoding -> severity decay. Show the structured JSON. |
-| 5. Responsible AI | 30s | Unverified labels, confidence scores, transparency page, not-911 disclaimers. |
+| 5. Responsible AI + Inhibitor | 30s | Unverified labels, confidence scores, Inhibitor as real-time ethical guardrail (blocks PII/harm/hallucination before display), audit trail on transparency page. |
 | 6. Market + Future | 30s | User personas (residents, drivers, tourists). Citizen app comparable. Premium alerts, B2B for real estate/insurance. Future: district-level decay, route scoring, multi-city expansion. |
 
 ## Market Viability (10 judging points)
@@ -284,6 +346,7 @@ Transcriber deps unchanged: `numpy`, `scipy`, `faster-whisper`, `webrtcvad`, `py
 # Backend
 pip install -r requirements-philly-pulse.txt
 export OPENAI_API_KEY=...
+export INHIBITOR_API_KEY=...   # from Applied AI Studio (Discord DM)
 uvicorn philly_pulse.server:app --reload --port 8765
 
 # Frontend
@@ -299,13 +362,14 @@ python radiotranscriber.py   # with philly_pulse.enabled in config.yaml
 
 ### Phase 1: Core Backend (3-4 hours)
 1. `severity_categories.yaml` with S_base values.
-2. `store.py` — SQLite schema + CRUD.
+2. `store.py` — SQLite schema + CRUD (include `inhibitor_status`, `inhibitor_reason` columns).
 3. `llm.py` — OpenAI structured extraction with closed enum.
-4. `geocode.py` — Nominatim with Philly bounding box.
-5. `weights.py` — S_base lookup + W_eff computation.
-6. `server.py` — FastAPI with `/api/ingest`, `/api/incidents`, `/api/health`, `/api/simulate`, `/api/summary`.
-7. `seed_incidents.json` — 15-20 realistic Philly incidents.
-8. Verify: POST a synthetic transcript -> LLM -> geocode -> GET shows pin.
+4. `inhibitor.py` — Wrapper for Inhibitor `/check` endpoint. Build thought chain from transcript + extraction, call in `performance` mode, return pass/block + reason.
+5. `geocode.py` — Nominatim with Philly bounding box.
+6. `weights.py` — S_base lookup + W_eff computation.
+7. `server.py` — FastAPI with `/api/ingest` (LLM -> Inhibitor -> geocode -> store), `/api/incidents`, `/api/health`, `/api/simulate`, `/api/summary`.
+8. `seed_incidents.json` — 15-20 realistic Philly incidents.
+9. Verify: POST a synthetic transcript -> LLM -> Inhibitor pass -> geocode -> GET shows pin. Also verify: POST a transcript with PII -> Inhibitor blocks -> incident stored as blocked, not displayed.
 
 ### Phase 2: Frontend (4-5 hours)
 1. Scaffold Next.js + Tailwind + shadcn/ui.
@@ -333,7 +397,8 @@ python radiotranscriber.py   # with philly_pulse.enabled in config.yaml
 
 ## Verification Checklist
 
-- [ ] `POST /api/ingest` with realistic dispatch text -> LLM returns structured JSON -> geocode returns Philly point -> `GET /api/incidents` shows pin with correct fields.
+- [ ] `POST /api/ingest` with realistic dispatch text -> LLM returns structured JSON -> Inhibitor passes -> geocode returns Philly point -> `GET /api/incidents` shows pin with correct fields.
+- [ ] `POST /api/ingest` with PII-containing transcript -> Inhibitor blocks -> incident stored with `inhibitor_status: "blocked"` -> NOT shown on map.
 - [ ] `POST /api/simulate` creates a new incident visible on the map within seconds.
 - [ ] Frontend loads, displays seeded incidents on map, color-coded by severity.
 - [ ] Tapping a pin opens detail modal with transcript, category, confidence, UNVERIFIED badge.
@@ -341,5 +406,5 @@ python radiotranscriber.py   # with philly_pulse.enabled in config.yaml
 - [ ] `/api/summary` returns a coherent AI-generated neighborhood summary.
 - [ ] Mobile layout works: bottom sheet, touch interactions, no horizontal scroll.
 - [ ] Dark mode renders correctly on map and all components.
-- [ ] Transparency page explains the full pipeline honestly.
+- [ ] Transparency page explains the full pipeline honestly, including Inhibitor audit stats (evaluated / blocked / displayed).
 - [ ] With transcriber running (if Broadcastify available), new lines create new pins on the map.
