@@ -26,9 +26,22 @@ CREATE TABLE IF NOT EXISTS incidents (
     confidence      REAL NOT NULL DEFAULT 1.0,
     geocode_status  TEXT DEFAULT 'pending',
     inhibitor_status TEXT DEFAULT 'passed',
-    inhibitor_reason TEXT
+    inhibitor_reason TEXT,
+    verification_score INTEGER DEFAULT NULL,
+    verification_status TEXT DEFAULT 'pending',
+    verification_summary TEXT DEFAULT NULL,
+    verification_checks TEXT DEFAULT NULL,
+    verified_at     TEXT DEFAULT NULL
 );
 """
+
+_MIGRATE_VERIFICATION = [
+    "ALTER TABLE incidents ADD COLUMN verification_score INTEGER DEFAULT NULL",
+    "ALTER TABLE incidents ADD COLUMN verification_status TEXT DEFAULT 'pending'",
+    "ALTER TABLE incidents ADD COLUMN verification_summary TEXT DEFAULT NULL",
+    "ALTER TABLE incidents ADD COLUMN verification_checks TEXT DEFAULT NULL",
+    "ALTER TABLE incidents ADD COLUMN verified_at TEXT DEFAULT NULL",
+]
 
 
 def _connect() -> sqlite3.Connection:
@@ -47,6 +60,13 @@ def get_conn() -> sqlite3.Connection:
         _conn = _connect()
         _conn.execute(_CREATE_TABLE)
         _conn.commit()
+        # Migrate existing databases to add verification columns
+        for stmt in _MIGRATE_VERIFICATION:
+            try:
+                _conn.execute(stmt)
+                _conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
     return _conn
 
 
@@ -151,6 +171,37 @@ def seed_from_json(seed_path: str, s_base_lookup: dict[str, float]) -> int:
         )
         count += 1
     return count
+
+
+def update_verification(
+    incident_id: str,
+    score: int,
+    status: str,
+    summary: str,
+    checks_json: str,
+) -> Optional[dict]:
+    """Update verification fields for an incident."""
+    conn = get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """UPDATE incidents
+           SET verification_score = ?, verification_status = ?,
+               verification_summary = ?, verification_checks = ?,
+               verified_at = ?
+           WHERE id = ?""",
+        (score, status, summary, checks_json, now, incident_id),
+    )
+    conn.commit()
+    return get_incident(incident_id)
+
+
+def verification_stats() -> dict:
+    """Return counts by verification_status."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT verification_status, COUNT(*) as cnt FROM incidents GROUP BY verification_status"
+    ).fetchall()
+    return {row["verification_status"]: row["cnt"] for row in rows}
 
 
 def incident_count() -> int:

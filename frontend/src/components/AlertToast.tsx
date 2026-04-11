@@ -58,7 +58,10 @@ export default function AlertToast({ incidents }: Props) {
           transition={{ type: "spring", damping: 20, stiffness: 300 }}
           className="fixed top-20 left-1/2 -translate-x-1/2 z-[2000]"
         >
-          <div className="glass-panel rounded-xl px-4 py-3 flex items-center gap-3 border border-red-500/30 shadow-[0_0_30px_rgba(239,68,68,0.15)] min-w-[280px]">
+          <div
+            className="rounded-xl px-4 py-3 flex items-center gap-3 border border-red-500/30 shadow-[0_0_30px_rgba(239,68,68,0.15)] min-w-[280px] backdrop-blur-xl"
+            style={{ background: "var(--panel-bg)" }}
+          >
             <div className="relative">
               <AlertTriangle className="w-5 h-5 text-red-400" />
               <div className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-400 rounded-full animate-pulse" />

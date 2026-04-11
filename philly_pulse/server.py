@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import geocode, inhibitor, llm, store, weights
+from . import geocode, inhibitor, llm, store, verifier, weights
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -234,10 +234,77 @@ async def summary():
     }
 
 
+@app.post("/api/verify/{incident_id}")
+async def verify_incident(incident_id: str):
+    """Run the multi-source verification engine on a single incident."""
+    incident = store.get_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    all_incidents = store.list_incidents()
+    result = await verifier.verify_incident(incident, all_incidents)
+
+    import json as _json
+    checks_json = _json.dumps([
+        {"source": c.source, "passed": c.passed, "score": c.score, "detail": c.detail}
+        for c in result.checks
+    ])
+
+    updated = store.update_verification(
+        incident_id=incident_id,
+        score=result.score,
+        status=result.status,
+        summary=result.summary,
+        checks_json=checks_json,
+    )
+
+    return {
+        "status": "verified",
+        "incident_id": incident_id,
+        "verification": {
+            "score": result.score,
+            "status": result.status,
+            "summary": result.summary,
+            "checks": [
+                {"source": c.source, "passed": c.passed, "score": c.score, "detail": c.detail}
+                for c in result.checks
+            ],
+        },
+        "incident": updated,
+    }
+
+
+@app.post("/api/verify-all")
+async def verify_all():
+    """Run verification on all unverified incidents. Returns summary."""
+    all_incidents = store.list_incidents()
+    unverified = [inc for inc in all_incidents if inc.get("verification_status") in (None, "pending")]
+
+    import json as _json
+    results = []
+    for incident in unverified[:50]:  # cap at 50 to avoid timeout
+        result = await verifier.verify_incident(incident, all_incidents)
+        checks_json = _json.dumps([
+            {"source": c.source, "passed": c.passed, "score": c.score, "detail": c.detail}
+            for c in result.checks
+        ])
+        store.update_verification(
+            incident_id=incident["id"],
+            score=result.score,
+            status=result.status,
+            summary=result.summary,
+            checks_json=checks_json,
+        )
+        results.append({"id": incident["id"], "score": result.score, "status": result.status})
+
+    return {"verified_count": len(results), "results": results}
+
+
 @app.get("/api/stats")
 async def stats():
     """Inhibitor audit stats for the transparency page."""
     return {
         "total_incidents": store.incident_count(),
         "inhibitor_stats": store.inhibitor_stats(),
+        "verification_stats": store.verification_stats(),
     }
