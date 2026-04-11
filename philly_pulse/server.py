@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import geocode, inhibitor, llm, store, verifier, weights
+from . import geocode, inhibitor, llm, persistence as store, verifier, weights
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
