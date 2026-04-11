@@ -9,6 +9,10 @@ A real-time transcription tool for public safety radio feeds (e.g., Broadcastify
 
 **Imporant note 2**: Please be aware that while Broadcastify is apparently cool with a premium subscriber who wants to use this tool to capture a few feeds for their own personal projects, if you spin up more than a couple of servers you are likely to run afoul of their acceptable use policy. Please review and comply with the [Broadcastify terms and conditions](https://www.broadcastify.com/terms/).
 
+## Philly Pulse (planned extension)
+
+Design doc for the Philadelphia scanner → LLM → map stack lives in [docs/philly-pulse-plan.md](docs/philly-pulse-plan.md) (versioned in this repo).
+
 ## Features
 
 * Live streaming from authenticated Broadcastify feeds
