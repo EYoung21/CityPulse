@@ -55,6 +55,7 @@ interface Props {
   onPreviewPins?: (origin: { lat: number; lng: number } | null, dest: { lat: number; lng: number } | null) => void;
   onSelectIncident?: (id: string) => void;
   selectedId?: string | null;
+  tripProgress?: number;
 }
 
 export default function SearchBar({
@@ -66,6 +67,7 @@ export default function SearchBar({
   onPreviewPins,
   onSelectIncident,
   selectedId,
+  tripProgress = 0,
 }: Props) {
   const [view, setView] = useState<View>("search");
   const [searchQuery, setSearchQuery] = useState("");
@@ -164,34 +166,71 @@ export default function SearchBar({
     const end: [number, number] = [destLoc.lat, destLoc.lng];
     const safety = assessSafety({ display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng }, incidents);
 
+    // Build a straight-line fallback route when API fails
+    const buildFallback = (): { geometry: [number, number][]; distanceKm: number; durationMin: number; isSafe: boolean } => {
+      // Create interpolated points along the straight line for smooth animation
+      const numPoints = 80;
+      const geometry: [number, number][] = [];
+      for (let i = 0; i <= numPoints; i++) {
+        const t = i / numPoints;
+        geometry.push([
+          start[0] + (end[0] - start[0]) * t,
+          start[1] + (end[1] - start[1]) * t,
+        ]);
+      }
+      // Approximate distance using haversine
+      const R = 6371;
+      const dLat = ((end[0] - start[0]) * Math.PI) / 180;
+      const dLng = ((end[1] - start[1]) * Math.PI) / 180;
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos((start[0] * Math.PI) / 180) * Math.cos((end[0] * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+      const distanceKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      // Estimate duration based on mode
+      const speedKmh = activeMode === "driving-car" ? 40 : activeMode === "cycling-regular" ? 15 : 5;
+      const durationMin = (distanceKm / speedKmh) * 60;
+      return { geometry, distanceKm, durationMin, isSafe: false };
+    };
+
     (async () => {
       try {
-        const directRoute = await getRoute(ORS_API_KEY, activeMode, start, end);
+        let directRoute = await getRoute(ORS_API_KEY, activeMode, start, end);
         if (controller.signal.aborted) return;
+
+        // If API failed, use straight-line fallback
+        if (!directRoute) {
+          const fb = buildFallback();
+          directRoute = { ...fb };
+        }
 
         if (safety.nearbyCount === 0) {
           onRoutesChange({ normal: directRoute, safe: null, avoidZones: [] });
           setPreviewRoute({
-            distanceKm: directRoute?.distanceKm ?? 0,
-            durationMin: directRoute?.durationMin ?? 0,
+            distanceKm: directRoute.distanceKm,
+            durationMin: directRoute.durationMin,
             isSafe: false,
             nearbyCount: 0,
           });
         } else {
           const zones = buildAvoidZones(incidents);
-          const safeRoute = await getRoute(ORS_API_KEY, activeMode, start, end, buildAvoidPolygons(zones));
+          let safeRoute = await getRoute(ORS_API_KEY, activeMode, start, end, buildAvoidPolygons(zones));
           if (controller.signal.aborted) return;
+          // If safe route API also failed, use the direct route as fallback
+          if (!safeRoute) safeRoute = { ...directRoute, isSafe: true };
           const best = safeRoute || directRoute;
           onRoutesChange({ normal: directRoute, safe: safeRoute, avoidZones: zones });
           setPreviewRoute({
-            distanceKm: best?.distanceKm ?? 0,
-            durationMin: best?.durationMin ?? 0,
+            distanceKm: best.distanceKm,
+            durationMin: best.durationMin,
             isSafe: !!safeRoute,
             nearbyCount: safety.nearbyCount,
           });
         }
       } catch {
-        if (!controller.signal.aborted) setPreviewRoute(null);
+        if (!controller.signal.aborted) {
+          // Even on error, show a fallback route
+          const fb = buildFallback();
+          onRoutesChange({ normal: fb, safe: null, avoidZones: [] });
+          setPreviewRoute({ distanceKm: fb.distanceKm, durationMin: fb.durationMin, isSafe: false, nearbyCount: 0 });
+        }
       } finally {
         if (!controller.signal.aborted) setPreviewLoading(false);
       }
@@ -225,16 +264,28 @@ export default function SearchBar({
     });
     setView("trip");
 
-    const primary = previewRoute?.isSafe ? "safe" : "normal";
-    // Re-use already-drawn route; just activate trip mode
-    // The route is already on the map from the preview effect
-    // We need to get the geometry for the animation
+    // Get the geometry for the animation
     const start: [number, number] = [originLoc.lat, originLoc.lng];
     const end: [number, number] = [destLoc.lat, destLoc.lng];
-    const route = await getRoute(ORS_API_KEY, activeMode, start, end,
+    let route = await getRoute(ORS_API_KEY, activeMode, start, end,
       safety.nearbyCount > 0 ? buildAvoidPolygons(buildAvoidZones(incidents)) : undefined
     );
-    onTripActive?.(true, route?.geometry, activeMode);
+
+    // Fallback: build interpolated straight-line geometry if API fails
+    if (!route || !route.geometry || route.geometry.length < 2) {
+      const numPoints = 80;
+      const geometry: [number, number][] = [];
+      for (let i = 0; i <= numPoints; i++) {
+        const t = i / numPoints;
+        geometry.push([
+          start[0] + (end[0] - start[0]) * t,
+          start[1] + (end[1] - start[1]) * t,
+        ]);
+      }
+      route = { geometry, distanceKm: best?.distanceKm ?? 1, durationMin: best?.durationMin ?? 10, isSafe: best?.isSafe ?? false };
+    }
+
+    onTripActive?.(true, route.geometry, activeMode);
   }, [originLoc, destLoc, activeMode, incidents, previewRoute, onTripActive]);
 
   const resetTrip = useCallback(() => {
@@ -647,14 +698,38 @@ export default function SearchBar({
                 </button>
               </div>
 
-              <div className="flex gap-6">
+              {/* Live distance & time with progress */}
+              <div className="flex gap-6 items-end">
                 <div>
-                  <p className="text-2xl font-bold" style={{ color: "var(--panel-text)" }}>{Math.ceil(routeInfo.durationMin)} min</p>
-                  <p className="text-xs" style={{ color: "var(--panel-text-secondary)" }}>{routeInfo.distanceKm.toFixed(1)} km</p>
+                  <p className="text-2xl font-bold" style={{ color: "var(--panel-text)" }}>
+                    {Math.max(0, Math.ceil(routeInfo.durationMin * (1 - tripProgress)))} min
+                  </p>
+                  <p className="text-xs" style={{ color: "var(--panel-text-secondary)" }}>
+                    {Math.max(0, (routeInfo.distanceKm * (1 - tripProgress))).toFixed(1)} km remaining
+                  </p>
                 </div>
                 <div className="flex items-center gap-1.5 text-xs" style={{ color: "var(--panel-text-secondary)" }}>
                   {(() => { const M = MODES.find(m => m.id === activeMode); return M ? <M.icon className="w-4 h-4" /> : null; })()}
                   {MODES.find(m => m.id === activeMode)?.label}
+                </div>
+              </div>
+
+              {/* Progress bar */}
+              <div className="mt-3 space-y-1.5">
+                <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: "var(--panel-input-bg)" }}>
+                  <div
+                    className="h-full rounded-full transition-all duration-300 ease-out"
+                    style={{
+                      width: `${Math.min(100, tripProgress * 100)}%`,
+                      background: routeInfo.isSafe
+                        ? "linear-gradient(90deg, #22c55e, #4ade80)"
+                        : "linear-gradient(90deg, #3b82f6, #60a5fa)",
+                    }}
+                  />
+                </div>
+                <div className="flex justify-between text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+                  <span>{(routeInfo.distanceKm * tripProgress).toFixed(1)} km traveled</span>
+                  <span>{Math.round(tripProgress * 100)}%</span>
                 </div>
               </div>
 
