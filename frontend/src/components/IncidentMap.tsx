@@ -34,6 +34,7 @@ interface Props {
   tripMode?: string | null;
   heatmapEnabled?: boolean;
   isDark?: boolean;
+  onTripProgress?: (progress: number) => void;
 }
 
 function distToSegmentKm(
@@ -217,7 +218,7 @@ const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.pn
 const LIGHT_TILES = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
 
 const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
-  { incidents, selectedId, onSelectIncident, routes, onMapTap, userLocation, tripRouteGeometry, previewOrigin, previewDest, tripMode, heatmapEnabled = true, isDark = true },
+  { incidents, selectedId, onSelectIncident, routes, onMapTap, userLocation, tripRouteGeometry, previewOrigin, previewDest, tripMode, heatmapEnabled = true, isDark = true, onTripProgress },
   ref
 ) {
   const mapRef = useRef<L.Map | null>(null);
@@ -229,6 +230,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const transportMarkerRef = useRef<L.Marker | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
+  const trailLayerRef = useRef<L.LayerGroup | null>(null);
 
   useImperativeHandle(ref, () => ({
     flyTo: (lat: number, lng: number, zoom = 14) => {
@@ -254,6 +256,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     markersRef.current = L.layerGroup().addTo(map);
     routeLayerRef.current = L.layerGroup().addTo(map);
     previewLayerRef.current = L.layerGroup().addTo(map);
+    trailLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
     map.on("click", (e: L.LeafletMouseEvent) => {
@@ -274,6 +277,13 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   }, [isDark]);
 
   const stableOnSelect = useCallback(onSelectIncident, [onSelectIncident]);
+
+  // Keep a ref for tripRouteGeometry so we can check it without causing re-renders
+  const tripGeomRef = useRef(tripRouteGeometry);
+  tripGeomRef.current = tripRouteGeometry;
+
+  // Track the safe route polylines so we can hide/show them without full re-render
+  const safePolylinesRef = useRef<L.Polyline[]>([]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -332,13 +342,14 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }
   }, [selectedId, incidents]);
 
-  // Routes, avoidance zones, A/B pins
+  // Routes, avoidance zones, A/B pins — only re-draws when routes object changes
   useEffect(() => {
     const map = mapRef.current;
     const routeLayer = routeLayerRef.current;
     if (!map || !routeLayer) return;
 
     routeLayer.clearLayers();
+    safePolylinesRef.current = [];
     if (!routes) return;
 
     for (const zone of routes.avoidZones) {
@@ -379,19 +390,21 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       }
     }
 
+    // Draw safe route polylines (will be hidden when trip animation starts)
     if (hasSafe && routes.safe) {
-      L.polyline(routes.safe.geometry, {
+      const glow = L.polyline(routes.safe.geometry, {
         color: "#22c55e",
         weight: 16,
         opacity: 0.12,
       }).addTo(routeLayer);
-      L.polyline(routes.safe.geometry, {
+      const line = L.polyline(routes.safe.geometry, {
         color: "#22c55e",
         weight: 6,
         opacity: 0.95,
         lineCap: "round",
         lineJoin: "round",
       }).addTo(routeLayer);
+      safePolylinesRef.current = [glow, line];
     }
 
     const primary = routes.safe || routes.normal;
@@ -473,11 +486,13 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }).addTo(map);
   }, [userLocation, routes, previewOrigin]);
 
-  // Animated transport icon moving along the route
+  // Animated transport icon moving along the route with trail effect
   useEffect(() => {
     const map = mapRef.current;
+    const trailLayer = trailLayerRef.current;
     if (!map) return;
 
+    // Clean up previous animation
     if (animFrameRef.current) {
       cancelAnimationFrame(animFrameRef.current);
       animFrameRef.current = null;
@@ -486,8 +501,20 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       map.removeLayer(transportMarkerRef.current);
       transportMarkerRef.current = null;
     }
+    if (trailLayer) trailLayer.clearLayers();
 
-    if (!tripMode || !tripRouteGeometry || tripRouteGeometry.length < 2) return;
+    if (!tripMode || !tripRouteGeometry || tripRouteGeometry.length < 2) {
+      // Restore safe route polylines when animation stops
+      for (const pl of safePolylinesRef.current) {
+        (pl as L.Polyline).setStyle({ opacity: pl.options.weight === 16 ? 0.12 : 0.95 });
+      }
+      return;
+    }
+
+    // Hide static safe route polylines — trail layer takes over
+    for (const pl of safePolylinesRef.current) {
+      (pl as L.Polyline).setStyle({ opacity: 0 });
+    }
 
     const icon = createTransportIcon(tripMode);
     const marker = L.marker(tripRouteGeometry[0], {
@@ -497,11 +524,45 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }).addTo(map);
     transportMarkerRef.current = marker;
 
+    // Determine route color based on whether it's a safe route
+    const routeColor = "#22c55e"; // green for safe route
+    const traveledColor = "#555";
+    const traveledOpacity = 0.35;
+
+    // Create the two polyline segments
+    // "Remaining" = bright path ahead of the icon
+    const remainingLine = L.polyline(tripRouteGeometry, {
+      color: routeColor,
+      weight: 6,
+      opacity: 0.95,
+      lineCap: "round",
+      lineJoin: "round",
+    }).addTo(trailLayer!);
+
+    // "Remaining" glow
+    const remainingGlow = L.polyline(tripRouteGeometry, {
+      color: routeColor,
+      weight: 16,
+      opacity: 0.12,
+    }).addTo(trailLayer!);
+
+    // "Traveled" = greyed-out path behind the icon
+    const traveledLine = L.polyline([], {
+      color: traveledColor,
+      weight: 6,
+      opacity: traveledOpacity,
+      lineCap: "round",
+      lineJoin: "round",
+      dashArray: "8 6",
+    }).addTo(trailLayer!);
+
     let idx = 0;
     const totalPts = tripRouteGeometry.length;
     const speed = tripMode === "driving-car" ? 3 : tripMode === "cycling-regular" ? 2 : 1;
     const msPerStep = 80 / speed;
     let lastTime = 0;
+    let lastTrailUpdate = -1;
+    const trailUpdateEvery = 3; // update trail polylines every N steps for performance
 
     function step(time: number) {
       if (time - lastTime < msPerStep) {
@@ -512,6 +573,32 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       idx = (idx + 1) % totalPts;
       const pt = tripRouteGeometry![idx];
       marker.setLatLng(pt);
+
+      // Update trail segments periodically
+      if (Math.abs(idx - lastTrailUpdate) >= trailUpdateEvery || idx === 0) {
+        lastTrailUpdate = idx;
+
+        // Report progress to parent (0 = start, 1 = end)
+        const progress = idx / (totalPts - 1);
+        onTripProgress?.(progress);
+
+        if (idx === 0) {
+          // Reset: full route ahead, nothing traveled
+          traveledLine.setLatLngs([]);
+          remainingLine.setLatLngs(tripRouteGeometry!);
+          remainingGlow.setLatLngs(tripRouteGeometry!);
+        } else {
+          // Traveled portion (start -> current position) — greyed out
+          const traveled = tripRouteGeometry!.slice(0, idx + 1);
+          traveledLine.setLatLngs(traveled);
+
+          // Remaining portion (current position -> end) — bright color
+          const remaining = tripRouteGeometry!.slice(idx);
+          remainingLine.setLatLngs(remaining);
+          remainingGlow.setLatLngs(remaining);
+        }
+      }
+
       animFrameRef.current = requestAnimationFrame(step);
     }
     animFrameRef.current = requestAnimationFrame(step);
@@ -521,6 +608,11 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       if (transportMarkerRef.current) {
         map.removeLayer(transportMarkerRef.current);
         transportMarkerRef.current = null;
+      }
+      if (trailLayer) trailLayer.clearLayers();
+      // Restore safe route polylines
+      for (const pl of safePolylinesRef.current) {
+        (pl as L.Polyline).setStyle({ opacity: pl.options.weight === 16 ? 0.12 : 0.95 });
       }
     };
   }, [tripMode, tripRouteGeometry]);

@@ -112,6 +112,7 @@ export default function Home() {
   const [showLayers, setShowLayers] = useState(false);
   const [heatmapEnabled, setHeatmapEnabled] = useState(true);
   const [showTheme, setShowTheme] = useState(false);
+  const [tripProgress, setTripProgress] = useState(0);
   const mapRef = useRef<MapHandle>(null);
 
   const loadFromApi = useCallback(async () => {
@@ -210,6 +211,7 @@ export default function Home() {
         tripMode={tripMode}
         heatmapEnabled={heatmapEnabled}
         isDark={isDark}
+        onTripProgress={setTripProgress}
       />
 
       {/* === LEFT SIDEBAR === */}
@@ -228,6 +230,7 @@ export default function Home() {
         }}
         onSelectIncident={setSelectedId}
         selectedId={selectedId}
+        tripProgress={tripProgress}
       />
 
       {/* === TOP CATEGORY PILLS === */}
