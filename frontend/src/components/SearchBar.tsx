@@ -31,12 +31,14 @@ import { geocodePhilly, assessSafety } from "@/lib/search";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
 import {
   getRoute,
+  getMultiStopRoute,
   buildAvoidZones,
   buildAvoidPolygons,
   type TransportMode,
 } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
 import type { RouteData } from "@/components/RoutePanel";
+import type { WaypointPin } from "@/components/IncidentMap";
 import { getSeverity } from "@/lib/severity";
 
 const ORS_API_KEY =
@@ -50,6 +52,14 @@ const MODES: { id: TransportMode; label: string; icon: typeof Footprints }[] = [
 
 type View = "search" | "directions" | "trip";
 
+const STOP_COLORS = ["#f97316", "#a855f7", "#06b6d4", "#ec4899", "#84cc16"];
+
+interface StopLoc {
+  display_name: string;
+  lat: number;
+  lng: number;
+}
+
 interface Props {
   incidents: Incident[];
   onFlyTo: (lat: number, lng: number) => void;
@@ -57,6 +67,7 @@ interface Props {
   onUserLocation?: (lat: number, lng: number) => void;
   onTripActive?: (active: boolean, routeGeometry?: [number, number][], mode?: TransportMode) => void;
   onPreviewPins?: (origin: { lat: number; lng: number } | null, dest: { lat: number; lng: number } | null) => void;
+  onPreviewWaypoints?: (waypoints: WaypointPin[] | null) => void;
   onSelectIncident?: (id: string) => void;
   selectedId?: string | null;
   tripProgress?: number;
@@ -69,6 +80,7 @@ export default function SearchBar({
   onUserLocation,
   onTripActive,
   onPreviewPins,
+  onPreviewWaypoints,
   onSelectIncident,
   selectedId,
   tripProgress = 0,
@@ -92,6 +104,10 @@ export default function SearchBar({
   const [activeDropdown, setActiveDropdown] = useState<"search" | "origin" | "dest" | null>(null);
   const [originLoc, setOriginLoc] = useState<{ display_name: string; lat: number; lng: number } | null>(null);
   const [destLoc, setDestLoc] = useState<{ display_name: string; lat: number; lng: number } | null>(null);
+  const [stops, setStops] = useState<{ query: string; loc: StopLoc | null }[]>([]);
+  const [stopSuggestions, setStopSuggestions] = useState<{ display_name: string; lat: number; lng: number }[]>([]);
+  const [stopLoading, setStopLoading] = useState(false);
+  const [activeStopIdx, setActiveStopIdx] = useState<number | null>(null);
   const [activeMode, setActiveMode] = useState<TransportMode>("driving-car");
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeInfo, setRouteInfo] = useState<{
@@ -155,94 +171,87 @@ export default function SearchBar({
     }, 200);
   }, []);
 
-  // Auto-fetch route preview when both A and B are selected
+  const allWaypoints = useCallback((): { label: string; loc: StopLoc }[] => {
+    const result: { label: string; loc: StopLoc }[] = [];
+    if (originLoc) result.push({ label: "A", loc: originLoc });
+    stops.forEach((s, i) => {
+      if (s.loc) result.push({ label: String.fromCharCode(66 + i), loc: s.loc });
+    });
+    if (destLoc) result.push({ label: String.fromCharCode(66 + stops.length), loc: destLoc });
+    return result;
+  }, [originLoc, destLoc, stops]);
+
+  const syncPreviewPins = useCallback(() => {
+    const wps = allWaypoints();
+    if (wps.length >= 2) {
+      const pins: WaypointPin[] = wps.map((wp, i) => ({
+        label: wp.label,
+        lat: wp.loc.lat,
+        lng: wp.loc.lng,
+        color: i === 0 ? "#22c55e" : i === wps.length - 1 ? "#ef4444" : STOP_COLORS[(i - 1) % STOP_COLORS.length],
+        glowColor: i === 0 ? "rgba(34,197,94,0.5)" : i === wps.length - 1 ? "rgba(239,68,68,0.5)" : STOP_COLORS[(i - 1) % STOP_COLORS.length] + "80",
+      }));
+      onPreviewWaypoints?.(pins);
+    } else {
+      onPreviewWaypoints?.(null);
+    }
+  }, [allWaypoints, onPreviewWaypoints]);
+
+  useEffect(() => {
+    if (view === "directions") syncPreviewPins();
+  }, [originLoc, destLoc, stops, view, syncPreviewPins]);
+
+  // Auto-fetch route preview when waypoints change
   useEffect(() => {
     if (!originLoc || !destLoc || view === "trip") {
       setPreviewRoute(null);
       return;
     }
+    const intermediateReady = stops.every(s => s.loc !== null);
+    if (!intermediateReady) { setPreviewRoute(null); return; }
 
     if (previewAbortRef.current) previewAbortRef.current.abort();
     const controller = new AbortController();
     previewAbortRef.current = controller;
 
     setPreviewLoading(true);
-    const start: [number, number] = [originLoc.lat, originLoc.lng];
-    const end: [number, number] = [destLoc.lat, destLoc.lng];
-    const safety = assessSafety({ display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng }, incidents);
 
-    // Build a straight-line fallback route when API fails
-    const buildFallback = (): { geometry: [number, number][]; distanceKm: number; durationMin: number; isSafe: boolean } => {
-      // Create interpolated points along the straight line for smooth animation
-      const numPoints = 80;
-      const geometry: [number, number][] = [];
-      for (let i = 0; i <= numPoints; i++) {
-        const t = i / numPoints;
-        geometry.push([
-          start[0] + (end[0] - start[0]) * t,
-          start[1] + (end[1] - start[1]) * t,
-        ]);
-      }
-      // Approximate distance using haversine
-      const R = 6371;
-      const dLat = ((end[0] - start[0]) * Math.PI) / 180;
-      const dLng = ((end[1] - start[1]) * Math.PI) / 180;
-      const a = Math.sin(dLat / 2) ** 2 + Math.cos((start[0] * Math.PI) / 180) * Math.cos((end[0] * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
-      const distanceKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      // Estimate duration based on mode
-      const speedKmh = activeMode === "driving-car" ? 40 : activeMode === "cycling-regular" ? 15 : 5;
-      const durationMin = (distanceKm / speedKmh) * 60;
-      return { geometry, distanceKm, durationMin, isSafe: false };
-    };
+    const waypoints: [number, number][] = [
+      [originLoc.lat, originLoc.lng],
+      ...stops.filter(s => s.loc).map(s => [s.loc!.lat, s.loc!.lng] as [number, number]),
+      [destLoc.lat, destLoc.lng],
+    ];
+    const safety = assessSafety({ display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng }, incidents);
 
     (async () => {
       try {
-        let directRoute = await getRoute(ORS_API_KEY, activeMode, start, end);
+        let directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
         if (controller.signal.aborted) return;
 
-        // If API failed, use straight-line fallback
         if (!directRoute) {
-          const fb = buildFallback();
-          directRoute = { ...fb };
+          directRoute = { geometry: waypoints, distanceKm: 0, durationMin: 0, isSafe: false };
         }
 
         if (safety.nearbyCount === 0) {
           onRoutesChange({ normal: directRoute, safe: null, avoidZones: [] });
-          setPreviewRoute({
-            distanceKm: directRoute.distanceKm,
-            durationMin: directRoute.durationMin,
-            isSafe: false,
-            nearbyCount: 0,
-          });
+          setPreviewRoute({ distanceKm: directRoute.distanceKm, durationMin: directRoute.durationMin, isSafe: false, nearbyCount: 0 });
         } else {
           const zones = buildAvoidZones(incidents);
-          let safeRoute = await getRoute(ORS_API_KEY, activeMode, start, end, buildAvoidPolygons(zones));
+          const safeRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints, buildAvoidPolygons(zones));
           if (controller.signal.aborted) return;
-          // If safe route API also failed, use the direct route as fallback
-          if (!safeRoute) safeRoute = { ...directRoute, isSafe: true };
           const best = safeRoute || directRoute;
           onRoutesChange({ normal: directRoute, safe: safeRoute, avoidZones: zones });
-          setPreviewRoute({
-            distanceKm: best.distanceKm,
-            durationMin: best.durationMin,
-            isSafe: !!safeRoute,
-            nearbyCount: safety.nearbyCount,
-          });
+          setPreviewRoute({ distanceKm: best.distanceKm, durationMin: best.durationMin, isSafe: !!safeRoute, nearbyCount: safety.nearbyCount });
         }
       } catch {
-        if (!controller.signal.aborted) {
-          // Even on error, show a fallback route
-          const fb = buildFallback();
-          onRoutesChange({ normal: fb, safe: null, avoidZones: [] });
-          setPreviewRoute({ distanceKm: fb.distanceKm, durationMin: fb.durationMin, isSafe: false, nearbyCount: 0 });
-        }
+        if (!controller.signal.aborted) setPreviewRoute(null);
       } finally {
         if (!controller.signal.aborted) setPreviewLoading(false);
       }
     })();
 
     return () => controller.abort();
-  }, [originLoc, destLoc, activeMode, view]);
+  }, [originLoc, destLoc, stops, activeMode, view]);
 
   const openDirections = useCallback((destName?: string, destCoords?: { lat: number; lng: number }) => {
     setView("directions");
@@ -269,40 +278,31 @@ export default function SearchBar({
     });
     setView("trip");
 
-    // Get the geometry for the animation
-    const start: [number, number] = [originLoc.lat, originLoc.lng];
-    const end: [number, number] = [destLoc.lat, destLoc.lng];
-    let route = await getRoute(ORS_API_KEY, activeMode, start, end,
+    const waypoints: [number, number][] = [
+      [originLoc.lat, originLoc.lng],
+      ...stops.filter(s => s.loc).map(s => [s.loc!.lat, s.loc!.lng] as [number, number]),
+      [destLoc.lat, destLoc.lng],
+    ];
+
+    const route = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints,
       safety.nearbyCount > 0 ? buildAvoidPolygons(buildAvoidZones(incidents)) : undefined
     );
 
-    // Fallback: build interpolated straight-line geometry if API fails
-    if (!route || !route.geometry || route.geometry.length < 2) {
-      const numPoints = 80;
-      const geometry: [number, number][] = [];
-      for (let i = 0; i <= numPoints; i++) {
-        const t = i / numPoints;
-        geometry.push([
-          start[0] + (end[0] - start[0]) * t,
-          start[1] + (end[1] - start[1]) * t,
-        ]);
-      }
-      route = { geometry, distanceKm: best?.distanceKm ?? 1, durationMin: best?.durationMin ?? 10, isSafe: best?.isSafe ?? false };
-    }
-
-    onTripActive?.(true, route.geometry, activeMode);
-  }, [originLoc, destLoc, activeMode, incidents, previewRoute, onTripActive]);
+    onTripActive?.(true, route?.geometry ?? waypoints, activeMode);
+  }, [originLoc, destLoc, stops, activeMode, incidents, previewRoute, onTripActive]);
 
   const resetTrip = useCallback(() => {
     setRouteInfo(null);
     setPreviewRoute(null);
     setDestLoc(null);
     setDestQuery("");
+    setStops([]);
     setView("search");
     onRoutesChange(null);
     onTripActive?.(false);
     onPreviewPins?.(originLoc, null);
-  }, [onRoutesChange, onTripActive, onPreviewPins, originLoc]);
+    onPreviewWaypoints?.(null);
+  }, [onRoutesChange, onTripActive, onPreviewPins, onPreviewWaypoints, originLoc]);
 
   const swapLocations = () => {
     const tmpQ = originQuery; const tmpL = originLoc;
@@ -534,7 +534,7 @@ export default function SearchBar({
           <>
             <div className="flex items-center gap-2 px-3 py-3" style={{ borderBottom: "1px solid var(--panel-border)" }}>
               <button
-                onClick={() => { setView("search"); setDestLoc(null); setDestQuery(""); setPreviewRoute(null); onRoutesChange(null); onPreviewPins?.(originLoc, null); }}
+                onClick={() => { setView("search"); setDestLoc(null); setDestQuery(""); setStops([]); setPreviewRoute(null); onRoutesChange(null); onPreviewPins?.(originLoc, null); onPreviewWaypoints?.(null); }}
                 className="p-1.5 rounded-lg transition-colors"
                 style={{ color: "var(--panel-text-secondary)" }}
                 onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
@@ -566,23 +566,30 @@ export default function SearchBar({
               })}
             </div>
 
-            {/* A → B inputs */}
+            {/* Waypoint inputs (A → B → C → ...) */}
             <div className="p-4">
               <div className="flex gap-2">
                 <div className="flex flex-col items-center pt-3 gap-0">
                   <div className="w-3 h-3 rounded-full bg-green-500 ring-4 ring-green-500/20" />
+                  {stops.map((_, i) => (
+                    <div key={`dot-${i}`} className="contents">
+                      <div className="w-0.5 flex-1 my-1" style={{ background: "var(--panel-border)" }} />
+                      <div className="w-3 h-3 rounded-full ring-4" style={{ backgroundColor: STOP_COLORS[i % STOP_COLORS.length], ["--tw-ring-color" as string]: STOP_COLORS[i % STOP_COLORS.length] + "30" }} />
+                    </div>
+                  ))}
                   <div className="w-0.5 flex-1 my-1" style={{ background: "var(--panel-border)" }} />
                   <div className="w-3 h-3 rounded-full bg-red-500 ring-4 ring-red-500/20" />
                 </div>
 
                 <div className="flex-1 space-y-2">
+                  {/* Origin */}
                   <div className="relative">
                     <input
                       type="text"
                       value={originQuery}
                       onChange={(e) => { setOriginQuery(e.target.value); setOriginLoc(null); setActiveDropdown("origin"); geocode(e.target.value, setOriginSuggestions, setOriginLoading); }}
                       onFocus={() => { setActiveDropdown("origin"); if (originQuery.length >= 2 && !originLoc) geocode(originQuery, setOriginSuggestions, setOriginLoading); }}
-                      placeholder="Choose starting point, or search"
+                      placeholder="A · Starting point"
                       className="w-full rounded-lg px-3 py-2.5 text-sm outline-none transition-colors focus:ring-2 focus:ring-blue-500/30"
                       style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-input-border)", color: "var(--panel-text)" }}
                     />
@@ -593,19 +600,58 @@ export default function SearchBar({
                       </button>
                     )}
                     {!originLoc && gpsStatus === "found" && (
-                      <button onClick={() => { setOriginLoc({ display_name: "Your location", ...userPos! }); setOriginQuery("Your location"); onPreviewPins?.({ ...userPos! }, destLoc); }}
+                      <button onClick={() => { setOriginLoc({ display_name: "Your location", ...userPos! }); setOriginQuery("Your location"); }}
                         className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full text-blue-500/50 hover:text-blue-500" title="Use my location">
                         <LocateFixed className="w-4 h-4" />
                       </button>
                     )}
                   </div>
+
+                  {/* Intermediate stops */}
+                  {stops.map((stop, idx) => (
+                    <div key={idx} className="relative flex gap-1">
+                      <input
+                        type="text"
+                        value={stop.query}
+                        onChange={(e) => {
+                          const next = [...stops];
+                          next[idx] = { ...next[idx], query: e.target.value, loc: null };
+                          setStops(next);
+                          setActiveStopIdx(idx);
+                          setActiveDropdown(null);
+                          geocode(e.target.value, setStopSuggestions, setStopLoading);
+                        }}
+                        onFocus={() => {
+                          setActiveStopIdx(idx);
+                          if (stop.query.length >= 2 && !stop.loc) geocode(stop.query, setStopSuggestions, setStopLoading);
+                        }}
+                        placeholder={`${String.fromCharCode(66 + idx)} · Stop`}
+                        className="flex-1 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors focus:ring-2 focus:ring-blue-500/30"
+                        style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-input-border)", color: "var(--panel-text)" }}
+                      />
+                      <button
+                        onClick={() => {
+                          setStops(stops.filter((_, i) => i !== idx));
+                          setPreviewRoute(null);
+                          onRoutesChange(null);
+                        }}
+                        className="p-1.5 rounded-lg self-center"
+                        style={{ color: "var(--panel-text-muted)" }}
+                        title="Remove stop"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+
+                  {/* Destination */}
                   <div className="relative">
                     <input
                       type="text"
                       value={destQuery}
                       onChange={(e) => { setDestQuery(e.target.value); setDestLoc(null); setActiveDropdown("dest"); geocode(e.target.value, setDestSuggestions, setDestLoading); }}
                       onFocus={() => { setActiveDropdown("dest"); if (destQuery.length >= 2 && !destLoc) geocode(destQuery, setDestSuggestions, setDestLoading); }}
-                      placeholder="Choose destination, or search"
+                      placeholder={`${String.fromCharCode(66 + stops.length)} · Destination`}
                       className="w-full rounded-lg px-3 py-2.5 text-sm outline-none transition-colors focus:ring-2 focus:ring-blue-500/30"
                       style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-input-border)", color: "var(--panel-text)" }}
                       autoFocus={!destLoc}
@@ -619,12 +665,25 @@ export default function SearchBar({
                   </div>
                 </div>
 
-                <button onClick={swapLocations} className="self-center p-2 rounded-full transition-colors" style={{ color: "var(--panel-text-muted)" }}
+                <button onClick={swapLocations} className="self-start mt-3 p-2 rounded-full transition-colors" style={{ color: "var(--panel-text-muted)" }}
                   onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
                   onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
                   <ArrowUpDown className="w-4 h-4" />
                 </button>
               </div>
+
+              {/* Add stop button */}
+              {stops.length < 5 && (
+                <button
+                  onClick={() => setStops([...stops, { query: "", loc: null }])}
+                  className="mt-2 flex items-center gap-2 px-3 py-1.5 text-xs font-medium transition-colors rounded-lg"
+                  style={{ color: "var(--panel-text-secondary)" }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add stop
+                </button>
+              )}
 
               {/* Route preview info (shown automatically when both locations selected) */}
               {previewLoading && (
@@ -757,6 +816,24 @@ export default function SearchBar({
               </div>
             )}
 
+            {/* Stop suggestions dropdown */}
+            {activeStopIdx !== null && stops[activeStopIdx] && !stops[activeStopIdx].loc && (stopSuggestions.length > 0 || stopLoading) && (
+              <div className="mx-4 mb-2 rounded-xl overflow-hidden shadow-lg max-h-[240px] overflow-y-auto"
+                style={{ background: "var(--panel-bg-secondary)", border: "1px solid var(--panel-border)" }}>
+                {stopLoading && stopSuggestions.length === 0 && renderLoadingDropdown()}
+                {stopSuggestions.map((s, i) =>
+                  renderSuggestion(s, i, () => {
+                    const next = [...stops];
+                    next[activeStopIdx] = { query: s.display_name.split(",")[0], loc: s };
+                    setStops(next);
+                    setStopSuggestions([]);
+                    setActiveStopIdx(null);
+                    onFlyTo(s.lat, s.lng);
+                  })
+                )}
+              </div>
+            )}
+
             <div className="flex-1" />
           </>
         )}
@@ -838,7 +915,16 @@ export default function SearchBar({
                 <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
                 <span className="truncate">{originQuery}</span>
               </div>
-              <div className="ml-1 w-px h-4" style={{ background: "var(--panel-border)" }} />
+              {stops.map((stop, idx) => (
+                <div key={idx}>
+                  <div className="ml-1 w-px h-3" style={{ background: "var(--panel-border)" }} />
+                  <div className="flex items-center gap-3 text-xs" style={{ color: "var(--panel-text-secondary)" }}>
+                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: STOP_COLORS[idx % STOP_COLORS.length] }} />
+                    <span className="truncate">{stop.query}</span>
+                  </div>
+                </div>
+              ))}
+              <div className="ml-1 w-px h-3" style={{ background: "var(--panel-border)" }} />
               <div className="flex items-center gap-3 text-xs" style={{ color: "var(--panel-text-secondary)" }}>
                 <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
                 <span className="truncate">{destQuery}</span>

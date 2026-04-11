@@ -25,7 +25,7 @@ import { type RouteData } from "@/components/RoutePanel";
 import SafetyScoreCard from "@/components/SafetyScoreCard";
 import AlertToast from "@/components/AlertToast";
 import IncidentDetail from "@/components/IncidentDetail";
-import type { MapHandle } from "@/components/IncidentMap";
+import type { MapHandle, WaypointPin } from "@/components/IncidentMap";
 import {
   fetchIncidents,
   fetchSummary,
@@ -41,7 +41,7 @@ import { enrichIncidents } from "@/lib/incident-weights";
 import { buildLocalSummary } from "@/lib/local-summary";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
-const WEIGHT_REFRESH_MS = 60000;
+const WEIGHT_REFRESH_MS = 15000;
 
 function statsFromIncidents(incidents: Incident[]): StatsResponse {
   const inhibitor_stats: Record<string, number> = {};
@@ -108,6 +108,7 @@ export default function Home() {
   const [tripMode, setTripMode] = useState<string | null>(null);
   const [previewOrigin, setPreviewOrigin] = useState<{ lat: number; lng: number } | null>(null);
   const [previewDest, setPreviewDest] = useState<{ lat: number; lng: number } | null>(null);
+  const [previewWaypoints, setPreviewWaypoints] = useState<WaypointPin[] | null>(null);
   const [showAbout, setShowAbout] = useState(false);
   const [showLayers, setShowLayers] = useState(false);
   const [heatmapEnabled, setHeatmapEnabled] = useState(true);
@@ -208,6 +209,7 @@ export default function Home() {
         tripRouteGeometry={tripGeometry}
         previewOrigin={previewOrigin}
         previewDest={previewDest}
+        previewWaypoints={previewWaypoints}
         tripMode={tripMode}
         heatmapEnabled={heatmapEnabled}
         isDark={isDark}
@@ -228,6 +230,7 @@ export default function Home() {
           setPreviewOrigin(origin);
           setPreviewDest(dest);
         }}
+        onPreviewWaypoints={setPreviewWaypoints}
         onSelectIncident={setSelectedId}
         selectedId={selectedId}
         tripProgress={tripProgress}

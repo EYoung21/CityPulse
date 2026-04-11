@@ -1,6 +1,7 @@
 import type { Incident } from "./api";
 
 const ORS_URL = "https://api.openrouteservice.org/v2/directions";
+const OSRM_URL = "https://router.project-osrm.org/route/v1";
 
 export type TransportMode = "foot-walking" | "cycling-regular" | "driving-car";
 
@@ -89,6 +90,42 @@ function decodePolyline(encoded: string): [number, number][] {
   return points;
 }
 
+const OSRM_PROFILES: Record<TransportMode, string> = {
+  "foot-walking": "foot",
+  "cycling-regular": "bike",
+  "driving-car": "car",
+};
+
+async function getRouteOSRM(
+  mode: TransportMode,
+  waypoints: [number, number][]
+): Promise<RouteResult | null> {
+  if (waypoints.length < 2) return null;
+  const coords = waypoints.map(([lat, lng]) => `${lng},${lat}`).join(";");
+  const profile = OSRM_PROFILES[mode] || "car";
+  try {
+    const res = await fetch(
+      `${OSRM_URL}/${profile}/${coords}?overview=full&geometries=geojson`,
+      { headers: { "User-Agent": "PHLPulse/0.1" } }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const route = data.routes?.[0];
+    if (!route) return null;
+    const geometry: [number, number][] = route.geometry.coordinates.map(
+      ([lng, lat]: [number, number]) => [lat, lng]
+    );
+    return {
+      geometry,
+      distanceKm: route.distance / 1000,
+      durationMin: route.duration / 60,
+      isSafe: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function getRoute(
   apiKey: string,
   mode: TransportMode,
@@ -96,11 +133,19 @@ export async function getRoute(
   end: [number, number],
   avoidPolygons?: GeoJSON.MultiPolygon | null
 ): Promise<RouteResult | null> {
+  return getMultiStopRoute(apiKey, mode, [start, end], avoidPolygons);
+}
+
+export async function getMultiStopRoute(
+  apiKey: string,
+  mode: TransportMode,
+  waypoints: [number, number][],
+  avoidPolygons?: GeoJSON.MultiPolygon | null
+): Promise<RouteResult | null> {
+  if (waypoints.length < 2) return null;
+
   const body: Record<string, unknown> = {
-    coordinates: [
-      [start[1], start[0]],
-      [end[1], end[0]],
-    ],
+    coordinates: waypoints.map(([lat, lng]) => [lng, lat]),
   };
 
   if (avoidPolygons && avoidPolygons.coordinates.length > 0) {
@@ -117,11 +162,17 @@ export async function getRoute(
       body: JSON.stringify(body),
     });
 
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (!avoidPolygons) return getRouteOSRM(mode, waypoints);
+      return null;
+    }
 
     const data = await res.json();
     const route = data.routes?.[0];
-    if (!route) return null;
+    if (!route) {
+      if (!avoidPolygons) return getRouteOSRM(mode, waypoints);
+      return null;
+    }
 
     const geometry = decodePolyline(route.geometry);
     return {
@@ -131,6 +182,7 @@ export async function getRoute(
       isSafe: !!avoidPolygons,
     };
   } catch {
+    if (!avoidPolygons) return getRouteOSRM(mode, waypoints);
     return null;
   }
 }

@@ -1,6 +1,7 @@
 import type { Incident } from "@/lib/api";
 
 const TAU_HOURS = 12;
+const MIN_W_EFF = 0.15;
 
 function computeWEff(
   sBase: number,
@@ -11,9 +12,11 @@ function computeWEff(
   let reported: Date;
   try {
     reported = new Date(reportedAtIso);
-    if (Number.isNaN(reported.getTime())) return 0;
+    if (Number.isNaN(reported.getTime())) {
+      return Math.max(MIN_W_EFF, sBase * 0.5);
+    }
   } catch {
-    return 0;
+    return Math.max(MIN_W_EFF, sBase * 0.5);
   }
   const deltaHours = Math.max(
     (nowMs - reported.getTime()) / (1000 * 60 * 60),
@@ -21,10 +24,9 @@ function computeWEff(
   );
   const c = Math.max(0.3, Math.min(confidence, 1));
   const timeDecay = Math.exp(-deltaHours / TAU_HOURS);
-  return sBase * timeDecay * c;
+  return Math.max(MIN_W_EFF, sBase * timeDecay * c);
 }
 
-/** Matches server-side weights.enrich_incidents for map pins. */
 export function enrichIncidents(incidents: Incident[]): Incident[] {
   const nowMs = Date.now();
   return incidents.map((inc) => ({
