@@ -315,7 +315,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       const heatData: [number, number, number][] = [];
       for (const inc of incidents) {
         if (inc.lat == null || inc.lng == null) continue;
-        const weight = Math.max(inc.w_eff, 0.15);
+        const weight = Math.max(inc.w_eff, 0.2);
         if (isTripMode) {
           const dist = minDistToRouteKm([inc.lat, inc.lng], tripRouteGeometry);
           if (dist <= TRIP_PROXIMITY_KM) heatData.push([inc.lat, inc.lng, weight]);
@@ -325,8 +325,22 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       }
       if (heatData.length > 0) {
         const heat = L.heatLayer(heatData, {
-          radius: 55, blur: 35, maxZoom: 17, max: 1.0, minOpacity: 0.3,
-          gradient: { 0.0: "rgba(13,27,42,0)", 0.15: "#1b263b", 0.3: "#e09f3e", 0.5: "#e76f51", 0.7: "#e63946", 1.0: "#ff006e" },
+          radius: 80,
+          blur: 50,
+          maxZoom: 17,
+          max: 0.8,
+          minOpacity: 0.45,
+          gradient: {
+            0.0:  "rgba(0,0,40,0)",
+            0.1:  "#0a0a5c",
+            0.2:  "#1a1a8f",
+            0.35: "#3333cc",
+            0.5:  "#22b8cf",
+            0.6:  "#f0e130",
+            0.75: "#ff6b1a",
+            0.9:  "#ef2020",
+            1.0:  "#ff0040",
+          },
         });
         heat.addTo(map);
         heatRef.current = heat;
