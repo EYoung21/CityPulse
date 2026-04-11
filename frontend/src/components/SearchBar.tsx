@@ -83,6 +83,7 @@ interface Props {
   onSelectIncident?: (id: string) => void;
   selectedId?: string | null;
   tripProgress?: number;
+  onGpsStatusChange?: (status: "idle" | "loading" | "found" | "denied") => void;
 }
 
 export default function SearchBar({
@@ -96,6 +97,7 @@ export default function SearchBar({
   onSelectIncident,
   selectedId,
   tripProgress = 0,
+  onGpsStatusChange,
 }: Props) {
   const [view, setView] = useState<View>("search");
   const [searchQuery, setSearchQuery] = useState("");
@@ -149,7 +151,13 @@ export default function SearchBar({
   onPreviewPinsRef.current = onPreviewPins;
   const lastGpsEmitRef = useRef<{ t: number; lat: number; lng: number } | null>(null);
   const seededOriginQueryRef = useRef(false);
+  const onGpsStatusChangeRef = useRef(onGpsStatusChange);
+  onGpsStatusChangeRef.current = onGpsStatusChange;
   const { destinations: savedDests, canSave, addDestination, removeDestination } = useSavedDestinations();
+
+  useEffect(() => {
+    onGpsStatusChangeRef.current?.(gpsStatus);
+  }, [gpsStatus]);
 
   // Live GPS: watchPosition + throttle so we don't spam routing APIs on every tick.
   useEffect(() => {

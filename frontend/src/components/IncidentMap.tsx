@@ -44,6 +44,8 @@ interface Props {
   heatmapEnabled?: boolean;
   isDark?: boolean;
   onTripProgress?: (progress: number) => void;
+  /** When true and GPS works, trip vehicle follows real position snapped to the route. */
+  liveTripGps?: boolean;
 }
 
 function distToSegmentKm(
@@ -104,6 +106,117 @@ function minDistToRouteKm(
     if (minDist < 0.2) return minDist;
   }
   return minDist;
+}
+
+function haversineKmPair(a: [number, number], b: [number, number]): number {
+  const R = 6371;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const lat1 = toRad(a[0]);
+  const lat2 = toRad(b[0]);
+  const dLat = lat2 - lat1;
+  const dLng = toRad(b[1] - a[1]);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return R * (2 * Math.asin(Math.min(1, Math.sqrt(h))));
+}
+
+/** Closest point on one segment; t ∈ [0,1] along A→B (lat/lng linearization, fine for city scale). */
+function closestPointOnSegmentLL(
+  plat: number,
+  plng: number,
+  alat: number,
+  alng: number,
+  blat: number,
+  blng: number
+): { point: [number, number]; t: number } {
+  const dlat = blat - alat;
+  const dlng = blng - alng;
+  const len2 = dlat * dlat + dlng * dlng;
+  if (len2 < 1e-18) return { point: [alat, alng], t: 0 };
+  let t = ((plat - alat) * dlat + (plng - alng) * dlng) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return { point: [alat + t * dlat, alng + t * dlng], t };
+}
+
+/** Distance along polyline to closest point to (lat,lng), plus total route length. */
+function closestDistAlongOnRoute(
+  route: [number, number][],
+  lat: number,
+  lng: number
+): { distAlong: number; totalLen: number } {
+  let totalLen = 0;
+  const segLens: number[] = [];
+  for (let i = 0; i < route.length - 1; i++) {
+    const L = haversineKmPair(route[i], route[i + 1]);
+    segLens.push(L);
+    totalLen += L;
+  }
+
+  let bestDistAlong = 0;
+  let bestPerp = Infinity;
+  let acc = 0;
+  for (let i = 0; i < route.length - 1; i++) {
+    const a = route[i];
+    const b = route[i + 1];
+    const { point, t } = closestPointOnSegmentLL(lat, lng, a[0], a[1], b[0], b[1]);
+    const perp = haversineKmPair([lat, lng], point);
+    if (perp < bestPerp) {
+      bestPerp = perp;
+      bestDistAlong = acc + t * segLens[i];
+    }
+    acc += segLens[i];
+  }
+  return { distAlong: bestDistAlong, totalLen };
+}
+
+function splitRouteAtDistance(
+  route: [number, number][],
+  distAlongKm: number
+): { traveled: [number, number][]; remaining: [number, number][]; marker: [number, number] } {
+  const p0 = route[0];
+  if (route.length < 2 || !p0) {
+    const p: [number, number] = p0 ?? [0, 0];
+    return { traveled: [p], remaining: [p], marker: p };
+  }
+
+  let totalLen = 0;
+  for (let i = 0; i < route.length - 1; i++) {
+    totalLen += haversineKmPair(route[i], route[i + 1]);
+  }
+
+  if (distAlongKm <= 0) {
+    return { traveled: [route[0]], remaining: [...route], marker: route[0] };
+  }
+  if (distAlongKm >= totalLen - 1e-9) {
+    const last = route[route.length - 1];
+    return { traveled: [...route], remaining: [last], marker: last };
+  }
+
+  let acc = 0;
+  for (let i = 0; i < route.length - 1; i++) {
+    const a = route[i];
+    const b = route[i + 1];
+    const segLen = haversineKmPair(a, b);
+    if (acc + segLen >= distAlongKm) {
+      const t = segLen < 1e-12 ? 1 : (distAlongKm - acc) / segLen;
+      const tClamped = Math.max(0, Math.min(1, t));
+      const marker: [number, number] = [
+        a[0] + tClamped * (b[0] - a[0]),
+        a[1] + tClamped * (b[1] - a[1]),
+      ];
+      const traveled: [number, number][] = [...route.slice(0, i + 1)];
+      traveled.push(marker);
+      const tail = route.slice(i + 1);
+      const remaining: [number, number][] =
+        haversineKmPair(marker, tail[0]) < 0.02 ? [...tail] : [marker, ...tail];
+      return { traveled, remaining, marker };
+    }
+    acc += segLen;
+  }
+
+  const last = route[route.length - 1];
+  return { traveled: [...route], remaining: [last], marker: last };
 }
 
 function createCircleIcon(color: string, wEff: number, isHighSev: boolean, greyed: boolean): L.DivIcon {
@@ -217,8 +330,15 @@ const TRIP_PROXIMITY_KM = 1.0;
 const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 const LIGHT_TILES = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
 
+type TripLiveLayers = {
+  marker: L.Marker;
+  traveled: L.Polyline;
+  remaining: L.Polyline;
+  remainingGlow: L.Polyline;
+};
+
 const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
-  { incidents, selectedId, onSelectIncident, routes, onMapTap, userLocation, tripRouteGeometry, previewOrigin, previewDest, previewWaypoints, tripMode, heatmapEnabled = true, isDark = true, onTripProgress },
+  { incidents, selectedId, onSelectIncident, routes, onMapTap, userLocation, tripRouteGeometry, previewOrigin, previewDest, previewWaypoints, tripMode, heatmapEnabled = true, isDark = true, onTripProgress, liveTripGps = false },
   ref
 ) {
   const mapRef = useRef<L.Map | null>(null);
@@ -234,6 +354,10 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   /** Avoid map.fitBounds on every live GPS tick when only the origin (A) moves. */
   const previewFitDestRef = useRef<{ lat: number; lng: number } | null>(null);
   const previewFitWaypointsTailRef = useRef<string>("");
+  const tripLiveLayersRef = useRef<TripLiveLayers | null>(null);
+  const liveTripDistAlongRef = useRef(0);
+  const onTripProgressRef = useRef(onTripProgress);
+  onTripProgressRef.current = onTripProgress;
 
   useImperativeHandle(ref, () => ({
     flyTo: (lat: number, lng: number, zoom = 14) => {
@@ -554,13 +678,12 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }
   }, [userLocation, routes, previewOrigin]);
 
-  // Animated transport icon moving along the route with trail effect
+  // Trip: live GPS (snap to route) or simulated playback
   useEffect(() => {
     const map = mapRef.current;
     const trailLayer = trailLayerRef.current;
     if (!map) return;
 
-    // Clean up previous animation
     if (animFrameRef.current) {
       cancelAnimationFrame(animFrameRef.current);
       animFrameRef.current = null;
@@ -569,37 +692,87 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       map.removeLayer(transportMarkerRef.current);
       transportMarkerRef.current = null;
     }
+    tripLiveLayersRef.current = null;
+    liveTripDistAlongRef.current = 0;
     if (trailLayer) trailLayer.clearLayers();
 
     if (!tripMode || !tripRouteGeometry || tripRouteGeometry.length < 2) {
-      // Restore safe route polylines when animation stops
       for (const pl of safePolylinesRef.current) {
         (pl as L.Polyline).setStyle({ opacity: pl.options.weight === 16 ? 0.12 : 0.95 });
       }
       return;
     }
 
-    // Hide static safe route polylines — trail layer takes over
     for (const pl of safePolylinesRef.current) {
       (pl as L.Polyline).setStyle({ opacity: 0 });
     }
 
+    const geo = tripRouteGeometry;
     const icon = createTransportIcon(tripMode);
-    const marker = L.marker(tripRouteGeometry[0], {
+    const routeColor = "#22c55e";
+    const traveledColor = "#3b82f6";
+
+    // —— Live GPS trip: layers updated in a separate effect on userLocation ——
+    if (liveTripGps) {
+      const marker = L.marker(geo[0], {
+        icon,
+        zIndexOffset: 3000,
+        interactive: false,
+      }).addTo(map);
+      transportMarkerRef.current = marker;
+
+      const remainingLine = L.polyline(geo, {
+        color: routeColor,
+        weight: 6,
+        opacity: 0.95,
+        lineCap: "round",
+        lineJoin: "round",
+      }).addTo(trailLayer!);
+
+      const remainingGlow = L.polyline(geo, {
+        color: routeColor,
+        weight: 16,
+        opacity: 0.12,
+      }).addTo(trailLayer!);
+
+      const traveledLine = L.polyline([], {
+        color: traveledColor,
+        weight: 6,
+        opacity: 0.9,
+        lineCap: "round",
+        lineJoin: "round",
+      }).addTo(trailLayer!);
+
+      tripLiveLayersRef.current = {
+        marker,
+        traveled: traveledLine,
+        remaining: remainingLine,
+        remainingGlow,
+      };
+
+      return () => {
+        tripLiveLayersRef.current = null;
+        liveTripDistAlongRef.current = 0;
+        if (transportMarkerRef.current) {
+          map.removeLayer(transportMarkerRef.current);
+          transportMarkerRef.current = null;
+        }
+        trailLayer?.clearLayers();
+        for (const pl of safePolylinesRef.current) {
+          (pl as L.Polyline).setStyle({ opacity: pl.options.weight === 16 ? 0.12 : 0.95 });
+        }
+      };
+    }
+
+    // —— Demo: play along polyline when GPS unavailable ——
+    const marker = L.marker(geo[0], {
       icon,
       zIndexOffset: 3000,
       interactive: false,
     }).addTo(map);
     transportMarkerRef.current = marker;
 
-    // Determine route color based on whether it's a safe route
-    const routeColor = "#22c55e"; // green for safe route
-    const traveledColor = "#555";
-    const traveledOpacity = 0.35;
-
-    // Create the two polyline segments
-    // "Remaining" = bright path ahead of the icon
-    const remainingLine = L.polyline(tripRouteGeometry, {
+    const remainingLine = L.polyline(geo, {
       color: routeColor,
       weight: 6,
       opacity: 0.95,
@@ -607,30 +780,28 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       lineJoin: "round",
     }).addTo(trailLayer!);
 
-    // "Remaining" glow
-    const remainingGlow = L.polyline(tripRouteGeometry, {
+    const remainingGlow = L.polyline(geo, {
       color: routeColor,
       weight: 16,
       opacity: 0.12,
     }).addTo(trailLayer!);
 
-    // "Traveled" = greyed-out path behind the icon
     const traveledLine = L.polyline([], {
-      color: traveledColor,
+      color: "#555",
       weight: 6,
-      opacity: traveledOpacity,
+      opacity: 0.35,
       lineCap: "round",
       lineJoin: "round",
       dashArray: "8 6",
     }).addTo(trailLayer!);
 
     let idx = 0;
-    const totalPts = tripRouteGeometry.length;
+    const totalPts = geo.length;
     const speed = tripMode === "driving-car" ? 3 : tripMode === "cycling-regular" ? 2 : 1;
     const msPerStep = 80 / speed;
     let lastTime = 0;
     let lastTrailUpdate = -1;
-    const trailUpdateEvery = 3; // update trail polylines every N steps for performance
+    const trailUpdateEvery = 3;
 
     function step(time: number) {
       if (time - lastTime < msPerStep) {
@@ -639,29 +810,22 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       }
       lastTime = time;
       idx = (idx + 1) % totalPts;
-      const pt = tripRouteGeometry![idx];
+      const pt = geo[idx];
       marker.setLatLng(pt);
 
-      // Update trail segments periodically
       if (Math.abs(idx - lastTrailUpdate) >= trailUpdateEvery || idx === 0) {
         lastTrailUpdate = idx;
-
-        // Report progress to parent (0 = start, 1 = end)
         const progress = idx / (totalPts - 1);
-        onTripProgress?.(progress);
+        onTripProgressRef.current?.(progress);
 
         if (idx === 0) {
-          // Reset: full route ahead, nothing traveled
           traveledLine.setLatLngs([]);
-          remainingLine.setLatLngs(tripRouteGeometry!);
-          remainingGlow.setLatLngs(tripRouteGeometry!);
+          remainingLine.setLatLngs(geo);
+          remainingGlow.setLatLngs(geo);
         } else {
-          // Traveled portion (start -> current position) — greyed out
-          const traveled = tripRouteGeometry!.slice(0, idx + 1);
+          const traveled = geo.slice(0, idx + 1);
           traveledLine.setLatLngs(traveled);
-
-          // Remaining portion (current position -> end) — bright color
-          const remaining = tripRouteGeometry!.slice(idx);
+          const remaining = geo.slice(idx);
           remainingLine.setLatLngs(remaining);
           remainingGlow.setLatLngs(remaining);
         }
@@ -677,13 +841,40 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         map.removeLayer(transportMarkerRef.current);
         transportMarkerRef.current = null;
       }
-      if (trailLayer) trailLayer.clearLayers();
-      // Restore safe route polylines
+      trailLayer?.clearLayers();
       for (const pl of safePolylinesRef.current) {
         (pl as L.Polyline).setStyle({ opacity: pl.options.weight === 16 ? 0.12 : 0.95 });
       }
     };
-  }, [tripMode, tripRouteGeometry]);
+  }, [tripMode, tripRouteGeometry, liveTripGps]);
+
+  // Live trip: move vehicle and split polylines from GPS (SearchBar watchPosition)
+  useEffect(() => {
+    if (!liveTripGps || !tripMode || !tripRouteGeometry || tripRouteGeometry.length < 2) {
+      return;
+    }
+    if (!userLocation) return;
+
+    const layers = tripLiveLayersRef.current;
+    if (!layers) return;
+
+    const geo = tripRouteGeometry;
+    const snap = closestDistAlongOnRoute(geo, userLocation.lat, userLocation.lng);
+    liveTripDistAlongRef.current = Math.max(liveTripDistAlongRef.current, snap.distAlong);
+    const { traveled, remaining, marker } = splitRouteAtDistance(
+      geo,
+      liveTripDistAlongRef.current
+    );
+
+    layers.marker.setLatLng(marker);
+    layers.traveled.setLatLngs(traveled);
+    layers.remaining.setLatLngs(remaining);
+    layers.remainingGlow.setLatLngs(remaining);
+
+    const p =
+      snap.totalLen > 0 ? Math.min(1, liveTripDistAlongRef.current / snap.totalLen) : 0;
+    onTripProgressRef.current?.(p);
+  }, [userLocation, tripMode, tripRouteGeometry, liveTripGps]);
 
   return <div id="incident-map" className="w-full h-full" />;
 });

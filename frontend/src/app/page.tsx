@@ -114,6 +114,7 @@ export default function Home() {
   const [heatmapEnabled, setHeatmapEnabled] = useState(true);
   const [showTheme, setShowTheme] = useState(false);
   const [tripProgress, setTripProgress] = useState(0);
+  const [gpsStatus, setGpsStatus] = useState<"idle" | "loading" | "found" | "denied">("idle");
   const mapRef = useRef<MapHandle>(null);
 
   const loadFromApi = useCallback(async () => {
@@ -214,6 +215,7 @@ export default function Home() {
         heatmapEnabled={heatmapEnabled}
         isDark={isDark}
         onTripProgress={setTripProgress}
+        liveTripGps={gpsStatus === "found"}
       />
 
       {/* === LEFT SIDEBAR === */}
@@ -234,6 +236,7 @@ export default function Home() {
         onSelectIncident={setSelectedId}
         selectedId={selectedId}
         tripProgress={tripProgress}
+        onGpsStatusChange={setGpsStatus}
       />
 
       {/* === TOP CATEGORY PILLS === */}
