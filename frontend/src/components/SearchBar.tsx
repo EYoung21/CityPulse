@@ -44,6 +44,18 @@ import { getSeverity } from "@/lib/severity";
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
 
+/** Great-circle distance in meters (for GPS throttle). */
+function haversineM(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const x =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
 const MODES: { id: TransportMode; label: string; icon: typeof Footprints }[] = [
   { id: "foot-walking", label: "Walking", icon: Footprints },
   { id: "cycling-regular", label: "Cycling", icon: Bike },
@@ -129,32 +141,82 @@ export default function SearchBar({
   const [gpsStatus, setGpsStatus] = useState<"idle" | "loading" | "found" | "denied">("idle");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const previewAbortRef = useRef<AbortController | null>(null);
+  const destLocRef = useRef(destLoc);
+  destLocRef.current = destLoc;
+  const onUserLocationRef = useRef(onUserLocation);
+  onUserLocationRef.current = onUserLocation;
+  const onPreviewPinsRef = useRef(onPreviewPins);
+  onPreviewPinsRef.current = onPreviewPins;
+  const lastGpsEmitRef = useRef<{ t: number; lat: number; lng: number } | null>(null);
+  const seededOriginQueryRef = useRef(false);
   const { destinations: savedDests, canSave, addDestination, removeDestination } = useSavedDestinations();
 
+  // Live GPS: watchPosition + throttle so we don't spam routing APIs on every tick.
   useEffect(() => {
-    if (gpsStatus !== "idle") return;
-    if (!navigator.geolocation) { setGpsStatus("denied"); return; }
+    if (!navigator.geolocation) {
+      setGpsStatus("denied");
+      const fb = { lat: 39.9526, lng: -75.1652 };
+      setOriginLoc({ display_name: "Philadelphia Center", ...fb });
+      setOriginQuery("Philadelphia Center");
+      onPreviewPinsRef.current?.(fb, null);
+      onUserLocationRef.current?.(fb.lat, fb.lng);
+      return;
+    }
+
     setGpsStatus("loading");
-    navigator.geolocation.getCurrentPosition(
+
+    const emit = (loc: { lat: number; lng: number }) => {
+      const now = Date.now();
+      const prev = lastGpsEmitRef.current;
+      const movedM = prev ? haversineM(prev.lat, prev.lng, loc.lat, loc.lng) : Infinity;
+      if (prev && now - prev.t < 900 && movedM < 10) return;
+      lastGpsEmitRef.current = { t: now, ...loc };
+
+      setUserPos(loc);
+      setGpsStatus("found");
+      setOriginLoc((prevLoc) => {
+        if (prevLoc === null) {
+          if (!seededOriginQueryRef.current) {
+            seededOriginQueryRef.current = true;
+            setOriginQuery("Your location");
+          }
+          return { display_name: "Your location", ...loc };
+        }
+        if (prevLoc.display_name === "Your location") {
+          return { ...prevLoc, ...loc };
+        }
+        return prevLoc;
+      });
+
+      onUserLocationRef.current?.(loc.lat, loc.lng);
+      const d = destLocRef.current;
+      onPreviewPinsRef.current?.(
+        loc,
+        d ? { lat: d.lat, lng: d.lng } : null
+      );
+    };
+
+    const watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        setUserPos(loc);
-        setGpsStatus("found");
-        setOriginLoc({ display_name: "Your location", ...loc });
-        setOriginQuery("Your location");
-        onUserLocation?.(loc.lat, loc.lng);
-        onPreviewPins?.(loc, null);
+        emit({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        });
       },
       () => {
+        navigator.geolocation.clearWatch(watchId);
         setGpsStatus("denied");
         const fb = { lat: 39.9526, lng: -75.1652 };
         setOriginLoc({ display_name: "Philadelphia Center", ...fb });
         setOriginQuery("Philadelphia Center");
-        onPreviewPins?.(fb, null);
+        onPreviewPinsRef.current?.(fb, null);
+        onUserLocationRef.current?.(fb.lat, fb.lng);
       },
-      { enableHighAccuracy: true, timeout: 8000 }
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }
     );
-  }, [gpsStatus, onUserLocation, onPreviewPins]);
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, []);
 
   const geocode = useCallback(async (
     q: string,

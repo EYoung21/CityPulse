@@ -231,6 +231,9 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const animFrameRef = useRef<number | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const trailLayerRef = useRef<L.LayerGroup | null>(null);
+  /** Avoid map.fitBounds on every live GPS tick when only the origin (A) moves. */
+  const previewFitDestRef = useRef<{ lat: number; lng: number } | null>(null);
+  const previewFitWaypointsTailRef = useRef<string>("");
 
   useImperativeHandle(ref, () => ({
     flyTo: (lat: number, lng: number, zoom = 14) => {
@@ -476,10 +479,21 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         }).addTo(layer);
       }
       if (previewWaypoints.length >= 2) {
-        const bounds = L.latLngBounds(previewWaypoints.map(wp => L.latLng(wp.lat, wp.lng)));
-        map.fitBounds(bounds, { padding: [100, 100], maxZoom: 14 });
+        const tailSig = previewWaypoints
+          .slice(1)
+          .map((w) => `${w.lat.toFixed(5)},${w.lng.toFixed(5)}`)
+          .join("|");
+        const tailChanged = tailSig !== previewFitWaypointsTailRef.current;
+        if (tailChanged) {
+          previewFitWaypointsTailRef.current = tailSig;
+          const bounds = L.latLngBounds(previewWaypoints.map((wp) => L.latLng(wp.lat, wp.lng)));
+          map.fitBounds(bounds, { padding: [100, 100], maxZoom: 14 });
+        }
+      } else {
+        previewFitWaypointsTailRef.current = "";
       }
     } else {
+      previewFitWaypointsTailRef.current = "";
       if (previewOrigin) {
         L.marker([previewOrigin.lat, previewOrigin.lng], {
           icon: createBigPinIcon("A", "#22c55e", "rgba(34,197,94,0.5)"),
@@ -494,33 +508,50 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
           interactive: false,
         }).addTo(layer);
         if (previewOrigin) {
-          const bounds = L.latLngBounds([
-            L.latLng(previewOrigin.lat, previewOrigin.lng),
-            L.latLng(previewDest.lat, previewDest.lng),
-          ]);
-          map.fitBounds(bounds, { padding: [100, 100], maxZoom: 14 });
+          const destSame =
+            previewFitDestRef.current &&
+            previewFitDestRef.current.lat === previewDest.lat &&
+            previewFitDestRef.current.lng === previewDest.lng;
+          if (!destSame) {
+            previewFitDestRef.current = {
+              lat: previewDest.lat,
+              lng: previewDest.lng,
+            };
+            const bounds = L.latLngBounds([
+              L.latLng(previewOrigin.lat, previewOrigin.lng),
+              L.latLng(previewDest.lat, previewDest.lng),
+            ]);
+            map.fitBounds(bounds, { padding: [100, 100], maxZoom: 14 });
+          }
         }
+      } else {
+        previewFitDestRef.current = null;
       }
     }
   }, [previewOrigin, previewDest, previewWaypoints, routes]);
 
-  // User location "A" (before any location is selected)
+  // User location dot (search view only — directions use preview pin A instead)
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    if (userMarkerRef.current) {
-      map.removeLayer(userMarkerRef.current);
-      userMarkerRef.current = null;
+    if (!userLocation || routes || previewOrigin) {
+      if (userMarkerRef.current) {
+        map.removeLayer(userMarkerRef.current);
+        userMarkerRef.current = null;
+      }
+      return;
     }
 
-    if (!userLocation || routes || previewOrigin) return;
-
-    userMarkerRef.current = L.marker([userLocation.lat, userLocation.lng], {
-      icon: createUserIcon(),
-      zIndexOffset: 1500,
-      interactive: false,
-    }).addTo(map);
+    if (userMarkerRef.current) {
+      userMarkerRef.current.setLatLng([userLocation.lat, userLocation.lng]);
+    } else {
+      userMarkerRef.current = L.marker([userLocation.lat, userLocation.lng], {
+        icon: createUserIcon(),
+        zIndexOffset: 1500,
+        interactive: false,
+      }).addTo(map);
+    }
   }, [userLocation, routes, previewOrigin]);
 
   // Animated transport icon moving along the route with trail effect
