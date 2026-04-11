@@ -45,6 +45,9 @@ best match. Use "admin_or_noise" for non-dispatch content.
 location is discernible.
 - "confidence": float 0.0-1.0 — your confidence that the extraction is accurate. \
 Lower if the transcript is garbled, ambiguous, or partially inaudible.
+- "lat": float or null — approximate latitude of the incident location in \
+Philadelphia (WGS-84). Use your knowledge of Philly geography. null if unknown.
+- "lng": float or null — approximate longitude. null if unknown.
 
 Rules:
 - Output ONLY valid JSON. No markdown, no explanation, no extra text.
@@ -52,6 +55,8 @@ Rules:
 severity_category to "admin_or_noise".
 - Prefer specific intersections ("5th and Market") over vague areas ("downtown").
 - If multiple incidents are mentioned, extract the most severe one.
+- For lat/lng, use your best estimate for Philadelphia locations. Philly center is \
+roughly 39.9526, -75.1652. Only provide coordinates you are reasonably confident about.
 """
 
 
@@ -117,9 +122,21 @@ async def extract_incident(raw_text: str) -> Optional[dict]:
     if cat not in SEVERITY_CATEGORIES:
         raise LLMError(f"Invalid severity_category '{cat}'. Must be one of {SEVERITY_CATEGORIES}")
 
+    llm_lat = data.get("lat")
+    llm_lng = data.get("lng")
+    if llm_lat is not None and llm_lng is not None:
+        try:
+            llm_lat, llm_lng = float(llm_lat), float(llm_lng)
+            if not (39.85 <= llm_lat <= 40.15 and -75.30 <= llm_lng <= -74.94):
+                llm_lat, llm_lng = None, None
+        except (ValueError, TypeError):
+            llm_lat, llm_lng = None, None
+
     return {
         "is_dispatch_relevant": True,
         "severity_category": cat,
         "location_text": data.get("location_text"),
         "confidence": float(data.get("confidence", 0.7)),
+        "llm_lat": llm_lat,
+        "llm_lng": llm_lng,
     }

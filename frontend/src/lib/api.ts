@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8765";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 export interface Incident {
   id: string;
@@ -68,5 +68,11 @@ export async function fetchHealth(): Promise<HealthResponse> {
 export async function simulateIncident(): Promise<unknown> {
   const res = await fetch(`${API_BASE}/api/simulate`, { method: "POST" });
   if (!res.ok) throw new Error(`Simulate failed: ${res.status}`);
+  return res.json();
+}
+
+export async function seedDemoData(): Promise<{ status: string; count: number }> {
+  const res = await fetch(`${API_BASE}/api/seed`, { method: "POST" });
+  if (!res.ok) throw new Error(`Seed failed: ${res.status}`);
   return res.json();
 }
