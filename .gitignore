@@ -13,3 +13,17 @@ venv/
 # Backup files
 *.bak
 *.backup
+
+# SQLite database (generated at runtime)
+philly_pulse/data/philly_pulse.db
+philly_pulse/data/philly_pulse.db-shm
+philly_pulse/data/philly_pulse.db-wal
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Environment
+.env
+.env.local
