@@ -416,7 +416,7 @@ export default function Home() {
             <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
               {new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })} EST
             </span>
-            <span className="text-[10px] font-medium" style={{ color: "var(--panel-text-muted)", opacity: 0.5 }}>PHLPulse</span>
+            <img src="/logo.png" alt="" className="w-4 h-4 opacity-50" />
           </div>
         </div>
       </div>
