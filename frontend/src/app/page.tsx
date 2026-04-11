@@ -258,7 +258,7 @@ export default function Home() {
           {CATEGORY_PILLS.map((pill) => {
             const Icon = pill.icon;
             const isActive = pill.cats.some((c) => activeCats.has(c));
-            const count = filteredIncidents.filter(i => pill.cats.includes(i.severity_category)).length;
+            const count = filteredIncidents.filter(i => (pill.cats as readonly string[]).includes(i.severity_category)).length;
             return (
               <button
                 key={pill.label}

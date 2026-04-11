@@ -36,6 +36,26 @@ function mapDoc(id: string, data: Record<string, unknown>): Incident {
         ? null
         : String(data.inhibitor_reason),
     w_eff: 0,
+    verification_score:
+      data.verification_score === null || data.verification_score === undefined
+        ? null
+        : Number(data.verification_score),
+    verification_status:
+      data.verification_status === null || data.verification_status === undefined
+        ? null
+        : String(data.verification_status),
+    verification_summary:
+      data.verification_summary === null || data.verification_summary === undefined
+        ? null
+        : String(data.verification_summary),
+    verification_checks:
+      data.verification_checks === null || data.verification_checks === undefined
+        ? null
+        : String(data.verification_checks),
+    verified_at:
+      data.verified_at === null || data.verified_at === undefined
+        ? null
+        : String(data.verified_at),
   };
 }
 
