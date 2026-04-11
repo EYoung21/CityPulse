@@ -9,8 +9,6 @@ import {
   Car,
   Navigation,
   ShieldCheck,
-  ShieldAlert,
-  ShieldQuestion,
   AlertTriangle,
   Loader2,
   LocateFixed,
@@ -391,16 +389,6 @@ export default function SearchBar({
               {recentIncidents.map((inc) => {
                 const sev = getSeverity(inc.severity_category);
                 const isSelected = selectedId === inc.id;
-                const vStatus = inc.verification_status || "pending";
-                const vBadge = vStatus === "verified"
-                  ? { icon: ShieldCheck, color: "text-green-500", tip: "Verified" }
-                  : vStatus === "likely"
-                  ? { icon: Shield, color: "text-blue-500", tip: "Likely Valid" }
-                  : vStatus === "suspicious"
-                  ? { icon: ShieldAlert, color: "text-red-400", tip: "Suspicious" }
-                  : vStatus === "unverified"
-                  ? { icon: ShieldQuestion, color: "text-amber-500", tip: "Unverified" }
-                  : null;
                 return (
                   <div
                     key={inc.id}
@@ -419,14 +407,6 @@ export default function SearchBar({
                         <span className="text-[10px]" style={{ color: "var(--panel-text-secondary)" }}>
                           {new Date(inc.reported_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
                         </span>
-                        {vBadge && (
-                          <>
-                            <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>·</span>
-                            <span className={`flex items-center gap-0.5 ${vBadge.color}`} title={vBadge.tip}>
-                              <vBadge.icon className="w-3 h-3" />
-                            </span>
-                          </>
-                        )}
                       </div>
                     </div>
                     <button

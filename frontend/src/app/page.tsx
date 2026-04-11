@@ -513,11 +513,6 @@ export default function Home() {
             <IncidentDetail
               incident={selected}
               onClose={() => setSelectedId(null)}
-              onIncidentUpdate={(updated) => {
-                setIncidents((prev) =>
-                  prev.map((i) => (i.id === updated.id ? updated : i))
-                );
-              }}
             />
           </motion.div>
         )}

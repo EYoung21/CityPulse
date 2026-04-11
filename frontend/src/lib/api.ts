@@ -14,30 +14,6 @@ export interface Incident {
   inhibitor_status: string;
   inhibitor_reason: string | null;
   w_eff: number;
-  verification_score: number | null;
-  verification_status: string | null;
-  verification_summary: string | null;
-  verification_checks: string | null;
-  verified_at: string | null;
-}
-
-export interface VerificationCheck {
-  source: string;
-  passed: boolean;
-  score: number;
-  detail: string;
-}
-
-export interface VerificationResponse {
-  status: string;
-  incident_id: string;
-  verification: {
-    score: number;
-    status: string;
-    summary: string;
-    checks: VerificationCheck[];
-  };
-  incident: Incident;
 }
 
 export interface HealthResponse {
@@ -98,17 +74,5 @@ export async function simulateIncident(): Promise<unknown> {
 export async function seedDemoData(): Promise<{ status: string; count: number }> {
   const res = await fetch(`${API_BASE}/api/seed`, { method: "POST" });
   if (!res.ok) throw new Error(`Seed failed: ${res.status}`);
-  return res.json();
-}
-
-export async function verifyIncident(id: string): Promise<VerificationResponse> {
-  const res = await fetch(`${API_BASE}/api/verify/${id}`, { method: "POST" });
-  if (!res.ok) throw new Error(`Verify failed: ${res.status}`);
-  return res.json();
-}
-
-export async function verifyAll(): Promise<{ verified_count: number; results: { id: string; score: number; status: string }[] }> {
-  const res = await fetch(`${API_BASE}/api/verify-all`, { method: "POST" });
-  if (!res.ok) throw new Error(`Verify-all failed: ${res.status}`);
   return res.json();
 }
