@@ -5,9 +5,10 @@ import {
   onSnapshot,
   orderBy,
   query,
+  where,
 } from "firebase/firestore";
 import { getFirebaseApp } from "@/lib/firebase";
-import type { Incident } from "@/lib/api";
+import type { Incident, Extraction } from "@/lib/api";
 import { enrichIncidents } from "@/lib/incident-weights";
 
 const COLLECTION = "incidents";
@@ -55,6 +56,10 @@ function mapDoc(id: string, data: Record<string, unknown>): Incident {
       data.audio_clip === null || data.audio_clip === undefined
         ? null
         : String(data.audio_clip),
+    feed_id:
+      data.feed_id === null || data.feed_id === undefined
+        ? null
+        : String(data.feed_id),
   };
 }
 
@@ -83,6 +88,77 @@ export function subscribeIncidents(
         }
       });
       onData(enrichIncidents(list));
+    },
+    (err) => {
+      onError?.(err instanceof Error ? err : new Error(String(err)));
+    }
+  );
+}
+
+function mapExtraction(id: string, data: Record<string, unknown>): Extraction {
+  return {
+    id,
+    feed_id: String(data.feed_id ?? "unknown"),
+    raw_text: String(data.raw_text ?? ""),
+    reported_at: toISOString(data.reported_at),
+    audio_clip:
+      data.audio_clip === null || data.audio_clip === undefined
+        ? null
+        : String(data.audio_clip),
+    llm_relevant: Boolean(data.llm_relevant),
+    llm_category:
+      data.llm_category === null || data.llm_category === undefined
+        ? null
+        : String(data.llm_category),
+    llm_confidence: Number(data.llm_confidence ?? 0),
+    llm_location_text:
+      data.llm_location_text === null || data.llm_location_text === undefined
+        ? null
+        : String(data.llm_location_text),
+    inhibitor_status:
+      data.inhibitor_status === null || data.inhibitor_status === undefined
+        ? null
+        : String(data.inhibitor_status),
+    inhibitor_reason:
+      data.inhibitor_reason === null || data.inhibitor_reason === undefined
+        ? null
+        : String(data.inhibitor_reason),
+    geocode_status:
+      data.geocode_status === null || data.geocode_status === undefined
+        ? null
+        : String(data.geocode_status),
+    incident_id:
+      data.incident_id === null || data.incident_id === undefined
+        ? null
+        : String(data.incident_id),
+  };
+}
+
+export function subscribeExtractions(
+  feedId: string,
+  since: Date,
+  until: Date,
+  onData: (extractions: Extraction[]) => void,
+  onError?: (e: Error) => void
+): () => void {
+  const db = getFirestore(getFirebaseApp());
+  const q = query(
+    collection(db, "extractions"),
+    where("feed_id", "==", feedId),
+    where("reported_at", ">=", since.toISOString()),
+    where("reported_at", "<=", until.toISOString()),
+    orderBy("reported_at", "desc"),
+    limitFn(500)
+  );
+
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: Extraction[] = [];
+      snap.forEach((doc) => {
+        list.push(mapExtraction(doc.id, doc.data()));
+      });
+      onData(list);
     },
     (err) => {
       onError?.(err instanceof Error ? err : new Error(String(err)));

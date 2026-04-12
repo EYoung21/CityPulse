@@ -63,6 +63,7 @@ def insert_incident(
     inhibitor_reason: Optional[str] = None,
     reported_at: Optional[str] = None,
     audio_clip: Optional[str] = None,
+    feed_id: Optional[str] = None,
 ) -> dict:
     db = _ensure_client()
     incident_id = uuid.uuid4().hex[:12]
@@ -82,11 +83,49 @@ def insert_incident(
         "inhibitor_status": inhibitor_status,
         "inhibitor_reason": inhibitor_reason,
         "audio_clip": audio_clip,
+        "feed_id": feed_id,
     }
     ref = db.collection("incidents").document(incident_id)
     ref.set(payload)
     snap = ref.get()
     return _doc_to_row(snap.id, snap.to_dict() or {})
+
+
+def insert_extraction(
+    feed_id: str,
+    raw_text: str,
+    reported_at: Optional[str] = None,
+    audio_clip: Optional[str] = None,
+    llm_relevant: bool = False,
+    llm_category: Optional[str] = None,
+    llm_confidence: float = 0.0,
+    llm_location_text: Optional[str] = None,
+    inhibitor_status: Optional[str] = None,
+    inhibitor_reason: Optional[str] = None,
+    geocode_status: Optional[str] = None,
+    incident_id: Optional[str] = None,
+) -> dict:
+    db = _ensure_client()
+    eid = uuid.uuid4().hex[:12]
+    if reported_at is None:
+        reported_at = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "feed_id": feed_id,
+        "raw_text": raw_text,
+        "reported_at": reported_at,
+        "audio_clip": audio_clip,
+        "llm_relevant": llm_relevant,
+        "llm_category": llm_category,
+        "llm_confidence": llm_confidence,
+        "llm_location_text": llm_location_text,
+        "inhibitor_status": inhibitor_status,
+        "inhibitor_reason": inhibitor_reason,
+        "geocode_status": geocode_status,
+        "incident_id": incident_id,
+    }
+    ref = db.collection("extractions").document(eid)
+    ref.set(payload)
+    return {"id": eid, **payload}
 
 
 def get_incident(incident_id: str) -> Optional[dict]:

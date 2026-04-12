@@ -5,6 +5,10 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false;
     }
+    match /extractions/{extractionId} {
+      allow read: if true;
+      allow write: if false;
+    }
     match /users/{userId} {
       allow read: if request.auth != null && request.auth.uid == userId;
       allow create, update: if request.auth != null

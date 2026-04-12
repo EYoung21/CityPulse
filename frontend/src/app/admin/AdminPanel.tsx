@@ -1,11 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import {
   ArrowLeft,
-  Radio,
-  FileText,
-  Brain,
   Play,
   Pause,
   Volume2,
@@ -17,15 +14,15 @@ import {
   AlertTriangle,
   MapPin,
   Shield,
-  ChevronDown,
-  ChevronRight,
-  Loader2,
+  Brain,
+  Radio,
 } from "lucide-react";
 import {
   useAdminStream,
-  type PipelineGroup,
   type FeedInfo,
 } from "@/hooks/useAdminStream";
+import { subscribeExtractions } from "@/lib/firestore";
+import type { Extraction } from "@/lib/api";
 import AuthBar from "@/components/AuthBar";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -34,19 +31,29 @@ interface Props {
   onBack: () => void;
 }
 
-// ── Audio Feed Card ─────────────────────────────────────────────────
+const TIME_FILTERS = [
+  { label: "1h", hours: 1 },
+  { label: "6h", hours: 6 },
+  { label: "24h", hours: 24 },
+  { label: "7d", hours: 24 * 7 },
+  { label: "30d", hours: 24 * 30 },
+  { label: "90d", hours: 24 * 90 },
+  { label: "6mo", hours: 24 * 180 },
+  { label: "All", hours: 0 },
+] as const;
 
-function AudioFeedCard({
-  feed,
-  activeFeedIds,
-}: {
-  feed: FeedInfo;
-  activeFeedIds: Set<string>;
-}) {
+function confidenceColor(c: number): string {
+  if (c >= 0.7) return "#22c55e";
+  if (c >= 0.4) return "#eab308";
+  return "#ef4444";
+}
+
+// ── Live Audio Header ────────────────────────────────────────────────
+
+function LiveAudioHeader({ feed }: { feed: FeedInfo }) {
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const isActive = activeFeedIds.has(feed.feed_id);
 
   const toggle = () => {
     if (!audioRef.current) {
@@ -77,361 +84,338 @@ function AudioFeedCard({
 
   return (
     <div
-      className="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all"
+      className="flex items-center gap-3 px-4 py-3 shrink-0"
       style={{
         background: playing
           ? "rgba(59,130,246,0.08)"
           : "var(--panel-input-bg, rgba(255,255,255,0.04))",
+        borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.08))",
+      }}
+    >
+      <Radio className="w-4 h-4 text-blue-400" />
+      <span className="text-sm font-medium" style={{ color: "var(--panel-text)" }}>
+        Live: {feed.label}
+      </span>
+      <span className="text-xs" style={{ color: "var(--panel-text-muted)" }}>
+        Feed {feed.feed_id}
+      </span>
+
+      <div className="ml-auto flex items-center gap-2">
+        <button
+          onClick={toggleMute}
+          className="p-1.5 rounded opacity-60 hover:opacity-100 transition-opacity"
+          style={{ color: "var(--panel-text-muted)" }}
+        >
+          {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+        </button>
+        <button
+          onClick={toggle}
+          className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all ${
+            playing
+              ? "bg-blue-500 text-white"
+              : "bg-white/5 hover:bg-white/10"
+          }`}
+          style={!playing ? { color: "var(--panel-text-secondary)" } : {}}
+        >
+          {playing ? (
+            <>
+              <Pause className="w-3.5 h-3.5" /> Pause
+            </>
+          ) : (
+            <>
+              <Play className="w-3.5 h-3.5" /> Play Live
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Extraction Card ──────────────────────────────────────────────────
+
+function ExtractionCard({ extraction }: { extraction: Extraction }) {
+  const [clipPlaying, setClipPlaying] = useState(false);
+  const clipRef = useRef<HTMLAudioElement | null>(null);
+
+  const time = (() => {
+    try {
+      const d = new Date(extraction.reported_at);
+      if (Number.isNaN(d.getTime())) return "";
+      return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    } catch {
+      return "";
+    }
+  })();
+
+  const date = (() => {
+    try {
+      const d = new Date(extraction.reported_at);
+      if (Number.isNaN(d.getTime())) return "";
+      return d.toLocaleDateString([], { month: "short", day: "numeric" });
+    } catch {
+      return "";
+    }
+  })();
+
+  const playClip = () => {
+    if (!extraction.audio_clip) return;
+    if (!clipRef.current) {
+      const a = new Audio(`${API_BASE}/api/audio/${extraction.audio_clip}`);
+      a.addEventListener("ended", () => setClipPlaying(false));
+      a.addEventListener("error", () => setClipPlaying(false));
+      clipRef.current = a;
+    }
+    if (clipPlaying) {
+      clipRef.current.pause();
+      clipRef.current.currentTime = 0;
+      setClipPlaying(false);
+    } else {
+      clipRef.current.play().catch(() => setClipPlaying(false));
+      setClipPlaying(true);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      clipRef.current?.pause();
+    };
+  }, []);
+
+  const dimmed = !extraction.llm_relevant;
+
+  return (
+    <div
+      className={`rounded-lg overflow-hidden transition-all ${dimmed ? "opacity-60" : ""}`}
+      style={{
+        background: "var(--panel-input-bg, rgba(255,255,255,0.04))",
         border: `1px solid ${
-          playing
-            ? "rgba(59,130,246,0.2)"
-            : "var(--panel-border, rgba(255,255,255,0.06))"
+          dimmed
+            ? "var(--panel-border, rgba(255,255,255,0.04))"
+            : "var(--panel-border, rgba(255,255,255,0.08))"
         }`,
       }}
     >
-      <div className="relative">
-        <div
-          className={`w-2.5 h-2.5 rounded-full ${
-            isActive ? "bg-green-500 animate-pulse" : "bg-gray-600"
-          }`}
-        />
-      </div>
-
-      <div className="flex-1 min-w-0">
-        <p
-          className="text-xs font-medium truncate"
-          style={{ color: "var(--panel-text, #e5e7eb)" }}
-        >
-          {feed.label}
-        </p>
-        <p
-          className="text-[10px]"
-          style={{ color: "var(--panel-text-muted, #6b7280)" }}
-        >
-          Feed {feed.feed_id}
-        </p>
-      </div>
-
-      <button
-        onClick={toggleMute}
-        className="p-1 rounded opacity-50 hover:opacity-100 transition-opacity"
-        style={{ color: "var(--panel-text-muted)" }}
-      >
-        {muted ? (
-          <VolumeX className="w-3.5 h-3.5" />
-        ) : (
-          <Volume2 className="w-3.5 h-3.5" />
-        )}
-      </button>
-
-      <button
-        onClick={toggle}
-        className={`p-1.5 rounded-full transition-all ${
-          playing
-            ? "bg-blue-500 text-white"
-            : "bg-white/5 hover:bg-white/10"
-        }`}
-        style={!playing ? { color: "var(--panel-text-secondary)" } : {}}
-      >
-        {playing ? (
-          <Pause className="w-3.5 h-3.5" />
-        ) : (
-          <Play className="w-3.5 h-3.5" />
-        )}
-      </button>
-    </div>
-  );
-}
-
-// ── Transcript Entry ────────────────────────────────────────────────
-
-const FEED_COLORS: Record<string, string> = {
-  "4603": "#3b82f6",
-  "17310": "#8b5cf6",
-  "21297": "#06b6d4",
-  "45495": "#f97316",
-  "18836": "#22c55e",
-  "15102": "#ef4444",
-  "15195": "#ec4899",
-  "34250": "#eab308",
-  "15747": "#f43f5e",
-  "44308": "#14b8a6",
-};
-
-function feedColor(id: string) {
-  return FEED_COLORS[id] || "#6b7280";
-}
-
-function TranscriptEntry({
-  group,
-  feedLabel,
-}: {
-  group: PipelineGroup;
-  feedLabel: string;
-}) {
-  const text = (group.transcript?.text as string) || "";
-  const ts = group.transcript?.timestamp as string | undefined;
-  const color = feedColor(group.feed_id);
-
-  return (
-    <div
-      className="px-3 py-2.5 transition-colors"
-      style={{ borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.06))" }}
-    >
-      <div className="flex items-center gap-2 mb-1">
-        <div
-          className="w-2 h-2 rounded-full shrink-0"
-          style={{ backgroundColor: color }}
-        />
-        <span className="text-[10px] font-semibold" style={{ color }}>
-          {feedLabel}
+      {/* Header: timestamp + audio */}
+      <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: "1px solid var(--panel-border)" }}>
+        <span className="text-xs font-medium" style={{ color: "var(--panel-text)" }}>
+          {time}
         </span>
-        {ts && (
-          <span
-            className="text-[10px] ml-auto"
-            style={{ color: "var(--panel-text-muted)" }}
-          >
-            {ts}
+        <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+          {date}
+        </span>
+
+        {!extraction.llm_relevant && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-500/20 text-gray-400 font-medium">
+            Not Relevant
           </span>
         )}
+
+        <div className="ml-auto">
+          {extraction.audio_clip ? (
+            <button
+              onClick={playClip}
+              className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-all ${
+                clipPlaying
+                  ? "bg-blue-500 text-white"
+                  : "bg-white/5 hover:bg-white/10"
+              }`}
+              style={!clipPlaying ? { color: "var(--panel-text-secondary)" } : {}}
+            >
+              {clipPlaying ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+              Audio
+            </button>
+          ) : (
+            <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+              No audio
+            </span>
+          )}
+        </div>
       </div>
-      <p className="text-xs leading-relaxed" style={{ color: "var(--panel-text, #e5e7eb)" }}>
-        {text}
-      </p>
+
+      {/* Transcript text */}
+      <div className="px-3 py-2.5">
+        <p className="text-xs leading-relaxed" style={{ color: "var(--panel-text, #e5e7eb)" }}>
+          {extraction.raw_text}
+        </p>
+      </div>
+
+      {/* LLM Decision + Pipeline Row */}
+      <div
+        className="px-3 py-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px]"
+        style={{
+          borderTop: "1px solid var(--panel-border)",
+          background: "rgba(0,0,0,0.15)",
+        }}
+      >
+        {/* Relevant status */}
+        <div className="flex items-center gap-1.5">
+          <Brain className="w-3 h-3 text-purple-400" />
+          <span style={{ color: "var(--panel-text-muted)" }}>LLM:</span>
+          <span style={{ color: extraction.llm_relevant ? "#22c55e" : "#6b7280" }}>
+            {extraction.llm_relevant ? "Relevant" : "Rejected"}
+            {extraction.llm_relevant ? " \u2713" : " \u2717"}
+          </span>
+        </div>
+
+        {/* Category */}
+        {extraction.llm_category && (
+          <div className="flex items-center gap-1.5">
+            <span style={{ color: "var(--panel-text-muted)" }}>Category:</span>
+            <span style={{ color: "var(--panel-text)" }}>
+              {extraction.llm_category.replace(/_/g, " ")}
+            </span>
+          </div>
+        )}
+
+        {/* Confidence */}
+        {extraction.llm_confidence > 0 && (
+          <div className="flex items-center gap-1.5">
+            <span style={{ color: "var(--panel-text-muted)" }}>Conf:</span>
+            <span style={{ color: confidenceColor(extraction.llm_confidence) }}>
+              {(extraction.llm_confidence * 100).toFixed(0)}%
+            </span>
+          </div>
+        )}
+
+        {/* Inhibitor */}
+        {extraction.inhibitor_status && (
+          <div className="flex items-center gap-1.5">
+            <Shield className="w-3 h-3" style={{ color: "var(--panel-text-muted)" }} />
+            <span style={{ color: "var(--panel-text-muted)" }}>Inhibitor:</span>
+            <span
+              style={{
+                color:
+                  extraction.inhibitor_status === "passed"
+                    ? "#22c55e"
+                    : extraction.inhibitor_status === "blocked"
+                      ? "#ef4444"
+                      : "#eab308",
+              }}
+            >
+              {extraction.inhibitor_status}
+            </span>
+          </div>
+        )}
+
+        {/* Geocode */}
+        {extraction.geocode_status && (
+          <div className="flex items-center gap-1.5">
+            <MapPin className="w-3 h-3" style={{ color: "var(--panel-text-muted)" }} />
+            <span style={{ color: "var(--panel-text-muted)" }}>Geocode:</span>
+            <span
+              style={{
+                color:
+                  extraction.geocode_status === "success"
+                    ? "#22c55e"
+                    : extraction.geocode_status === "llm_fallback"
+                      ? "#eab308"
+                      : "#6b7280",
+              }}
+            >
+              {extraction.geocode_status}
+            </span>
+          </div>
+        )}
+
+        {/* Stored indicator */}
+        {extraction.incident_id ? (
+          <div className="flex items-center gap-1.5">
+            <CheckCircle2 className="w-3 h-3 text-green-500" />
+            <span style={{ color: "#22c55e" }}>Stored</span>
+          </div>
+        ) : extraction.llm_relevant && extraction.inhibitor_status === "blocked" ? (
+          <div className="flex items-center gap-1.5">
+            <XCircle className="w-3 h-3 text-red-500" />
+            <span style={{ color: "#ef4444" }}>Blocked</span>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
 
-// ── Pipeline Card ───────────────────────────────────────────────────
+// ── Feed Tab Content ─────────────────────────────────────────────────
 
-function confidenceColor(c: number): string {
-  if (c >= 0.7) return "#22c55e";
-  if (c >= 0.4) return "#eab308";
-  return "#ef4444";
-}
+function FeedTabContent({ feed }: { feed: FeedInfo }) {
+  const [timeFilter, setTimeFilter] = useState(24);
+  const [extractions, setExtractions] = useState<Extraction[]>([]);
+  const [loading, setLoading] = useState(true);
 
-function PipelineCard({
-  group,
-  feedLabel,
-}: {
-  group: PipelineGroup;
-  feedLabel: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const llm = group.llm_result;
-  const inh = group.inhibitor_result;
-  const geo = group.geocode_result;
-  const stored = group.incident_stored;
-  const isRelevant = llm?.is_relevant as boolean | undefined;
-  const confidence = (llm?.confidence as number) ?? 0;
-  const category = (llm?.category as string) || "";
-  const locationText = (llm?.location_text as string) || "";
-  const text = (group.transcript?.text as string) || "";
+  useEffect(() => {
+    setLoading(true);
+    const now = new Date();
+    const since =
+      timeFilter === 0
+        ? new Date(0)
+        : new Date(now.getTime() - timeFilter * 60 * 60 * 1000);
 
-  let outcomeLabel = "Processing...";
-  let outcomeColor = "var(--panel-text-muted)";
-  let OutcomeIcon = Loader2;
+    const unsub = subscribeExtractions(
+      feed.feed_id,
+      since,
+      now,
+      (data) => {
+        setExtractions(data);
+        setLoading(false);
+      },
+      () => setLoading(false)
+    );
 
-  if (stored) {
-    const outcome = stored.outcome as string;
-    if (outcome === "created") {
-      outcomeLabel = "Stored";
-      outcomeColor = "#22c55e";
-      OutcomeIcon = CheckCircle2;
-    } else if (outcome === "blocked") {
-      outcomeLabel = "Blocked";
-      outcomeColor = "#ef4444";
-      OutcomeIcon = XCircle;
-    }
-  } else if (llm && isRelevant === false) {
-    outcomeLabel = "Rejected";
-    outcomeColor = "#6b7280";
-    OutcomeIcon = XCircle;
-  } else if (group.llm_error) {
-    outcomeLabel = "LLM Error";
-    outcomeColor = "#ef4444";
-    OutcomeIcon = AlertTriangle;
-  }
+    return unsub;
+  }, [feed.feed_id, timeFilter]);
 
   return (
-    <div
-      className="rounded-lg overflow-hidden transition-all"
-      style={{
-        background: "var(--panel-input-bg, rgba(255,255,255,0.04))",
-        border: "1px solid var(--panel-border, rgba(255,255,255,0.06))",
-      }}
-    >
-      {/* Header */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:brightness-110"
+    <div className="flex flex-col flex-1 overflow-hidden">
+      {/* Live audio player */}
+      <LiveAudioHeader feed={feed} />
+
+      {/* Date range filter */}
+      <div
+        className="flex items-center gap-1.5 px-4 py-2.5 shrink-0 overflow-x-auto"
+        style={{ borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.08))" }}
       >
-        <div
-          className="w-2 h-2 rounded-full shrink-0"
-          style={{ backgroundColor: feedColor(group.feed_id) }}
-        />
-        <span
-          className="text-[10px] font-semibold shrink-0"
-          style={{ color: feedColor(group.feed_id) }}
-        >
-          {feedLabel}
+        <span className="text-[10px] font-semibold uppercase mr-2" style={{ color: "var(--panel-text-muted)" }}>
+          Range:
         </span>
-        <span
-          className="text-xs truncate flex-1"
-          style={{ color: "var(--panel-text, #e5e7eb)" }}
-        >
-          {text.slice(0, 60)}
-          {text.length > 60 ? "..." : ""}
+        {TIME_FILTERS.map((tf) => (
+          <button
+            key={tf.label}
+            onClick={() => setTimeFilter(tf.hours)}
+            className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all whitespace-nowrap ${
+              timeFilter === tf.hours
+                ? "bg-blue-500 text-white"
+                : "bg-white/5 hover:bg-white/10"
+            }`}
+            style={
+              timeFilter !== tf.hours
+                ? { color: "var(--panel-text-secondary)" }
+                : {}
+            }
+          >
+            {tf.label}
+          </button>
+        ))}
+        <span className="ml-auto text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+          {extractions.length} extractions
         </span>
-        <OutcomeIcon
-          className={`w-3.5 h-3.5 shrink-0 ${outcomeLabel === "Processing..." ? "animate-spin" : ""}`}
-          style={{ color: outcomeColor }}
-        />
-        {expanded ? (
-          <ChevronDown className="w-3 h-3 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
-        ) : (
-          <ChevronRight className="w-3 h-3 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
-        )}
-      </button>
+      </div>
 
-      {expanded && (
-        <div className="px-3 pb-3 space-y-2" style={{ borderTop: "1px solid var(--panel-border)" }}>
-          {/* Transcript */}
-          <div className="pt-2">
-            <p className="text-[10px] font-semibold uppercase mb-1" style={{ color: "var(--panel-text-muted)" }}>
-              Transcript
-            </p>
-            <p className="text-xs leading-relaxed" style={{ color: "var(--panel-text-secondary, #9ca3af)" }}>
-              {text}
-            </p>
+      {/* Extraction list */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        {loading && (
+          <div className="text-center py-12 text-xs" style={{ color: "var(--panel-text-muted)" }}>
+            Loading extractions...
           </div>
-
-          {/* LLM Result */}
-          {llm && (
-            <div
-              className="rounded-lg p-2.5"
-              style={{ background: "rgba(0,0,0,0.2)" }}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <Brain className="w-3.5 h-3.5 text-purple-400" />
-                <span className="text-[10px] font-semibold text-purple-400 uppercase">
-                  LLM Decision
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 text-[11px]">
-                <div>
-                  <span style={{ color: "var(--panel-text-muted)" }}>Relevant: </span>
-                  <span style={{ color: isRelevant ? "#22c55e" : "#6b7280" }}>
-                    {isRelevant ? "Yes" : "No"}
-                  </span>
-                </div>
-                {isRelevant && (
-                  <>
-                    <div>
-                      <span style={{ color: "var(--panel-text-muted)" }}>Category: </span>
-                      <span style={{ color: "var(--panel-text)" }}>
-                        {category.replace(/_/g, " ")}
-                      </span>
-                    </div>
-                    <div className="col-span-2">
-                      <span style={{ color: "var(--panel-text-muted)" }}>Confidence: </span>
-                      <span style={{ color: confidenceColor(confidence) }}>
-                        {(confidence * 100).toFixed(0)}%
-                      </span>
-                      <div className="mt-1 h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
-                        <div
-                          className="h-full rounded-full transition-all"
-                          style={{
-                            width: `${confidence * 100}%`,
-                            background: confidenceColor(confidence),
-                          }}
-                        />
-                      </div>
-                    </div>
-                    {locationText && (
-                      <div className="col-span-2">
-                        <span style={{ color: "var(--panel-text-muted)" }}>Location: </span>
-                        <span style={{ color: "var(--panel-text)" }}>{locationText}</span>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
-          {group.llm_error && (
-            <div className="flex items-center gap-2 text-xs text-red-400 bg-red-500/10 rounded-lg px-2.5 py-2">
-              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-              {String(group.llm_error.error)}
-            </div>
-          )}
-
-          {/* Inhibitor */}
-          {inh && (
-            <div className="flex items-center gap-2 text-[11px]">
-              <Shield className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
-              <span style={{ color: "var(--panel-text-muted)" }}>Inhibitor:</span>
-              <span
-                style={{
-                  color:
-                    inh.status === "passed"
-                      ? "#22c55e"
-                      : inh.status === "blocked"
-                        ? "#ef4444"
-                        : "#eab308",
-                }}
-              >
-                {String(inh.status)}
-              </span>
-              {inh.reason ? (
-                <span className="truncate" style={{ color: "var(--panel-text-muted)" }}>
-                  — {String(inh.reason)}
-                </span>
-              ) : null}
-            </div>
-          )}
-
-          {/* Geocode */}
-          {geo && (
-            <div className="flex items-center gap-2 text-[11px]">
-              <MapPin className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
-              <span style={{ color: "var(--panel-text-muted)" }}>Geocode:</span>
-              <span
-                style={{
-                  color:
-                    geo.method === "success"
-                      ? "#22c55e"
-                      : geo.method === "llm_fallback"
-                        ? "#eab308"
-                        : "#6b7280",
-                }}
-              >
-                {String(geo.method)}
-              </span>
-              {geo.lat != null && (
-                <span style={{ color: "var(--panel-text-muted)" }}>
-                  ({Number(geo.lat).toFixed(4)}, {Number(geo.lng).toFixed(4)})
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Final outcome */}
-          {stored && (
-            <div className="flex items-center gap-2 text-[11px]">
-              <OutcomeIcon className="w-3.5 h-3.5 shrink-0" style={{ color: outcomeColor }} />
-              <span style={{ color: outcomeColor }} className="font-medium">
-                {outcomeLabel}
-              </span>
-              <span style={{ color: "var(--panel-text-muted)" }}>
-                ID: {String(stored.incident_id).slice(0, 8)}...
-              </span>
-            </div>
-          )}
-        </div>
-      )}
+        )}
+        {!loading && extractions.length === 0 && (
+          <div className="text-center py-12 text-xs" style={{ color: "var(--panel-text-muted)" }}>
+            No extractions found for this feed in the selected time range.
+          </div>
+        )}
+        {extractions.map((e) => (
+          <ExtractionCard key={e.id} extraction={e} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -439,12 +423,9 @@ function PipelineCard({
 // ── Main Admin Panel ────────────────────────────────────────────────
 
 export default function AdminPanel({ onBack }: Props) {
-  const { events, connected, feeds, pipelineGroups } = useAdminStream();
-  const [feedFilter, setFeedFilter] = useState<string | null>(null);
-  const transcriptEndRef = useRef<HTMLDivElement>(null);
-  const [autoScroll, setAutoScroll] = useState(true);
+  const { connected, feeds, events } = useAdminStream();
+  const [activeTab, setActiveTab] = useState<string | null>(null);
 
-  const feedMap = new Map(feeds.map((f) => [f.feed_id, f.label]));
   const activeFeedIds = new Set(
     events
       .filter((e) => e.type === "transcript_received")
@@ -452,21 +433,17 @@ export default function AdminPanel({ onBack }: Props) {
       .map((e) => e.feed_id)
   );
 
-  const filtered = feedFilter
-    ? pipelineGroups.filter((g) => g.feed_id === feedFilter)
-    : pipelineGroups;
-
-  const transcriptGroups = filtered
-    .filter((g) => g.transcript)
-    .slice(-100);
-
-  const pipelineCards = filtered.slice(-80).reverse();
+  const setInitialTab = useCallback(() => {
+    if (activeTab === null && feeds.length > 0) {
+      setActiveTab(feeds[0].feed_id);
+    }
+  }, [activeTab, feeds]);
 
   useEffect(() => {
-    if (autoScroll && transcriptEndRef.current) {
-      transcriptEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [transcriptGroups.length, autoScroll]);
+    setInitialTab();
+  }, [setInitialTab]);
+
+  const activeFeed = feeds.find((f) => f.feed_id === activeTab);
 
   return (
     <div
@@ -489,11 +466,8 @@ export default function AdminPanel({ onBack }: Props) {
           <ArrowLeft className="w-4 h-4" />
         </button>
 
-        <Shield className="w-5 h-5 text-purple-400" />
-        <span
-          className="text-sm font-semibold"
-          style={{ color: "var(--panel-text)" }}
-        >
+        <img src="/logo.png" alt="PHLPulse" className="w-5 h-5" />
+        <span className="text-sm font-semibold" style={{ color: "var(--panel-text)" }}>
           Admin Panel
         </span>
 
@@ -512,175 +486,65 @@ export default function AdminPanel({ onBack }: Props) {
           </span>
         </div>
 
-        {/* Feed filter */}
-        <select
-          value={feedFilter || ""}
-          onChange={(e) => setFeedFilter(e.target.value || null)}
-          className="ml-auto text-xs rounded-lg px-2.5 py-1.5 outline-none"
-          style={{
-            background: "var(--panel-input-bg)",
-            border: "1px solid var(--panel-border)",
-            color: "var(--panel-text)",
-          }}
-        >
-          <option value="">All Feeds</option>
-          {feeds.map((f) => (
-            <option key={f.feed_id} value={f.feed_id}>
-              {f.label}
-            </option>
-          ))}
-        </select>
-
-        <div className="ml-2">
+        <div className="ml-auto">
           <AuthBar />
         </div>
       </div>
 
-      {/* Three-column layout */}
-      <div className="flex-1 grid grid-cols-[280px_1fr_1fr] gap-0 overflow-hidden">
-        {/* LEFT: Audio feeds */}
-        <div
-          className="flex flex-col overflow-hidden"
-          style={{
-            background: "var(--panel-bg, rgba(15,15,25,0.95))",
-            borderRight: "1px solid var(--panel-border)",
-          }}
-        >
-          <div
-            className="flex items-center gap-2 px-3 py-2.5 shrink-0"
-            style={{ borderBottom: "1px solid var(--panel-border)" }}
-          >
-            <Radio className="w-4 h-4 text-blue-500" />
-            <span
-              className="text-xs font-semibold uppercase tracking-wider"
-              style={{ color: "var(--panel-text-muted)" }}
-            >
-              Live Audio Feeds
-            </span>
-            <span
-              className="text-[10px] ml-auto"
-              style={{ color: "var(--panel-text-muted)" }}
-            >
-              {feeds.length}
-            </span>
-          </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
-            {feeds.map((feed) => (
-              <AudioFeedCard
-                key={feed.feed_id}
-                feed={feed}
-                activeFeedIds={activeFeedIds}
-              />
-            ))}
-            {feeds.length === 0 && (
-              <div className="text-center py-8 text-xs" style={{ color: "var(--panel-text-muted)" }}>
-                No feeds available.
-                <br />
-                Check API connection.
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* CENTER: Live Transcripts */}
-        <div
-          className="flex flex-col overflow-hidden"
-          style={{
-            background: "rgba(15,15,25,0.6)",
-            borderRight: "1px solid var(--panel-border)",
-          }}
-        >
-          <div
-            className="flex items-center gap-2 px-3 py-2.5 shrink-0"
-            style={{ borderBottom: "1px solid var(--panel-border)" }}
-          >
-            <FileText className="w-4 h-4 text-cyan-500" />
-            <span
-              className="text-xs font-semibold uppercase tracking-wider"
-              style={{ color: "var(--panel-text-muted)" }}
-            >
-              Live Transcripts
-            </span>
-            <span
-              className="text-[10px] ml-auto"
-              style={{ color: "var(--panel-text-muted)" }}
-            >
-              {transcriptGroups.length}
-            </span>
+      {/* Tab bar */}
+      <div
+        className="flex items-center gap-0.5 px-2 shrink-0 overflow-x-auto"
+        style={{
+          background: "var(--panel-bg, rgba(15,15,25,0.95))",
+          borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.08))",
+        }}
+      >
+        {feeds.map((feed) => {
+          const isActive = feed.feed_id === activeTab;
+          const hasActivity = activeFeedIds.has(feed.feed_id);
+          return (
             <button
-              onClick={() => setAutoScroll(!autoScroll)}
-              className={`text-[10px] px-2 py-0.5 rounded-full ${
-                autoScroll
-                  ? "bg-cyan-500/15 text-cyan-500"
-                  : "text-gray-500"
+              key={feed.feed_id}
+              onClick={() => setActiveTab(feed.feed_id)}
+              className={`relative flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap transition-all border-b-2 ${
+                isActive
+                  ? "border-blue-500"
+                  : "border-transparent hover:border-white/10"
               }`}
+              style={{
+                color: isActive
+                  ? "var(--panel-text, #e5e7eb)"
+                  : "var(--panel-text-muted, #6b7280)",
+              }}
             >
-              {autoScroll ? "Auto-scroll" : "Paused"}
+              {hasActivity && (
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+              )}
+              {feed.label}
             </button>
+          );
+        })}
+        {feeds.length === 0 && (
+          <div className="px-3 py-2 text-xs" style={{ color: "var(--panel-text-muted)" }}>
+            No feeds available. Check API connection.
           </div>
-          <div
-            className="flex-1 overflow-y-auto"
-            onScroll={(e) => {
-              const el = e.currentTarget;
-              const nearBottom =
-                el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-              if (autoScroll !== nearBottom) setAutoScroll(nearBottom);
-            }}
-          >
-            {transcriptGroups.length === 0 && (
-              <div className="text-center py-12 text-xs" style={{ color: "var(--panel-text-muted)" }}>
-                Waiting for transcripts...
-              </div>
-            )}
-            {transcriptGroups.map((g) => (
-              <TranscriptEntry
-                key={g.correlation}
-                group={g}
-                feedLabel={feedMap.get(g.feed_id) || g.feed_id}
-              />
-            ))}
-            <div ref={transcriptEndRef} />
-          </div>
-        </div>
+        )}
+      </div>
 
-        {/* RIGHT: LLM Pipeline */}
-        <div
-          className="flex flex-col overflow-hidden"
-          style={{ background: "rgba(15,15,25,0.6)" }}
-        >
-          <div
-            className="flex items-center gap-2 px-3 py-2.5 shrink-0"
-            style={{ borderBottom: "1px solid var(--panel-border)" }}
-          >
-            <Brain className="w-4 h-4 text-purple-400" />
-            <span
-              className="text-xs font-semibold uppercase tracking-wider"
-              style={{ color: "var(--panel-text-muted)" }}
-            >
-              LLM Pipeline
-            </span>
-            <span
-              className="text-[10px] ml-auto"
-              style={{ color: "var(--panel-text-muted)" }}
-            >
-              {pipelineCards.length}
-            </span>
+      {/* Tab content */}
+      <div className="flex-1 flex flex-col overflow-hidden" style={{ background: "rgba(15,15,25,0.6)" }}>
+        {activeFeed ? (
+          <FeedTabContent key={activeFeed.feed_id} feed={activeFeed} />
+        ) : (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <AlertTriangle className="w-8 h-8 mx-auto mb-3 text-yellow-500/50" />
+              <p className="text-sm" style={{ color: "var(--panel-text-muted)" }}>
+                Select a feed tab to view extractions
+              </p>
+            </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
-            {pipelineCards.length === 0 && (
-              <div className="text-center py-12 text-xs" style={{ color: "var(--panel-text-muted)" }}>
-                Waiting for pipeline events...
-              </div>
-            )}
-            {pipelineCards.map((g) => (
-              <PipelineCard
-                key={g.correlation}
-                group={g}
-                feedLabel={feedMap.get(g.feed_id) || g.feed_id}
-              />
-            ))}
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );

@@ -207,6 +207,11 @@ def auto_check_stats() -> dict[str, Any]:
     return {"auto_checked": total, "by_status": by_status}
 
 
+def insert_extraction(**kwargs) -> dict:
+    """No-op for SQLite — extractions only stored in Firestore."""
+    return kwargs
+
+
 def insert_incident(
     raw_text: str,
     severity_category: str,
@@ -220,6 +225,7 @@ def insert_incident(
     inhibitor_reason: Optional[str] = None,
     reported_at: Optional[str] = None,
     audio_clip: Optional[str] = None,
+    feed_id: Optional[str] = None,
 ) -> dict:
     conn = get_conn()
     incident_id = uuid.uuid4().hex[:12]

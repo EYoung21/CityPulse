@@ -204,6 +204,14 @@ async def ingest(req: IngestRequest):
             "confidence": 0,
             "location_text": None,
         })
+        store.insert_extraction(
+            feed_id=feed_id,
+            raw_text=req.text,
+            reported_at=req.timestamp,
+            audio_clip=req.audio_clip,
+            llm_relevant=False,
+            llm_confidence=0.0,
+        )
         return {"status": "rejected", "reason": "Not dispatch-relevant"}
 
     category = extraction["severity_category"]
@@ -251,6 +259,8 @@ async def ingest(req: IngestRequest):
             location_text=location_text,
             inhibitor_status="blocked",
             inhibitor_reason=inh.reason,
+            feed_id=feed_id,
+            audio_clip=req.audio_clip,
         )
         await admin_events.broadcast({
             "type": "incident_stored",
@@ -259,6 +269,19 @@ async def ingest(req: IngestRequest):
             "outcome": "blocked",
             "incident_id": incident["id"],
         })
+        store.insert_extraction(
+            feed_id=feed_id,
+            raw_text=req.text,
+            reported_at=req.timestamp,
+            audio_clip=req.audio_clip,
+            llm_relevant=True,
+            llm_category=category,
+            llm_confidence=confidence,
+            llm_location_text=location_text,
+            inhibitor_status="blocked",
+            inhibitor_reason=inh.reason,
+            incident_id=incident["id"],
+        )
         return {
             "status": "blocked",
             "reason": inh.reason,
@@ -305,6 +328,7 @@ async def ingest(req: IngestRequest):
         inhibitor_reason=inh.reason,
         reported_at=req.timestamp,
         audio_clip=req.audio_clip,
+        feed_id=feed_id,
     )
 
     await admin_events.broadcast({
@@ -319,6 +343,21 @@ async def ingest(req: IngestRequest):
         "lat": lat,
         "lng": lng,
     })
+
+    store.insert_extraction(
+        feed_id=feed_id,
+        raw_text=req.text,
+        reported_at=req.timestamp,
+        audio_clip=req.audio_clip,
+        llm_relevant=True,
+        llm_category=category,
+        llm_confidence=confidence,
+        llm_location_text=location_text,
+        inhibitor_status=inh.status,
+        inhibitor_reason=inh.reason,
+        geocode_status=geocode_status,
+        incident_id=incident["id"],
+    )
 
     return {"status": "created", "incident": incident}
 
