@@ -13,6 +13,10 @@ config.yaml
 philly_transcripts/
 *.log
 
+# Audio clips (generated at runtime, served by API)
+audio_clips/
+audio_clips_raw/
+
 # Python artifacts
 __pycache__/
 *.pyc
