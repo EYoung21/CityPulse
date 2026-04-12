@@ -15,6 +15,23 @@ export interface Incident {
   inhibitor_reason: string | null;
   w_eff: number;
   audio_clip: string | null;
+  feed_id: string | null;
+}
+
+export interface Extraction {
+  id: string;
+  feed_id: string;
+  raw_text: string;
+  reported_at: string;
+  audio_clip: string | null;
+  llm_relevant: boolean;
+  llm_category: string | null;
+  llm_confidence: number;
+  llm_location_text: string | null;
+  inhibitor_status: string | null;
+  inhibitor_reason: string | null;
+  geocode_status: string | null;
+  incident_id: string | null;
 }
 
 export interface HealthResponse {
