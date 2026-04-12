@@ -77,6 +77,7 @@ const CATEGORY_PILLS = [
 ] as const;
 
 const TIME_FILTERS = [
+  { label: "5m", hours: 5 / 60 },
   { label: "10m", hours: 10 / 60 },
   { label: "30m", hours: 0.5 },
   { label: "1h", hours: 1 },
@@ -353,6 +354,7 @@ export default function Home() {
         onSelectIncident={(id) => { setMapTap(null); setSelectedId(id); }}
         routes={routes}
         onMapTap={(lat, lng) => { setSelectedId(null); setMapTap({ lat, lng }); }}
+        mapTapActive={mapTap !== null}
         userLocation={userLocation}
         tripRouteGeometry={tripGeometry}
         previewOrigin={previewOrigin}

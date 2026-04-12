@@ -266,6 +266,7 @@ interface Props {
   onSelectIncident: (id: string) => void;
   routes?: RouteData | null;
   onMapTap?: (lat: number, lng: number) => void;
+  mapTapActive?: boolean;
   userLocation?: { lat: number; lng: number } | null;
   tripRouteGeometry?: [number, number][] | null;
   previewOrigin?: { lat: number; lng: number } | null;
@@ -722,6 +723,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     onSelectIncident,
     routes,
     onMapTap,
+    mapTapActive = false,
     userLocation,
     tripRouteGeometry,
     previewOrigin,
@@ -751,6 +753,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const trailLayerRef = useRef<L.LayerGroup | null>(null);
   const districtsLayerRef = useRef<L.LayerGroup | null>(null);
+  const sonarLayerRef = useRef<L.LayerGroup | null>(null);
   /** Avoid map.fitBounds on every live GPS tick when only the origin (A) moves. */
   const previewFitDestRef = useRef<{ lat: number; lng: number } | null>(null);
   const previewFitWaypointsTailRef = useRef<string>("");
@@ -759,9 +762,25 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const onTripProgressRef = useRef(onTripProgress);
   onTripProgressRef.current = onTripProgress;
 
+  const flyToOffset = useCallback((lat: number, lng: number, zoom = 14) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const targetZoom = zoom;
+    const targetPoint = map.project([lat, lng], targetZoom);
+    const sidebarPx = 380;
+    const cardPx = 384;
+    const mapW = map.getSize().x;
+    const isMobile = mapW < 768;
+    const offsetX = isMobile ? 0 : (sidebarPx + cardPx) / 2;
+    const offsetY = isMobile ? -100 : 0;
+    const shifted = L.point(targetPoint.x - offsetX, targetPoint.y - offsetY);
+    const shiftedLatLng = map.unproject(shifted, targetZoom);
+    map.flyTo(shiftedLatLng, targetZoom, { duration: 0.8 });
+  }, []);
+
   useImperativeHandle(ref, () => ({
     flyTo: (lat: number, lng: number, zoom = 14) => {
-      mapRef.current?.flyTo([lat, lng], zoom, { duration: 0.8 });
+      flyToOffset(lat, lng, zoom);
     },
     resetView: () => {
       mapRef.current?.flyTo(PHILLY_CENTER, DEFAULT_ZOOM, { duration: 0.75 });
@@ -810,6 +829,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     routeLayerRef.current = L.layerGroup().addTo(map);
     previewLayerRef.current = L.layerGroup().addTo(map);
     trailLayerRef.current = L.layerGroup().addTo(map);
+    sonarLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
     const setZoomCSSVar = (z: number) => {
@@ -829,8 +849,44 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     map.on("zoom", syncIncidentZoom);
     map.on("zoomend", syncIncidentZoom);
 
+    const ringsTimeout: { id: ReturnType<typeof setTimeout> | null } = { id: null };
+
     map.on("click", (e: L.LeafletMouseEvent) => {
       onMapTapRef.current?.(e.latlng.lat, e.latlng.lng);
+
+      const sonar = sonarLayerRef.current;
+      if (!sonar) return;
+      sonar.clearLayers();
+      if (ringsTimeout.id) clearTimeout(ringsTimeout.id);
+
+      const sizePx = 220;
+      const dotPx = 12;
+
+      const dotIcon = L.divIcon({
+        className: "",
+        iconSize: [dotPx, dotPx],
+        iconAnchor: [dotPx / 2, dotPx / 2],
+        html: `<div class="safety-sonar-dot" style="width:${dotPx}px;height:${dotPx}px;"></div>`,
+      });
+      const dotMarker = L.marker(e.latlng, { icon: dotIcon, interactive: false }).addTo(sonar);
+
+      const ringMarkers: L.Marker[] = [];
+      for (let i = 0; i < 3; i++) {
+        const ringIcon = L.divIcon({
+          className: "",
+          iconSize: [sizePx, sizePx],
+          iconAnchor: [sizePx / 2, sizePx / 2],
+          html: `<div class="safety-sonar-ring safety-sonar-ring--${i + 1}" style="width:${sizePx}px;height:${sizePx}px;"></div>`,
+        });
+        ringMarkers.push(L.marker(e.latlng, { icon: ringIcon, interactive: false }).addTo(sonar));
+      }
+
+      ringsTimeout.id = setTimeout(() => {
+        ringMarkers.forEach((m) => sonar.removeLayer(m));
+        ringsTimeout.id = null;
+      }, 2200);
+
+      void dotMarker;
     });
 
     return () => {
@@ -966,9 +1022,15 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     if (!selectedId || !mapRef.current) return;
     const inc = incidents.find((i) => i.id === selectedId);
     if (inc?.lat != null && inc?.lng != null) {
-      mapRef.current.flyTo([inc.lat, inc.lng], 15, { duration: 0.8 });
+      flyToOffset(inc.lat, inc.lng, 15);
     }
-  }, [selectedId, incidents]);
+  }, [selectedId, incidents, flyToOffset]);
+
+  useEffect(() => {
+    if (!mapTapActive && sonarLayerRef.current) {
+      sonarLayerRef.current.clearLayers();
+    }
+  }, [mapTapActive]);
 
   // District overlay ref for click callbacks
   const onDistrictClickRef = useRef(onDistrictClick);

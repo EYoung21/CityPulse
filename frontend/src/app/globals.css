@@ -304,6 +304,42 @@ svg.leaflet-zoom-animated path.leaflet-cluster-spider-leg,
 .animate-pulse-ring {
   animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
 }
+
+/* Safety-pulse sonar ripple (Snap Map style tap-to-discover) */
+@keyframes safety-sonar {
+  0% {
+    transform: scale(0);
+    opacity: 0.7;
+  }
+  70% {
+    opacity: 0.15;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+.safety-sonar-ring {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  border: 2px solid rgba(59, 130, 246, 0.6);
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.25), inset 0 0 20px rgba(59, 130, 246, 0.08);
+  animation: safety-sonar 1.6s cubic-bezier(0.16, 0.84, 0.44, 1) forwards;
+}
+.safety-sonar-ring--2 { animation-delay: 0.3s; }
+.safety-sonar-ring--3 { animation-delay: 0.6s; }
+.safety-sonar-dot {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.9) 0%, rgba(59, 130, 246, 0.3) 50%, transparent 70%);
+  animation: safety-dot-pulse 2.4s ease-in-out infinite;
+}
+@keyframes safety-dot-pulse {
+  0%, 100% { transform: scale(0.8); opacity: 0.6; }
+  50% { transform: scale(1.2); opacity: 1; }
+}
 .animate-glow-breathe {
   animation: glow-breathe 3s ease-in-out infinite;
 }
