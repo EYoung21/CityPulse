@@ -20,6 +20,8 @@ import {
   Monitor,
   BarChart3,
   Menu,
+  LocateFixed,
+  House,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import SearchSidebar from "@/components/SearchSidebar";
@@ -131,6 +133,29 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedDistrict, setSelectedDistrict] = useState<{ neighborhood: Neighborhood; incidents: Incident[] } | null>(null);
   const mapRef = useRef<MapHandle>(null);
+
+  const goToMyLocation = useCallback(() => {
+    if (userLocation) {
+      mapRef.current?.flyTo(userLocation.lat, userLocation.lng, 15);
+      return;
+    }
+    if (typeof navigator === "undefined" || !navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setUserLocation(loc);
+        mapRef.current?.flyTo(loc.lat, loc.lng, 15);
+      },
+      () => {
+        /* user denied or unavailable */
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  }, [userLocation]);
+
+  const recenterCity = useCallback(() => {
+    mapRef.current?.resetView();
+  }, []);
 
   const routeGeometryForDemo =
     tripGeometry ??
@@ -361,8 +386,36 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Bottom-right controls */}
-      <div className="absolute bottom-6 right-3 z-[999] flex flex-col items-end gap-2 pointer-events-auto">
+      {/* Bottom-right controls (lifted so map markers under corner overlap UI less) */}
+      <div className="absolute bottom-[4.5rem] max-md:bottom-20 right-3 z-[1001] flex flex-col items-end gap-2 pointer-events-auto">
+        <button
+          type="button"
+          onClick={goToMyLocation}
+          title="My location"
+          aria-label="Center map on my location"
+          className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-opacity hover:opacity-90 active:scale-95"
+          style={{
+            background: "var(--pill-bg)",
+            border: "1px solid var(--pill-border)",
+            color: "var(--panel-text)",
+          }}
+        >
+          <LocateFixed className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          onClick={recenterCity}
+          title="City overview"
+          aria-label="Recenter map on Philadelphia"
+          className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-opacity hover:opacity-90 active:scale-95"
+          style={{
+            background: "var(--pill-bg)",
+            border: "1px solid var(--pill-border)",
+            color: "var(--panel-text)",
+          }}
+        >
+          <House className="w-4 h-4" />
+        </button>
         <AuthBar />
 
         {/* Analytics toggle */}
