@@ -799,11 +799,11 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }).addTo(map);
 
     markersRef.current = L.markerClusterGroup({
-      maxClusterRadius: 45,
+      maxClusterRadius: 80,
       spiderfyOnMaxZoom: true,
       showCoverageOnHover: false,
       zoomToBoundsOnClick: true,
-      disableClusteringAtZoom: 17,
+      disableClusteringAtZoom: 18,
       iconCreateFunction: (cluster: L.MarkerCluster) => {
         const count = cluster.getChildCount();
         let size = 32;
@@ -825,7 +825,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
     const setZoomCSSVar = (z: number) => {
       const clamped = Math.max(8, Math.min(19, z));
-      const scale = Math.max(0.35, Math.min(2.2, Math.pow(2, (clamped - 12) / 3)));
+      const scale = Math.max(0.35, Math.min(1.6, Math.pow(2, (clamped - 12) / 3.5)));
       map.getContainer().style.setProperty("--pp-marker-scale", String(scale));
     };
     let zoomRaf = 0;
