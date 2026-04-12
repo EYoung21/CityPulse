@@ -4,7 +4,9 @@ import json
 import logging
 import os
 import random
+import re
 import subprocess
+from datetime import datetime, date
 from pathlib import Path
 
 import httpx
@@ -175,7 +177,14 @@ async def ingest(req: IngestRequest):
     """
 
     feed_id = req.feed_id or "unknown"
-    correlation = f"{feed_id}_{req.timestamp or ''}"
+
+    # Normalize time-only timestamps (e.g. "14:30:00") to full ISO
+    ts = req.timestamp
+    if ts and re.match(r"^\d{1,2}:\d{2}(:\d{2})?$", ts.strip()):
+        ts = f"{date.today().isoformat()}T{ts.strip()}"
+    req_timestamp = ts or datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
+    correlation = f"{feed_id}_{req_timestamp}"
 
     effective_audio_clip = req.audio_clip
     if not effective_audio_clip and req.variants:
@@ -192,7 +201,7 @@ async def ingest(req: IngestRequest):
         "correlation": correlation,
         "feed_id": feed_id,
         "text": req.text,
-        "timestamp": req.timestamp,
+        "timestamp": req_timestamp,
     })
 
     # ── Collection-only mode (LLM paused) ──────────────────────────
@@ -200,7 +209,7 @@ async def ingest(req: IngestRequest):
         store.insert_extraction(
             feed_id=feed_id,
             raw_text=req.text,
-            reported_at=req.timestamp,
+            reported_at=req_timestamp,
             audio_clip=effective_audio_clip,
             raw_audio_clip=req.raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
@@ -228,7 +237,7 @@ async def ingest(req: IngestRequest):
         store.insert_extraction(
             feed_id=feed_id,
             raw_text=req.text,
-            reported_at=req.timestamp,
+            reported_at=req_timestamp,
             audio_clip=effective_audio_clip,
             raw_audio_clip=req.raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
@@ -249,7 +258,7 @@ async def ingest(req: IngestRequest):
         store.insert_extraction(
             feed_id=feed_id,
             raw_text=req.text,
-            reported_at=req.timestamp,
+            reported_at=req_timestamp,
             audio_clip=effective_audio_clip,
             raw_audio_clip=req.raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
@@ -322,7 +331,7 @@ async def ingest(req: IngestRequest):
         store.insert_extraction(
             feed_id=feed_id,
             raw_text=req.text,
-            reported_at=req.timestamp,
+            reported_at=req_timestamp,
             audio_clip=effective_audio_clip,
             raw_audio_clip=req.raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
@@ -387,7 +396,7 @@ async def ingest(req: IngestRequest):
             location_confidence=location_confidence,
             inhibitor_status=inh.status,
             inhibitor_reason=inh.reason,
-            reported_at=req.timestamp,
+            reported_at=req_timestamp,
             audio_clip=effective_audio_clip,
             feed_id=feed_id,
             description=description,
@@ -410,7 +419,7 @@ async def ingest(req: IngestRequest):
     store.insert_extraction(
         feed_id=feed_id,
         raw_text=req.text,
-        reported_at=req.timestamp,
+        reported_at=req_timestamp,
         audio_clip=effective_audio_clip,
         raw_audio_clip=req.raw_audio_clip,
         preprocess_meta=req.preprocess_meta,
@@ -573,6 +582,8 @@ async def admin_predict(req: PredictRequest):
     feed_id = ext.get("feed_id", "unknown")
     audio_clip = ext.get("audio_clip")
     reported_at = ext.get("reported_at")
+    if reported_at and re.match(r"^\d{1,2}:\d{2}(:\d{2})?$", str(reported_at).strip()):
+        reported_at = f"{date.today().isoformat()}T{str(reported_at).strip()}"
 
     # LLM extraction
     try:

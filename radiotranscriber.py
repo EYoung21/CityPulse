@@ -412,7 +412,7 @@ def process_audio():
                         duration = len(full_audio) / SAMPLE_RATE
                         
                         if duration >= MIN_SPEECH_SECONDS:
-                            timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+                            timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
                             transcription_queue.put((timestamp, full_audio.copy()))
                             print(f"   Queued {duration:.1f}s segment for transcription")
                         else:
