@@ -6,6 +6,7 @@ import "leaflet.heat";
 import type { Incident } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
 import type { RouteData } from "@/components/RoutePanel";
+import { NEIGHBORHOODS, type Neighborhood, incidentsInNeighborhood } from "@/lib/neighborhoods";
 
 declare module "leaflet" {
   function heatLayer(
@@ -48,6 +49,8 @@ interface Props {
   timeFilterHours?: number;
   /** Demo: vivid heat + pulse + radiating vehicle / user marker (e.g. route sim checkbox). */
   heatmapDemoBoost?: boolean;
+  districtsEnabled?: boolean;
+  onDistrictClick?: (neighborhood: Neighborhood, incidents: Incident[]) => void;
 }
 
 function distToSegmentKm(
@@ -389,6 +392,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     liveTripGps = false,
     timeFilterHours = 0,
     heatmapDemoBoost = false,
+    districtsEnabled = false,
+    onDistrictClick,
   },
   ref
 ) {
@@ -403,6 +408,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const animFrameRef = useRef<number | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const trailLayerRef = useRef<L.LayerGroup | null>(null);
+  const districtsLayerRef = useRef<L.LayerGroup | null>(null);
   /** Avoid map.fitBounds on every live GPS tick when only the origin (A) moves. */
   const previewFitDestRef = useRef<{ lat: number; lng: number } | null>(null);
   const previewFitWaypointsTailRef = useRef<string>("");
@@ -436,6 +442,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }).addTo(map);
 
     markersRef.current = L.layerGroup().addTo(map);
+    districtsLayerRef.current = L.layerGroup().addTo(map);
     routeLayerRef.current = L.layerGroup().addTo(map);
     previewLayerRef.current = L.layerGroup().addTo(map);
     trailLayerRef.current = L.layerGroup().addTo(map);
@@ -572,6 +579,86 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       mapRef.current.flyTo([inc.lat, inc.lng], 15, { duration: 0.8 });
     }
   }, [selectedId, incidents]);
+
+  // District overlay ref for click callbacks
+  const onDistrictClickRef = useRef(onDistrictClick);
+  onDistrictClickRef.current = onDistrictClick;
+
+  // Neighborhood district overlays (Mafia III-style)
+  useEffect(() => {
+    const map = mapRef.current;
+    const layer = districtsLayerRef.current;
+    if (!map || !layer) return;
+    layer.clearLayers();
+    if (!districtsEnabled) return;
+
+    const DISTRICT_COLORS = [
+      "#22c55e", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6",
+      "#ec4899", "#14b8a6", "#f97316", "#06b6d4", "#a3e635",
+      "#e879f9", "#fb923c", "#34d399", "#818cf8", "#fbbf24",
+      "#f87171", "#2dd4bf", "#c084fc", "#4ade80", "#38bdf8",
+    ];
+
+    for (let i = 0; i < NEIGHBORHOODS.length; i++) {
+      const n = NEIGHBORHOODS[i];
+      const color = DISTRICT_COLORS[i % DISTRICT_COLORS.length];
+      const nIncidents = incidentsInNeighborhood(incidents, n.slug);
+      const count = nIncidents.length;
+
+      const severity = count === 0 ? 0 : Math.min(count / 8, 1);
+      const fillOpacity = 0.08 + severity * 0.18;
+
+      const rect = L.rectangle(
+        [[n.bounds.south, n.bounds.west], [n.bounds.north, n.bounds.east]],
+        {
+          color,
+          weight: 2,
+          opacity: 0.6,
+          fillColor: color,
+          fillOpacity,
+          dashArray: "6 3",
+        }
+      );
+
+      rect.on("click", (e: L.LeafletMouseEvent) => {
+        L.DomEvent.stopPropagation(e);
+        onDistrictClickRef.current?.(n, nIncidents);
+      });
+
+      rect.on("mouseover", () => {
+        rect.setStyle({ fillOpacity: fillOpacity + 0.12, weight: 3, opacity: 0.9 });
+      });
+      rect.on("mouseout", () => {
+        rect.setStyle({ fillOpacity, weight: 2, opacity: 0.6 });
+      });
+
+      rect.addTo(layer);
+
+      const label = L.divIcon({
+        className: "",
+        html: `<div style="
+          white-space: nowrap;
+          font-size: 11px;
+          font-weight: 700;
+          color: ${color};
+          text-shadow: 0 0 6px rgba(0,0,0,0.9), 0 1px 3px rgba(0,0,0,0.7);
+          letter-spacing: 0.5px;
+          text-transform: uppercase;
+          pointer-events: none;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 1px;
+        ">
+          <span>${n.name}</span>
+          ${count > 0 ? `<span style="font-size:9px;opacity:0.8;font-weight:600;">${count} incident${count !== 1 ? "s" : ""}</span>` : ""}
+        </div>`,
+        iconSize: [0, 0],
+        iconAnchor: [0, 0],
+      });
+      L.marker([n.center.lat, n.center.lng], { icon: label, interactive: false }).addTo(layer);
+    }
+  }, [districtsEnabled, incidents]);
 
   // Routes, avoidance zones, A/B pins — only re-draws when routes object changes
   useEffect(() => {
