@@ -1,133 +1,158 @@
-# RadioTranscriber
+# PhillyPulse
 
-**My first ever coding project — please be kind!**  
-I'm **not** a programmer (at all). This tool was built entirely by describing what I wanted to generative AIs, iterating on their suggestions, and testing/debugging over many sessions. My AI buddy says it's proof that AI-assisted development can take a complete beginner surprisingly far. Feedback, issues, and pull requests are **very welcome**!
+**Google Maps tells you the fastest way. PhillyPulse tells you the safest.**
 
-A real-time transcription tool for public safety radio feeds (e.g., Broadcastify streams) using OpenAI Whisper large-v3 via [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2 INT8). Designed for long-running, low-maintenance operation with daily log rotation, robust audio processing, and strong hallucination filtering.
+PhillyPulse is a real-time safety-aware navigation tool for Philadelphia. It streams live police scanner audio, transcribes it with AI, plots incidents on an interactive map, and routes you around danger — walk, bike, or drive.
 
-**Important note**: This script is **heavily tuned** to the patterns of my local public safety radio feed (Belchertown, MA area). Unit IDs, dispatch phrasing, alert tones, and filters are customized for that system. It works well on similar feeds, but you will likely need to tweak the prompt, VAD settings, or cleanup rules in `config.yaml` to match your local radio style.
+**Live demo:** [https://phlpulse.com](https://phlpulse.com)
 
-**Imporant note 2**: Please be aware that while Broadcastify is apparently cool with a premium subscriber who wants to use this tool to capture a few feeds for their own personal projects, if you spin up more than a couple of servers you are likely to run afoul of their acceptable use policy. Please review and comply with the [Broadcastify terms and conditions](https://www.broadcastify.com/terms/).
+---
 
-## Philly Pulse (planned extension)
+## Team
 
-Design doc for the Philadelphia scanner → LLM → map stack lives in [docs/philly-pulse-plan.md](docs/philly-pulse-plan.md) (versioned in this repo).
+- **Team name:** PhillyPulse
+- **Team members:** Eli Young, Kethan Umanarayanan, Harsh Mahani
 
-## Features
+## Challenges Implemented
 
-* Live streaming from authenticated Broadcastify feeds
-* High-pass filtering to reduce low-frequency rumble/static
-* Percentile-based normalization to handle squelch pops without crushing quiet speech
-* WebRTC VAD for reliable speech detection in noisy radio environments
-* **faster-whisper** large-v3 transcription with CTranslate2 INT8 quantization (~3-4x faster than openai-whisper on CPU, same model weights)
-* Configurable beam search with patience control for accuracy/speed tradeoff
-* **MQTT publishing** of transcription state for home automation integration (optional, configurable)
-* Powerful hallucination guards:
-  + Block full-line credit/caption hallucinations
-  + Discard Whisper meta-description artifacts (`Sound effects.`, `Sound of gunfire.`, etc.)
-  + Discard dot-only and BANG noise segments
-  + Repetition cascade detection: truncate tail cascades, discard full-line cascades, recover content after head cascades
-  + Truncate common static-induced endings
-  + Replace alert tone or noise hallucinations with `[beeps]` or `[noise]`
-  + Spoken-to-unit-ID mapping and hyphen normalization (fully configurable)
-* Daily log rollover with clear markers (`[STARTED]`, `[ROLLOVER]`, `[STOPPED]`)
-* Memory management with periodic garbage collection for multi-day runs
-* Centralized configuration via a single, easy-to-edit `config.yaml`
+- **Challenge 1 — Trust Accelerator Campaign:** PhillyPulse itself is a public-facing demonstration of Inhibitor in production. Every incident on the map passed through Inhibitor's guardrails, and the app surfaces full transparency stats (processed / passed / blocked counts) so users can see the trust layer working in real time.
+- **Challenge 2 — Inhibitor Innovation (Track A — Build with Inhibitor):** PhillyPulse is an original agent-powered system where Inhibitor serves as the critical safety gate between AI-extracted scanner data and public-facing map pins. Every LLM extraction is validated through Inhibitor before it can appear on the map — blocking PII, hallucinations, and harmful content.
+- **Challenge 3 — Glass Box (Audit Dashboard):** The admin panel provides full pipeline visibility: every extraction shows its LLM prediction, confidence score, Inhibitor status (passed/blocked with reason), and geocode result. Admins can filter to only map-published incidents, toggle visibility, delete, and re-run predictions.
 
-## Requirements
+## How It Works
 
-* Python 3.8+
-* ffmpeg (must be in your PATH)
-* A Broadcastify premium account (for direct stream access)
-
-## Installation & Setup
-
-1. Clone the repository:
 ```
-   git clone https://github.com/Nite01007/RadioTranscriber.git
-   cd RadioTranscriber
+Broadcastify Live Audio
+        ↓
+  faster-whisper (transcription)
+        ↓
+  GPT-4o-mini (extraction: type, location, severity, confidence)
+        ↓
+  Applied AI Studio Inhibitor API (ethical guardrail — blocks PII, hallucinations, harmful content)
+        ↓
+  Geocoding (Nominatim → LLM fallback)
+        ↓
+  Firebase / Map Display
+        ↓
+  Safe Routing (OpenRouteService with dynamic avoid zones)
 ```
 
-2. Create and activate a virtual environment (recommended):
+1. **Ingest** — `radiotranscriber.py` streams Philadelphia police scanner audio from Broadcastify and transcribes it with faster-whisper.
+2. **Extract** — `philly_pulse/llm.py` sends transcripts to GPT-4o-mini to extract structured incident data (type, location, severity, confidence).
+3. **Guard** — `philly_pulse/inhibitor.py` runs every extraction through the Applied AI Studio Inhibitor API. Content with PII, hallucinations, or potential for public harm is blocked before it ever reaches the map.
+4. **Geocode** — `philly_pulse/geocode.py` resolves location text to lat/lng via Nominatim with an LLM-powered fallback for ambiguous addresses.
+5. **Store** — Incidents are persisted to Firebase Firestore (or SQLite locally) with full audit trail.
+6. **Display** — The Next.js frontend renders incidents on a Leaflet map with severity-coded markers, heatmap overlays, time decay, category filters, and a live ticker.
+7. **Route** — Users enter a destination, and the app builds avoid zones around active high-severity incidents, then queries OpenRouteService for both direct and safe routes. It shows the tradeoff: *"Safe route is +3 min longer but avoids 2 incident zones."*
+8. **Score** — Tap anywhere on the map to get a 0–100 safety score for that location based on nearby incident density and severity.
+
+Every pin on the map is labeled **UNVERIFIED**. PhillyPulse is a situational awareness tool, not a source of truth.
+
+## Architecture
+
+| Layer | Tech |
+|-------|------|
+| Audio capture | Broadcastify stream + ffmpeg |
+| Transcription | faster-whisper (Whisper base, INT8) |
+| LLM extraction | OpenAI GPT-4o-mini |
+| Ethical guardrail | Applied AI Studio Inhibitor API |
+| Geocoding | Nominatim + LLM fallback |
+| Backend API | Python, FastAPI, uvicorn |
+| Database | Firebase Firestore (prod) / SQLite (dev) |
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS 4 |
+| UI components | shadcn/ui, Leaflet, Framer Motion, Lucide React |
+| Routing engine | OpenRouteService API |
+| Hosting | Vercel (frontend), dedicated server (backend) |
+| Domain | phlpulse.com (GoDaddy) |
+
+## Run Instructions
+
+### Prerequisites
+
+- Python 3.10+
+- Node.js 18+
+- ffmpeg in PATH
+- A Broadcastify premium account
+- API keys: OpenAI, Applied AI Studio Inhibitor, OpenRouteService
+
+### Backend
+
+```bash
+git clone https://github.com/EYoung21/PhillyPulse.git
+cd PhillyPulse
+
+python -m venv venv
+source venv/bin/activate
+
+pip install -r requirements-philly-pulse.txt
+pip install numpy scipy faster-whisper webrtcvad pyyaml
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your OPENAI_API_KEY and INHIBITOR_API_KEY
+
+# Configure feed settings
+# Edit config.yaml with your Broadcastify credentials and feed number
+
+# Start the API server
+python -m uvicorn philly_pulse.server:app --host 0.0.0.0 --port 8000
+
+# In a separate terminal, start the transcriber
+python radiotranscriber.py
 ```
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+### Frontend
+
+```bash
+cd frontend
+
+npm install
+
+# Configure environment
+cp .env.local.example .env.local
+# Edit .env.local with your Firebase config and API URL
+
+npm run dev
 ```
 
-3. Install dependencies:
-```
-   pip install numpy scipy faster-whisper webrtcvad pyyaml paho-mqtt
-```
+The frontend will be available at `http://localhost:3000`.
 
-   > **Note:** `faster-whisper` replaces `openai-whisper` and `torch` from earlier versions. If upgrading from a previous install, uninstall those first: `pip uninstall openai-whisper torch`
+### Production
 
-4. Set up configuration:
+- **Frontend** is deployed on Vercel at [phlpulse.com](https://phlpulse.com)
+- **Backend API** runs on a dedicated server at `api.phlpulse.com`
+- **Transcriber** runs continuously on the same server, ingesting live scanner audio 24/7
 
-   * Copy `config.yaml.example` to `config.yaml` and fill in your values:
-     + Broadcastify credentials
-     + Feed number and description
-     + Whisper model size, prompt, beam/patience settings
-     + VAD aggressiveness, min speech length, silence limit
-     + MQTT broker settings (optional — set `enabled: false` to disable)
-     + Hallucination block phrases, cutoff phrases, unit mappings, etc.
+## Key Features
 
-5. (Recommended) Protect your credentials:
+- **Real-time incident mapping** — Live police scanner → AI pipeline → map pins in seconds
+- **Safe routing** — Walk, bike, or drive routes that avoid active incident zones with clear time tradeoff
+- **Safety scoring** — Tap anywhere for a 0–100 safety score based on nearby activity
+- **Inhibitor guardrails** — Every extraction validated; PII, hallucinations, and harmful content blocked
+- **Transparency dashboard** — Full visibility into Inhibitor pass/block stats
+- **Admin panel** — Pipeline audit trail, re-transcription, prediction re-runs, visibility toggles, "On Map" filter
+- **Cluster list view** — Overlapping incidents at the same location expand into a scrollable list
+- **Heatmap overlay** — Density visualization with vivid gradients
+- **District breakdown** — Neighborhood-level incident analysis
+- **Time decay** — Older incidents fade; configurable time filters (1h to 30d)
+- **Category filters** — Filter by violent, medical, fire, vehicle, property, disorder
+- **AI neighborhood summaries** — GPT-generated plain-English safety briefings
+- **Dark/light theme** — Full theme support
+- **Mobile responsive** — Works on phone, tablet, and desktop
 
-   * `config.yaml` is already in `.gitignore`, but verify it is **not tracked** before any push:
-```
-     git ls-files config.yaml
-```
-     This should return nothing. If it returns `config.yaml`, run `git rm --cached config.yaml` immediately.
+## Assumptions and Limitations
 
-6. Run the transcriber:
-```
-   python radiotranscriber.py
-```
+- Scanner audio quality varies; transcription accuracy depends on signal clarity and dispatcher speaking patterns
+- Geocoding relies on location text extracted by the LLM, which may be incomplete or ambiguous — the LLM fallback helps but is not perfect
+- All incidents are labeled **UNVERIFIED** — this is a situational awareness tool, not a verified crime database
+- The Inhibitor API blocks content that could cause harm, which means some real incidents may be filtered out (this is by design)
+- Safe routing adds avoid zones around incidents but cannot guarantee safety — it reduces exposure to known reported activity
+- Currently covers Philadelphia only (Broadcastify feed 4603 — Philadelphia Police Citywide)
 
-## Output
+## License and Copyright
 
-Transcriptions are saved to daily log files (e.g. `transcription_Belchertown_2025-12-28.log`)
+Copyright (c) 2026 PhillyPulse Team (Eli Young, Kethan Umanarayanan, Harsh Mahani)
 
-Example log entry:
-```
-[12:44:52] (21.0s) Central Station 52, stand by for the medical — 123 Main Street...
-```
+This team's submission is provided under the MIT License.
 
-## MQTT Integration
-
-When enabled, the transcriber publishes each transcript line to an MQTT topic for use with home automation platforms (Home Assistant, Node-RED, etc.). Configure broker, port, topic, and credentials in the `mqtt` section of `config.yaml`. Set `enabled: false` to disable entirely with no performance impact.
-
-## Customization (All in config.yaml)
-
-Everything tunable is in one file — no editing the main script needed.
-
-| Section | What You Can Change | Examples / Tips |
-|---|---|---|
-| `credentials` | Broadcastify username/password | Keep secure! Never commit this file |
-| `feed_specific` | Feed number, description, output folder | Output folder auto-created if missing |
-| `vad_and_silence` | VAD aggressiveness, min speech seconds, silence limit | Lower VAD = catches more borderline audio; downstream filters handle noise |
-| `tuning` | Model size, language, initial prompt, beam size, patience, no-speech threshold, normalization | `beam_size: 10-12` recommended; `patience: 2.0` improves accuracy on ambiguous audio |
-| `mqtt` | Broker host/port, topic, credentials, enabled flag | Set `enabled: false` to disable |
-| `post_generation_cleanup` | Block phrases, cutoff phrases, unit mapping dict, normalization regex/prefix | Add your local unit phrases here! |
-
-**Tip**: The `initial_prompt` guides Whisper heavily — include your common units, locations, and agencies. Keep it under ~224 tokens. Rebuild it periodically using frequency analysis of your transcript logs to add high-volume addresses and remove dead entries.
-
-## Performance Notes
-
-* Uses **faster-whisper** with INT8 quantization for ~3-4x CPU speedup over openai-whisper at identical accuracy
-* Tested on CPU-only hardware (Intel Core i5-3470, no GPU) at ~1.5-2x real-time for typical 15-30s segments
-* `beam_size: 12` and `patience: 2.0` are the recommended quality settings for CPU-only deployments with this hardware class
-* GPU support available via `compute_type="float16"` — change the model initialization in `radiotranscriber.py`
-
-## Contributing
-
-This project is beginner-friendly and open to improvements!
-If you adapt it for your own feed:
-
-* Fork and tweak `config.yaml` for your local dispatch patterns
-* If your changes (better defaults, new filters, CLI flags) would help others → open a pull request!
-* Issues welcome: bugs, feature ideas, or "it works on my feed now!" success stories
-
-## License
-
-MIT License — feel free to fork, modify, and share.
+SPDX-License-Identifier: MIT
