@@ -255,33 +255,6 @@ function createCircleIcon(color: string, wEff: number, isHighSev: boolean, greye
   });
 }
 
-function createDistrictIcon(color: string): L.DivIcon {
-  const size = 40;
-  return L.divIcon({
-    className: "",
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size / 2],
-    html: `<div style="position:relative;width:${size}px;height:${size}px;">
-      <div style="
-        position:absolute;top:0;left:0;
-        width:${size}px;height:${size}px;
-        background:${color};
-        opacity:0.18;
-        border-radius:50%;
-        border:2px dashed ${color}80;
-      "></div>
-      <div style="
-        position:absolute;top:50%;left:50%;
-        width:6px;height:6px;
-        margin-left:-3px;margin-top:-3px;
-        background:${color};
-        opacity:0.5;
-        border-radius:50%;
-      "></div>
-    </div>`,
-  });
-}
-
 function createBigPinIcon(
   letter: string,
   bgColor: string,
@@ -520,6 +493,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       const heatData: [number, number, number][] = [];
       for (const inc of incidents) {
         if (inc.lat == null || inc.lng == null) continue;
+        if (inc.location_confidence === "district") continue;
         const weight = useDensity ? 0.6 : Math.max(inc.w_eff, 0.2);
         if (isTripMode && tripRouteGeometry) {
           const dist = minDistToRouteKm([inc.lat, inc.lng], tripRouteGeometry);
@@ -605,16 +579,14 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
     for (const inc of incidents) {
       if (inc.lat == null || inc.lng == null) continue;
+      if (inc.location_confidence === "district") continue;
       const sev = getSeverity(inc.severity_category);
       let greyed = false;
       if (isTripMode && tripRouteGeometry) {
         const dist = minDistToRouteKm([inc.lat, inc.lng], tripRouteGeometry);
         greyed = dist > TRIP_PROXIMITY_KM;
       }
-      const isDistrict = inc.location_confidence === "district";
-      const icon = isDistrict
-        ? createDistrictIcon(greyed ? "#555" : sev.markerColor)
-        : createCircleIcon(sev.markerColor, inc.w_eff, inc.s_base >= 0.7, greyed);
+      const icon = createCircleIcon(sev.markerColor, inc.w_eff, inc.s_base >= 0.7, greyed);
       const marker = L.marker([inc.lat, inc.lng], { icon });
       if (!greyed) marker.on("click", () => stableOnSelect(inc.id));
       markers.addLayer(marker);
