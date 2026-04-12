@@ -9,9 +9,6 @@ import {
 } from "react";
 import L from "leaflet";
 import "leaflet.heat";
-import "leaflet.markercluster";
-import "leaflet.markercluster/dist/MarkerCluster.css";
-import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import type { Incident } from "@/lib/api";
 import type { RouteData } from "@/components/RoutePanel";
 import { NEIGHBORHOODS, type Neighborhood, incidentsInNeighborhood } from "@/lib/neighborhoods";
@@ -742,7 +739,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   ref
 ) {
   const mapRef = useRef<L.Map | null>(null);
-  const markersRef = useRef<L.MarkerClusterGroup | null>(null);
+  const markersRef = useRef<L.LayerGroup | null>(null);
   const heatRef = useRef<L.Layer | null>(null);
   const heatPulseRafRef = useRef<number | null>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
@@ -805,26 +802,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       maxZoom: 19,
     }).addTo(map);
 
-    markersRef.current = L.markerClusterGroup({
-      maxClusterRadius: 40,
-      spiderfyOnMaxZoom: true,
-      spiderfyDistanceMultiplier: 2,
-      showCoverageOnHover: false,
-      zoomToBoundsOnClick: true,
-      disableClusteringAtZoom: 14,
-      iconCreateFunction: (cluster: L.MarkerCluster) => {
-        const count = cluster.getChildCount();
-        let size = 32;
-        let cls = "pp-cluster-small";
-        if (count >= 50) { size = 44; cls = "pp-cluster-large"; }
-        else if (count >= 10) { size = 38; cls = "pp-cluster-medium"; }
-        return L.divIcon({
-          html: `<div class="pp-cluster ${cls}"><span>${count}</span></div>`,
-          className: "pp-cluster-icon",
-          iconSize: L.point(size, size),
-        });
-      },
-    }).addTo(map);
+    markersRef.current = L.layerGroup().addTo(map);
     districtsLayerRef.current = L.layerGroup().addTo(map);
     routeLayerRef.current = L.layerGroup().addTo(map);
     previewLayerRef.current = L.layerGroup().addTo(map);
