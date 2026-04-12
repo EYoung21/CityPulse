@@ -788,8 +788,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
     markersRef.current = L.markerClusterGroup({
       maxClusterRadius: 40,
-      spiderfyOnMaxZoom: true,
-      spiderfyDistanceMultiplier: 2,
+      spiderfyOnMaxZoom: false,
       showCoverageOnHover: false,
       zoomToBoundsOnClick: true,
       disableClusteringAtZoom: 14,
