@@ -49,11 +49,6 @@ PHILLY_FEEDS = [
     {"feed_id": "15195", "label": "PPD Southwest/West"},
     {"feed_id": "34250", "label": "PFD South Fire/Medics"},
     {"feed_id": "15747", "label": "PFD North Fire"},
-    {"feed_id": "44308", "label": "SEPTA Transit Police"},
-    {"feed_id": "13975", "label": "SEPTA Regional Rail"},
-    {"feed_id": "13951", "label": "PA Turnpike Police East"},
-    {"feed_id": "36323", "label": "Delaware Co Police Dispatch"},
-    {"feed_id": "20795", "label": "Camden Co Fire/EMS Digital"},
 ]
 if _config_path.exists():
     try:
@@ -220,7 +215,17 @@ async def ingest(req: IngestRequest):
             "feed_id": feed_id,
             "error": str(e),
         })
-        raise HTTPException(status_code=502, detail=f"LLM error: {e}")
+        logger.warning("LLM failed, storing raw extraction: %s", e)
+        store.insert_extraction(
+            feed_id=feed_id,
+            raw_text=req.text,
+            reported_at=req.timestamp,
+            audio_clip=req.audio_clip,
+            raw_audio_clip=req.raw_audio_clip,
+            preprocess_meta=req.preprocess_meta,
+            variants=req.variants,
+        )
+        return {"status": "collected", "reason": f"LLM error, raw stored: {e}"}
 
     if extraction is None:
         await admin_events.broadcast({

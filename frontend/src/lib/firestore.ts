@@ -181,7 +181,7 @@ export function subscribeExtractions(
     where("reported_at", ">=", since.toISOString()),
     where("reported_at", "<=", until.toISOString()),
     orderBy("reported_at", "desc"),
-    limitFn(500)
+    limitFn(2000)
   );
 
   return onSnapshot(
@@ -211,7 +211,7 @@ export function subscribeAllExtractions(
     where("reported_at", ">=", since.toISOString()),
     where("reported_at", "<=", until.toISOString()),
     orderBy("reported_at", "desc"),
-    limitFn(500)
+    limitFn(2000)
   );
 
   return onSnapshot(

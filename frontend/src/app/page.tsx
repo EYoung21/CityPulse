@@ -18,13 +18,16 @@ import {
   Sun,
   Moon,
   Monitor,
+  BarChart3,
+  Menu,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import SearchBar from "@/components/SearchBar";
+import SearchSidebar from "@/components/SearchSidebar";
 import { type RouteData } from "@/components/RoutePanel";
 import SafetyScoreCard from "@/components/SafetyScoreCard";
 import AlertToast from "@/components/AlertToast";
 import IncidentDetail from "@/components/IncidentDetail";
+import AnalyticsPanel from "@/components/AnalyticsPanel";
 import type { MapHandle, WaypointPin } from "@/components/IncidentMap";
 import {
   fetchIncidents,
@@ -39,6 +42,8 @@ import { isFirebaseConfigured } from "@/lib/firebase";
 import { subscribeIncidents } from "@/lib/firestore";
 import { enrichIncidents } from "@/lib/incident-weights";
 import { buildLocalSummary } from "@/lib/local-summary";
+import { getNeighborhood } from "@/lib/neighborhoods";
+import { assessSafety } from "@/lib/search";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 const WEIGHT_REFRESH_MS = 15000;
@@ -120,6 +125,8 @@ export default function Home() {
   const [tripProgress, setTripProgress] = useState(0);
   const [gpsStatus, setGpsStatus] = useState<"idle" | "loading" | "found" | "denied">("idle");
   const [routeDemoSimActive, setRouteDemoSimActive] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const mapRef = useRef<MapHandle>(null);
 
   const routeGeometryForDemo =
@@ -205,11 +212,25 @@ export default function Home() {
 
   const selected = filteredIncidents.find((i) => i.id === selectedId) || null;
 
+  const analyticsAreaName = mapTap
+    ? getNeighborhood(mapTap.lat, mapTap.lng)?.name
+    : undefined;
+
+  const analyticsAreaIncidents = mapTap
+    ? (() => {
+        const result = assessSafety(
+          { display_name: "", lat: mapTap.lat, lng: mapTap.lng },
+          filteredIncidents,
+          1.5
+        );
+        return result.nearbyIncidents;
+      })()
+    : undefined;
+
   return (
     <div className="relative w-full h-screen overflow-hidden" style={{ background: "var(--map-bg)" }}>
       <AlertToast incidents={incidents} />
 
-      {/* === FULL-SCREEN MAP === */}
       <IncidentMap
         ref={mapRef}
         incidents={filteredIncidents}
@@ -231,33 +252,43 @@ export default function Home() {
         heatmapDemoBoost={routeDemoSimActive}
       />
 
-      {/* === LEFT SIDEBAR === */}
-      <SearchBar
-        incidents={filteredIncidents}
-        onFlyTo={(lat, lng) => mapRef.current?.flyTo(lat, lng)}
-        onRoutesChange={setRoutes}
-        onUserLocation={(lat, lng) => setUserLocation({ lat, lng })}
-        onTripActive={(active, geometry, m) => {
-          setTripGeometry(active && geometry ? geometry : null);
-          setTripMode(active && m ? m : null);
-        }}
-        onPreviewPins={(origin, dest) => {
-          setPreviewOrigin(origin);
-          setPreviewDest(dest);
-        }}
-        onPreviewWaypoints={setPreviewWaypoints}
-        onSelectIncident={setSelectedId}
-        selectedId={selectedId}
-        tripProgress={tripProgress}
-        onGpsStatusChange={setGpsStatus}
-        routeGeometryForDemo={routeGeometryForDemo}
-        onRouteDemoSimChange={setRouteDemoSimActive}
-      />
+      {/* Mobile hamburger */}
+      <button
+        onClick={() => setSidebarOpen(!sidebarOpen)}
+        className="md:hidden fixed top-3 left-3 z-[2001] w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg"
+        style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)", color: "var(--pill-text)" }}
+      >
+        {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+      </button>
 
-      {/* === TOP CATEGORY PILLS === */}
-      <div className="absolute top-3 left-[396px] right-3 z-[999] pointer-events-none">
+      {/* Sidebar */}
+      <div className={`max-md:${sidebarOpen ? "block" : "hidden"} md:block`}>
+        <SearchSidebar
+          incidents={filteredIncidents}
+          onFlyTo={(lat, lng) => mapRef.current?.flyTo(lat, lng)}
+          onRoutesChange={setRoutes}
+          onUserLocation={(lat, lng) => setUserLocation({ lat, lng })}
+          onTripActive={(active, geometry, m) => {
+            setTripGeometry(active && geometry ? geometry : null);
+            setTripMode(active && m ? m : null);
+          }}
+          onPreviewPins={(origin, dest) => {
+            setPreviewOrigin(origin);
+            setPreviewDest(dest);
+          }}
+          onPreviewWaypoints={setPreviewWaypoints}
+          onSelectIncident={setSelectedId}
+          selectedId={selectedId}
+          tripProgress={tripProgress}
+          onGpsStatusChange={setGpsStatus}
+          routeGeometryForDemo={routeGeometryForDemo}
+          onRouteDemoSimChange={setRouteDemoSimActive}
+        />
+      </div>
+
+      {/* Top category pills */}
+      <div className="absolute top-3 left-0 md:left-[396px] right-3 z-[999] pointer-events-none max-md:pl-14">
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pointer-events-auto">
-          {/* Time filter */}
           <div
             className="flex items-center rounded-full overflow-hidden shadow-lg shrink-0 backdrop-blur-md"
             style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)" }}
@@ -267,7 +298,7 @@ export default function Home() {
               <button
                 key={tf.label}
                 onClick={() => setTimeFilter(tf.hours)}
-                className={`px-3 py-2 text-xs font-medium transition-all ${
+                className={`px-2 md:px-3 py-2 text-xs font-medium transition-all ${
                   timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
                 }`}
                 style={timeFilter !== tf.hours ? { color: "var(--pill-text)" } : {}}
@@ -277,7 +308,7 @@ export default function Home() {
             ))}
           </div>
 
-          <div className="w-px h-6 shrink-0" style={{ background: "var(--pill-border)" }} />
+          <div className="w-px h-6 shrink-0 hidden md:block" style={{ background: "var(--pill-border)" }} />
 
           <button
             onClick={() => setActiveCats(new Set())}
@@ -307,7 +338,7 @@ export default function Home() {
                 }}
               >
                 <Icon className="w-3.5 h-3.5" />
-                {pill.label}
+                <span className="hidden md:inline">{pill.label}</span>
                 {count > 0 && (
                   <span className="text-[10px] font-mono" style={{ opacity: isActive ? 1 : 0.5 }}>{count}</span>
                 )}
@@ -317,9 +348,24 @@ export default function Home() {
         </div>
       </div>
 
-      {/* === BOTTOM-RIGHT CONTROLS === */}
+      {/* Bottom-right controls */}
       <div className="absolute bottom-6 right-3 z-[999] flex flex-col items-end gap-2 pointer-events-auto">
         <AuthBar />
+
+        {/* Analytics toggle */}
+        <button
+          onClick={() => setShowAnalytics(!showAnalytics)}
+          className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
+          style={{
+            background: showAnalytics ? "rgba(59,130,246,0.15)" : "var(--pill-bg)",
+            border: `1px solid ${showAnalytics ? "rgba(59,130,246,0.3)" : "var(--pill-border)"}`,
+            color: showAnalytics ? "#3b82f6" : "var(--pill-text)",
+          }}
+          title="Analytics"
+        >
+          <BarChart3 className="w-4 h-4" />
+        </button>
+
         {/* Theme toggle */}
         <div className="relative">
           <button
@@ -430,8 +476,8 @@ export default function Home() {
         </button>
       </div>
 
-      {/* === BOTTOM STATUS BAR === */}
-      <div className="absolute bottom-0 left-[380px] right-0 z-[998] pointer-events-none">
+      {/* Bottom status bar */}
+      <div className="absolute bottom-0 left-0 md:left-[380px] right-0 z-[998] pointer-events-none">
         <div
           className="flex items-center justify-between px-4 py-2 backdrop-blur-md"
           style={{ background: "var(--status-bg)", borderTop: "1px solid var(--status-border)" }}
@@ -447,7 +493,7 @@ export default function Home() {
             </span>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+            <span className="text-[10px] hidden sm:inline" style={{ color: "var(--panel-text-muted)" }}>
               {new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })} EST
             </span>
             <img src="/logo.png" alt="" className="w-4 h-4 opacity-50" />
@@ -455,14 +501,14 @@ export default function Home() {
         </div>
       </div>
 
-      {/* === ABOUT / TRANSPARENCY PANEL === */}
+      {/* About panel */}
       <AnimatePresence>
         {showAbout && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-16 right-3 z-[1000] w-80 max-h-[calc(100vh-8rem)] overflow-y-auto rounded-xl shadow-2xl backdrop-blur-xl p-4 space-y-3"
+            className="absolute bottom-16 right-3 z-[1000] w-80 max-w-[calc(100vw-1.5rem)] max-h-[calc(100vh-8rem)] overflow-y-auto rounded-xl shadow-2xl backdrop-blur-xl p-4 space-y-3"
             style={{ background: "var(--panel-bg)", border: "1px solid var(--panel-border)" }}
           >
             <h3 className="font-semibold flex items-center gap-2 text-sm" style={{ color: "var(--panel-text)" }}>
@@ -516,14 +562,14 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* === SAFETY SCORE CARD === */}
+      {/* Safety Score Card */}
       <AnimatePresence>
-        {mapTap && !selected && (
+        {mapTap && !selected && !showAnalytics && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-16 left-[396px] z-[1000] w-80"
+            className="absolute bottom-16 left-3 md:left-[396px] z-[1000] w-80 max-w-[calc(100vw-1.5rem)]"
           >
             <SafetyScoreCard
               lat={mapTap.lat}
@@ -535,14 +581,33 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* === INCIDENT DETAIL === */}
+      {/* Analytics Panel */}
+      <AnimatePresence>
+        {showAnalytics && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="absolute bottom-16 left-3 md:left-[396px] z-[1000] w-96 max-w-[calc(100vw-1.5rem)]"
+          >
+            <AnalyticsPanel
+              incidents={filteredIncidents}
+              areaIncidents={analyticsAreaIncidents}
+              areaName={analyticsAreaName}
+              onClose={() => setShowAnalytics(false)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Incident Detail */}
       <AnimatePresence>
         {selected && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-16 left-[396px] z-[1000] w-96"
+            className="absolute bottom-16 left-3 md:left-[396px] z-[1000] w-96 max-w-[calc(100vw-1.5rem)]"
           >
             <IncidentDetail
               incident={selected}

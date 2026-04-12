@@ -23,12 +23,7 @@ class VariantConfig:
 
 
 PIPELINE_VARIANTS: list[VariantConfig] = [
-    # Proven best: strong filtering, aggressive VAD, heavy normalization
     VariantConfig(name="aggressive", highpass_hz=100, vad_aggressiveness=3, norm_percentile=99),
-    # Higher HPF (200Hz) to cut more low-freq rumble, moderate VAD, strong normalization
-    VariantConfig(name="bright", highpass_hz=200, vad_aggressiveness=2, norm_percentile=98),
-    # Lower HPF preserves more bass, gentlest VAD to avoid clipping quiet speech, moderate norm
-    VariantConfig(name="warm", highpass_hz=60, vad_aggressiveness=1, norm_percentile=92),
 ]
 
 
