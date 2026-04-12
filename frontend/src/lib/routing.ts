@@ -2,6 +2,13 @@ import type { Incident } from "./api";
 
 const ORS_URL = "https://api.openrouteservice.org/v2/directions";
 
+/** Same base as `lib/api.ts` so routing hits the backend when using NEXT_PUBLIC_API_URL. */
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+
+function routeDirectionsUrl(): string {
+  return `${API_BASE}/api/route-directions`;
+}
+
 export type TransportMode = "foot-walking" | "cycling-regular" | "driving-car";
 
 export interface RouteResult {
@@ -100,7 +107,7 @@ async function getRouteOSRM(
 ): Promise<RouteResult | null> {
   if (waypoints.length < 2) return null;
   try {
-    const res = await fetch("/api/route-directions", {
+    const res = await fetch(routeDirectionsUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ waypoints, mode }),
