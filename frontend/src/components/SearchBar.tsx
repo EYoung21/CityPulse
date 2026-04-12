@@ -139,6 +139,8 @@ export default function SearchBar({
     nearbyCount: number;
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
+  const [startNavBusy, setStartNavBusy] = useState(false);
   const [userPos, setUserPos] = useState<{ lat: number; lng: number } | null>(null);
   const [gpsStatus, setGpsStatus] = useState<"idle" | "loading" | "found" | "denied">("idle");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -153,6 +155,8 @@ export default function SearchBar({
   const seededOriginQueryRef = useRef(false);
   const onGpsStatusChangeRef = useRef(onGpsStatusChange);
   onGpsStatusChangeRef.current = onGpsStatusChange;
+  const incidentsRef = useRef(incidents);
+  incidentsRef.current = incidents;
   const { destinations: savedDests, canSave, addDestination, removeDestination } = useSavedDestinations();
 
   useEffect(() => {
@@ -291,13 +295,18 @@ export default function SearchBar({
     previewAbortRef.current = controller;
 
     setPreviewLoading(true);
+    setRouteError(null);
 
     const waypoints: [number, number][] = [
       [originLoc.lat, originLoc.lng],
       ...stops.filter((s) => s.loc).map((s) => [s.loc!.lat, s.loc!.lng] as [number, number]),
       [destLoc.lat, destLoc.lng],
     ];
-    const safety = assessSafety({ display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng }, incidents);
+    const incSnap = incidentsRef.current;
+    const safety = assessSafety(
+      { display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng },
+      incSnap
+    );
 
     (async () => {
       try {
@@ -307,6 +316,9 @@ export default function SearchBar({
         if (!directRoute) {
           onRoutesChange(null);
           setPreviewRoute(null);
+          setRouteError(
+            "Could not load a street route. Start the PhillyPulse API (e.g. port 8765) or set NEXT_PUBLIC_API_URL."
+          );
           return;
         }
 
@@ -314,17 +326,19 @@ export default function SearchBar({
           onRoutesChange({ normal: directRoute, safe: null, avoidZones: [] });
           setPreviewRoute({ distanceKm: directRoute.distanceKm, durationMin: directRoute.durationMin, isSafe: false, nearbyCount: 0 });
         } else {
-          const zones = buildAvoidZones(incidents);
+          const zones = buildAvoidZones(incSnap);
           const safeRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints, buildAvoidPolygons(zones));
           if (controller.signal.aborted) return;
           const best = safeRoute || directRoute;
           onRoutesChange({ normal: directRoute, safe: safeRoute, avoidZones: zones });
           setPreviewRoute({ distanceKm: best.distanceKm, durationMin: best.durationMin, isSafe: !!safeRoute, nearbyCount: safety.nearbyCount });
         }
+        setRouteError(null);
       } catch {
         if (!controller.signal.aborted) {
           setPreviewRoute(null);
           onRoutesChange(null);
+          setRouteError("Routing request failed.");
         }
       } finally {
         if (!controller.signal.aborted) setPreviewLoading(false);
@@ -332,7 +346,7 @@ export default function SearchBar({
     })();
 
     return () => controller.abort();
-  }, [originLoc, destLoc, stops, activeMode, view, incidents, onRoutesChange]);
+  }, [originLoc, destLoc, stops, activeMode, view, onRoutesChange]);
 
   const openDirections = useCallback((destName?: string, destCoords?: { lat: number; lng: number }) => {
     setView("directions");
@@ -348,29 +362,82 @@ export default function SearchBar({
   const startTrip = useCallback(async () => {
     if (!originLoc || !destLoc) return;
 
-    const safety = assessSafety({ display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng }, incidents);
-    const best = previewRoute;
-
-    setRouteInfo({
-      isSafe: best?.isSafe ?? false,
-      distanceKm: best?.distanceKm ?? 0,
-      durationMin: best?.durationMin ?? 0,
-      nearbyCount: safety.nearbyCount,
-    });
-    setView("trip");
-
     const waypoints: [number, number][] = [
       [originLoc.lat, originLoc.lng],
-      ...stops.filter(s => s.loc).map(s => [s.loc!.lat, s.loc!.lng] as [number, number]),
+      ...stops.filter((s) => s.loc).map((s) => [s.loc!.lat, s.loc!.lng] as [number, number]),
       [destLoc.lat, destLoc.lng],
     ];
 
-    const route = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints,
-      safety.nearbyCount > 0 ? buildAvoidPolygons(buildAvoidZones(incidents)) : undefined
+    const incSnap = incidentsRef.current;
+    const safety = assessSafety(
+      { display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng },
+      incSnap
     );
 
-    onTripActive?.(true, route?.geometry, activeMode);
-  }, [originLoc, destLoc, stops, activeMode, incidents, previewRoute, onTripActive]);
+    setStartNavBusy(true);
+    setRouteError(null);
+
+    try {
+      let directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
+      if (!directRoute) {
+        setRouteError(
+          "Could not calculate route. Start the API on port 8765 or set NEXT_PUBLIC_API_URL to your backend."
+        );
+        return;
+      }
+
+      let routeData: RouteData;
+      let meta: {
+        distanceKm: number;
+        durationMin: number;
+        isSafe: boolean;
+        nearbyCount: number;
+      };
+
+      if (safety.nearbyCount === 0) {
+        routeData = { normal: directRoute, safe: null, avoidZones: [] };
+        meta = {
+          distanceKm: directRoute.distanceKm,
+          durationMin: directRoute.durationMin,
+          isSafe: false,
+          nearbyCount: 0,
+        };
+      } else {
+        const zones = buildAvoidZones(incSnap);
+        const safeRoute = await getMultiStopRoute(
+          ORS_API_KEY,
+          activeMode,
+          waypoints,
+          buildAvoidPolygons(zones)
+        );
+        const best = safeRoute || directRoute;
+        routeData = { normal: directRoute, safe: safeRoute, avoidZones: zones };
+        meta = {
+          distanceKm: best.distanceKm,
+          durationMin: best.durationMin,
+          isSafe: !!safeRoute,
+          nearbyCount: safety.nearbyCount,
+        };
+      }
+
+      onRoutesChange(routeData);
+      setPreviewRoute(meta);
+      setRouteInfo({
+        isSafe: meta.isSafe,
+        distanceKm: meta.distanceKm,
+        durationMin: meta.durationMin,
+        nearbyCount: safety.nearbyCount,
+      });
+      setView("trip");
+
+      const geom = (routeData.safe || routeData.normal)?.geometry;
+      onTripActive?.(true, geom, activeMode);
+    } catch {
+      setRouteError("Start navigation failed. Check your connection and API.");
+    } finally {
+      setStartNavBusy(false);
+    }
+  }, [originLoc, destLoc, stops, activeMode, onRoutesChange, onTripActive]);
 
   const resetTrip = useCallback(() => {
     setRouteInfo(null);
@@ -738,7 +805,7 @@ export default function SearchBar({
                       autoFocus={!destLoc}
                     />
                     {destLoc && (
-                      <button onClick={() => { setDestLoc(null); setDestQuery(""); setPreviewRoute(null); onRoutesChange(null); }}
+                      <button onClick={() => { setDestLoc(null); setDestQuery(""); setPreviewRoute(null); setRouteError(null); onRoutesChange(null); }}
                         className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full" style={{ color: "var(--panel-text-muted)" }}>
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -771,6 +838,13 @@ export default function SearchBar({
                 <div className="mt-3 flex items-center gap-2 px-3 py-2.5 rounded-lg" style={{ background: "var(--panel-input-bg)" }}>
                   <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
                   <span className="text-xs" style={{ color: "var(--panel-text-secondary)" }}>Calculating route...</span>
+                </div>
+              )}
+
+              {routeError && !previewLoading && (
+                <div className="mt-3 flex items-start gap-2 px-3 py-2.5 rounded-lg text-xs text-red-400" style={{ background: "rgba(239,68,68,0.08)" }}>
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{routeError}</span>
                 </div>
               )}
 
@@ -813,16 +887,27 @@ export default function SearchBar({
               {/* GO button */}
               <div className="mt-3 flex gap-2">
                 <button
-                  onClick={startTrip}
-                  disabled={!originLoc || !destLoc || !previewRoute}
+                  onClick={() => void startTrip()}
+                  disabled={!originLoc || !destLoc || startNavBusy}
                   className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-full text-sm font-semibold transition-all ${
-                    originLoc && destLoc && previewRoute
-                      ? "bg-blue-500 hover:bg-blue-400 text-white shadow-lg shadow-blue-500/25 active:scale-[0.98]"
+                    originLoc && destLoc
+                      ? startNavBusy
+                        ? "bg-blue-500 text-white cursor-wait opacity-90"
+                        : "bg-blue-500 hover:bg-blue-400 text-white shadow-lg shadow-blue-500/25 active:scale-[0.98]"
                       : "cursor-not-allowed"
                   }`}
-                  style={!(originLoc && destLoc && previewRoute) ? { background: "var(--panel-input-bg)", color: "var(--panel-text-muted)" } : {}}
+                  style={
+                    !(originLoc && destLoc)
+                      ? { background: "var(--panel-input-bg)", color: "var(--panel-text-muted)" }
+                      : {}
+                  }
                 >
-                  <Play className="w-4 h-4 fill-current" /> Start Navigation
+                  {startNavBusy ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Play className="w-4 h-4 fill-current" />
+                  )}
+                  {startNavBusy ? "Starting…" : "Start Navigation"}
                 </button>
                 {canSave && destLoc && (
                   <button
