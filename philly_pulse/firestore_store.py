@@ -247,14 +247,21 @@ def seed_from_json(seed_path: str, s_base_lookup: dict[str, float]) -> int:
 
 def incident_count() -> int:
     db = _ensure_client()
-    return sum(1 for _ in db.collection("incidents").stream())
+    try:
+        agg = db.collection("incidents").count().get()
+        return agg[0][0].value
+    except Exception:
+        return -1
 
 
 def inhibitor_stats() -> dict:
     db = _ensure_client()
     stats: dict[str, int] = {}
-    for doc in db.collection("incidents").stream():
-        data = doc.to_dict() or {}
-        s = str(data.get("inhibitor_status", "unknown"))
-        stats[s] = stats.get(s, 0) + 1
+    try:
+        for doc in db.collection("incidents").select(["inhibitor_status"]).stream():
+            data = doc.to_dict() or {}
+            s = str(data.get("inhibitor_status", "unknown"))
+            stats[s] = stats.get(s, 0) + 1
+    except Exception:
+        pass
     return stats

@@ -113,11 +113,15 @@ async def startup():
 
 @app.get("/api/health")
 async def health():
+    try:
+        count = store.incident_count()
+    except Exception:
+        count = -1
     return {
         "status": "ok",
         "llm_configured": bool(llm.OPENAI_API_KEY),
         "inhibitor_configured": bool(inhibitor.INHIBITOR_API_KEY),
-        "incident_count": store.incident_count(),
+        "incident_count": count,
     }
 
 
