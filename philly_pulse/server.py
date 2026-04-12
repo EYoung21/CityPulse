@@ -19,6 +19,10 @@ from . import admin_events, geocode, inhibitor, llm, persistence as store, verif
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# When False, ingest only stores raw transcript+audio — no LLM/inhibitor/geocode.
+# Flip to True (or set env PHILLY_PULSE_LLM_AUTO=1) to resume automatic processing.
+LLM_AUTO_ENABLED = os.environ.get("PHILLY_PULSE_LLM_AUTO", "0").strip().lower() in ("1", "true", "yes")
+
 app = FastAPI(title="PhillyPulse API", version="0.1.0")
 
 app.add_middleware(
@@ -162,7 +166,12 @@ async def route_directions(body: RouteDirectionsRequest):
 
 @app.post("/api/ingest")
 async def ingest(req: IngestRequest):
-    """Ingest a scanner transcript: LLM extract -> Inhibitor check -> geocode -> store."""
+    """Ingest a scanner transcript.
+
+    When LLM_AUTO_ENABLED is False (default), only store the raw
+    transcript + audio as an extraction — no LLM / inhibitor / geocode.
+    When True, run the full pipeline.
+    """
 
     feed_id = req.feed_id or "unknown"
     correlation = f"{feed_id}_{req.timestamp or ''}"
@@ -176,7 +185,17 @@ async def ingest(req: IngestRequest):
         "timestamp": req.timestamp,
     })
 
-    # Step 1: LLM extraction
+    # ── Collection-only mode (LLM paused) ──────────────────────────
+    if not LLM_AUTO_ENABLED:
+        store.insert_extraction(
+            feed_id=feed_id,
+            raw_text=req.text,
+            reported_at=req.timestamp,
+            audio_clip=req.audio_clip,
+        )
+        return {"status": "collected", "reason": "LLM auto-processing paused; raw transcript stored"}
+
+    # ── Full pipeline mode ──────────────────────────────────────────
     await admin_events.broadcast({
         "type": "llm_started",
         "correlation": correlation,
@@ -234,7 +253,7 @@ async def ingest(req: IngestRequest):
         "s_base": s_base,
     })
 
-    # Step 2: Inhibitor ethical guardrail
+    # Inhibitor ethical guardrail
     inh = await inhibitor.check_incident(
         raw_transcript=req.text,
         severity_category=category,
@@ -288,7 +307,7 @@ async def ingest(req: IngestRequest):
             "incident_id": incident["id"],
         }
 
-    # Step 3: Geocode (Nominatim first, LLM coordinates as fallback)
+    # Geocode (Nominatim first, LLM coordinates as fallback)
     lat, lng = None, None
     geocode_status = "failed"
     if location_text:
@@ -314,7 +333,7 @@ async def ingest(req: IngestRequest):
         "method": geocode_status,
     })
 
-    # Step 4: Store
+    # Store incident
     incident = store.insert_incident(
         raw_text=req.text,
         severity_category=category,
@@ -484,6 +503,98 @@ async def admin_ws(ws: WebSocket):
 async def admin_feeds():
     """List of available Broadcastify feeds."""
     return {"feeds": PHILLY_FEEDS}
+
+
+class PredictRequest(BaseModel):
+    extraction_id: str
+
+
+@app.post("/api/admin/predict")
+async def admin_predict(req: PredictRequest):
+    """Run the full LLM + inhibitor + geocode pipeline on a stored extraction.
+
+    Used for manual evaluation when LLM_AUTO_ENABLED is off.
+    """
+    ext = store.get_extraction(req.extraction_id)
+    if ext is None:
+        raise HTTPException(status_code=404, detail="Extraction not found")
+
+    raw_text = ext.get("raw_text", "")
+    feed_id = ext.get("feed_id", "unknown")
+    audio_clip = ext.get("audio_clip")
+    reported_at = ext.get("reported_at")
+
+    # LLM extraction
+    try:
+        result = await llm.extract_incident(raw_text)
+    except llm.LLMError as e:
+        raise HTTPException(status_code=502, detail=f"LLM error: {e}")
+
+    if result is None:
+        store.update_extraction(req.extraction_id, {
+            "llm_relevant": False,
+            "llm_confidence": 0.0,
+            "llm_category": None,
+            "llm_location_text": None,
+        })
+        return {"status": "not_relevant", "extraction_id": req.extraction_id}
+
+    category = result["severity_category"]
+    location_text = result["location_text"]
+    confidence = result["confidence"]
+    llm_lat = result.get("llm_lat")
+    llm_lng = result.get("llm_lng")
+    s_base = weights.get_s_base(category)
+
+    # Inhibitor
+    inh = await inhibitor.check_incident(
+        raw_transcript=raw_text,
+        severity_category=category,
+        location_text=location_text,
+        confidence=confidence,
+    )
+
+    # Geocode
+    lat, lng = None, None
+    geocode_status = "failed"
+    if location_text:
+        coords = await geocode.geocode(location_text)
+        if coords:
+            lat, lng = coords
+            geocode_status = "success"
+        elif llm_lat is not None and llm_lng is not None:
+            lat, lng = llm_lat, llm_lng
+            geocode_status = "llm_fallback"
+        else:
+            geocode_status = "no_result"
+    elif llm_lat is not None and llm_lng is not None:
+        lat, lng = llm_lat, llm_lng
+        geocode_status = "llm_fallback"
+
+    # Update the extraction with full results (but don't store incident yet)
+    store.update_extraction(req.extraction_id, {
+        "llm_relevant": True,
+        "llm_category": category,
+        "llm_confidence": confidence,
+        "llm_location_text": location_text,
+        "inhibitor_status": inh.status,
+        "inhibitor_reason": inh.reason,
+        "geocode_status": geocode_status,
+    })
+
+    return {
+        "status": "predicted",
+        "extraction_id": req.extraction_id,
+        "llm_relevant": True,
+        "category": category,
+        "confidence": confidence,
+        "location_text": location_text,
+        "inhibitor_status": inh.status,
+        "inhibitor_reason": inh.reason,
+        "geocode_status": geocode_status,
+        "lat": lat,
+        "lng": lng,
+    }
 
 
 @app.get("/api/admin/stream/{feed_id}")

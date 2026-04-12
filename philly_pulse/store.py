@@ -212,6 +212,16 @@ def insert_extraction(**kwargs) -> dict:
     return kwargs
 
 
+def get_extraction(extraction_id: str) -> Optional[dict]:
+    """No-op for SQLite."""
+    return None
+
+
+def update_extraction(extraction_id: str, updates: dict) -> Optional[dict]:
+    """No-op for SQLite."""
+    return None
+
+
 def insert_incident(
     raw_text: str,
     severity_category: str,
