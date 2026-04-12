@@ -453,8 +453,11 @@ async def get_incidents(
     category: str | None = Query(None, description="Severity category filter"),
 ):
     """Return all displayable incidents with computed w_eff."""
-    incidents = store.list_incidents(since=since, category=category)
-    incidents = weights.enrich_incidents(incidents)
+    try:
+        incidents = store.list_incidents(since=since, category=category)
+        incidents = weights.enrich_incidents(incidents)
+    except Exception:
+        incidents = []
     return {"incidents": incidents}
 
 

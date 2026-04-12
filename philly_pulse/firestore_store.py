@@ -192,20 +192,19 @@ def list_incidents(
 ) -> list[dict]:
     db = _ensure_client()
     col = db.collection("incidents")
-    try:
-        docs = col.order_by("reported_at", direction=firestore.Query.DESCENDING).stream()
-    except Exception:
-        return []
     rows: list[dict] = []
-    for doc in docs:
-        row = _doc_to_row(doc.id, doc.to_dict() or {})
-        if not include_blocked and row.get("inhibitor_status") == "blocked":
-            continue
-        if since and (row.get("reported_at") or "") < since:
-            continue
-        if category and row.get("severity_category") != category:
-            continue
-        rows.append(row)
+    try:
+        for doc in col.order_by("reported_at", direction=firestore.Query.DESCENDING).stream():
+            row = _doc_to_row(doc.id, doc.to_dict() or {})
+            if not include_blocked and row.get("inhibitor_status") == "blocked":
+                continue
+            if since and (row.get("reported_at") or "") < since:
+                continue
+            if category and row.get("severity_category") != category:
+                continue
+            rows.append(row)
+    except Exception:
+        pass
     return rows
 
 
