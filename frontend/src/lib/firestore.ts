@@ -195,3 +195,33 @@ export function subscribeExtractions(
     }
   );
 }
+
+export function subscribeAllExtractions(
+  since: Date,
+  until: Date,
+  onData: (extractions: Extraction[]) => void,
+  onError?: (e: Error) => void
+): () => void {
+  const db = getFirestore(getFirebaseApp());
+  const q = query(
+    collection(db, "extractions"),
+    where("reported_at", ">=", since.toISOString()),
+    where("reported_at", "<=", until.toISOString()),
+    orderBy("reported_at", "desc"),
+    limitFn(500)
+  );
+
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: Extraction[] = [];
+      snap.forEach((doc) => {
+        list.push(mapExtraction(doc.id, doc.data()));
+      });
+      onData(list);
+    },
+    (err) => {
+      onError?.(err instanceof Error ? err : new Error(String(err)));
+    }
+  );
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
   ArrowLeft,
   Play,
@@ -16,12 +16,13 @@ import {
   Shield,
   Brain,
   Radio,
+  Layers,
 } from "lucide-react";
 import {
   useAdminStream,
   type FeedInfo,
 } from "@/hooks/useAdminStream";
-import { subscribeExtractions } from "@/lib/firestore";
+import { subscribeExtractions, subscribeAllExtractions } from "@/lib/firestore";
 import type { Extraction, VariantResult } from "@/lib/api";
 import AuthBar from "@/components/AuthBar";
 
@@ -715,6 +716,136 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
   );
 }
 
+// ── All Feeds Content ────────────────────────────────────────────────
+
+function AllFeedsContent({ feeds }: { feeds: FeedInfo[] }) {
+  const [timeFilter, setTimeFilter] = useState(24);
+  const [extractions, setExtractions] = useState<Extraction[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const feedLabelMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const f of feeds) m[f.feed_id] = f.label;
+    return m;
+  }, [feeds]);
+
+  useEffect(() => {
+    setLoading(true);
+    const now = new Date();
+    const since =
+      timeFilter === 0
+        ? new Date(0)
+        : new Date(now.getTime() - timeFilter * 60 * 60 * 1000);
+
+    const unsub = subscribeAllExtractions(
+      since,
+      now,
+      (data) => {
+        setExtractions(data);
+        setLoading(false);
+      },
+      () => setLoading(false)
+    );
+
+    return unsub;
+  }, [timeFilter]);
+
+  const handlePredict = async (extractionId: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/predict`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ extraction_id: extractionId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Request failed" }));
+        alert(`Prediction failed: ${err.detail || res.status}`);
+      }
+    } catch (err) {
+      alert(`Prediction error: ${err}`);
+    }
+  };
+
+  return (
+    <div className="flex flex-col flex-1 overflow-hidden">
+      {/* Title */}
+      <div
+        className="flex items-center gap-2 px-4 py-2.5 shrink-0"
+        style={{
+          background: "var(--panel-input-bg, rgba(255,255,255,0.04))",
+          borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.08))",
+        }}
+      >
+        <Layers className="w-4 h-4 text-blue-400" />
+        <span className="text-sm font-medium" style={{ color: "var(--panel-text)" }}>
+          All Feeds
+        </span>
+        <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+          Combined view
+        </span>
+      </div>
+
+      {/* Time range filter */}
+      <div
+        className="flex items-center gap-1.5 px-4 py-2.5 shrink-0 overflow-x-auto"
+        style={{ borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.08))" }}
+      >
+        <span className="text-[10px] font-semibold uppercase mr-2" style={{ color: "var(--panel-text-muted)" }}>
+          Range:
+        </span>
+        {TIME_FILTERS.map((tf) => (
+          <button
+            key={tf.label}
+            onClick={() => setTimeFilter(tf.hours)}
+            className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all whitespace-nowrap ${
+              timeFilter === tf.hours
+                ? "bg-blue-500 text-white"
+                : "bg-white/5 hover:bg-white/10"
+            }`}
+            style={
+              timeFilter !== tf.hours
+                ? { color: "var(--panel-text-secondary)" }
+                : {}
+            }
+          >
+            {tf.label}
+          </button>
+        ))}
+        <span className="ml-auto text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+          {extractions.length} extractions
+        </span>
+      </div>
+
+      {/* Extraction list */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        {loading && (
+          <div className="text-center py-12 text-xs" style={{ color: "var(--panel-text-muted)" }}>
+            Loading extractions...
+          </div>
+        )}
+        {!loading && extractions.length === 0 && (
+          <div className="text-center py-12 text-xs" style={{ color: "var(--panel-text-muted)" }}>
+            No extractions found in the selected time range.
+          </div>
+        )}
+        {extractions.map((e) => (
+          <div key={e.id}>
+            <div className="flex items-center gap-1.5 mb-1 px-1">
+              <span
+                className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                style={{ background: "rgba(59,130,246,0.15)", color: "#60a5fa" }}
+              >
+                {feedLabelMap[e.feed_id] || e.feed_id}
+              </span>
+            </div>
+            <ExtractionCard extraction={e} onPredict={handlePredict} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Sidebar Feed Item (with inline live play button) ────────────────
 
 function SidebarFeedItem({
@@ -790,9 +921,11 @@ function SidebarFeedItem({
 
 // ── Main Admin Panel ────────────────────────────────────────────────
 
+const ALL_TAB = "__all__";
+
 export default function AdminPanel({ onBack }: Props) {
   const { connected, feeds, events } = useAdminStream();
-  const [activeTab, setActiveTab] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<string>(ALL_TAB);
 
   const activeFeedIds = new Set(
     events
@@ -801,17 +934,7 @@ export default function AdminPanel({ onBack }: Props) {
       .map((e) => e.feed_id)
   );
 
-  const setInitialTab = useCallback(() => {
-    if (activeTab === null && feeds.length > 0) {
-      setActiveTab(feeds[0].feed_id);
-    }
-  }, [activeTab, feeds]);
-
-  useEffect(() => {
-    setInitialTab();
-  }, [setInitialTab]);
-
-  const activeFeed = feeds.find((f) => f.feed_id === activeTab);
+  const activeFeed = activeTab !== ALL_TAB ? feeds.find((f) => f.feed_id === activeTab) : null;
 
   return (
     <div
@@ -869,14 +992,36 @@ export default function AdminPanel({ onBack }: Props) {
             borderRight: "1px solid var(--panel-border, rgba(255,255,255,0.08))",
           }}
         >
-          <div
-            className="px-3 py-2 text-[9px] font-bold uppercase tracking-wider shrink-0"
+          {/* All Feeds tab */}
+          <button
+            onClick={() => setActiveTab(ALL_TAB)}
+            className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition-all ${
+              activeTab === ALL_TAB ? "bg-blue-500/10" : "hover:bg-white/5"
+            }`}
             style={{
-              color: "var(--panel-text-muted)",
+              borderLeft: activeTab === ALL_TAB ? "3px solid #3b82f6" : "3px solid transparent",
               borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.06))",
             }}
           >
-            Feeds
+            <Layers className="w-3.5 h-3.5 shrink-0" style={{ color: activeTab === ALL_TAB ? "#3b82f6" : "var(--panel-text-muted)" }} />
+            <span
+              className="text-[11px] font-semibold"
+              style={{
+                color: activeTab === ALL_TAB
+                  ? "var(--panel-text, #e5e7eb)"
+                  : "var(--panel-text-muted, #6b7280)",
+              }}
+            >
+              All Feeds
+            </span>
+          </button>
+
+          {/* Per-feed items */}
+          <div
+            className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider shrink-0"
+            style={{ color: "var(--panel-text-muted)" }}
+          >
+            Channels
           </div>
           {feeds.map((feed) => (
             <SidebarFeedItem
@@ -896,7 +1041,9 @@ export default function AdminPanel({ onBack }: Props) {
 
         {/* Main content */}
         <div className="flex-1 flex flex-col overflow-hidden" style={{ background: "rgba(15,15,25,0.6)" }}>
-          {activeFeed ? (
+          {activeTab === ALL_TAB ? (
+            <AllFeedsContent feeds={feeds} />
+          ) : activeFeed ? (
             <FeedTabContent key={activeFeed.feed_id} feed={activeFeed} />
           ) : (
             <div className="flex-1 flex items-center justify-center">
