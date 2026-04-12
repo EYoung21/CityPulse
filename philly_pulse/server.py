@@ -6,7 +6,7 @@ import os
 import random
 import re
 import subprocess
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from pathlib import Path
 
 import httpx
@@ -182,7 +182,7 @@ async def ingest(req: IngestRequest):
     ts = req.timestamp
     if ts and re.match(r"^\d{1,2}:\d{2}(:\d{2})?$", ts.strip()):
         ts = f"{date.today().isoformat()}T{ts.strip()}"
-    req_timestamp = ts or datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    req_timestamp = ts or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     correlation = f"{feed_id}_{req_timestamp}"
 

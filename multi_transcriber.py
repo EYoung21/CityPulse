@@ -362,7 +362,7 @@ def feed_capture_thread(feed_id, feed_label):
                     duration = len(raw_pcm) / SAMPLE_RATE
 
                     if duration >= MIN_SPEECH_SECONDS:
-                        ts = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+                        ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                         transcription_queue.put((feed_id, feed_label, ts, raw_pcm.copy()))
 
                     audio_buffer = []
