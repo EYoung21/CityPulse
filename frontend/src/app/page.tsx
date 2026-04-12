@@ -115,7 +115,14 @@ export default function Home() {
   const [showTheme, setShowTheme] = useState(false);
   const [tripProgress, setTripProgress] = useState(0);
   const [gpsStatus, setGpsStatus] = useState<"idle" | "loading" | "found" | "denied">("idle");
+  const [routeDemoSimActive, setRouteDemoSimActive] = useState(false);
   const mapRef = useRef<MapHandle>(null);
+
+  const routeGeometryForDemo =
+    tripGeometry ??
+    routes?.safe?.geometry ??
+    routes?.normal?.geometry ??
+    null;
 
   const loadFromApi = useCallback(async () => {
     try {
@@ -215,7 +222,7 @@ export default function Home() {
         heatmapEnabled={heatmapEnabled}
         isDark={isDark}
         onTripProgress={setTripProgress}
-        liveTripGps={gpsStatus === "found"}
+        liveTripGps={gpsStatus === "found" || routeDemoSimActive}
       />
 
       {/* === LEFT SIDEBAR === */}
@@ -237,6 +244,8 @@ export default function Home() {
         selectedId={selectedId}
         tripProgress={tripProgress}
         onGpsStatusChange={setGpsStatus}
+        routeGeometryForDemo={routeGeometryForDemo}
+        onRouteDemoSimChange={setRouteDemoSimActive}
       />
 
       {/* === TOP CATEGORY PILLS === */}

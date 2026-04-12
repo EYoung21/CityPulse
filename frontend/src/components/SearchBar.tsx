@@ -40,6 +40,7 @@ import type { Incident } from "@/lib/api";
 import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
 import { getSeverity } from "@/lib/severity";
+import { pointAtDistanceMeters, routeLengthMeters } from "@/lib/route-geometry";
 
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
@@ -84,6 +85,10 @@ interface Props {
   selectedId?: string | null;
   tripProgress?: number;
   onGpsStatusChange?: (status: "idle" | "loading" | "found" | "denied") => void;
+  /** Active route polyline for demo simulation (directions + trip). */
+  routeGeometryForDemo?: [number, number][] | null;
+  /** When true, map uses simulated movement so live trip can be tested without walking. */
+  onRouteDemoSimChange?: (active: boolean) => void;
 }
 
 export default function SearchBar({
@@ -98,6 +103,8 @@ export default function SearchBar({
   selectedId,
   tripProgress = 0,
   onGpsStatusChange,
+  routeGeometryForDemo = null,
+  onRouteDemoSimChange,
 }: Props) {
   const [view, setView] = useState<View>("search");
   const [searchQuery, setSearchQuery] = useState("");
@@ -141,6 +148,9 @@ export default function SearchBar({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [startNavBusy, setStartNavBusy] = useState(false);
+  const [demoRouteSim, setDemoRouteSim] = useState(false);
+  const demoRouteSimRef = useRef(false);
+  const demoDistMRef = useRef(0);
   const [userPos, setUserPos] = useState<{ lat: number; lng: number } | null>(null);
   const [gpsStatus, setGpsStatus] = useState<"idle" | "loading" | "found" | "denied">("idle");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -163,6 +173,73 @@ export default function SearchBar({
     onGpsStatusChangeRef.current?.(gpsStatus);
   }, [gpsStatus]);
 
+  useEffect(() => {
+    demoRouteSimRef.current = demoRouteSim;
+  }, [demoRouteSim]);
+
+  useEffect(() => {
+    if (view !== "directions" && view !== "trip") {
+      setDemoRouteSim(false);
+    }
+  }, [view]);
+
+  useEffect(() => {
+    if (!routeGeometryForDemo || routeGeometryForDemo.length < 2) {
+      setDemoRouteSim(false);
+    }
+  }, [routeGeometryForDemo]);
+
+  // ~100 m/min along the active route (for testing live vehicle / GPS UI)
+  useEffect(() => {
+    if (!demoRouteSim || !routeGeometryForDemo || routeGeometryForDemo.length < 2) {
+      onRouteDemoSimChange?.(false);
+      return;
+    }
+
+    const geo = routeGeometryForDemo;
+    const totalM = routeLengthMeters(geo);
+    if (totalM < 1) {
+      onRouteDemoSimChange?.(false);
+      return;
+    }
+
+    onRouteDemoSimChange?.(true);
+    demoDistMRef.current = 0;
+    const metersPerSecond = 100 / 60;
+
+    const apply = (distM: number) => {
+      const p = pointAtDistanceMeters(geo, distM);
+      if (!p) return;
+      const loc = { lat: p[0], lng: p[1] };
+      setUserPos(loc);
+      setOriginLoc((prevLoc) => {
+        if (prevLoc?.display_name === "Your location") {
+          return { ...prevLoc, ...loc };
+        }
+        return prevLoc;
+      });
+      onUserLocationRef.current?.(loc.lat, loc.lng);
+      const d = destLocRef.current;
+      onPreviewPinsRef.current?.(
+        loc,
+        d ? { lat: d.lat, lng: d.lng } : null
+      );
+    };
+
+    const tick = () => {
+      demoDistMRef.current += metersPerSecond;
+      if (demoDistMRef.current >= totalM) demoDistMRef.current = 0;
+      apply(demoDistMRef.current);
+    };
+
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => {
+      clearInterval(id);
+      onRouteDemoSimChange?.(false);
+    };
+  }, [demoRouteSim, routeGeometryForDemo, onRouteDemoSimChange]);
+
   // Live GPS: watchPosition + throttle so we don't spam routing APIs on every tick.
   useEffect(() => {
     if (!navigator.geolocation) {
@@ -178,6 +255,8 @@ export default function SearchBar({
     setGpsStatus("loading");
 
     const emit = (loc: { lat: number; lng: number }) => {
+      if (demoRouteSimRef.current) return;
+
       const now = Date.now();
       const prev = lastGpsEmitRef.current;
       const movedM = prev ? haversineM(prev.lat, prev.lng, loc.lat, loc.lng) : Infinity;
@@ -440,6 +519,7 @@ export default function SearchBar({
   }, [originLoc, destLoc, stops, activeMode, onRoutesChange, onTripActive]);
 
   const resetTrip = useCallback(() => {
+    setDemoRouteSim(false);
     setRouteInfo(null);
     setPreviewRoute(null);
     setDestLoc(null);
@@ -450,7 +530,8 @@ export default function SearchBar({
     onTripActive?.(false);
     onPreviewPins?.(originLoc, null);
     onPreviewWaypoints?.(null);
-  }, [onRoutesChange, onTripActive, onPreviewPins, onPreviewWaypoints, originLoc]);
+    onRouteDemoSimChange?.(false);
+  }, [onRoutesChange, onTripActive, onPreviewPins, onPreviewWaypoints, originLoc, onRouteDemoSimChange]);
 
   const swapLocations = () => {
     const tmpQ = originQuery; const tmpL = originLoc;
@@ -884,6 +965,20 @@ export default function SearchBar({
                 </div>
               )}
 
+              {routeGeometryForDemo && routeGeometryForDemo.length >= 2 && (
+                <label className="mt-3 flex items-start gap-2.5 cursor-pointer text-xs px-1 leading-snug" style={{ color: "var(--panel-text-secondary)" }}>
+                  <input
+                    type="checkbox"
+                    checked={demoRouteSim}
+                    onChange={(e) => setDemoRouteSim(e.target.checked)}
+                    className="mt-0.5 rounded border-gray-500 accent-blue-500"
+                  />
+                  <span>
+                    Demo: simulate walking speed (~100&nbsp;m per minute) along the route to test the live icon.
+                  </span>
+                </label>
+              )}
+
               {/* GO button */}
               <div className="mt-3 flex gap-2">
                 <button
@@ -1055,6 +1150,20 @@ export default function SearchBar({
                   <span>{Math.round(tripProgress * 100)}%</span>
                 </div>
               </div>
+
+              {routeGeometryForDemo && routeGeometryForDemo.length >= 2 && (
+                <label className="mt-3 flex items-start gap-2.5 cursor-pointer text-xs leading-snug" style={{ color: "var(--panel-text-secondary)" }}>
+                  <input
+                    type="checkbox"
+                    checked={demoRouteSim}
+                    onChange={(e) => setDemoRouteSim(e.target.checked)}
+                    className="mt-0.5 rounded border-gray-500 accent-blue-500"
+                  />
+                  <span>
+                    Demo: simulate ~100&nbsp;m/min along route (tests live vehicle without GPS walk).
+                  </span>
+                </label>
+              )}
 
               {routeInfo.isSafe && (
                 <div className="mt-3 flex items-center gap-2 text-xs text-green-600 dark:text-green-400/70 bg-green-500/10 rounded-lg px-3 py-2">
