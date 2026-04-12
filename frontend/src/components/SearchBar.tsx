@@ -277,8 +277,14 @@ export default function SearchBar({
       setPreviewRoute(null);
       return;
     }
-    const intermediateReady = stops.every(s => s.loc !== null);
-    if (!intermediateReady) { setPreviewRoute(null); return; }
+    // Blank "Add stop" rows (no query yet) must not block routing
+    const intermediateReady = stops.every(
+      (s) => s.query.trim() === "" || s.loc !== null
+    );
+    if (!intermediateReady) {
+      setPreviewRoute(null);
+      return;
+    }
 
     if (previewAbortRef.current) previewAbortRef.current.abort();
     const controller = new AbortController();
@@ -288,7 +294,7 @@ export default function SearchBar({
 
     const waypoints: [number, number][] = [
       [originLoc.lat, originLoc.lng],
-      ...stops.filter(s => s.loc).map(s => [s.loc!.lat, s.loc!.lng] as [number, number]),
+      ...stops.filter((s) => s.loc).map((s) => [s.loc!.lat, s.loc!.lng] as [number, number]),
       [destLoc.lat, destLoc.lng],
     ];
     const safety = assessSafety({ display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng }, incidents);
@@ -316,14 +322,17 @@ export default function SearchBar({
           setPreviewRoute({ distanceKm: best.distanceKm, durationMin: best.durationMin, isSafe: !!safeRoute, nearbyCount: safety.nearbyCount });
         }
       } catch {
-        if (!controller.signal.aborted) setPreviewRoute(null);
+        if (!controller.signal.aborted) {
+          setPreviewRoute(null);
+          onRoutesChange(null);
+        }
       } finally {
         if (!controller.signal.aborted) setPreviewLoading(false);
       }
     })();
 
     return () => controller.abort();
-  }, [originLoc, destLoc, stops, activeMode, view]);
+  }, [originLoc, destLoc, stops, activeMode, view, incidents, onRoutesChange]);
 
   const openDirections = useCallback((destName?: string, destCoords?: { lat: number; lng: number }) => {
     setView("directions");
