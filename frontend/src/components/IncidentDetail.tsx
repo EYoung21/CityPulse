@@ -20,11 +20,18 @@ import {
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-US", {
+  const d = new Date(iso);
+  const date = d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  const time = d.toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
   });
+  return `${date}, ${time}`;
 }
 
 function WaveformPlayer({
