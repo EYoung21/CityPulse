@@ -142,6 +142,31 @@ function formatTime(s: number): string {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
+const WAVEFORM_BARS = 80;
+
+function computeWaveform(audioBuffer: AudioBuffer, bars: number): number[] {
+  const raw = audioBuffer.getChannelData(0);
+  const blockSize = Math.floor(raw.length / bars);
+  const peaks = new Array(bars);
+  for (let i = 0; i < bars; i++) {
+    let sum = 0;
+    const start = i * blockSize;
+    for (let j = start; j < start + blockSize; j++) {
+      sum += Math.abs(raw[j]);
+    }
+    peaks[i] = sum / blockSize;
+  }
+  const max = Math.max(...peaks, 0.001);
+  for (let i = 0; i < bars; i++) peaks[i] = peaks[i] / max;
+  return peaks;
+}
+
+let _audioCtx: AudioContext | null = null;
+function getAudioContext(): AudioContext {
+  if (!_audioCtx) _audioCtx = new AudioContext();
+  return _audioCtx;
+}
+
 function AudioPlayer({
   clipId,
   endpoint,
@@ -157,14 +182,32 @@ function AudioPlayer({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  const [waveform, setWaveform] = useState<number[] | null>(null);
   const ref = useRef<HTMLAudioElement | null>(null);
   const animRef = useRef<number>(0);
   const accent = accentColor || "#3b82f6";
+  const audioUrl = clipId ? `${API_BASE}/api/${endpoint}/${clipId}` : null;
+
+  useEffect(() => {
+    if (!audioUrl) return;
+    let cancelled = false;
+    fetch(audioUrl)
+      .then((r) => r.arrayBuffer())
+      .then((buf) => getAudioContext().decodeAudioData(buf))
+      .then((decoded) => {
+        if (cancelled) return;
+        setWaveform(computeWaveform(decoded, WAVEFORM_BARS));
+        setDuration(decoded.duration);
+        setLoaded(true);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [audioUrl]);
 
   const ensureAudio = useCallback(() => {
     if (ref.current) return ref.current;
-    if (!clipId) return null;
-    const a = new Audio(`${API_BASE}/api/${endpoint}/${clipId}`);
+    if (!audioUrl) return null;
+    const a = new Audio(audioUrl);
     a.addEventListener("loadedmetadata", () => {
       setDuration(a.duration);
       setLoaded(true);
@@ -179,7 +222,7 @@ function AudioPlayer({
     });
     ref.current = a;
     return a;
-  }, [clipId, endpoint]);
+  }, [audioUrl]);
 
   const tick = useCallback(() => {
     if (ref.current) setCurrentTime(ref.current.currentTime);
@@ -228,7 +271,7 @@ function AudioPlayer({
 
   if (!clipId) return null;
 
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const progress = duration > 0 ? currentTime / duration : 0;
 
   return (
     <div className="flex items-center gap-1.5 w-full min-w-0">
@@ -257,20 +300,58 @@ function AudioPlayer({
         {playing ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
       </button>
 
-      {/* Time + seek bar */}
+      {/* Waveform + seek */}
       <div className="flex-1 min-w-0 flex flex-col gap-0.5">
         <div
-          className="h-1.5 rounded-full cursor-pointer relative group"
-          style={{ background: "rgba(255,255,255,0.08)" }}
+          className="h-6 cursor-pointer relative group flex items-end gap-px rounded"
+          style={{ background: "rgba(255,255,255,0.03)" }}
           onClick={seek}
         >
+          {waveform ? (
+            waveform.map((amp, i) => {
+              const barProgress = i / waveform.length;
+              const isPlayed = barProgress < progress;
+              const minH = 2;
+              const maxH = 22;
+              const h = minH + amp * (maxH - minH);
+              return (
+                <div
+                  key={i}
+                  className="flex-1 rounded-sm transition-colors duration-75"
+                  style={{
+                    height: `${h}px`,
+                    background: isPlayed ? accent : "rgba(255,255,255,0.12)",
+                    opacity: isPlayed ? 1 : 0.6,
+                  }}
+                />
+              );
+            })
+          ) : (
+            <div className="w-full h-full flex items-center justify-center">
+              <span className="text-[8px]" style={{ color: "var(--panel-text-muted)" }}>
+                Loading...
+              </span>
+            </div>
+          )}
+          {/* Playhead line */}
           <div
-            className="h-full rounded-full transition-[width] duration-75"
-            style={{ width: `${progress}%`, background: accent }}
+            className="absolute top-0 bottom-0 w-0.5 pointer-events-none"
+            style={{
+              left: `${progress * 100}%`,
+              background: "#fff",
+              boxShadow: `0 0 4px ${accent}`,
+              opacity: loaded ? 0.9 : 0,
+            }}
           />
+          {/* Hover scrub handle */}
           <div
-            className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-            style={{ left: `calc(${progress}% - 5px)`, background: accent, boxShadow: `0 0 4px ${accent}88` }}
+            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+            style={{
+              left: `calc(${progress * 100}% - 6px)`,
+              background: accent,
+              boxShadow: `0 0 6px ${accent}aa`,
+              border: "2px solid #fff",
+            }}
           />
         </div>
         <div className="flex justify-between">
