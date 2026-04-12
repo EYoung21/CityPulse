@@ -125,6 +125,53 @@ async function getRouteOSRM(
   }
 }
 
+/** Join consecutive leg geometries (drop duplicate seam points). */
+function mergeRouteLegs(legs: [number, number][][]): [number, number][] {
+  const out: [number, number][] = [];
+  const close = (a: [number, number], b: [number, number]) =>
+    Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-4;
+
+  for (const leg of legs) {
+    if (leg.length === 0) continue;
+    if (out.length === 0) {
+      out.push(...leg);
+      continue;
+    }
+    let start = 0;
+    if (close(leg[0], out[out.length - 1])) start = 1;
+    for (let j = start; j < leg.length; j++) out.push(leg[j]);
+  }
+  return out;
+}
+
+/**
+ * Multi-via routing as A→B, B→C, … then merge. More reliable than one OSRM call on public demo.
+ */
+async function getRouteOSRMChained(
+  mode: TransportMode,
+  waypoints: [number, number][],
+  isSafe = false
+): Promise<RouteResult | null> {
+  if (waypoints.length < 2) return null;
+  const geometries: [number, number][][] = [];
+  let distanceKm = 0;
+  let durationMin = 0;
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const leg = await getRouteOSRM(
+      mode,
+      [waypoints[i], waypoints[i + 1]],
+      isSafe
+    );
+    if (!leg) return null;
+    geometries.push(leg.geometry);
+    distanceKm += leg.distanceKm;
+    durationMin += leg.durationMin;
+  }
+  const geometry = mergeRouteLegs(geometries);
+  if (geometry.length < 2) return null;
+  return { geometry, distanceKm, durationMin, isSafe };
+}
+
 /** Try ORS first, then fall back to OSRM for street-level routing */
 export async function getRoute(
   apiKey: string,
@@ -180,6 +227,11 @@ export async function getMultiStopRoute(
     // ORS failed, will try OSRM below
   }
 
-  // Fallback: OSRM free routing (follows actual streets, no API key needed)
-  return getRouteOSRM(mode, waypoints, !!avoidPolygons);
+  const isSafe = !!avoidPolygons;
+  // OSRM via backend proxy (street geometry)
+  let osrm = await getRouteOSRM(mode, waypoints, isSafe);
+  if (!osrm && waypoints.length > 2) {
+    osrm = await getRouteOSRMChained(mode, waypoints, isSafe);
+  }
+  return osrm;
 }

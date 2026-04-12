@@ -134,6 +134,11 @@ async def route_directions(body: RouteDirectionsRequest):
             status_code=502, detail=f"OSRM error HTTP {resp.status_code}"
         )
     data = resp.json()
+    if data.get("code") not in (None, "Ok"):
+        raise HTTPException(
+            status_code=404,
+            detail=data.get("message") or data.get("code") or "No route",
+        )
     routes = data.get("routes") or []
     if not routes:
         raise HTTPException(status_code=404, detail="No route found for these waypoints")
