@@ -20,6 +20,7 @@ export interface Incident {
   audio_clip: string | null;
   feed_id: string | null;
   description: string | null;
+  hidden?: boolean;
 }
 
 export interface PreprocessMeta {

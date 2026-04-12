@@ -17,6 +17,10 @@ import {
   Brain,
   Radio,
   Layers,
+  Eye,
+  EyeOff,
+  Trash2,
+  Map,
 } from "lucide-react";
 import {
   useAdminStream,
@@ -624,6 +628,9 @@ function ExtractionCard({
   onPredict: (id: string) => Promise<void> | void;
 }) {
   const [predicting, setPredicting] = useState(false);
+  const [hiddenOnMap, setHiddenOnMap] = useState(false);
+  const [togglingVis, setTogglingVis] = useState(false);
+  const [incidentDeleted, setIncidentDeleted] = useState(false);
 
   const hasLlmResult =
     extraction.llm_relevant || extraction.llm_confidence > 0 || extraction.llm_category !== null;
@@ -817,10 +824,18 @@ function ExtractionCard({
               </div>
             )}
 
-            {extraction.incident_id ? (
+            {extraction.incident_id && !incidentDeleted ? (
               <div className="flex items-center gap-1.5">
                 <CheckCircle2 className="w-3 h-3 text-green-500" />
                 <span style={{ color: "#22c55e" }}>Stored</span>
+                {hiddenOnMap && (
+                  <span className="text-[9px] px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-400">Hidden</span>
+                )}
+              </div>
+            ) : incidentDeleted ? (
+              <div className="flex items-center gap-1.5">
+                <Trash2 className="w-3 h-3 text-gray-500" />
+                <span style={{ color: "#6b7280" }}>Deleted</span>
               </div>
             ) : extraction.llm_relevant && extraction.inhibitor_status === "blocked" ? (
               <div className="flex items-center gap-1.5">
@@ -857,6 +872,61 @@ function ExtractionCard({
           </>
         )}
       </div>
+
+      {/* Map Control Row */}
+      {extraction.incident_id && !incidentDeleted && (
+        <div
+          className="px-3 py-1.5 flex items-center gap-2 text-[11px]"
+          style={{
+            borderTop: "1px solid var(--panel-border)",
+            background: "rgba(0,0,0,0.1)",
+          }}
+        >
+          <Map className="w-3 h-3" style={{ color: "var(--panel-text-muted)" }} />
+          <span style={{ color: "var(--panel-text-muted)" }}>Map:</span>
+
+          <button
+            onClick={async () => {
+              setTogglingVis(true);
+              try {
+                const res = await fetch(`${API_BASE}/api/admin/incident/${extraction.incident_id}/visibility`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ hidden: !hiddenOnMap }),
+                });
+                if (res.ok) setHiddenOnMap(!hiddenOnMap);
+              } finally {
+                setTogglingVis(false);
+              }
+            }}
+            disabled={togglingVis}
+            className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-all disabled:opacity-50 ${
+              hiddenOnMap
+                ? "bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/25"
+                : "bg-green-500/15 text-green-400 hover:bg-green-500/25"
+            }`}
+          >
+            {hiddenOnMap ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+            {togglingVis ? "..." : hiddenOnMap ? "Hidden — Show on Map" : "Visible on Map"}
+          </button>
+
+          <button
+            onClick={async () => {
+              if (!confirm("Permanently delete this incident from the map?")) return;
+              try {
+                const res = await fetch(`${API_BASE}/api/admin/incident/${extraction.incident_id}`, {
+                  method: "DELETE",
+                });
+                if (res.ok) setIncidentDeleted(true);
+              } catch { /* ignore */ }
+            }}
+            className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all"
+          >
+            <Trash2 className="w-3 h-3" />
+            Delete
+          </button>
+        </div>
+      )}
     </div>
   );
 }

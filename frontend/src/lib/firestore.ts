@@ -67,6 +67,7 @@ function mapDoc(id: string, data: Record<string, unknown>): Incident {
       data.description === null || data.description === undefined
         ? null
         : String(data.description),
+    hidden: data.hidden === true,
   };
 }
 

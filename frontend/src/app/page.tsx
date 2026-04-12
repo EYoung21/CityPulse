@@ -205,6 +205,7 @@ export default function Home() {
   }, []);
 
   const filteredIncidents = incidents.filter((inc) => {
+    if (inc.hidden) return false;
     if (timeFilter > 0) {
       const cutoff = Date.now() - timeFilter * 60 * 60 * 1000;
       if (new Date(inc.reported_at).getTime() < cutoff) return false;
