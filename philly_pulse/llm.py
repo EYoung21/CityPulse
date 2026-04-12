@@ -40,13 +40,23 @@ incident (crime, medical, fire, crash). false for administrative chatter, test t
 unit check-ins, or ambiguous fragments.
 - "severity_category": one of {json.dumps(SEVERITY_CATEGORIES)} — pick the single \
 best match. Use "admin_or_noise" for non-dispatch content.
-- "location_text": string or null — the most specific location mentioned \
-(intersection, block, landmark). Include "Philadelphia" for geocoding. null if no \
-location is discernible.
+- "location_text": string or null — the most specific location mentioned in direct \
+connection to the incident (intersection, block, address, landmark). Include \
+"Philadelphia" for geocoding. null if no location is directly associated with the \
+incident.
+- "context_location_text": string or null — if "location_text" is null, look for \
+ANY location mentioned elsewhere in the transcript, even if it is not in the same \
+sentence as the incident. Officers often state their position before reporting an \
+event. Extract the most recent/relevant location from the full transcript. null only \
+if truly no location appears anywhere.
+- "location_confidence": one of "direct", "context", "none" — "direct" if \
+location_text is set (location explicitly tied to the incident), "context" if only \
+context_location_text is available, "none" if no location at all.
 - "confidence": float 0.0-1.0 — your confidence that the extraction is accurate. \
 Lower if the transcript is garbled, ambiguous, or partially inaudible.
 - "lat": float or null — approximate latitude of the incident location in \
-Philadelphia (WGS-84). Use your knowledge of Philly geography. null if unknown.
+Philadelphia (WGS-84). Use your knowledge of Philly geography. Derive from \
+location_text first, then context_location_text. null if unknown.
 - "lng": float or null — approximate longitude. null if unknown.
 
 Rules:
@@ -57,6 +67,9 @@ severity_category to "admin_or_noise".
 - If multiple incidents are mentioned, extract the most severe one.
 - For lat/lng, use your best estimate for Philadelphia locations. Philly center is \
 roughly 39.9526, -75.1652. Only provide coordinates you are reasonably confident about.
+- Aggressively extract locations: block numbers ("1200 block of Germantown Ave"), \
+intersections ("52nd and Market"), landmarks ("Temple Hospital"), highway references \
+("I-76 at the Vine St exit"), unit positions ("on scene at Broad and Lehigh").
 """
 
 
@@ -132,10 +145,20 @@ async def extract_incident(raw_text: str) -> Optional[dict]:
         except (ValueError, TypeError):
             llm_lat, llm_lng = None, None
 
+    location_text = data.get("location_text")
+    context_location = data.get("context_location_text")
+    loc_confidence = data.get("location_confidence", "none")
+    if loc_confidence not in ("direct", "context", "none"):
+        loc_confidence = "direct" if location_text else ("context" if context_location else "none")
+
+    effective_location = location_text or context_location
+
     return {
         "is_dispatch_relevant": True,
         "severity_category": cat,
-        "location_text": data.get("location_text"),
+        "location_text": effective_location,
+        "location_confidence": loc_confidence,
+        "context_location_text": context_location,
         "confidence": float(data.get("confidence", 0.7)),
         "llm_lat": llm_lat,
         "llm_lng": llm_lng,

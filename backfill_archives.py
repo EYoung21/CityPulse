@@ -16,6 +16,8 @@ Requires:
     - The FastAPI server running (for /api/ingest)
 """
 
+from __future__ import annotations
+
 import argparse
 import datetime
 import json
@@ -348,7 +350,18 @@ def main():
     print(f"Feeds: {len(feeds)}, Days: {args.days}, Bridge: {BRIDGE_URL}")
     print(f"Loading Whisper model '{MODEL_SIZE}'...")
 
-    model = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8", cpu_threads=4)
+    try:
+        import ctranslate2
+        cuda_ok = "float16" in ctranslate2.get_supported_compute_types("cuda")
+    except Exception:
+        cuda_ok = False
+
+    if cuda_ok:
+        model = WhisperModel(MODEL_SIZE, device="cuda", compute_type="float16")
+        print("  (GPU mode: CUDA float16)")
+    else:
+        model = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8", cpu_threads=4)
+        print("  (CPU mode: int8)")
     print("Model loaded.")
 
     print("Logging into Broadcastify...")
