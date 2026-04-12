@@ -9,6 +9,9 @@ import {
 } from "react";
 import L from "leaflet";
 import "leaflet.heat";
+import "leaflet.markercluster";
+import "leaflet.markercluster/dist/MarkerCluster.css";
+import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import type { Incident } from "@/lib/api";
 import type { RouteData } from "@/components/RoutePanel";
 import { NEIGHBORHOODS, type Neighborhood, incidentsInNeighborhood } from "@/lib/neighborhoods";
@@ -216,8 +219,8 @@ function createIncidentGlyphIcon(
   const kind = resolveBlipKind(inc);
   const mc = monoColor(kind);
   const w = Number.isFinite(wEff) ? wEff : 0.5;
-  const base = Math.round(48 + w * 22);
-  const box = Math.ceil(base * 1.3);
+  const base = Math.round(24 + w * 8);
+  const box = Math.ceil(base * 1.25);
   const half = box / 2;
   const opacity = greyed ? 0.28 : Math.max(0.88, Math.min(1, 0.75 + w * 0.25));
   const filt = greyed
@@ -749,7 +752,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   ref
 ) {
   const mapRef = useRef<L.Map | null>(null);
-  const markersRef = useRef<L.LayerGroup | null>(null);
+  const markersRef = useRef<L.MarkerClusterGroup | null>(null);
   const heatRef = useRef<L.Layer | null>(null);
   const heatPulseRafRef = useRef<number | null>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
@@ -795,7 +798,25 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       maxZoom: 19,
     }).addTo(map);
 
-    markersRef.current = L.layerGroup().addTo(map);
+    markersRef.current = L.markerClusterGroup({
+      maxClusterRadius: 45,
+      spiderfyOnMaxZoom: true,
+      showCoverageOnHover: false,
+      zoomToBoundsOnClick: true,
+      disableClusteringAtZoom: 17,
+      iconCreateFunction: (cluster: L.MarkerCluster) => {
+        const count = cluster.getChildCount();
+        let size = 32;
+        let cls = "pp-cluster-small";
+        if (count >= 50) { size = 44; cls = "pp-cluster-large"; }
+        else if (count >= 10) { size = 38; cls = "pp-cluster-medium"; }
+        return L.divIcon({
+          html: `<div class="pp-cluster ${cls}"><span>${count}</span></div>`,
+          className: "pp-cluster-icon",
+          iconSize: L.point(size, size),
+        });
+      },
+    }).addTo(map);
     districtsLayerRef.current = L.layerGroup().addTo(map);
     routeLayerRef.current = L.layerGroup().addTo(map);
     previewLayerRef.current = L.layerGroup().addTo(map);
@@ -804,7 +825,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
     const setZoomCSSVar = (z: number) => {
       const clamped = Math.max(8, Math.min(19, z));
-      const scale = Math.max(0.45, Math.min(5.5, Math.pow(2, (clamped - 12) / 2)));
+      const scale = Math.max(0.35, Math.min(2.2, Math.pow(2, (clamped - 12) / 3)));
       map.getContainer().style.setProperty("--pp-marker-scale", String(scale));
     };
     let zoomRaf = 0;
