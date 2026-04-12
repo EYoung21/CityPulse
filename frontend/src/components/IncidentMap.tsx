@@ -44,8 +44,8 @@ interface Props {
   heatmapEnabled?: boolean;
   isDark?: boolean;
   onTripProgress?: (progress: number) => void;
-  /** When true and GPS works, trip vehicle follows real position snapped to the route. */
   liveTripGps?: boolean;
+  timeFilterHours?: number;
 }
 
 function distToSegmentKm(
@@ -338,7 +338,7 @@ type TripLiveLayers = {
 };
 
 const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
-  { incidents, selectedId, onSelectIncident, routes, onMapTap, userLocation, tripRouteGeometry, previewOrigin, previewDest, previewWaypoints, tripMode, heatmapEnabled = true, isDark = true, onTripProgress, liveTripGps = false },
+  { incidents, selectedId, onSelectIncident, routes, onMapTap, userLocation, tripRouteGeometry, previewOrigin, previewDest, previewWaypoints, tripMode, heatmapEnabled = true, isDark = true, onTripProgress, liveTripGps = false, timeFilterHours = 0 },
   ref
 ) {
   const mapRef = useRef<L.Map | null>(null);
@@ -430,10 +430,11 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     const isTripMode = tripRouteGeometry && tripRouteGeometry.length >= 2;
 
     if (heatmapEnabled) {
+      const useDensity = timeFilterHours >= 168;
       const heatData: [number, number, number][] = [];
       for (const inc of incidents) {
         if (inc.lat == null || inc.lng == null) continue;
-        const weight = Math.max(inc.w_eff, 0.2);
+        const weight = useDensity ? 0.6 : inc.w_eff;
         if (isTripMode) {
           const dist = minDistToRouteKm([inc.lat, inc.lng], tripRouteGeometry);
           if (dist <= TRIP_PROXIMITY_KM) heatData.push([inc.lat, inc.lng, weight]);
@@ -443,11 +444,11 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       }
       if (heatData.length > 0) {
         const heat = L.heatLayer(heatData, {
-          radius: 80,
-          blur: 50,
+          radius: useDensity ? 40 : 80,
+          blur: useDensity ? 30 : 50,
           maxZoom: 17,
-          max: 0.8,
-          minOpacity: 0.45,
+          max: useDensity ? 1.0 : 0.8,
+          minOpacity: useDensity ? 0.3 : 0.45,
           gradient: {
             0.0:  "rgba(0,0,40,0)",
             0.1:  "#0a0a5c",
@@ -478,7 +479,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       if (!greyed) marker.on("click", () => stableOnSelect(inc.id));
       markers.addLayer(marker);
     }
-  }, [incidents, stableOnSelect, tripRouteGeometry, heatmapEnabled]);
+  }, [incidents, stableOnSelect, tripRouteGeometry, heatmapEnabled, timeFilterHours]);
 
   useEffect(() => {
     if (!selectedId || !mapRef.current) return;

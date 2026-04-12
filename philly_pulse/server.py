@@ -44,6 +44,10 @@ PHILLY_FEEDS = [
     {"feed_id": "34250", "label": "PFD South Fire/Medics"},
     {"feed_id": "15747", "label": "PFD North Fire"},
     {"feed_id": "44308", "label": "SEPTA Transit Police"},
+    {"feed_id": "13975", "label": "SEPTA Regional Rail"},
+    {"feed_id": "13951", "label": "PA Turnpike Police East"},
+    {"feed_id": "36323", "label": "Delaware Co Police Dispatch"},
+    {"feed_id": "20795", "label": "Camden Co Fire/EMS Digital"},
 ]
 if _config_path.exists():
     try:
@@ -73,6 +77,7 @@ class IngestRequest(BaseModel):
     text: str
     timestamp: str | None = None
     feed_id: str | None = None
+    audio_clip: str | None = None
 
 
 class RouteDirectionsRequest(BaseModel):
@@ -299,6 +304,7 @@ async def ingest(req: IngestRequest):
         inhibitor_status=inh.status,
         inhibitor_reason=inh.reason,
         reported_at=req.timestamp,
+        audio_clip=req.audio_clip,
     )
 
     await admin_events.broadcast({
@@ -475,3 +481,22 @@ async def admin_stream(feed_id: str):
             proc.wait()
 
     return StreamingResponse(stream_audio(), media_type="audio/mpeg")
+
+
+@app.get("/api/audio/{clip_id}")
+async def get_audio_clip(clip_id: str):
+    """Serve a saved audio clip WAV file by its clip ID."""
+    import re
+    if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
+        raise HTTPException(status_code=400, detail="Invalid clip ID")
+
+    clip_path = Path(__file__).resolve().parent.parent / "audio_clips" / f"{clip_id}.wav"
+    if not clip_path.exists():
+        raise HTTPException(status_code=404, detail="Audio clip not found")
+
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=str(clip_path),
+        media_type="audio/wav",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )

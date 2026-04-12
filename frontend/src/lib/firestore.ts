@@ -11,7 +11,7 @@ import type { Incident } from "@/lib/api";
 import { enrichIncidents } from "@/lib/incident-weights";
 
 const COLLECTION = "incidents";
-const MAX_DOCS = 500;
+const MAX_DOCS = 5000;
 
 function toISOString(val: unknown): string {
   if (!val) return new Date().toISOString();
@@ -51,6 +51,10 @@ function mapDoc(id: string, data: Record<string, unknown>): Incident {
         ? null
         : String(data.inhibitor_reason),
     w_eff: 0,
+    audio_clip:
+      data.audio_clip === null || data.audio_clip === undefined
+        ? null
+        : String(data.audio_clip),
   };
 }
 

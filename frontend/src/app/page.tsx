@@ -67,6 +67,10 @@ const TIME_FILTERS = [
   { label: "1h", hours: 1 },
   { label: "6h", hours: 6 },
   { label: "24h", hours: 24 },
+  { label: "7d", hours: 24 * 7 },
+  { label: "30d", hours: 24 * 30 },
+  { label: "90d", hours: 24 * 90 },
+  { label: "6mo", hours: 24 * 180 },
   { label: "All", hours: 0 },
 ] as const;
 
@@ -223,6 +227,7 @@ export default function Home() {
         isDark={isDark}
         onTripProgress={setTripProgress}
         liveTripGps={gpsStatus === "found" || routeDemoSimActive}
+        timeFilterHours={timeFilter}
       />
 
       {/* === LEFT SIDEBAR === */}

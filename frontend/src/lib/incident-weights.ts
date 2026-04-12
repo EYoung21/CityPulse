@@ -1,7 +1,6 @@
 import type { Incident } from "@/lib/api";
 
 const TAU_HOURS = 12;
-const MIN_W_EFF = 0.15;
 
 function computeWEff(
   sBase: number,
@@ -13,10 +12,10 @@ function computeWEff(
   try {
     reported = new Date(reportedAtIso);
     if (Number.isNaN(reported.getTime())) {
-      return Math.max(MIN_W_EFF, sBase * 0.5);
+      return sBase * 0.05;
     }
   } catch {
-    return Math.max(MIN_W_EFF, sBase * 0.5);
+    return sBase * 0.05;
   }
   const deltaHours = Math.max(
     (nowMs - reported.getTime()) / (1000 * 60 * 60),
@@ -24,7 +23,7 @@ function computeWEff(
   );
   const c = Math.max(0.3, Math.min(confidence, 1));
   const timeDecay = Math.exp(-deltaHours / TAU_HOURS);
-  return Math.max(MIN_W_EFF, sBase * timeDecay * c);
+  return sBase * timeDecay * c;
 }
 
 export function enrichIncidents(incidents: Incident[]): Incident[] {
