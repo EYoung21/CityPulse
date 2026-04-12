@@ -46,7 +46,7 @@ function mapDoc(id: string, data: Record<string, unknown>): Incident {
       data.lng === null || data.lng === undefined ? null : Number(data.lng),
     confidence: Number(data.confidence ?? 1),
     geocode_status: String(data.geocode_status ?? "pending"),
-    location_confidence: (["direct", "context", "district", "none"].includes(String(data.location_confidence ?? "none"))
+    location_confidence: (["direct", "context", "none"].includes(String(data.location_confidence ?? "none"))
       ? String(data.location_confidence)
       : "none") as import("./api").LocationConfidence,
     inhibitor_status: String(data.inhibitor_status ?? "passed"),

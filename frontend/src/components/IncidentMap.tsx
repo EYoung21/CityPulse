@@ -493,7 +493,6 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       const heatData: [number, number, number][] = [];
       for (const inc of incidents) {
         if (inc.lat == null || inc.lng == null) continue;
-        if (inc.location_confidence === "district") continue;
         const weight = useDensity ? 0.6 : Math.max(inc.w_eff, 0.2);
         if (isTripMode && tripRouteGeometry) {
           const dist = minDistToRouteKm([inc.lat, inc.lng], tripRouteGeometry);
@@ -579,7 +578,6 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
     for (const inc of incidents) {
       if (inc.lat == null || inc.lng == null) continue;
-      if (inc.location_confidence === "district") continue;
       const sev = getSeverity(inc.severity_category);
       let greyed = false;
       if (isTripMode && tripRouteGeometry) {
