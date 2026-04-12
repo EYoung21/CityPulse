@@ -52,6 +52,10 @@ if truly no location appears anywhere.
 - "location_confidence": one of "direct", "context", "none" — "direct" if \
 location_text is set (location explicitly tied to the incident), "context" if only \
 context_location_text is available, "none" if no location at all.
+- "description": string — one plain-English sentence summarizing the incident \
+for a civilian reader. No jargon, no police codes. Decode any radio codes into \
+plain language. Example: "Multiple gunshots reported near 52nd and Market, \
+suspect fled on foot wearing grey hoodie."
 - "confidence": float 0.0-1.0 — your confidence that the extraction is accurate. \
 Lower if the transcript is garbled, ambiguous, or partially inaudible.
 - "lat": float or null — approximate latitude of the incident location in \
@@ -193,6 +197,7 @@ async def extract_incident(raw_text: str) -> Optional[dict]:
         "location_confidence": loc_confidence,
         "context_location_text": context_location,
         "confidence": float(data.get("confidence", 0.7)),
+        "description": data.get("description"),
         "llm_lat": llm_lat,
         "llm_lng": llm_lng,
     }

@@ -111,11 +111,11 @@ function IncidentCard({
     }
   };
 
-  const snippet = inc.raw_text
-    ? inc.raw_text.length > 100
-      ? inc.raw_text.slice(0, 100) + "…"
-      : inc.raw_text
-    : null;
+  const snippet = inc.description
+    ? inc.description
+    : inc.location_text
+      ? `${sev.label} reported at ${inc.location_text}`
+      : null;
 
   return (
     <div

@@ -19,6 +19,7 @@ export interface Incident {
   w_eff: number;
   audio_clip: string | null;
   feed_id: string | null;
+  description: string | null;
 }
 
 export interface PreprocessMeta {

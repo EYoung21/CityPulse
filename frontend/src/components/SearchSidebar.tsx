@@ -56,6 +56,7 @@ interface Props {
   onGpsStatusChange?: (status: "idle" | "loading" | "found" | "denied") => void;
   routeGeometryForDemo?: [number, number][] | null;
   onRouteDemoSimChange?: (active: boolean) => void;
+  timeFilterLabel?: string;
 }
 
 export default function SearchSidebar({
@@ -72,6 +73,7 @@ export default function SearchSidebar({
   onGpsStatusChange,
   routeGeometryForDemo = null,
   onRouteDemoSimChange,
+  timeFilterLabel,
 }: Props) {
   const [view, setView] = useState<View>("search");
   const [originQuery, setOriginQuery] = useState("");
@@ -343,7 +345,7 @@ export default function SearchSidebar({
                   className="text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1.5"
                   style={{ color: "var(--panel-text-muted)" }}
                 >
-                  <Radio className="w-3 h-3" /> Recent Incidents
+                  <Radio className="w-3 h-3" /> {timeFilterLabel ? `Incidents — ${timeFilterLabel}` : "Recent Incidents"}
                 </h3>
               </div>
               <IncidentFeed

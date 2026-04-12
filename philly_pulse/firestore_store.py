@@ -65,6 +65,7 @@ def insert_incident(
     reported_at: Optional[str] = None,
     audio_clip: Optional[str] = None,
     feed_id: Optional[str] = None,
+    description: Optional[str] = None,
 ) -> dict:
     db = _ensure_client()
     incident_id = uuid.uuid4().hex[:12]
@@ -86,6 +87,7 @@ def insert_incident(
         "inhibitor_reason": inhibitor_reason,
         "audio_clip": audio_clip,
         "feed_id": feed_id,
+        "description": description,
     }
     ref = db.collection("incidents").document(incident_id)
     ref.set(payload)

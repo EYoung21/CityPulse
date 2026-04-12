@@ -212,6 +212,12 @@ export default function Home() {
 
   const selected = filteredIncidents.find((i) => i.id === selectedId) || null;
 
+  const activeTimeLabel = timeFilter === 0
+    ? ""
+    : TIME_FILTERS.find((tf) => tf.hours === timeFilter)?.label
+      ? `Last ${TIME_FILTERS.find((tf) => tf.hours === timeFilter)!.label}`
+      : "";
+
   const analyticsAreaName = mapTap
     ? getNeighborhood(mapTap.lat, mapTap.lng)?.name
     : undefined;
@@ -283,6 +289,7 @@ export default function Home() {
           onGpsStatusChange={setGpsStatus}
           routeGeometryForDemo={routeGeometryForDemo}
           onRouteDemoSimChange={setRouteDemoSimActive}
+          timeFilterLabel={activeTimeLabel}
         />
       </div>
 
@@ -489,7 +496,7 @@ export default function Home() {
             </div>
             <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>·</span>
             <span className="text-[10px]" style={{ color: "var(--panel-text-secondary)" }}>
-              {filteredIncidents.length} active incidents in Philadelphia metro
+              {filteredIncidents.length} incident{filteredIncidents.length !== 1 ? "s" : ""}{activeTimeLabel ? ` (${activeTimeLabel.toLowerCase()})` : ""} in Philadelphia metro
             </span>
           </div>
           <div className="flex items-center gap-3">
