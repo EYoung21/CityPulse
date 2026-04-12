@@ -33,6 +33,7 @@ import { type RouteData } from "@/components/RoutePanel";
 import SafetyScoreCard from "@/components/SafetyScoreCard";
 import AlertToast from "@/components/AlertToast";
 import IncidentDetail from "@/components/IncidentDetail";
+import ClusterListPanel from "@/components/ClusterListPanel";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
 import DistrictCard from "@/components/DistrictCard";
 import type { MapHandle, WaypointPin } from "@/components/IncidentMap";
@@ -153,6 +154,7 @@ export default function Home() {
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedDistrict, setSelectedDistrict] = useState<{ neighborhood: Neighborhood; incidents: Incident[] } | null>(null);
+  const [clusterIncidentIds, setClusterIncidentIds] = useState<string[] | null>(null);
   const mapRef = useRef<MapHandle>(null);
 
   const goToMyLocation = useCallback(() => {
@@ -259,6 +261,12 @@ export default function Home() {
   });
 
   const selected = filteredIncidents.find((i) => i.id === selectedId) || null;
+
+  const clusterIncidents = useMemo(() => {
+    if (!clusterIncidentIds) return null;
+    const idSet = new Set(clusterIncidentIds);
+    return filteredIncidents.filter((i) => idSet.has(i.id));
+  }, [clusterIncidentIds, filteredIncidents]);
 
   const activeTimeLabel = TIME_FILTERS.find((tf) => tf.hours === timeFilter)?.label
     ? `Last ${TIME_FILTERS.find((tf) => tf.hours === timeFilter)!.label}`
@@ -369,6 +377,7 @@ export default function Home() {
         heatmapDemoBoost={routeDemoSimActive}
         districtsEnabled={districtsEnabled}
         onDistrictClick={(n, incs) => setSelectedDistrict({ neighborhood: n, incidents: incs })}
+        onClusterClick={(ids) => { setSelectedId(null); setClusterIncidentIds(ids); }}
       />
 
       {/* Mobile hamburger */}
@@ -805,6 +814,24 @@ export default function Home() {
                 return DISTRICT_COLORS[idx >= 0 ? idx % DISTRICT_COLORS.length : 0];
               })()}
               onClose={() => setSelectedDistrict(null)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Cluster List */}
+      <AnimatePresence>
+        {clusterIncidents && clusterIncidents.length > 0 && !selected && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="absolute bottom-16 left-3 md:left-[396px] z-[1000] w-96 max-w-[calc(100vw-1.5rem)]"
+          >
+            <ClusterListPanel
+              incidents={clusterIncidents}
+              onSelect={(id) => { setClusterIncidentIds(null); setSelectedId(id); }}
+              onClose={() => setClusterIncidentIds(null)}
             />
           </motion.div>
         )}
