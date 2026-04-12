@@ -173,6 +173,35 @@
   0% { transform: scale(0.8); opacity: 1; }
   100% { transform: scale(2.5); opacity: 0; }
 }
+
+/* Expanding rings for live demo vehicle / user (heat-style radiate) */
+@keyframes demo-radial-expand {
+  0% {
+    transform: scale(0.35);
+    opacity: 0.85;
+  }
+  55% {
+    opacity: 0.28;
+  }
+  100% {
+    transform: scale(3.4);
+    opacity: 0;
+  }
+}
+.demo-live-glow-ring {
+  border-radius: 50%;
+  pointer-events: none;
+  box-sizing: border-box;
+  animation: demo-radial-expand 2.1s cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
+}
+.demo-live-glow-ring--blue {
+  border: 2px solid rgba(96, 165, 250, 0.55);
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.45);
+}
+.demo-live-glow-ring--green {
+  border: 2px solid rgba(74, 222, 128, 0.5);
+  box-shadow: 0 0 10px rgba(34, 197, 94, 0.4);
+}
 @keyframes glow-breathe {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 0.8; }

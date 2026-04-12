@@ -6,6 +6,7 @@ import "leaflet.heat";
 import type { Incident } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
 import type { RouteData } from "@/components/RoutePanel";
+import { phillyDemoHeatPoints } from "@/lib/demo-heat";
 
 declare module "leaflet" {
   function heatLayer(
@@ -46,6 +47,8 @@ interface Props {
   onTripProgress?: (progress: number) => void;
   liveTripGps?: boolean;
   timeFilterHours?: number;
+  /** Demo: vivid heat + pulse + radiating vehicle / user marker (e.g. route sim checkbox). */
+  heatmapDemoBoost?: boolean;
 }
 
 function distToSegmentKm(
@@ -280,12 +283,8 @@ function createBigPinIcon(
   });
 }
 
-function createUserIcon(): L.DivIcon {
-  return L.divIcon({
-    className: "",
-    iconSize: [32, 46],
-    iconAnchor: [16, 46],
-    html: `
+function createUserIcon(radiate = false): L.DivIcon {
+  const pin = `
       <div style="position:relative;width:32px;height:46px;filter:drop-shadow(0 2px 6px rgba(34,197,94,0.4));">
         <svg width="32" height="46" viewBox="0 0 32 46" fill="none" xmlns="http://www.w3.org/2000/svg">
           <circle cx="16" cy="14" r="13" fill="#22c55e" stroke="#fff" stroke-width="2"/>
@@ -298,30 +297,65 @@ function createUserIcon(): L.DivIcon {
           font-size:13px;font-weight:800;color:#fff;
           font-family:ui-monospace,SFMono-Regular,monospace;
         ">A</div>
-      </div>
-    `,
+      </div>`;
+  if (!radiate) {
+    return L.divIcon({
+      className: "",
+      iconSize: [32, 46],
+      iconAnchor: [16, 46],
+      html: pin,
+    });
+  }
+  return L.divIcon({
+    className: "",
+    iconSize: [32, 46],
+    iconAnchor: [16, 46],
+    html: `
+      <div style="position:relative;width:32px;height:46px;">
+        <div class="demo-live-glow-ring demo-live-glow-ring--green" style="position:absolute;left:16px;top:14px;width:30px;height:30px;margin:-15px 0 0 -15px;"></div>
+        <div class="demo-live-glow-ring demo-live-glow-ring--green" style="animation-delay:0.65s;position:absolute;left:16px;top:14px;width:30px;height:30px;margin:-15px 0 0 -15px;"></div>
+        <div class="demo-live-glow-ring demo-live-glow-ring--green" style="animation-delay:1.3s;position:absolute;left:16px;top:14px;width:30px;height:30px;margin:-15px 0 0 -15px;"></div>
+        <div style="position:relative;z-index:2;">${pin}</div>
+      </div>`,
   });
 }
 
-function createTransportIcon(mode: string): L.DivIcon {
+function createTransportIcon(mode: string, radiate = false): L.DivIcon {
   const svgs: Record<string, string> = {
     "foot-walking": `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><circle cx="12" cy="5" r="2"/><path d="M10 22l3-8 2 2 4-4"/><path d="M10 22l-2-4 2-4 3 2"/></svg>`,
     "cycling-regular": `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><circle cx="15" cy="5" r="1"/><path d="M12 17.5V14l-3-3 4-3 2 3h3"/></svg>`,
     "driving-car": `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9L18 10l-2.7-3.6A1 1 0 0014.5 6h-5a1 1 0 00-.8.4L6 10l-2.5 1.1C2.7 11.3 2 12.1 2 13v3c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></svg>`,
   };
   const svg = svgs[mode] || svgs["foot-walking"];
-  return L.divIcon({
-    className: "",
-    iconSize: [40, 40],
-    iconAnchor: [20, 20],
-    html: `<div style="
+  const coreAnim = radiate ? "" : "animation:pulse-ring 1.5s ease-in-out infinite;";
+  const core = `<div style="
+      position:relative;z-index:2;
       width:40px;height:40px;border-radius:50%;
       background:linear-gradient(135deg,#3b82f6,#6366f1);
       border:3px solid #fff;
       display:flex;align-items:center;justify-content:center;
-      box-shadow:0 4px 16px rgba(59,130,246,0.6);
-      animation:pulse-ring 1.5s ease-in-out infinite;
-    ">${svg}</div>`,
+      box-shadow:0 4px 20px rgba(59,130,246,0.75),0 0 24px rgba(96,165,250,0.45);
+      ${coreAnim}
+    ">${svg}</div>`;
+  if (!radiate) {
+    return L.divIcon({
+      className: "",
+      iconSize: [40, 40],
+      iconAnchor: [20, 20],
+      html: core,
+    });
+  }
+  return L.divIcon({
+    className: "",
+    iconSize: [56, 56],
+    iconAnchor: [28, 28],
+    html: `
+      <div style="position:relative;width:56px;height:56px;display:flex;align-items:center;justify-content:center;">
+        <div class="demo-live-glow-ring demo-live-glow-ring--blue" style="position:absolute;left:50%;top:50%;width:42px;height:42px;margin:-21px 0 0 -21px;"></div>
+        <div class="demo-live-glow-ring demo-live-glow-ring--blue" style="animation-delay:0.65s;position:absolute;left:50%;top:50%;width:42px;height:42px;margin:-21px 0 0 -21px;"></div>
+        <div class="demo-live-glow-ring demo-live-glow-ring--blue" style="animation-delay:1.3s;position:absolute;left:50%;top:50%;width:42px;height:42px;margin:-21px 0 0 -21px;"></div>
+        ${core}
+      </div>`,
   });
 }
 
@@ -338,12 +372,31 @@ type TripLiveLayers = {
 };
 
 const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
-  { incidents, selectedId, onSelectIncident, routes, onMapTap, userLocation, tripRouteGeometry, previewOrigin, previewDest, previewWaypoints, tripMode, heatmapEnabled = true, isDark = true, onTripProgress, liveTripGps = false, timeFilterHours = 0 },
+  {
+    incidents,
+    selectedId,
+    onSelectIncident,
+    routes,
+    onMapTap,
+    userLocation,
+    tripRouteGeometry,
+    previewOrigin,
+    previewDest,
+    previewWaypoints,
+    tripMode,
+    heatmapEnabled = true,
+    isDark = true,
+    onTripProgress,
+    liveTripGps = false,
+    timeFilterHours = 0,
+    heatmapDemoBoost = false,
+  },
   ref
 ) {
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<L.LayerGroup | null>(null);
   const heatRef = useRef<L.Layer | null>(null);
+  const heatPulseRafRef = useRef<number | null>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
   const previewLayerRef = useRef<L.LayerGroup | null>(null);
@@ -422,47 +475,104 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     if (!map || !markers) return;
 
     markers.clearLayers();
+    if (heatPulseRafRef.current != null) {
+      cancelAnimationFrame(heatPulseRafRef.current);
+      heatPulseRafRef.current = null;
+    }
     if (heatRef.current) {
       map.removeLayer(heatRef.current);
       heatRef.current = null;
     }
 
-    const isTripMode = tripRouteGeometry && tripRouteGeometry.length >= 2;
+    const isTripMode = Boolean(tripRouteGeometry && tripRouteGeometry.length >= 2);
+    const countWithLat = incidents.filter((i) => i.lat != null && i.lng != null).length;
+    const useDemoFill = heatmapDemoBoost || countWithLat < 12;
 
     if (heatmapEnabled) {
       const useDensity = timeFilterHours >= 168;
       const heatData: [number, number, number][] = [];
       for (const inc of incidents) {
         if (inc.lat == null || inc.lng == null) continue;
-        const weight = useDensity ? 0.6 : inc.w_eff;
-        if (isTripMode) {
+        const weight = useDensity ? 0.6 : Math.max(inc.w_eff, 0.2);
+        if (isTripMode && tripRouteGeometry) {
           const dist = minDistToRouteKm([inc.lat, inc.lng], tripRouteGeometry);
           if (dist <= TRIP_PROXIMITY_KM) heatData.push([inc.lat, inc.lng, weight]);
         } else {
           heatData.push([inc.lat, inc.lng, weight]);
         }
       }
+
+      if (useDemoFill) {
+        const demoPts = phillyDemoHeatPoints();
+        if (isTripMode && tripRouteGeometry) {
+          for (const [lat, lng, w] of demoPts) {
+            const dist = minDistToRouteKm([lat, lng], tripRouteGeometry);
+            if (dist <= TRIP_PROXIMITY_KM) heatData.push([lat, lng, w * (heatmapDemoBoost ? 1 : 0.75)]);
+          }
+        } else {
+          for (const p of demoPts) heatData.push(p);
+        }
+      }
+
       if (heatData.length > 0) {
+        const vividGradient = {
+          0.0: "rgba(0,0,50,0)",
+          0.08: "#0c1a4a",
+          0.18: "#1e3a8a",
+          0.32: "#2563eb",
+          0.48: "#22c55e",
+          0.58: "#eab308",
+          0.72: "#f97316",
+          0.86: "#ef4444",
+          1.0: "#dc2626",
+        };
+        const softRadius = heatmapDemoBoost ? 86 : useDemoFill ? 82 : 72;
+        const softBlur = heatmapDemoBoost ? 52 : useDemoFill ? 48 : 44;
+        const legacyGradient = {
+          0.0: "rgba(0,0,40,0)",
+          0.1: "#0a0a5c",
+          0.2: "#1a1a8f",
+          0.35: "#3333cc",
+          0.5: "#22b8cf",
+          0.6: "#f0e130",
+          0.75: "#ff6b1a",
+          0.9: "#ef2020",
+          1.0: "#ff0040",
+        };
+        const baseRadius = useDensity ? 40 : softRadius;
+        const baseBlur = useDensity ? 30 : softBlur;
+        const heatMax = useDensity ? 1.0 : 0.85;
+        const heatMinOp = useDensity ? 0.3 : heatmapDemoBoost ? 0.48 : 0.42;
+        const gradient = useDensity ? legacyGradient : vividGradient;
         const heat = L.heatLayer(heatData, {
-          radius: useDensity ? 40 : 80,
-          blur: useDensity ? 30 : 50,
+          radius: baseRadius,
+          blur: baseBlur,
           maxZoom: 17,
-          max: useDensity ? 1.0 : 0.8,
-          minOpacity: useDensity ? 0.3 : 0.45,
-          gradient: {
-            0.0:  "rgba(0,0,40,0)",
-            0.1:  "#0a0a5c",
-            0.2:  "#1a1a8f",
-            0.35: "#3333cc",
-            0.5:  "#22b8cf",
-            0.6:  "#f0e130",
-            0.75: "#ff6b1a",
-            0.9:  "#ef2020",
-            1.0:  "#ff0040",
-          },
+          max: heatMax,
+          minOpacity: heatMinOp,
+          gradient,
         });
         heat.addTo(map);
         heatRef.current = heat;
+
+        if (heatmapDemoBoost) {
+          type HeatLayerPulse = L.Layer & {
+            setOptions: (o: Record<string, unknown>) => HeatLayerPulse;
+          };
+          const h = heat as HeatLayerPulse;
+          const tick = () => {
+            const t = Date.now() / 900;
+            const pulse = 0.78 + 0.22 * (0.5 + 0.5 * Math.sin(t));
+            const blurPulse = 0.92 + 0.14 * (0.5 + 0.5 * Math.cos(t * 1.12));
+            h.setOptions({
+              radius: Math.round(baseRadius * pulse),
+              blur: Math.round(baseBlur * blurPulse),
+              minOpacity: 0.36 + 0.16 * (0.5 + 0.5 * Math.sin(t * 0.85)),
+            });
+            heatPulseRafRef.current = requestAnimationFrame(tick);
+          };
+          heatPulseRafRef.current = requestAnimationFrame(tick);
+        }
       }
     }
 
@@ -470,7 +580,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       if (inc.lat == null || inc.lng == null) continue;
       const sev = getSeverity(inc.severity_category);
       let greyed = false;
-      if (isTripMode) {
+      if (isTripMode && tripRouteGeometry) {
         const dist = minDistToRouteKm([inc.lat, inc.lng], tripRouteGeometry);
         greyed = dist > TRIP_PROXIMITY_KM;
       }
@@ -479,7 +589,14 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       if (!greyed) marker.on("click", () => stableOnSelect(inc.id));
       markers.addLayer(marker);
     }
-  }, [incidents, stableOnSelect, tripRouteGeometry, heatmapEnabled, timeFilterHours]);
+  }, [
+    incidents,
+    stableOnSelect,
+    tripRouteGeometry,
+    heatmapEnabled,
+    timeFilterHours,
+    heatmapDemoBoost,
+  ]);
 
   useEffect(() => {
     if (!selectedId || !mapRef.current) return;
@@ -668,16 +785,18 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       return;
     }
 
+    const icon = createUserIcon(heatmapDemoBoost);
     if (userMarkerRef.current) {
       userMarkerRef.current.setLatLng([userLocation.lat, userLocation.lng]);
+      userMarkerRef.current.setIcon(icon);
     } else {
       userMarkerRef.current = L.marker([userLocation.lat, userLocation.lng], {
-        icon: createUserIcon(),
+        icon,
         zIndexOffset: 1500,
         interactive: false,
       }).addTo(map);
     }
-  }, [userLocation, routes, previewOrigin]);
+  }, [userLocation, routes, previewOrigin, heatmapDemoBoost]);
 
   // Trip: live GPS (snap to route) or simulated playback
   useEffect(() => {
@@ -709,7 +828,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }
 
     const geo = tripRouteGeometry;
-    const icon = createTransportIcon(tripMode);
+    const icon = createTransportIcon(tripMode, heatmapDemoBoost);
     const routeColor = "#22c55e";
     const traveledColor = "#3b82f6";
 
@@ -847,7 +966,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         (pl as L.Polyline).setStyle({ opacity: pl.options.weight === 16 ? 0.12 : 0.95 });
       }
     };
-  }, [tripMode, tripRouteGeometry, liveTripGps]);
+  }, [tripMode, tripRouteGeometry, liveTripGps, heatmapDemoBoost]);
 
   // Live trip: move vehicle and split polylines from GPS (SearchBar watchPosition)
   useEffect(() => {
