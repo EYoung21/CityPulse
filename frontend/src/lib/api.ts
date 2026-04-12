@@ -14,6 +14,7 @@ export interface Incident {
   inhibitor_status: string;
   inhibitor_reason: string | null;
   w_eff: number;
+  audio_clip: string | null;
 }
 
 export interface HealthResponse {

@@ -219,6 +219,7 @@ def insert_incident(
     inhibitor_status: str = "passed",
     inhibitor_reason: Optional[str] = None,
     reported_at: Optional[str] = None,
+    audio_clip: Optional[str] = None,
 ) -> dict:
     conn = get_conn()
     incident_id = uuid.uuid4().hex[:12]

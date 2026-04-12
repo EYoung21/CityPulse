@@ -1,8 +1,11 @@
 "use client";
 
+import { useRef, useState } from "react";
 import type { Incident } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
-import { AlertTriangle, MapPin, Clock, Brain, Shield, X, Radio } from "lucide-react";
+import { AlertTriangle, MapPin, Clock, Brain, Shield, X, Radio, Pause, Volume2 } from "lucide-react";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString("en-US", {
@@ -20,6 +23,26 @@ interface Props {
 export default function IncidentDetail({ incident, onClose }: Props) {
   const sev = getSeverity(incident.severity_category);
   const confidencePct = Math.round(incident.confidence * 100);
+  const [playing, setPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const hasAudio = !!incident.audio_clip && !!API_BASE;
+
+  const toggleAudio = () => {
+    if (!incident.audio_clip || !API_BASE) return;
+    if (!audioRef.current) {
+      audioRef.current = new Audio(`${API_BASE}/api/audio/${incident.audio_clip}`);
+      audioRef.current.addEventListener("ended", () => setPlaying(false));
+      audioRef.current.addEventListener("error", () => setPlaying(false));
+    }
+    if (playing) {
+      audioRef.current.pause();
+      setPlaying(false);
+    } else {
+      audioRef.current.play().catch(() => setPlaying(false));
+      setPlaying(true);
+    }
+  };
 
   return (
     <div
@@ -61,9 +84,33 @@ export default function IncidentDetail({ incident, onClose }: Props) {
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 
         <div className="rounded-lg p-3" style={{ background: "var(--panel-input-bg)" }}>
-          <p className="text-[10px] text-blue-500 font-mono font-medium mb-1.5 flex items-center gap-1">
-            <Radio className="w-3 h-3" /> SCANNER TRANSCRIPT
-          </p>
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-[10px] text-blue-500 font-mono font-medium flex items-center gap-1">
+              <Radio className="w-3 h-3" /> SCANNER TRANSCRIPT
+            </p>
+            {hasAudio && (
+              <button
+                onClick={toggleAudio}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium transition-all ${
+                  playing
+                    ? "bg-blue-500 text-white"
+                    : "bg-blue-500/15 text-blue-400 hover:bg-blue-500/25"
+                }`}
+              >
+                {playing ? (
+                  <>
+                    <Pause className="w-3 h-3" />
+                    Playing...
+                  </>
+                ) : (
+                  <>
+                    <Volume2 className="w-3 h-3" />
+                    Play Audio
+                  </>
+                )}
+              </button>
+            )}
+          </div>
           <p className="text-xs leading-relaxed italic" style={{ color: "var(--panel-text-secondary)" }}>
             &ldquo;{incident.raw_text}&rdquo;
           </p>

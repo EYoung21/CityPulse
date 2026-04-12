@@ -59,7 +59,7 @@ PP_CFG = config.get("philly_pulse", {})
 PP_ENABLED = PP_CFG.get("enabled", False) and _pp_post is not None
 PP_BRIDGE_URL = PP_CFG.get("bridge_url", "http://127.0.0.1:8765/api/ingest")
 
-# All Philadelphia public safety feeds
+# All Philadelphia-area public safety feeds
 PHILLY_FEEDS = [
     {"feed_id": "4603",  "label": "PPD Citywide"},
     {"feed_id": "17310", "label": "PPD Central"},
@@ -71,6 +71,10 @@ PHILLY_FEEDS = [
     {"feed_id": "34250", "label": "PFD South Fire/Medics"},
     {"feed_id": "15747", "label": "PFD North Fire"},
     {"feed_id": "44308", "label": "SEPTA Transit Police"},
+    {"feed_id": "13975", "label": "SEPTA Regional Rail"},
+    {"feed_id": "13951", "label": "PA Turnpike Police East"},
+    {"feed_id": "36323", "label": "Delaware Co Police Dispatch"},
+    {"feed_id": "20795", "label": "Camden Co Fire/EMS Digital"},
 ]
 
 # ── Constants ───────────────────────────────────────────────────────
@@ -83,6 +87,9 @@ VAD_FRAME_BYTES = int(SAMPLE_RATE * (VAD_FRAME_MS / 1000) * 2)
 
 OUTPUT_FOLDER = "philly_transcripts/"
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+AUDIO_CLIPS_FOLDER = "audio_clips/"
+os.makedirs(AUDIO_CLIPS_FOLDER, exist_ok=True)
 
 # ── Shared transcription queue ──────────────────────────────────────
 
@@ -187,8 +194,22 @@ def transcriber_worker(worker_id):
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(output + "\n")
 
+            clip_id = None
             if PP_ENABLED:
-                _pp_post(PP_BRIDGE_URL, text, timestamp, feed_id=feed_id)
+                import uuid, wave, struct
+                clip_id = uuid.uuid4().hex[:12]
+                clip_path = os.path.join(AUDIO_CLIPS_FOLDER, f"{clip_id}.wav")
+                try:
+                    pcm = (audio_data * 32767).astype(np.int16)
+                    with wave.open(clip_path, "w") as wf:
+                        wf.setnchannels(1)
+                        wf.setsampwidth(2)
+                        wf.setframerate(SAMPLE_RATE)
+                        wf.writeframes(pcm.tobytes())
+                except Exception as e:
+                    print(f"   [Worker-{worker_id}] Audio clip save error: {e}")
+                    clip_id = None
+                _pp_post(PP_BRIDGE_URL, text, timestamp, feed_id=feed_id, audio_clip=clip_id)
 
             transcription_queue.task_done()
         except Exception as e:
