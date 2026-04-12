@@ -192,8 +192,10 @@ def list_incidents(
 ) -> list[dict]:
     db = _ensure_client()
     col = db.collection("incidents")
-    # Prefer server-side ordering; filter in memory for compound filters (small scale).
-    docs = col.order_by("reported_at", direction=firestore.Query.DESCENDING).stream()
+    try:
+        docs = col.order_by("reported_at", direction=firestore.Query.DESCENDING).stream()
+    except Exception:
+        return []
     rows: list[dict] = []
     for doc in docs:
         row = _doc_to_row(doc.id, doc.to_dict() or {})
