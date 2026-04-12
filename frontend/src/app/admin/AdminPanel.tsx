@@ -133,52 +133,156 @@ function LiveAudioHeader({ feed }: { feed: FeedInfo }) {
   );
 }
 
-// ── Variant Audio Player ─────────────────────────────────────────────
+// ── Audio Player (with seek bar, restart, time display) ──────────────
 
-function VariantAudioButton({
+function formatTime(s: number): string {
+  if (!isFinite(s) || s < 0) return "0:00";
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, "0")}`;
+}
+
+function AudioPlayer({
   clipId,
   endpoint,
   label,
+  accentColor,
 }: {
   clipId: string | null;
   endpoint: string;
   label: string;
+  accentColor?: string;
 }) {
   const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [loaded, setLoaded] = useState(false);
   const ref = useRef<HTMLAudioElement | null>(null);
+  const animRef = useRef<number>(0);
+  const accent = accentColor || "#3b82f6";
 
-  const toggle = () => {
-    if (!clipId) return;
-    if (!ref.current) {
-      const a = new Audio(`${API_BASE}/api/${endpoint}/${clipId}`);
-      a.addEventListener("ended", () => setPlaying(false));
-      a.addEventListener("error", () => setPlaying(false));
-      ref.current = a;
-    }
+  const ensureAudio = useCallback(() => {
+    if (ref.current) return ref.current;
+    if (!clipId) return null;
+    const a = new Audio(`${API_BASE}/api/${endpoint}/${clipId}`);
+    a.addEventListener("loadedmetadata", () => {
+      setDuration(a.duration);
+      setLoaded(true);
+    });
+    a.addEventListener("ended", () => {
+      setPlaying(false);
+      cancelAnimationFrame(animRef.current);
+    });
+    a.addEventListener("error", () => {
+      setPlaying(false);
+      cancelAnimationFrame(animRef.current);
+    });
+    ref.current = a;
+    return a;
+  }, [clipId, endpoint]);
+
+  const tick = useCallback(() => {
+    if (ref.current) setCurrentTime(ref.current.currentTime);
+    animRef.current = requestAnimationFrame(tick);
+  }, []);
+
+  const togglePlay = () => {
+    const a = ensureAudio();
+    if (!a) return;
     if (playing) {
-      ref.current.pause();
+      a.pause();
+      cancelAnimationFrame(animRef.current);
       setPlaying(false);
     } else {
-      ref.current.play().catch(() => setPlaying(false));
+      a.play().catch(() => setPlaying(false));
+      animRef.current = requestAnimationFrame(tick);
       setPlaying(true);
     }
   };
 
-  useEffect(() => () => { ref.current?.pause(); }, []);
+  const restart = () => {
+    const a = ensureAudio();
+    if (!a) return;
+    a.currentTime = 0;
+    setCurrentTime(0);
+    if (!playing) {
+      a.play().catch(() => setPlaying(false));
+      animRef.current = requestAnimationFrame(tick);
+      setPlaying(true);
+    }
+  };
+
+  const seek = (e: React.MouseEvent<HTMLDivElement>) => {
+    const a = ensureAudio();
+    if (!a || !duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    a.currentTime = ratio * duration;
+    setCurrentTime(a.currentTime);
+  };
+
+  useEffect(() => () => {
+    ref.current?.pause();
+    cancelAnimationFrame(animRef.current);
+  }, []);
 
   if (!clipId) return null;
 
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+
   return (
-    <button
-      onClick={toggle}
-      className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
-        playing ? "bg-blue-500 text-white" : "bg-white/5 hover:bg-white/10"
-      }`}
-      style={!playing ? { color: "var(--panel-text-secondary)" } : {}}
-    >
-      {playing ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-      {label}
-    </button>
+    <div className="flex items-center gap-1.5 w-full min-w-0">
+      {/* Restart */}
+      <button
+        onClick={restart}
+        className="shrink-0 p-0.5 rounded hover:bg-white/10 transition-colors"
+        style={{ color: "var(--panel-text-muted)" }}
+        title="Restart"
+      >
+        <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M4 2v12l-2-2v-8l2-2zm2 1v10l8-5-8-5z" />
+        </svg>
+      </button>
+
+      {/* Play / Pause */}
+      <button
+        onClick={togglePlay}
+        className="shrink-0 p-1 rounded transition-all"
+        style={{
+          background: playing ? accent : "rgba(255,255,255,0.05)",
+          color: playing ? "#fff" : "var(--panel-text-secondary)",
+        }}
+        title={playing ? "Pause" : `Play ${label}`}
+      >
+        {playing ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+      </button>
+
+      {/* Time + seek bar */}
+      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+        <div
+          className="h-1.5 rounded-full cursor-pointer relative group"
+          style={{ background: "rgba(255,255,255,0.08)" }}
+          onClick={seek}
+        >
+          <div
+            className="h-full rounded-full transition-[width] duration-75"
+            style={{ width: `${progress}%`, background: accent }}
+          />
+          <div
+            className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+            style={{ left: `calc(${progress}% - 5px)`, background: accent, boxShadow: `0 0 4px ${accent}88` }}
+          />
+        </div>
+        <div className="flex justify-between">
+          <span className="text-[8px] tabular-nums" style={{ color: "var(--panel-text-muted)" }}>
+            {formatTime(currentTime)}
+          </span>
+          <span className="text-[8px] tabular-nums" style={{ color: "var(--panel-text-muted)" }}>
+            {loaded ? formatTime(duration) : label}
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -204,7 +308,7 @@ function VariantColumn({ v }: { v: VariantResult }) {
     >
       {/* Variant header */}
       <div
-        className="flex items-center gap-2 px-2.5 py-1.5"
+        className="px-2.5 py-1.5 space-y-1"
         style={{ borderBottom: `1px solid ${color}22` }}
       >
         <span
@@ -213,7 +317,7 @@ function VariantColumn({ v }: { v: VariantResult }) {
         >
           {v.name}
         </span>
-        <VariantAudioButton clipId={v.audio_clip} endpoint="audio" label="Play" />
+        <AudioPlayer clipId={v.audio_clip} endpoint="audio" label={v.name} accentColor={color} />
       </div>
 
       {/* Transcript */}
@@ -454,11 +558,11 @@ function ExtractionCard({
           </span>
         )}
 
-        <div className="ml-auto flex items-center gap-1.5">
-          {hasRaw && (
-            <VariantAudioButton clipId={extraction.raw_audio_clip} endpoint="audio-raw" label="Raw Audio" />
-          )}
-        </div>
+        {hasRaw && (
+          <div className="ml-auto w-48">
+            <AudioPlayer clipId={extraction.raw_audio_clip} endpoint="audio-raw" label="Raw Audio" accentColor="#10b981" />
+          </div>
+        )}
       </div>
 
       {/* Variant comparison columns (or fallback to raw_text) */}
