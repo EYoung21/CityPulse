@@ -41,6 +41,7 @@ interface TimeBlock {
 function groupByTimeBlocks(incidents: Incident[]): TimeBlock[] {
   const now = Date.now();
   const hourAgo = now - 60 * 60 * 1000;
+  const threeHoursAgo = now - 3 * 60 * 60 * 1000;
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
@@ -48,6 +49,7 @@ function groupByTimeBlocks(incidents: Incident[]): TimeBlock[] {
 
   const blocks: TimeBlock[] = [
     { label: "Last Hour", incidents: [] },
+    { label: "Last 3 Hours", incidents: [] },
     { label: "Today", incidents: [] },
     { label: "Yesterday", incidents: [] },
     { label: "This Week", incidents: [] },
@@ -57,10 +59,11 @@ function groupByTimeBlocks(incidents: Incident[]): TimeBlock[] {
   for (const inc of incidents) {
     const t = new Date(inc.reported_at).getTime();
     if (t >= hourAgo) blocks[0].incidents.push(inc);
-    else if (t >= todayStart.getTime()) blocks[1].incidents.push(inc);
-    else if (t >= yesterdayStart.getTime()) blocks[2].incidents.push(inc);
-    else if (t >= weekStart.getTime()) blocks[3].incidents.push(inc);
-    else blocks[4].incidents.push(inc);
+    else if (t >= threeHoursAgo) blocks[1].incidents.push(inc);
+    else if (t >= todayStart.getTime()) blocks[2].incidents.push(inc);
+    else if (t >= yesterdayStart.getTime()) blocks[3].incidents.push(inc);
+    else if (t >= weekStart.getTime()) blocks[4].incidents.push(inc);
+    else blocks[5].incidents.push(inc);
   }
 
   for (const block of blocks) {

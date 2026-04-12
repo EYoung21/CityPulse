@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Navigation, Flame, Radio, Shield } from "lucide-react";
+import { Navigation, Flame, Radio, Shield, TrendingUp, TrendingDown, MapPin, Minus } from "lucide-react";
+import Sparkline from "@/components/charts/Sparkline";
 import { assessSafety } from "@/lib/search";
 import {
   getMultiStopRoute,
@@ -42,6 +43,19 @@ interface StopLoc {
   lng: number;
 }
 
+interface HotNeighborhood {
+  name: string;
+  slug: string;
+  count: number;
+}
+
+interface CategoryBreakdownItem {
+  label: string;
+  color: string;
+  cats: readonly string[];
+  count: number;
+}
+
 interface Props {
   incidents: Incident[];
   onFlyTo: (lat: number, lng: number) => void;
@@ -57,6 +71,11 @@ interface Props {
   routeGeometryForDemo?: [number, number][] | null;
   onRouteDemoSimChange?: (active: boolean) => void;
   timeFilterLabel?: string;
+  trendPct?: number;
+  hotNeighborhoods?: HotNeighborhood[];
+  categoryBreakdown?: CategoryBreakdownItem[];
+  hourlyData?: number[];
+  onToggleCat?: (cats: readonly string[]) => void;
 }
 
 export default function SearchSidebar({
@@ -74,6 +93,11 @@ export default function SearchSidebar({
   routeGeometryForDemo = null,
   onRouteDemoSimChange,
   timeFilterLabel,
+  trendPct = 0,
+  hotNeighborhoods = [],
+  categoryBreakdown = [],
+  hourlyData = [],
+  onToggleCat,
 }: Props) {
   const [view, setView] = useState<View>("search");
   const [originQuery, setOriginQuery] = useState("");
@@ -318,24 +342,126 @@ export default function SearchSidebar({
 
             <SavedPlaces onFlyTo={onFlyTo} onDirections={openDirections} />
 
+            {/* Stats strip */}
             <div
-              className="px-4 py-2 flex items-center gap-2"
+              className="px-4 py-3 space-y-3"
               style={{ borderBottom: "1px solid var(--panel-border)" }}
             >
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-              <span className="text-[11px] text-green-500 font-medium">LIVE</span>
-              <span className="text-[11px]" style={{ color: "var(--panel-text-muted)" }}>·</span>
-              <span className="text-[11px]" style={{ color: "var(--panel-text-secondary)" }}>
-                {incidents.length} incidents tracked
-              </span>
-              {highCount > 0 && (
-                <>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                  <span className="text-[11px] text-green-500 font-medium">LIVE</span>
                   <span className="text-[11px]" style={{ color: "var(--panel-text-muted)" }}>·</span>
-                  <span className="text-[11px] text-amber-500 flex items-center gap-1">
-                    <Flame className="w-3 h-3" />
-                    {highCount} critical
+                  <span className="text-[11px] font-semibold" style={{ color: "var(--panel-text)" }}>
+                    {incidents.length}
                   </span>
-                </>
+                  <span className="text-[11px]" style={{ color: "var(--panel-text-secondary)" }}>
+                    incidents
+                  </span>
+                </div>
+                {trendPct !== 0 && (
+                  <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                    trendPct > 0 ? "bg-red-500/10 text-red-400" : "bg-green-500/10 text-green-400"
+                  }`}>
+                    {trendPct > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                    {trendPct > 0 ? "+" : ""}{trendPct}%
+                  </div>
+                )}
+                {trendPct === 0 && (
+                  <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium"
+                    style={{ background: "var(--panel-input-bg)", color: "var(--panel-text-muted)" }}>
+                    <Minus className="w-3 h-3" />
+                    0%
+                  </div>
+                )}
+              </div>
+              {highCount > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <Flame className="w-3 h-3 text-amber-500" />
+                  <span className="text-[10px] text-amber-500 font-medium">{highCount} critical</span>
+                </div>
+              )}
+
+              {/* Today's hourly sparkline */}
+              {hourlyData.length > 0 && hourlyData.some((v) => v > 0) && (
+                <div>
+                  <p className="text-[9px] font-semibold uppercase tracking-wider mb-1" style={{ color: "var(--panel-text-muted)" }}>
+                    Today&apos;s Activity
+                  </p>
+                  <Sparkline data={hourlyData} color="#3b82f6" width={340} height={28} filled />
+                  <div className="flex justify-between mt-0.5">
+                    <span className="text-[8px]" style={{ color: "var(--panel-text-muted)" }}>12am</span>
+                    <span className="text-[8px]" style={{ color: "var(--panel-text-muted)" }}>6am</span>
+                    <span className="text-[8px]" style={{ color: "var(--panel-text-muted)" }}>12pm</span>
+                    <span className="text-[8px]" style={{ color: "var(--panel-text-muted)" }}>6pm</span>
+                    <span className="text-[8px]" style={{ color: "var(--panel-text-muted)" }}>12am</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Category breakdown bar */}
+              {categoryBreakdown.length > 0 && (
+                <div>
+                  <p className="text-[9px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: "var(--panel-text-muted)" }}>
+                    By Category
+                  </p>
+                  <div className="flex h-2 rounded-full overflow-hidden gap-px">
+                    {categoryBreakdown.map((cat) => (
+                      <div
+                        key={cat.label}
+                        className="h-full cursor-pointer transition-opacity hover:opacity-80"
+                        style={{
+                          backgroundColor: cat.color,
+                          flexGrow: cat.count,
+                        }}
+                        title={`${cat.label}: ${cat.count}`}
+                        onClick={() => onToggleCat?.(cat.cats)}
+                      />
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5">
+                    {categoryBreakdown.map((cat) => (
+                      <button
+                        key={cat.label}
+                        className="flex items-center gap-1 text-[9px] transition-opacity hover:opacity-80"
+                        style={{ color: "var(--panel-text-secondary)" }}
+                        onClick={() => onToggleCat?.(cat.cats)}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
+                        {cat.label}
+                        <span className="font-mono" style={{ color: "var(--panel-text-muted)" }}>{cat.count}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Hot neighborhoods */}
+              {hotNeighborhoods.length > 0 && (
+                <div>
+                  <p className="text-[9px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: "var(--panel-text-muted)" }}>
+                    Hot Spots
+                  </p>
+                  <div className="space-y-1">
+                    {hotNeighborhoods.map((n, idx) => (
+                      <div key={n.slug} className="flex items-center gap-2">
+                        <span className="text-[9px] font-mono w-3 text-right" style={{ color: "var(--panel-text-muted)" }}>{idx + 1}</span>
+                        <MapPin className="w-3 h-3 shrink-0" style={{ color: idx === 0 ? "#ef4444" : idx < 3 ? "#f59e0b" : "var(--panel-text-muted)" }} />
+                        <span className="text-[10px] flex-1 truncate" style={{ color: "var(--panel-text-secondary)" }}>{n.name}</span>
+                        <div className="w-16 h-1.5 rounded-full overflow-hidden" style={{ background: "var(--panel-input-bg)" }}>
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${Math.min(100, (n.count / (hotNeighborhoods[0]?.count || 1)) * 100)}%`,
+                              backgroundColor: idx === 0 ? "#ef4444" : idx < 3 ? "#f59e0b" : "#3b82f6",
+                            }}
+                          />
+                        </div>
+                        <span className="text-[9px] font-mono w-4 text-right" style={{ color: "var(--panel-text-muted)" }}>{n.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
 

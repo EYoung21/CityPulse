@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -22,6 +22,10 @@ import {
   Menu,
   LocateFixed,
   House,
+  TrendingUp,
+  TrendingDown,
+  MapPin,
+  Radio,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import SearchSidebar from "@/components/SearchSidebar";
@@ -45,8 +49,9 @@ import { isFirebaseConfigured } from "@/lib/firebase";
 import { subscribeIncidents } from "@/lib/firestore";
 import { enrichIncidents } from "@/lib/incident-weights";
 import { buildLocalSummary } from "@/lib/local-summary";
-import { getNeighborhood, NEIGHBORHOODS, type Neighborhood } from "@/lib/neighborhoods";
+import { getNeighborhood, incidentsInNeighborhood, NEIGHBORHOODS, type Neighborhood } from "@/lib/neighborhoods";
 import { assessSafety } from "@/lib/search";
+import Sparkline from "@/components/charts/Sparkline";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 const WEIGHT_REFRESH_MS = 15000;
@@ -72,15 +77,30 @@ const CATEGORY_PILLS = [
 ] as const;
 
 const TIME_FILTERS = [
+  { label: "10m", hours: 10 / 60 },
+  { label: "30m", hours: 0.5 },
   { label: "1h", hours: 1 },
+  { label: "3h", hours: 3 },
   { label: "6h", hours: 6 },
   { label: "24h", hours: 24 },
-  { label: "7d", hours: 24 * 7 },
-  { label: "30d", hours: 24 * 30 },
-  { label: "90d", hours: 24 * 90 },
-  { label: "6mo", hours: 24 * 180 },
-  { label: "All", hours: 0 },
+  { label: "3d", hours: 72 },
+  { label: "1w", hours: 168 },
+  { label: "1mo", hours: 720 },
+  { label: "3mo", hours: 2160 },
+  { label: "6mo", hours: 4320 },
 ] as const;
+
+const FEED_LABELS: Record<string, string> = {
+  "4603": "Citywide",
+  "17310": "Central",
+  "21297": "East",
+  "45495": "Northeast",
+  "18836": "Northwest",
+  "15102": "South",
+  "15195": "SW/West",
+  "34250": "PFD South",
+  "15747": "PFD North",
+};
 
 const IncidentMap = dynamic(() => import("@/components/IncidentMap"), {
   ssr: false,
@@ -112,7 +132,7 @@ export default function Home() {
   const [summary, setSummary] = useState<string>("");
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [routes, setRoutes] = useState<RouteData | null>(null);
-  const [timeFilter, setTimeFilter] = useState(0);
+  const [timeFilter, setTimeFilter] = useState(24);
   const [activeCats, setActiveCats] = useState<Set<string>>(new Set());
   const [mapTap, setMapTap] = useState<{ lat: number; lng: number } | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -231,21 +251,81 @@ export default function Home() {
 
   const filteredIncidents = incidents.filter((inc) => {
     if (inc.hidden) return false;
-    if (timeFilter > 0) {
-      const cutoff = Date.now() - timeFilter * 60 * 60 * 1000;
-      if (new Date(inc.reported_at).getTime() < cutoff) return false;
-    }
+    const cutoff = Date.now() - timeFilter * 60 * 60 * 1000;
+    if (new Date(inc.reported_at).getTime() < cutoff) return false;
     if (activeCats.size > 0 && !activeCats.has(inc.severity_category)) return false;
     return true;
   });
 
   const selected = filteredIncidents.find((i) => i.id === selectedId) || null;
 
-  const activeTimeLabel = timeFilter === 0
-    ? ""
-    : TIME_FILTERS.find((tf) => tf.hours === timeFilter)?.label
-      ? `Last ${TIME_FILTERS.find((tf) => tf.hours === timeFilter)!.label}`
-      : "";
+  const activeTimeLabel = TIME_FILTERS.find((tf) => tf.hours === timeFilter)?.label
+    ? `Last ${TIME_FILTERS.find((tf) => tf.hours === timeFilter)!.label}`
+    : "";
+
+  const trendPct = useMemo(() => {
+    const windowMs = timeFilter * 60 * 60 * 1000;
+    const now = Date.now();
+    const currentStart = now - windowMs;
+    const prevStart = currentStart - windowMs;
+    const current = incidents.filter((i) => {
+      if (i.hidden) return false;
+      const t = new Date(i.reported_at).getTime();
+      return t >= currentStart;
+    }).length;
+    const prev = incidents.filter((i) => {
+      if (i.hidden) return false;
+      const t = new Date(i.reported_at).getTime();
+      return t >= prevStart && t < currentStart;
+    }).length;
+    if (prev === 0) return current > 0 ? 100 : 0;
+    return Math.round(((current - prev) / prev) * 100);
+  }, [incidents, timeFilter]);
+
+  const hotNeighborhoods = useMemo(() => {
+    return NEIGHBORHOODS.map((n) => ({
+      name: n.name,
+      slug: n.slug,
+      count: incidentsInNeighborhood(filteredIncidents, n.slug).length,
+    }))
+      .filter((n) => n.count > 0)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  }, [filteredIncidents]);
+
+  const categoryBreakdown = useMemo(() => {
+    return CATEGORY_PILLS.map((pill) => ({
+      label: pill.label,
+      color: pill.color,
+      cats: pill.cats,
+      count: filteredIncidents.filter((i) => (pill.cats as readonly string[]).includes(i.severity_category)).length,
+    })).filter((c) => c.count > 0);
+  }, [filteredIncidents]);
+
+  const hourlyData = useMemo(() => {
+    const bins = new Array(24).fill(0);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    for (const inc of filteredIncidents) {
+      const d = new Date(inc.reported_at);
+      if (d.getTime() >= todayStart.getTime()) {
+        bins[d.getHours()]++;
+      }
+    }
+    return bins;
+  }, [filteredIncidents]);
+
+  const activeFeeds = useMemo(() => {
+    const feedCounts = new Map<string, number>();
+    for (const inc of filteredIncidents) {
+      if (inc.feed_id) {
+        feedCounts.set(inc.feed_id, (feedCounts.get(inc.feed_id) ?? 0) + 1);
+      }
+    }
+    return Array.from(feedCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([id, count]) => ({ id, label: FEED_LABELS[id] || id, count }));
+  }, [filteredIncidents]);
 
   const analyticsAreaName = mapTap
     ? getNeighborhood(mapTap.lat, mapTap.lng)?.name
@@ -321,6 +401,11 @@ export default function Home() {
           routeGeometryForDemo={routeGeometryForDemo}
           onRouteDemoSimChange={setRouteDemoSimActive}
           timeFilterLabel={activeTimeLabel}
+          trendPct={trendPct}
+          hotNeighborhoods={hotNeighborhoods}
+          categoryBreakdown={categoryBreakdown}
+          hourlyData={hourlyData}
+          onToggleCat={toggleCat}
         />
       </div>
 
@@ -572,6 +657,22 @@ export default function Home() {
             </span>
           </div>
           <div className="flex items-center gap-3">
+            {activeFeeds.length > 0 && (
+              <div className="flex items-center gap-1.5 hidden sm:flex">
+                <Radio className="w-3 h-3" style={{ color: "var(--panel-text-muted)" }} />
+                {activeFeeds.slice(0, 4).map((f) => (
+                  <span key={f.id} className="flex items-center gap-1 text-[9px]" style={{ color: "var(--panel-text-muted)" }}>
+                    <span className="w-1 h-1 rounded-full bg-green-500" />
+                    {f.label}
+                  </span>
+                ))}
+                {activeFeeds.length > 4 && (
+                  <span className="text-[9px]" style={{ color: "var(--panel-text-muted)" }}>
+                    +{activeFeeds.length - 4}
+                  </span>
+                )}
+              </div>
+            )}
             <span className="text-[10px] hidden sm:inline" style={{ color: "var(--panel-text-muted)" }}>
               {new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })} EST
             </span>
