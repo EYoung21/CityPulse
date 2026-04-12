@@ -1,4 +1,7 @@
-"""FastAPI server for PhillyPulse."""
+"""FastAPI server for PhillyPulse.
+
+Serves the PhillyPulse API: ingest, incidents, admin, health.
+"""
 
 import json
 import logging
