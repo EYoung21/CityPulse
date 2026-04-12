@@ -166,6 +166,25 @@ def get_incident(incident_id: str) -> Optional[dict]:
     return _doc_to_row(snap.id, snap.to_dict() or {})
 
 
+def update_incident(incident_id: str, updates: dict) -> Optional[dict]:
+    db = _ensure_client()
+    ref = db.collection("incidents").document(incident_id)
+    if not ref.get().exists:
+        return None
+    ref.update(updates)
+    snap = ref.get()
+    return _doc_to_row(snap.id, snap.to_dict() or {})
+
+
+def delete_incident(incident_id: str) -> bool:
+    db = _ensure_client()
+    ref = db.collection("incidents").document(incident_id)
+    if not ref.get().exists:
+        return False
+    ref.delete()
+    return True
+
+
 def list_incidents(
     since: Optional[str] = None,
     category: Optional[str] = None,

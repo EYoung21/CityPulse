@@ -568,6 +568,28 @@ class PredictRequest(BaseModel):
     extraction_id: str
 
 
+class VisibilityRequest(BaseModel):
+    hidden: bool
+
+
+@app.post("/api/admin/incident/{incident_id}/visibility")
+async def admin_toggle_visibility(incident_id: str, req: VisibilityRequest):
+    """Toggle an incident's visibility on the public map."""
+    result = store.update_incident(incident_id, {"hidden": req.hidden})
+    if result is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return {"status": "ok", "incident_id": incident_id, "hidden": req.hidden}
+
+
+@app.delete("/api/admin/incident/{incident_id}")
+async def admin_delete_incident(incident_id: str):
+    """Permanently delete an incident."""
+    ok = store.delete_incident(incident_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return {"status": "deleted", "incident_id": incident_id}
+
+
 @app.post("/api/admin/predict")
 async def admin_predict(req: PredictRequest):
     """Run the full LLM + inhibitor + geocode pipeline on a stored extraction.
