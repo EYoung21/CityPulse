@@ -8,7 +8,7 @@ import {
   where,
 } from "firebase/firestore";
 import { getFirebaseApp } from "@/lib/firebase";
-import type { Incident, Extraction } from "@/lib/api";
+import type { Incident, Extraction, PreprocessMeta, VariantResult, WhisperMeta } from "@/lib/api";
 import { enrichIncidents } from "@/lib/incident-weights";
 
 const COLLECTION = "incidents";
@@ -95,7 +95,28 @@ export function subscribeIncidents(
   );
 }
 
+function mapVariant(v: Record<string, unknown>): VariantResult {
+  return {
+    name: String(v.name ?? "unknown"),
+    audio_clip:
+      v.audio_clip === null || v.audio_clip === undefined
+        ? null
+        : String(v.audio_clip),
+    transcript: String(v.transcript ?? ""),
+    preprocess_meta:
+      v.preprocess_meta && typeof v.preprocess_meta === "object"
+        ? (v.preprocess_meta as PreprocessMeta)
+        : null,
+    whisper_meta:
+      v.whisper_meta && typeof v.whisper_meta === "object"
+        ? (v.whisper_meta as WhisperMeta)
+        : null,
+  };
+}
+
 function mapExtraction(id: string, data: Record<string, unknown>): Extraction {
+  const rawVariants = Array.isArray(data.variants) ? data.variants : [];
+
   return {
     id,
     feed_id: String(data.feed_id ?? "unknown"),
@@ -105,6 +126,15 @@ function mapExtraction(id: string, data: Record<string, unknown>): Extraction {
       data.audio_clip === null || data.audio_clip === undefined
         ? null
         : String(data.audio_clip),
+    raw_audio_clip:
+      data.raw_audio_clip === null || data.raw_audio_clip === undefined
+        ? null
+        : String(data.raw_audio_clip),
+    preprocess_meta:
+      data.preprocess_meta && typeof data.preprocess_meta === "object"
+        ? (data.preprocess_meta as PreprocessMeta)
+        : null,
+    variants: rawVariants.map((v: Record<string, unknown>) => mapVariant(v)),
     llm_relevant: Boolean(data.llm_relevant),
     llm_category:
       data.llm_category === null || data.llm_category === undefined

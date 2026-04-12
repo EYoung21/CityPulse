@@ -18,12 +18,36 @@ export interface Incident {
   feed_id: string | null;
 }
 
+export interface PreprocessMeta {
+  vad_duration_s: number;
+  norm_percentile: number | null;
+  norm_level: number;
+  highpass_hz: number;
+  vad_aggressiveness: number | null;
+}
+
+export interface WhisperMeta {
+  no_speech_prob: number;
+  duration_s: number;
+}
+
+export interface VariantResult {
+  name: string;
+  audio_clip: string | null;
+  transcript: string;
+  preprocess_meta: PreprocessMeta | null;
+  whisper_meta: WhisperMeta | null;
+}
+
 export interface Extraction {
   id: string;
   feed_id: string;
   raw_text: string;
   reported_at: string;
   audio_clip: string | null;
+  raw_audio_clip: string | null;
+  preprocess_meta: PreprocessMeta | null;
+  variants: VariantResult[];
   llm_relevant: boolean;
   llm_category: string | null;
   llm_confidence: number;

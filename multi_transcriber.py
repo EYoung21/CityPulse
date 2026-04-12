@@ -19,7 +19,6 @@ import sys
 import queue
 import threading
 import select
-import scipy.signal as signal
 import os
 import gc
 import re
@@ -31,6 +30,12 @@ try:
     from philly_pulse.bridge import post_transcript as _pp_post
 except Exception:
     _pp_post = None
+
+try:
+    from philly_pulse.preprocess import PIPELINE_VARIANTS, preprocess_audio
+except Exception:
+    PIPELINE_VARIANTS = []
+    preprocess_audio = None
 
 
 # ── Config ──────────────────────────────────────────────────────────
@@ -90,6 +95,9 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 AUDIO_CLIPS_FOLDER = "audio_clips/"
 os.makedirs(AUDIO_CLIPS_FOLDER, exist_ok=True)
+
+RAW_CLIPS_FOLDER = "audio_clips_raw/"
+os.makedirs(RAW_CLIPS_FOLDER, exist_ok=True)
 
 # ── Shared transcription queue ──────────────────────────────────────
 
@@ -153,40 +161,115 @@ def cleanup_text(text, duration):
 
 # ── Transcription workers (2 threads to handle bursts) ──────────────
 
+def _save_wav(path, audio_float32):
+    """Save float32 audio array as 16-bit WAV."""
+    import wave as _wave
+    pcm = (audio_float32 * 32767).astype(np.int16)
+    with _wave.open(path, "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(pcm.tobytes())
+
+
+def _transcribe_variant(variant_audio, worker_id, variant_name):
+    """Run Whisper on a single variant's preprocessed audio. Returns (text, whisper_meta) or None."""
+    duration = len(variant_audio) / SAMPLE_RATE
+    try:
+        segments, _info = model.transcribe(
+            variant_audio,
+            language=LANGUAGE,
+            initial_prompt=INITIAL_PROMPT,
+            condition_on_previous_text=False,
+            temperature=0.0,
+            beam_size=BEAM_SIZE,
+            patience=1.5,
+            suppress_blank=True,
+            no_speech_threshold=NO_SPEECH_THRESHOLD,
+        )
+        segments = list(segments)
+        text = " ".join(s.text for s in segments).strip()
+
+        no_speech_prob = max((s.no_speech_prob for s in segments), default=0)
+        if no_speech_prob > NO_SPEECH_THRESHOLD:
+            return None
+
+        text = cleanup_text(text, duration)
+        if not text:
+            return None
+
+        whisper_meta = {
+            "no_speech_prob": round(no_speech_prob, 4),
+            "duration_s": round(duration, 2),
+        }
+        return text, whisper_meta
+    except Exception as e:
+        print(f"   [Worker-{worker_id}] Variant '{variant_name}' transcribe error: {e}")
+        return None
+
+
 def transcriber_worker(worker_id):
     print(f"   [Worker-{worker_id}] Transcriber thread started")
     while True:
         try:
-            feed_id, feed_label, timestamp, audio_data = transcription_queue.get()
-            if audio_data is None:
+            item = transcription_queue.get()
+            if item[3] is None:
                 break
 
-            duration = len(audio_data) / SAMPLE_RATE
-            segments, info = model.transcribe(
-                audio_data,
-                language=LANGUAGE,
-                initial_prompt=INITIAL_PROMPT,
-                condition_on_previous_text=False,
-                temperature=0.0,
-                beam_size=BEAM_SIZE,
-                patience=1.5,
-                suppress_blank=True,
-                no_speech_threshold=NO_SPEECH_THRESHOLD,
-            )
-            segments = list(segments)
-            text = " ".join(s.text for s in segments).strip()
+            feed_id, feed_label, timestamp, raw_pcm = item
 
-            no_speech_prob = max((s.no_speech_prob for s in segments), default=0)
-            if no_speech_prob > NO_SPEECH_THRESHOLD:
+            if not PP_ENABLED:
                 transcription_queue.task_done()
                 continue
 
-            text = cleanup_text(text, duration)
-            if not text:
+            import uuid as _uuid
+
+            # Save raw clip (FFmpeg-only decode) once, shared across variants
+            raw_clip_id = _uuid.uuid4().hex[:12]
+            try:
+                _save_wav(os.path.join(RAW_CLIPS_FOLDER, f"{raw_clip_id}.wav"), raw_pcm)
+            except Exception as e:
+                print(f"   [Worker-{worker_id}] Raw clip save error: {e}")
+                raw_clip_id = None
+
+            variants_list = []
+            standard_text = None
+
+            for vcfg in (PIPELINE_VARIANTS if PIPELINE_VARIANTS else []):
+                processed, meta = preprocess_audio(raw_pcm, vcfg)
+
+                result = _transcribe_variant(processed, worker_id, vcfg.name)
+                if result is None:
+                    continue
+
+                text, whisper_meta = result
+
+                clip_id = _uuid.uuid4().hex[:12]
+                try:
+                    _save_wav(os.path.join(AUDIO_CLIPS_FOLDER, f"{clip_id}.wav"), processed)
+                except Exception as e:
+                    print(f"   [Worker-{worker_id}] Variant '{vcfg.name}' clip save error: {e}")
+                    clip_id = None
+
+                variants_list.append({
+                    "name": vcfg.name,
+                    "audio_clip": clip_id,
+                    "transcript": text,
+                    "preprocess_meta": meta,
+                    "whisper_meta": whisper_meta,
+                })
+
+                if vcfg.name == "standard":
+                    standard_text = text
+
+            if not variants_list:
                 transcription_queue.task_done()
                 continue
 
-            output = f"[{timestamp}] [{feed_label}] ({duration:.1f}s) {text}"
+            if standard_text is None:
+                standard_text = variants_list[0]["transcript"]
+
+            output = f"[{timestamp}] [{feed_label}] {len(variants_list)} variants — {standard_text[:80]}"
             print(output)
 
             log_date = datetime.date.today()
@@ -194,22 +277,12 @@ def transcriber_worker(worker_id):
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(output + "\n")
 
-            clip_id = None
-            if PP_ENABLED:
-                import uuid, wave, struct
-                clip_id = uuid.uuid4().hex[:12]
-                clip_path = os.path.join(AUDIO_CLIPS_FOLDER, f"{clip_id}.wav")
-                try:
-                    pcm = (audio_data * 32767).astype(np.int16)
-                    with wave.open(clip_path, "w") as wf:
-                        wf.setnchannels(1)
-                        wf.setsampwidth(2)
-                        wf.setframerate(SAMPLE_RATE)
-                        wf.writeframes(pcm.tobytes())
-                except Exception as e:
-                    print(f"   [Worker-{worker_id}] Audio clip save error: {e}")
-                    clip_id = None
-                _pp_post(PP_BRIDGE_URL, text, timestamp, feed_id=feed_id, audio_clip=clip_id)
+            _pp_post(
+                PP_BRIDGE_URL, standard_text, timestamp,
+                feed_id=feed_id,
+                raw_audio_clip=raw_clip_id,
+                variants=variants_list,
+            )
 
             transcription_queue.task_done()
         except Exception as e:
@@ -219,11 +292,14 @@ def transcriber_worker(worker_id):
 # ── Per-feed audio capture thread ───────────────────────────────────
 
 def feed_capture_thread(feed_id, feed_label):
-    """Captures audio from one Broadcastify feed, runs VAD, queues segments."""
+    """Captures raw audio from one Broadcastify feed.
+
+    Uses a lightweight VAD pass to detect speech boundaries, then queues
+    the *raw* PCM (post-ffmpeg only — no high-pass, no normalization) for
+    the transcriber workers to preprocess via all pipeline variants.
+    """
     print(f"   [{feed_label}] Connecting to feed {feed_id}...")
 
-    sos = signal.butter(5, 100 / (SAMPLE_RATE / 2), btype="high", output="sos")
-    filter_state = np.zeros((sos.shape[0], 2))
     vad = webrtcvad.Vad(VAD_AGGRESSIVENESS)
 
     ffmpeg = get_ffmpeg_stream(feed_id)
@@ -249,7 +325,6 @@ def feed_capture_thread(feed_id, feed_label):
                     ffmpeg.kill()
                     time.sleep(2)
                     ffmpeg = get_ffmpeg_stream(feed_id)
-                    filter_state = np.zeros((sos.shape[0], 2))
                 continue
 
             raw_bytes = ffmpeg.stdout.read(CHUNK_BYTES)
@@ -258,15 +333,12 @@ def feed_capture_thread(feed_id, feed_label):
                 ffmpeg.kill()
                 time.sleep(2)
                 ffmpeg = get_ffmpeg_stream(feed_id)
-                filter_state = np.zeros((sos.shape[0], 2))
                 continue
 
             reconnect_count = 0
             audio_chunk = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-            audio_chunk, filter_state = signal.sosfilt(sos, audio_chunk, zi=filter_state)
-            audio_chunk = audio_chunk.astype(np.float32)
 
-            # VAD
+            # Lightweight VAD just for boundary detection
             audio_int16 = (audio_chunk * 32767).astype(np.int16)
             is_speech = False
             for i in range(0, len(audio_int16), VAD_FRAME_BYTES // 2):
@@ -286,17 +358,12 @@ def feed_capture_thread(feed_id, feed_label):
                 silence_counter += 1
 
                 if silence_counter >= silence_limit_chunks:
-                    full_audio = np.concatenate(audio_buffer)
-                    if len(full_audio) > 0:
-                        pval = np.percentile(np.abs(full_audio), NORMALIZATION_PERCENTILE)
-                        if pval > 0:
-                            full_audio = np.clip(full_audio / pval, -1.0, 1.0)
-                    full_audio = full_audio.astype(np.float32)
-                    duration = len(full_audio) / SAMPLE_RATE
+                    raw_pcm = np.concatenate(audio_buffer).astype(np.float32)
+                    duration = len(raw_pcm) / SAMPLE_RATE
 
                     if duration >= MIN_SPEECH_SECONDS:
                         ts = datetime.datetime.now().strftime("%H:%M:%S")
-                        transcription_queue.put((feed_id, feed_label, ts, full_audio.copy()))
+                        transcription_queue.put((feed_id, feed_label, ts, raw_pcm.copy()))
 
                     audio_buffer = []
                     is_recording = False
@@ -356,7 +423,7 @@ def main():
     except KeyboardInterrupt:
         print("\nShutting down...")
         for _ in workers:
-            transcription_queue.put(("", "", "", None))
+            transcription_queue.put(("", "", "", None))  # sentinel
         for w in workers:
             w.join(timeout=5)
         print("Done.")
