@@ -142,5 +142,104 @@
     "lng": -75.1720,
     "confidence": 0.72,
     "reported_at_offset_minutes": -110
+  },
+  {
+    "raw_text": "Commercial alarm, 1200 block of Walnut Street, building secure on arrival",
+    "severity_category": "burglary_in_progress",
+    "location_text": "1200 Walnut Street, Philadelphia",
+    "lat": 39.9489,
+    "lng": -75.1618,
+    "confidence": 0.76,
+    "reported_at_offset_minutes": -6
+  },
+  {
+    "raw_text": "Person struck by vehicle, Columbus Boulevard and Race Street, medics staging",
+    "severity_category": "traffic_crash_injury",
+    "location_text": "Columbus Boulevard and Race Street, Philadelphia",
+    "lat": 39.9556,
+    "lng": -75.1402,
+    "confidence": 0.91,
+    "reported_at_offset_minutes": -14
+  },
+  {
+    "raw_text": "Domestic in progress, second floor, 4800 block of Frankford Avenue",
+    "severity_category": "violent_no_weapon",
+    "location_text": "4800 Frankford Avenue, Philadelphia",
+    "lat": 40.0154,
+    "lng": -75.0786,
+    "confidence": 0.79,
+    "reported_at_offset_minutes": -21
+  },
+  {
+    "raw_text": "SEPTA bus operator reports unruly passenger, 52nd and Market",
+    "severity_category": "disorder",
+    "location_text": "52nd Street and Market Street, Philadelphia",
+    "lat": 39.9597,
+    "lng": -75.2254,
+    "confidence": 0.74,
+    "reported_at_offset_minutes": -33
+  },
+  {
+    "raw_text": "Gas odor investigation, exterior only, 3700 Lancaster Avenue",
+    "severity_category": "fire_hazmat",
+    "location_text": "3700 Lancaster Avenue, Philadelphia",
+    "lat": 39.9658,
+    "lng": -75.1955,
+    "confidence": 0.84,
+    "reported_at_offset_minutes": -41
+  },
+  {
+    "raw_text": "Pedestrian struck, minor injuries, Broad Street and Snyder Avenue",
+    "severity_category": "traffic_crash_injury",
+    "location_text": "Broad Street and Snyder Avenue, Philadelphia",
+    "lat": 39.9259,
+    "lng": -75.1684,
+    "confidence": 0.87,
+    "reported_at_offset_minutes": -9
+  },
+  {
+    "raw_text": "Armed robbery of a delivery driver, 2000 block of Ridge Avenue",
+    "severity_category": "robbery",
+    "location_text": "2000 Ridge Avenue, Philadelphia",
+    "lat": 39.9782,
+    "lng": -75.1765,
+    "confidence": 0.83,
+    "reported_at_offset_minutes": -27
+  },
+  {
+    "raw_text": "Shots heard in the area, 7th and Diamond, multiple 911 calls, no victims located",
+    "severity_category": "shots_heard",
+    "location_text": "7th Street and Diamond Street, Philadelphia",
+    "lat": 39.9844,
+    "lng": -75.1501,
+    "confidence": 0.68,
+    "reported_at_offset_minutes": -3
+  },
+  {
+    "raw_text": "Chest pain, conscious and alert, 5500 Chester Avenue, medic response",
+    "severity_category": "medical_priority",
+    "location_text": "5500 Chester Avenue, Philadelphia",
+    "lat": 39.9372,
+    "lng": -75.2189,
+    "confidence": 0.92,
+    "reported_at_offset_minutes": -16
+  },
+  {
+    "raw_text": "Parked vehicle crash, no injuries, Aramingo Avenue and Castor",
+    "severity_category": "traffic_crash_no_injury",
+    "location_text": "Aramingo Avenue and Castor Avenue, Philadelphia",
+    "lat": 39.9856,
+    "lng": -75.0978,
+    "confidence": 0.88,
+    "reported_at_offset_minutes": -58
+  },
+  {
+    "raw_text": "Trespasser refusing to leave, Penn's Landing pier area",
+    "severity_category": "disorder",
+    "location_text": "Penn's Landing, Philadelphia",
+    "lat": 39.9446,
+    "lng": -75.1431,
+    "confidence": 0.71,
+    "reported_at_offset_minutes": -44
   }
 ]
