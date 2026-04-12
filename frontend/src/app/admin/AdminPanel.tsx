@@ -134,9 +134,19 @@ function LiveAudioHeader({ feed }: { feed: FeedInfo }) {
 
 // ── Extraction Card ──────────────────────────────────────────────────
 
-function ExtractionCard({ extraction }: { extraction: Extraction }) {
+function ExtractionCard({
+  extraction,
+  onPredict,
+}: {
+  extraction: Extraction;
+  onPredict: (id: string) => void;
+}) {
   const [clipPlaying, setClipPlaying] = useState(false);
+  const [predicting, setPredicting] = useState(false);
   const clipRef = useRef<HTMLAudioElement | null>(null);
+
+  const hasLlmResult =
+    extraction.llm_relevant || extraction.llm_confidence > 0 || extraction.llm_category !== null;
 
   const time = (() => {
     try {
@@ -176,13 +186,22 @@ function ExtractionCard({ extraction }: { extraction: Extraction }) {
     }
   };
 
+  const runPredict = async () => {
+    setPredicting(true);
+    try {
+      onPredict(extraction.id);
+    } finally {
+      setPredicting(false);
+    }
+  };
+
   useEffect(() => {
     return () => {
       clipRef.current?.pause();
     };
   }, []);
 
-  const dimmed = !extraction.llm_relevant;
+  const dimmed = hasLlmResult && !extraction.llm_relevant;
 
   return (
     <div
@@ -248,88 +267,111 @@ function ExtractionCard({ extraction }: { extraction: Extraction }) {
           background: "rgba(0,0,0,0.15)",
         }}
       >
-        {/* Relevant status */}
-        <div className="flex items-center gap-1.5">
-          <Brain className="w-3 h-3 text-purple-400" />
-          <span style={{ color: "var(--panel-text-muted)" }}>LLM:</span>
-          <span style={{ color: extraction.llm_relevant ? "#22c55e" : "#6b7280" }}>
-            {extraction.llm_relevant ? "Relevant" : "Rejected"}
-            {extraction.llm_relevant ? " \u2713" : " \u2717"}
-          </span>
-        </div>
+        {hasLlmResult ? (
+          <>
+            {/* Relevant status */}
+            <div className="flex items-center gap-1.5">
+              <Brain className="w-3 h-3 text-purple-400" />
+              <span style={{ color: "var(--panel-text-muted)" }}>LLM:</span>
+              <span style={{ color: extraction.llm_relevant ? "#22c55e" : "#6b7280" }}>
+                {extraction.llm_relevant ? "Relevant" : "Rejected"}
+                {extraction.llm_relevant ? " \u2713" : " \u2717"}
+              </span>
+            </div>
 
-        {/* Category */}
-        {extraction.llm_category && (
-          <div className="flex items-center gap-1.5">
-            <span style={{ color: "var(--panel-text-muted)" }}>Category:</span>
-            <span style={{ color: "var(--panel-text)" }}>
-              {extraction.llm_category.replace(/_/g, " ")}
-            </span>
-          </div>
-        )}
+            {extraction.llm_category && (
+              <div className="flex items-center gap-1.5">
+                <span style={{ color: "var(--panel-text-muted)" }}>Category:</span>
+                <span style={{ color: "var(--panel-text)" }}>
+                  {extraction.llm_category.replace(/_/g, " ")}
+                </span>
+              </div>
+            )}
 
-        {/* Confidence */}
-        {extraction.llm_confidence > 0 && (
-          <div className="flex items-center gap-1.5">
-            <span style={{ color: "var(--panel-text-muted)" }}>Conf:</span>
-            <span style={{ color: confidenceColor(extraction.llm_confidence) }}>
-              {(extraction.llm_confidence * 100).toFixed(0)}%
-            </span>
-          </div>
-        )}
+            {extraction.llm_confidence > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span style={{ color: "var(--panel-text-muted)" }}>Conf:</span>
+                <span style={{ color: confidenceColor(extraction.llm_confidence) }}>
+                  {(extraction.llm_confidence * 100).toFixed(0)}%
+                </span>
+              </div>
+            )}
 
-        {/* Inhibitor */}
-        {extraction.inhibitor_status && (
-          <div className="flex items-center gap-1.5">
-            <Shield className="w-3 h-3" style={{ color: "var(--panel-text-muted)" }} />
-            <span style={{ color: "var(--panel-text-muted)" }}>Inhibitor:</span>
-            <span
-              style={{
-                color:
-                  extraction.inhibitor_status === "passed"
-                    ? "#22c55e"
-                    : extraction.inhibitor_status === "blocked"
-                      ? "#ef4444"
-                      : "#eab308",
-              }}
+            {extraction.inhibitor_status && (
+              <div className="flex items-center gap-1.5">
+                <Shield className="w-3 h-3" style={{ color: "var(--panel-text-muted)" }} />
+                <span style={{ color: "var(--panel-text-muted)" }}>Inhibitor:</span>
+                <span
+                  style={{
+                    color:
+                      extraction.inhibitor_status === "passed"
+                        ? "#22c55e"
+                        : extraction.inhibitor_status === "blocked"
+                          ? "#ef4444"
+                          : "#eab308",
+                  }}
+                >
+                  {extraction.inhibitor_status}
+                </span>
+              </div>
+            )}
+
+            {extraction.geocode_status && (
+              <div className="flex items-center gap-1.5">
+                <MapPin className="w-3 h-3" style={{ color: "var(--panel-text-muted)" }} />
+                <span style={{ color: "var(--panel-text-muted)" }}>Geocode:</span>
+                <span
+                  style={{
+                    color:
+                      extraction.geocode_status === "success"
+                        ? "#22c55e"
+                        : extraction.geocode_status === "llm_fallback"
+                          ? "#eab308"
+                          : "#6b7280",
+                  }}
+                >
+                  {extraction.geocode_status}
+                </span>
+              </div>
+            )}
+
+            {extraction.incident_id ? (
+              <div className="flex items-center gap-1.5">
+                <CheckCircle2 className="w-3 h-3 text-green-500" />
+                <span style={{ color: "#22c55e" }}>Stored</span>
+              </div>
+            ) : extraction.llm_relevant && extraction.inhibitor_status === "blocked" ? (
+              <div className="flex items-center gap-1.5">
+                <XCircle className="w-3 h-3 text-red-500" />
+                <span style={{ color: "#ef4444" }}>Blocked</span>
+              </div>
+            ) : null}
+
+            {/* Re-run prediction */}
+            <button
+              onClick={runPredict}
+              disabled={predicting}
+              className="ml-auto px-2 py-0.5 rounded text-[10px] font-medium bg-purple-500/15 text-purple-400 hover:bg-purple-500/25 transition-colors disabled:opacity-50"
             >
-              {extraction.inhibitor_status}
-            </span>
-          </div>
-        )}
-
-        {/* Geocode */}
-        {extraction.geocode_status && (
-          <div className="flex items-center gap-1.5">
-            <MapPin className="w-3 h-3" style={{ color: "var(--panel-text-muted)" }} />
-            <span style={{ color: "var(--panel-text-muted)" }}>Geocode:</span>
-            <span
-              style={{
-                color:
-                  extraction.geocode_status === "success"
-                    ? "#22c55e"
-                    : extraction.geocode_status === "llm_fallback"
-                      ? "#eab308"
-                      : "#6b7280",
-              }}
+              {predicting ? "Running..." : "Re-run"}
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-1.5">
+              <Brain className="w-3 h-3 text-gray-500" />
+              <span style={{ color: "var(--panel-text-muted)" }}>No LLM prediction yet</span>
+            </div>
+            <button
+              onClick={runPredict}
+              disabled={predicting}
+              className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium bg-purple-500 text-white hover:bg-purple-600 transition-colors disabled:opacity-50"
             >
-              {extraction.geocode_status}
-            </span>
-          </div>
+              <Brain className="w-3.5 h-3.5" />
+              {predicting ? "Running..." : "Run Prediction"}
+            </button>
+          </>
         )}
-
-        {/* Stored indicator */}
-        {extraction.incident_id ? (
-          <div className="flex items-center gap-1.5">
-            <CheckCircle2 className="w-3 h-3 text-green-500" />
-            <span style={{ color: "#22c55e" }}>Stored</span>
-          </div>
-        ) : extraction.llm_relevant && extraction.inhibitor_status === "blocked" ? (
-          <div className="flex items-center gap-1.5">
-            <XCircle className="w-3 h-3 text-red-500" />
-            <span style={{ color: "#ef4444" }}>Blocked</span>
-          </div>
-        ) : null}
       </div>
     </div>
   );
@@ -363,6 +405,22 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
 
     return unsub;
   }, [feed.feed_id, timeFilter]);
+
+  const handlePredict = async (extractionId: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/predict`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ extraction_id: extractionId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Request failed" }));
+        alert(`Prediction failed: ${err.detail || res.status}`);
+      }
+    } catch (err) {
+      alert(`Prediction error: ${err}`);
+    }
+  };
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -413,7 +471,7 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
           </div>
         )}
         {extractions.map((e) => (
-          <ExtractionCard key={e.id} extraction={e} />
+          <ExtractionCard key={e.id} extraction={e} onPredict={handlePredict} />
         ))}
       </div>
     </div>

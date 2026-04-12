@@ -24,6 +24,7 @@ def _should_use_firestore() -> bool:
 if _should_use_firestore():
     from .firestore_store import (
         get_conn,
+        get_extraction,
         get_incident,
         incident_count,
         inhibitor_stats,
@@ -31,10 +32,12 @@ if _should_use_firestore():
         insert_incident,
         list_incidents,
         seed_from_json,
+        update_extraction,
     )
 else:
     from .store import (
         get_conn,
+        get_extraction,
         get_incident,
         incident_count,
         inhibitor_stats,
@@ -42,4 +45,5 @@ else:
         insert_incident,
         list_incidents,
         seed_from_json,
+        update_extraction,
     )

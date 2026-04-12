@@ -128,6 +128,24 @@ def insert_extraction(
     return {"id": eid, **payload}
 
 
+def get_extraction(extraction_id: str) -> Optional[dict]:
+    db = _ensure_client()
+    snap = db.collection("extractions").document(extraction_id).get()
+    if not snap.exists:
+        return None
+    data = snap.to_dict() or {}
+    return {"id": snap.id, **data}
+
+
+def update_extraction(extraction_id: str, updates: dict) -> Optional[dict]:
+    db = _ensure_client()
+    ref = db.collection("extractions").document(extraction_id)
+    ref.update(updates)
+    snap = ref.get()
+    data = snap.to_dict() or {}
+    return {"id": snap.id, **data}
+
+
 def get_incident(incident_id: str) -> Optional[dict]:
     db = _ensure_client()
     snap = db.collection("incidents").document(incident_id).get()
