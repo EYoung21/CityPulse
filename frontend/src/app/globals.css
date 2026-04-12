@@ -182,10 +182,14 @@
   height: 100% !important;
 }
 
-/* Hide spiderfy connecting lines but keep the spread-out icon positions */
-.leaflet-cluster-spider-leg {
-  stroke-opacity: 0 !important;
+/* Hide ALL spiderfy connecting lines but keep spread-out icon positions */
+.leaflet-cluster-spider-leg,
+svg.leaflet-zoom-animated path.leaflet-cluster-spider-leg,
+#incident-map .leaflet-overlay-pane .leaflet-cluster-spider-leg {
   stroke: transparent !important;
+  stroke-opacity: 0 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 /* Incident markers: fixed size, no zoom scaling — clustering handles density */
