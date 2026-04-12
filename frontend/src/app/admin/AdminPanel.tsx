@@ -935,6 +935,7 @@ function ExtractionCard({
 
 function FeedTabContent({ feed }: { feed: FeedInfo }) {
   const [timeFilter, setTimeFilter] = useState(24 * 30);
+  const [onMapOnly, setOnMapOnly] = useState(false);
   const [extractions, setExtractions] = useState<Extraction[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -959,6 +960,10 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
 
     return unsub;
   }, [feed.feed_id, timeFilter]);
+
+  const visibleExtractions = onMapOnly
+    ? extractions.filter((e) => e.incident_id != null)
+    : extractions;
 
   const handlePredict = async (extractionId: string) => {
     try {
@@ -1021,8 +1026,29 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
             {tf.label}
           </button>
         ))}
+
+        <div className="w-px h-4 mx-1 bg-white/10" />
+
+        <button
+          onClick={() => setOnMapOnly((v) => !v)}
+          className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium transition-all whitespace-nowrap ${
+            onMapOnly
+              ? "bg-green-500 text-white"
+              : "bg-white/5 hover:bg-white/10"
+          }`}
+          style={!onMapOnly ? { color: "var(--panel-text-secondary)" } : {}}
+          title="Show only extractions promoted to the map"
+        >
+          <Map className="w-3 h-3" />
+          On Map
+        </button>
+
         <span className="ml-auto text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
-          {extractions.length} extractions
+          {visibleExtractions.length}
+          {onMapOnly ? "" : ""} extraction{visibleExtractions.length !== 1 ? "s" : ""}
+          {onMapOnly && extractions.length !== visibleExtractions.length
+            ? ` of ${extractions.length}`
+            : ""}
         </span>
       </div>
 
@@ -1033,12 +1059,14 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
             Loading extractions...
           </div>
         )}
-        {!loading && extractions.length === 0 && (
+        {!loading && visibleExtractions.length === 0 && (
           <div className="text-center py-12 text-xs" style={{ color: "var(--panel-text-muted)" }}>
-            No extractions found for this feed in the selected time range.
+            {onMapOnly
+              ? "No map-published extractions in this time range."
+              : "No extractions found for this feed in the selected time range."}
           </div>
         )}
-        {extractions.map((e) => (
+        {visibleExtractions.map((e) => (
           <ExtractionCard key={e.id} extraction={e} onPredict={handlePredict} />
         ))}
       </div>
@@ -1050,6 +1078,7 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
 
 function AllFeedsContent({ feeds }: { feeds: FeedInfo[] }) {
   const [timeFilter, setTimeFilter] = useState(24 * 30);
+  const [onMapOnly, setOnMapOnly] = useState(false);
   const [extractions, setExtractions] = useState<Extraction[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -1079,6 +1108,10 @@ function AllFeedsContent({ feeds }: { feeds: FeedInfo[] }) {
 
     return unsub;
   }, [timeFilter]);
+
+  const visibleExtractions = onMapOnly
+    ? extractions.filter((e) => e.incident_id != null)
+    : extractions;
 
   const handlePredict = async (extractionId: string) => {
     try {
@@ -1141,8 +1174,28 @@ function AllFeedsContent({ feeds }: { feeds: FeedInfo[] }) {
             {tf.label}
           </button>
         ))}
+
+        <div className="w-px h-4 mx-1 bg-white/10" />
+
+        <button
+          onClick={() => setOnMapOnly((v) => !v)}
+          className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium transition-all whitespace-nowrap ${
+            onMapOnly
+              ? "bg-green-500 text-white"
+              : "bg-white/5 hover:bg-white/10"
+          }`}
+          style={!onMapOnly ? { color: "var(--panel-text-secondary)" } : {}}
+          title="Show only extractions promoted to the map"
+        >
+          <Map className="w-3 h-3" />
+          On Map
+        </button>
+
         <span className="ml-auto text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
-          {extractions.length} extractions
+          {visibleExtractions.length} extraction{visibleExtractions.length !== 1 ? "s" : ""}
+          {onMapOnly && extractions.length !== visibleExtractions.length
+            ? ` of ${extractions.length}`
+            : ""}
         </span>
       </div>
 
@@ -1153,12 +1206,14 @@ function AllFeedsContent({ feeds }: { feeds: FeedInfo[] }) {
             Loading extractions...
           </div>
         )}
-        {!loading && extractions.length === 0 && (
+        {!loading && visibleExtractions.length === 0 && (
           <div className="text-center py-12 text-xs" style={{ color: "var(--panel-text-muted)" }}>
-            No extractions found in the selected time range.
+            {onMapOnly
+              ? "No map-published extractions in this time range."
+              : "No extractions found in the selected time range."}
           </div>
         )}
-        {extractions.map((e) => (
+        {visibleExtractions.map((e) => (
           <div key={e.id}>
             <div className="flex items-center gap-1.5 mb-1 px-1">
               <span

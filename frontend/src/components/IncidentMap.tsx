@@ -282,6 +282,7 @@ interface Props {
   heatmapDemoBoost?: boolean;
   districtsEnabled?: boolean;
   onDistrictClick?: (neighborhood: Neighborhood, incidents: Incident[]) => void;
+  onClusterClick?: (incidentIds: string[]) => void;
 }
 
 function distToSegmentKm(
@@ -738,6 +739,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     heatmapDemoBoost = false,
     districtsEnabled = false,
     onDistrictClick,
+    onClusterClick,
   },
   ref
 ) {
@@ -789,6 +791,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
   const onMapTapRef = useRef(onMapTap);
   onMapTapRef.current = onMapTap;
+  const onClusterClickRef = useRef(onClusterClick);
+  onClusterClickRef.current = onClusterClick;
 
   useEffect(() => {
     if (mapRef.current) return;
@@ -806,11 +810,11 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }).addTo(map);
 
     markersRef.current = L.markerClusterGroup({
-      maxClusterRadius: 50,
+      maxClusterRadius: 60,
       spiderfyOnMaxZoom: false,
       showCoverageOnHover: false,
-      zoomToBoundsOnClick: true,
-      disableClusteringAtZoom: 15,
+      zoomToBoundsOnClick: false,
+      disableClusteringAtZoom: 18,
       animate: true,
       iconCreateFunction: (cluster: L.MarkerCluster) => {
         const count = cluster.getChildCount();
@@ -825,6 +829,24 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         });
       },
     }).addTo(map);
+
+    markersRef.current.on("clusterclick", (e: L.LeafletEvent) => {
+      const cluster = (e as any).layer as L.MarkerCluster;
+      const bounds = cluster.getBounds();
+      const span =
+        Math.abs(bounds.getNorth() - bounds.getSouth()) +
+        Math.abs(bounds.getEast() - bounds.getWest());
+      if (span < 0.0003) {
+        const ids: string[] = cluster
+          .getAllChildMarkers()
+          .map((m: any) => m._ppIncidentId as string)
+          .filter(Boolean);
+        if (ids.length > 0) onClusterClickRef.current?.(ids);
+      } else {
+        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 18 });
+      }
+    });
+
     districtsLayerRef.current = L.layerGroup().addTo(map);
     routeLayerRef.current = L.layerGroup().addTo(map);
     previewLayerRef.current = L.layerGroup().addTo(map);
@@ -1006,6 +1028,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         greyed
       );
       const marker = L.marker([inc.lat, inc.lng], { icon });
+      (marker as any)._ppIncidentId = inc.id;
       if (!greyed) marker.on("click", () => stableOnSelect(inc.id));
       markers.addLayer(marker);
     }
