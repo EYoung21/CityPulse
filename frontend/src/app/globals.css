@@ -182,6 +182,12 @@
   height: 100% !important;
 }
 
+/* Hide spiderfy connecting lines but keep the spread-out icon positions */
+.leaflet-cluster-spider-leg {
+  stroke-opacity: 0 !important;
+  stroke: transparent !important;
+}
+
 /* Incident markers: fixed size, no zoom scaling — clustering handles density */
 #incident-map .pp-incident-marker-inner {
   transform-origin: center center;
