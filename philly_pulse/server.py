@@ -177,6 +177,15 @@ async def ingest(req: IngestRequest):
     feed_id = req.feed_id or "unknown"
     correlation = f"{feed_id}_{req.timestamp or ''}"
 
+    effective_audio_clip = req.audio_clip
+    if not effective_audio_clip and req.variants:
+        for v in req.variants:
+            if v.get("name") == "aggressive" and v.get("audio_clip"):
+                effective_audio_clip = v["audio_clip"]
+                break
+        if not effective_audio_clip and req.variants:
+            effective_audio_clip = req.variants[0].get("audio_clip")
+
     # Broadcast: transcript received
     await admin_events.broadcast({
         "type": "transcript_received",
@@ -192,7 +201,7 @@ async def ingest(req: IngestRequest):
             feed_id=feed_id,
             raw_text=req.text,
             reported_at=req.timestamp,
-            audio_clip=req.audio_clip,
+            audio_clip=effective_audio_clip,
             raw_audio_clip=req.raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
             variants=req.variants,
@@ -220,7 +229,7 @@ async def ingest(req: IngestRequest):
             feed_id=feed_id,
             raw_text=req.text,
             reported_at=req.timestamp,
-            audio_clip=req.audio_clip,
+            audio_clip=effective_audio_clip,
             raw_audio_clip=req.raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
             variants=req.variants,
@@ -241,7 +250,7 @@ async def ingest(req: IngestRequest):
             feed_id=feed_id,
             raw_text=req.text,
             reported_at=req.timestamp,
-            audio_clip=req.audio_clip,
+            audio_clip=effective_audio_clip,
             raw_audio_clip=req.raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
             variants=req.variants,
@@ -253,6 +262,7 @@ async def ingest(req: IngestRequest):
     category = extraction["severity_category"]
     location_text = extraction["location_text"]
     confidence = extraction["confidence"]
+    description = extraction.get("description")
     llm_lat = extraction.get("llm_lat")
     llm_lng = extraction.get("llm_lng")
     s_base = weights.get_s_base(category)
@@ -298,8 +308,9 @@ async def ingest(req: IngestRequest):
             inhibitor_status="blocked",
             inhibitor_reason=inh.reason,
             feed_id=feed_id,
-            audio_clip=req.audio_clip,
+            audio_clip=effective_audio_clip,
             location_confidence=location_confidence,
+            description=description,
         )
         await admin_events.broadcast({
             "type": "incident_stored",
@@ -312,7 +323,7 @@ async def ingest(req: IngestRequest):
             feed_id=feed_id,
             raw_text=req.text,
             reported_at=req.timestamp,
-            audio_clip=req.audio_clip,
+            audio_clip=effective_audio_clip,
             raw_audio_clip=req.raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
             variants=req.variants,
@@ -377,8 +388,9 @@ async def ingest(req: IngestRequest):
             inhibitor_status=inh.status,
             inhibitor_reason=inh.reason,
             reported_at=req.timestamp,
-            audio_clip=req.audio_clip,
+            audio_clip=effective_audio_clip,
             feed_id=feed_id,
+            description=description,
         )
         incident_id = incident["id"]
 
@@ -399,7 +411,7 @@ async def ingest(req: IngestRequest):
         feed_id=feed_id,
         raw_text=req.text,
         reported_at=req.timestamp,
-        audio_clip=req.audio_clip,
+        audio_clip=effective_audio_clip,
         raw_audio_clip=req.raw_audio_clip,
         preprocess_meta=req.preprocess_meta,
         variants=req.variants,

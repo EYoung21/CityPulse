@@ -306,6 +306,17 @@ export default function IncidentDetail({ incident, onClose }: Props) {
 
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 
+        {incident.description && (
+          <div className="rounded-lg p-3" style={{ background: "var(--panel-input-bg)" }}>
+            <p className="text-[10px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-2">
+              SUMMARY
+            </p>
+            <p className="text-xs leading-relaxed" style={{ color: "var(--panel-text)" }}>
+              {incident.description}
+            </p>
+          </div>
+        )}
+
         <div className="rounded-lg p-3" style={{ background: "var(--panel-input-bg)" }}>
           <p className="text-[10px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-2">
             <Radio className="w-3 h-3" /> SCANNER TRANSCRIPT

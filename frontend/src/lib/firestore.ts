@@ -63,6 +63,10 @@ function mapDoc(id: string, data: Record<string, unknown>): Incident {
       data.feed_id === null || data.feed_id === undefined
         ? null
         : String(data.feed_id),
+    description:
+      data.description === null || data.description === undefined
+        ? null
+        : String(data.description),
   };
 }
 

@@ -6,7 +6,6 @@ import "leaflet.heat";
 import type { Incident } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
 import type { RouteData } from "@/components/RoutePanel";
-import { phillyDemoHeatPoints } from "@/lib/demo-heat";
 
 declare module "leaflet" {
   function heatLayer(
@@ -485,8 +484,6 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }
 
     const isTripMode = Boolean(tripRouteGeometry && tripRouteGeometry.length >= 2);
-    const countWithLat = incidents.filter((i) => i.lat != null && i.lng != null).length;
-    const useDemoFill = heatmapDemoBoost || countWithLat < 12;
 
     if (heatmapEnabled) {
       const useDensity = timeFilterHours >= 168;
@@ -502,18 +499,6 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         }
       }
 
-      if (useDemoFill) {
-        const demoPts = phillyDemoHeatPoints();
-        if (isTripMode && tripRouteGeometry) {
-          for (const [lat, lng, w] of demoPts) {
-            const dist = minDistToRouteKm([lat, lng], tripRouteGeometry);
-            if (dist <= TRIP_PROXIMITY_KM) heatData.push([lat, lng, w * (heatmapDemoBoost ? 1 : 0.75)]);
-          }
-        } else {
-          for (const p of demoPts) heatData.push(p);
-        }
-      }
-
       if (heatData.length > 0) {
         const vividGradient = {
           0.0: "rgba(0,0,50,0)",
@@ -526,8 +511,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
           0.86: "#ef4444",
           1.0: "#dc2626",
         };
-        const softRadius = heatmapDemoBoost ? 86 : useDemoFill ? 82 : 72;
-        const softBlur = heatmapDemoBoost ? 52 : useDemoFill ? 48 : 44;
+        const softRadius = 72;
+        const softBlur = 44;
         const legacyGradient = {
           0.0: "rgba(0,0,40,0)",
           0.1: "#0a0a5c",
@@ -542,7 +527,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         const baseRadius = useDensity ? 40 : softRadius;
         const baseBlur = useDensity ? 30 : softBlur;
         const heatMax = useDensity ? 1.0 : 0.85;
-        const heatMinOp = useDensity ? 0.3 : heatmapDemoBoost ? 0.48 : 0.42;
+        const heatMinOp = useDensity ? 0.3 : 0.42;
         const gradient = useDensity ? legacyGradient : vividGradient;
         const heat = L.heatLayer(heatData, {
           radius: baseRadius,
@@ -555,24 +540,6 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         heat.addTo(map);
         heatRef.current = heat;
 
-        if (heatmapDemoBoost) {
-          type HeatLayerPulse = L.Layer & {
-            setOptions: (o: Record<string, unknown>) => HeatLayerPulse;
-          };
-          const h = heat as HeatLayerPulse;
-          const tick = () => {
-            const t = Date.now() / 900;
-            const pulse = 0.78 + 0.22 * (0.5 + 0.5 * Math.sin(t));
-            const blurPulse = 0.92 + 0.14 * (0.5 + 0.5 * Math.cos(t * 1.12));
-            h.setOptions({
-              radius: Math.round(baseRadius * pulse),
-              blur: Math.round(baseBlur * blurPulse),
-              minOpacity: 0.36 + 0.16 * (0.5 + 0.5 * Math.sin(t * 0.85)),
-            });
-            heatPulseRafRef.current = requestAnimationFrame(tick);
-          };
-          heatPulseRafRef.current = requestAnimationFrame(tick);
-        }
       }
     }
 
