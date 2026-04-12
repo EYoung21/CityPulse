@@ -218,31 +218,19 @@ function createIncidentGlyphIcon(
 ): L.DivIcon {
   const kind = resolveBlipKind(inc);
   const mc = monoColor(kind);
-  const w = Number.isFinite(wEff) ? wEff : 0.5;
-  const base = Math.round(22 + w * 6);
-  const box = Math.ceil(base * 1.2);
-  const half = box / 2;
-  const opacity = greyed ? 0.28 : Math.max(0.88, Math.min(1, 0.75 + w * 0.25));
+  const base = 18;
+  const box = 22;
+  const half = 11;
+  const opacity = greyed ? 0.25 : 0.92;
   const filt = greyed
-    ? "filter:grayscale(0.6) saturate(0.3) brightness(0.85) drop-shadow(0 2px 5px rgba(0,0,0,0.4));"
-    : "filter:drop-shadow(0 3px 6px rgba(0,0,0,0.45));";
-  const pulseRing =
-    isHighSev && !greyed
-      ? `<div class="pp-pulse-ring" style="
-        position:absolute;top:50%;left:50%;
-        width:120%;height:120%;
-        margin-left:-60%;margin-top:-60%;
-        border-radius:50%;border:2px solid ${mc.pulse};
-        animation:pulse-ring 2s cubic-bezier(0.215,0.61,0.355,1) infinite;
-      "></div>`
-      : "";
+    ? "filter:grayscale(0.6) saturate(0.3) brightness(0.85);"
+    : "filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5));";
   const svg = monoGlyphSvg(kind, uid);
   return L.divIcon({
     className: "pp-incident-marker",
     iconSize: [box, box],
     iconAnchor: [half, half],
     html: `<div class="pp-incident-marker-inner" style="position:relative;width:${box}px;height:${box}px;box-sizing:border-box;">
-      ${pulseRing}
       <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:${base}px;height:${base}px;opacity:${opacity};${filt}">${svg}</div>
     </div>`,
   });
@@ -799,12 +787,12 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }).addTo(map);
 
     markersRef.current = L.markerClusterGroup({
-      maxClusterRadius: 60,
+      maxClusterRadius: 40,
       spiderfyOnMaxZoom: true,
-      spiderfyDistanceMultiplier: 1.8,
+      spiderfyDistanceMultiplier: 2,
       showCoverageOnHover: false,
       zoomToBoundsOnClick: true,
-      disableClusteringAtZoom: 16,
+      disableClusteringAtZoom: 14,
       iconCreateFunction: (cluster: L.MarkerCluster) => {
         const count = cluster.getChildCount();
         let size = 32;
