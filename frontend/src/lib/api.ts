@@ -1,5 +1,7 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
+export type LocationConfidence = "direct" | "context" | "district" | "none";
+
 export interface Incident {
   id: string;
   reported_at: string;
@@ -11,6 +13,7 @@ export interface Incident {
   lng: number | null;
   confidence: number;
   geocode_status: string;
+  location_confidence: LocationConfidence;
   inhibitor_status: string;
   inhibitor_reason: string | null;
   w_eff: number;

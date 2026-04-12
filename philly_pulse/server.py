@@ -15,7 +15,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import admin_events, geocode, inhibitor, llm, persistence as store, verifier, weights
+from . import admin_events, geocode, inhibitor, llm, persistence as store, weights
+
+# District centroid fallback coordinates (approximate geographic center of each PPD/PFD area)
+DISTRICT_CENTROIDS: dict[str, tuple[float, float]] = {
+    "4603":  (39.9526, -75.1652),   # PPD Citywide — center city
+    "17310": (39.9526, -75.1652),   # PPD Central — center city
+    "21297": (39.9870, -75.1190),   # PPD East — Kensington/Frankford
+    "45495": (40.0450, -75.0550),   # PPD Northeast — NE Philly
+    "18836": (40.0350, -75.1750),   # PPD Northwest — Germantown/Mt Airy
+    "15102": (39.9230, -75.1700),   # PPD South — S Philly
+    "15195": (39.9550, -75.2300),   # PPD Southwest/West — W Philly
+    "34250": (39.9230, -75.1700),   # PFD South Fire/Medics — S Philly
+    "15747": (40.0200, -75.1500),   # PFD North Fire — N Philly
+    "44308": (39.9526, -75.1652),   # SEPTA Transit Police — citywide
+    "13975": (39.9526, -75.1652),   # SEPTA Regional Rail — citywide
+    "13951": (40.0800, -75.0200),   # PA Turnpike Police East
+    "36323": (39.9160, -75.3900),   # Delaware Co Police Dispatch
+    "20795": (39.9400, -75.1000),   # Camden Co Fire/EMS Digital
+}
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -281,6 +299,8 @@ async def ingest(req: IngestRequest):
         "reason": inh.reason,
     })
 
+    location_confidence = extraction.get("location_confidence", "none")
+
     if inh.status == "blocked":
         incident = store.insert_incident(
             raw_text=req.text,
@@ -292,6 +312,7 @@ async def ingest(req: IngestRequest):
             inhibitor_reason=inh.reason,
             feed_id=feed_id,
             audio_clip=req.audio_clip,
+            location_confidence=location_confidence,
         )
         await admin_events.broadcast({
             "type": "incident_stored",
@@ -312,6 +333,7 @@ async def ingest(req: IngestRequest):
             llm_category=category,
             llm_confidence=confidence,
             llm_location_text=location_text,
+            location_confidence=location_confidence,
             inhibitor_status="blocked",
             inhibitor_reason=inh.reason,
             incident_id=incident["id"],
@@ -322,22 +344,31 @@ async def ingest(req: IngestRequest):
             "incident_id": incident["id"],
         }
 
-    # Geocode (Nominatim first, LLM coordinates as fallback)
+    # 3-tier location resolution
+    location_confidence = extraction.get("location_confidence", "none")
     lat, lng = None, None
     geocode_status = "failed"
+
+    # Tier 1 & 2: geocode the location text (direct or context)
     if location_text:
         coords = await geocode.geocode(location_text)
         if coords:
             lat, lng = coords
-            geocode_status = "success"
+            geocode_status = f"success_{location_confidence}"
         elif llm_lat is not None and llm_lng is not None:
             lat, lng = llm_lat, llm_lng
-            geocode_status = "llm_fallback"
+            geocode_status = f"llm_fallback_{location_confidence}"
         else:
-            geocode_status = "no_result"
+            geocode_status = f"no_result_{location_confidence}"
     elif llm_lat is not None and llm_lng is not None:
         lat, lng = llm_lat, llm_lng
         geocode_status = "llm_fallback"
+
+    # Tier 3: district centroid fallback when no location at all
+    if lat is None and lng is None and feed_id in DISTRICT_CENTROIDS:
+        lat, lng = DISTRICT_CENTROIDS[feed_id]
+        geocode_status = "district_centroid"
+        location_confidence = "district"
 
     await admin_events.broadcast({
         "type": "geocode_result",
@@ -346,6 +377,7 @@ async def ingest(req: IngestRequest):
         "lat": lat,
         "lng": lng,
         "method": geocode_status,
+        "location_confidence": location_confidence,
     })
 
     # Store incident
@@ -358,6 +390,7 @@ async def ingest(req: IngestRequest):
         lat=lat,
         lng=lng,
         geocode_status=geocode_status,
+        location_confidence=location_confidence,
         inhibitor_status=inh.status,
         inhibitor_reason=inh.reason,
         reported_at=req.timestamp,
@@ -390,6 +423,7 @@ async def ingest(req: IngestRequest):
         llm_category=category,
         llm_confidence=confidence,
         llm_location_text=location_text,
+        location_confidence=location_confidence,
         inhibitor_status=inh.status,
         inhibitor_reason=inh.reason,
         geocode_status=geocode_status,
@@ -572,29 +606,35 @@ async def admin_predict(req: PredictRequest):
         confidence=confidence,
     )
 
-    # Geocode
+    # 3-tier geocode
+    location_confidence = result.get("location_confidence", "none")
     lat, lng = None, None
     geocode_status = "failed"
     if location_text:
         coords = await geocode.geocode(location_text)
         if coords:
             lat, lng = coords
-            geocode_status = "success"
+            geocode_status = f"success_{location_confidence}"
         elif llm_lat is not None and llm_lng is not None:
             lat, lng = llm_lat, llm_lng
-            geocode_status = "llm_fallback"
+            geocode_status = f"llm_fallback_{location_confidence}"
         else:
-            geocode_status = "no_result"
+            geocode_status = f"no_result_{location_confidence}"
     elif llm_lat is not None and llm_lng is not None:
         lat, lng = llm_lat, llm_lng
         geocode_status = "llm_fallback"
 
-    # Update the extraction with full results (but don't store incident yet)
+    if lat is None and lng is None and feed_id in DISTRICT_CENTROIDS:
+        lat, lng = DISTRICT_CENTROIDS[feed_id]
+        geocode_status = "district_centroid"
+        location_confidence = "district"
+
     store.update_extraction(req.extraction_id, {
         "llm_relevant": True,
         "llm_category": category,
         "llm_confidence": confidence,
         "llm_location_text": location_text,
+        "location_confidence": location_confidence,
         "inhibitor_status": inh.status,
         "inhibitor_reason": inh.reason,
         "geocode_status": geocode_status,
@@ -607,6 +647,7 @@ async def admin_predict(req: PredictRequest):
         "category": category,
         "confidence": confidence,
         "location_text": location_text,
+        "location_confidence": location_confidence,
         "inhibitor_status": inh.status,
         "inhibitor_reason": inh.reason,
         "geocode_status": geocode_status,
