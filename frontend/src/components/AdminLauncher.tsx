@@ -1,6 +1,6 @@
 "use client";
 
-import { Map, Settings, Shield, ChevronRight } from "lucide-react";
+import { Map, Settings, ChevronRight } from "lucide-react";
 
 interface Props {
   onChoose: (mode: "dashboard" | "admin") => void;
@@ -13,7 +13,7 @@ export default function AdminLauncher({ onChoose }: Props) {
       style={{ background: "var(--map-bg, #0a0a14)" }}
     >
       <div className="flex items-center gap-3 mb-2">
-        <Shield className="w-8 h-8 text-blue-500" />
+        <img src="/logo.png" alt="PHLPulse" className="w-10 h-10" />
         <h1
           className="text-2xl font-bold tracking-tight"
           style={{ color: "var(--panel-text, #e5e7eb)" }}
