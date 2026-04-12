@@ -23,6 +23,7 @@ def _should_use_firestore() -> bool:
 
 if _should_use_firestore():
     from .firestore_store import (
+        delete_incident,
         get_conn,
         get_extraction,
         get_incident,
@@ -33,6 +34,7 @@ if _should_use_firestore():
         list_incidents,
         seed_from_json,
         update_extraction,
+        update_incident,
     )
 else:
     from .store import (
@@ -47,3 +49,9 @@ else:
         seed_from_json,
         update_extraction,
     )
+
+    def update_incident(incident_id, updates):  # type: ignore[misc]
+        raise NotImplementedError("update_incident not supported in SQLite mode")
+
+    def delete_incident(incident_id):  # type: ignore[misc]
+        raise NotImplementedError("delete_incident not supported in SQLite mode")
