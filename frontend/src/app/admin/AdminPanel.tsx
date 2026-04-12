@@ -22,7 +22,7 @@ import {
   type FeedInfo,
 } from "@/hooks/useAdminStream";
 import { subscribeExtractions } from "@/lib/firestore";
-import type { Extraction } from "@/lib/api";
+import type { Extraction, VariantResult } from "@/lib/api";
 import AuthBar from "@/components/AuthBar";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -132,6 +132,242 @@ function LiveAudioHeader({ feed }: { feed: FeedInfo }) {
   );
 }
 
+// ── Variant Audio Player ─────────────────────────────────────────────
+
+function VariantAudioButton({
+  clipId,
+  endpoint,
+  label,
+}: {
+  clipId: string | null;
+  endpoint: string;
+  label: string;
+}) {
+  const [playing, setPlaying] = useState(false);
+  const ref = useRef<HTMLAudioElement | null>(null);
+
+  const toggle = () => {
+    if (!clipId) return;
+    if (!ref.current) {
+      const a = new Audio(`${API_BASE}/api/${endpoint}/${clipId}`);
+      a.addEventListener("ended", () => setPlaying(false));
+      a.addEventListener("error", () => setPlaying(false));
+      ref.current = a;
+    }
+    if (playing) {
+      ref.current.pause();
+      setPlaying(false);
+    } else {
+      ref.current.play().catch(() => setPlaying(false));
+      setPlaying(true);
+    }
+  };
+
+  useEffect(() => () => { ref.current?.pause(); }, []);
+
+  if (!clipId) return null;
+
+  return (
+    <button
+      onClick={toggle}
+      className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
+        playing ? "bg-blue-500 text-white" : "bg-white/5 hover:bg-white/10"
+      }`}
+      style={!playing ? { color: "var(--panel-text-secondary)" } : {}}
+    >
+      {playing ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+      {label}
+    </button>
+  );
+}
+
+// ── Variant Column ──────────────────────────────────────────────────
+
+function VariantColumn({ v }: { v: VariantResult }) {
+  const meta = v.preprocess_meta;
+  const wm = v.whisper_meta;
+  const nameColors: Record<string, string> = {
+    minimal: "#f97316",
+    standard: "#3b82f6",
+    aggressive: "#a855f7",
+  };
+  const color = nameColors[v.name] ?? "#6b7280";
+
+  return (
+    <div
+      className="flex-1 min-w-[180px] rounded-lg overflow-hidden"
+      style={{
+        border: `1px solid ${color}33`,
+        background: `${color}08`,
+      }}
+    >
+      {/* Variant header */}
+      <div
+        className="flex items-center gap-2 px-2.5 py-1.5"
+        style={{ borderBottom: `1px solid ${color}22` }}
+      >
+        <span
+          className="text-[10px] font-bold uppercase tracking-wide"
+          style={{ color }}
+        >
+          {v.name}
+        </span>
+        <VariantAudioButton clipId={v.audio_clip} endpoint="audio" label="Play" />
+      </div>
+
+      {/* Transcript */}
+      <div className="px-2.5 py-2">
+        <p className="text-[11px] leading-relaxed" style={{ color: "var(--panel-text, #e5e7eb)" }}>
+          {v.transcript || <span className="italic text-gray-500">No transcript</span>}
+        </p>
+      </div>
+
+      {/* Metadata */}
+      <div
+        className="px-2.5 py-1.5 text-[9px] flex flex-wrap gap-x-3 gap-y-0.5"
+        style={{ borderTop: `1px solid ${color}15`, color: "var(--panel-text-muted)" }}
+      >
+        {meta && (
+          <>
+            <span>HPF: {meta.highpass_hz}Hz</span>
+            <span>VAD: {meta.vad_aggressiveness ?? "off"}</span>
+            <span>Norm: {meta.norm_percentile != null ? `p${meta.norm_percentile}` : "off"}</span>
+            <span>Dur: {meta.vad_duration_s}s</span>
+          </>
+        )}
+        {wm && (
+          <>
+            <span>NSP: {(wm.no_speech_prob * 100).toFixed(1)}%</span>
+            <span>Wh.Dur: {wm.duration_s}s</span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Re-transcribe Form ──────────────────────────────────────────────
+
+function RetranscribeForm({
+  extractionId,
+  onDone,
+}: {
+  extractionId: string;
+  onDone: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [hpf, setHpf] = useState("100");
+  const [vad, setVad] = useState("1");
+  const [norm, setNorm] = useState("95");
+  const [beam, setBeam] = useState("5");
+  const [running, setRunning] = useState(false);
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="text-[10px] font-medium px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-400 hover:bg-cyan-500/25 transition-colors"
+      >
+        Re-transcribe
+      </button>
+    );
+  }
+
+  const submit = async () => {
+    setRunning(true);
+    try {
+      const body = {
+        extraction_id: extractionId,
+        highpass_hz: parseInt(hpf) || 0,
+        vad_aggressiveness: vad === "off" ? null : parseInt(vad),
+        norm_percentile: norm === "off" ? null : parseInt(norm),
+        beam_size: parseInt(beam) || 5,
+      };
+      const res = await fetch(`${API_BASE}/api/admin/retranscribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Request failed" }));
+        alert(`Re-transcribe failed: ${err.detail || res.status}`);
+      } else {
+        onDone();
+      }
+    } catch (err) {
+      alert(`Re-transcribe error: ${err}`);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div
+      className="rounded-lg p-2.5 space-y-2"
+      style={{ background: "rgba(0,0,0,0.2)", border: "1px solid var(--panel-border)" }}
+    >
+      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase" style={{ color: "var(--panel-text-muted)" }}>
+        Custom Re-transcription
+        <button onClick={() => setOpen(false)} className="ml-auto text-gray-500 hover:text-gray-300">
+          <XCircle className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      <div className="grid grid-cols-4 gap-2 text-[10px]">
+        <label className="space-y-0.5">
+          <span style={{ color: "var(--panel-text-muted)" }}>HPF (Hz)</span>
+          <input
+            value={hpf}
+            onChange={(e) => setHpf(e.target.value)}
+            className="w-full px-1.5 py-1 rounded text-[10px] bg-white/5 border border-white/10 outline-none focus:border-cyan-500/50"
+            style={{ color: "var(--panel-text)" }}
+          />
+        </label>
+        <label className="space-y-0.5">
+          <span style={{ color: "var(--panel-text-muted)" }}>VAD Aggr.</span>
+          <select
+            value={vad}
+            onChange={(e) => setVad(e.target.value)}
+            className="w-full px-1.5 py-1 rounded text-[10px] bg-white/5 border border-white/10 outline-none focus:border-cyan-500/50"
+            style={{ color: "var(--panel-text)" }}
+          >
+            <option value="off">Off</option>
+            <option value="0">0</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+          </select>
+        </label>
+        <label className="space-y-0.5">
+          <span style={{ color: "var(--panel-text-muted)" }}>Norm %ile</span>
+          <input
+            value={norm}
+            onChange={(e) => setNorm(e.target.value)}
+            className="w-full px-1.5 py-1 rounded text-[10px] bg-white/5 border border-white/10 outline-none focus:border-cyan-500/50"
+            style={{ color: "var(--panel-text)" }}
+            placeholder="off"
+          />
+        </label>
+        <label className="space-y-0.5">
+          <span style={{ color: "var(--panel-text-muted)" }}>Beam</span>
+          <input
+            value={beam}
+            onChange={(e) => setBeam(e.target.value)}
+            className="w-full px-1.5 py-1 rounded text-[10px] bg-white/5 border border-white/10 outline-none focus:border-cyan-500/50"
+            style={{ color: "var(--panel-text)" }}
+          />
+        </label>
+      </div>
+      <button
+        onClick={submit}
+        disabled={running}
+        className="w-full py-1.5 rounded-lg text-[11px] font-medium bg-cyan-500 text-white hover:bg-cyan-600 transition-colors disabled:opacity-50"
+      >
+        {running ? "Processing..." : "Run Custom Variant"}
+      </button>
+    </div>
+  );
+}
+
 // ── Extraction Card ──────────────────────────────────────────────────
 
 function ExtractionCard({
@@ -139,11 +375,9 @@ function ExtractionCard({
   onPredict,
 }: {
   extraction: Extraction;
-  onPredict: (id: string) => void;
+  onPredict: (id: string) => Promise<void> | void;
 }) {
-  const [clipPlaying, setClipPlaying] = useState(false);
   const [predicting, setPredicting] = useState(false);
-  const clipRef = useRef<HTMLAudioElement | null>(null);
 
   const hasLlmResult =
     extraction.llm_relevant || extraction.llm_confidence > 0 || extraction.llm_category !== null;
@@ -168,40 +402,18 @@ function ExtractionCard({
     }
   })();
 
-  const playClip = () => {
-    if (!extraction.audio_clip) return;
-    if (!clipRef.current) {
-      const a = new Audio(`${API_BASE}/api/audio/${extraction.audio_clip}`);
-      a.addEventListener("ended", () => setClipPlaying(false));
-      a.addEventListener("error", () => setClipPlaying(false));
-      clipRef.current = a;
-    }
-    if (clipPlaying) {
-      clipRef.current.pause();
-      clipRef.current.currentTime = 0;
-      setClipPlaying(false);
-    } else {
-      clipRef.current.play().catch(() => setClipPlaying(false));
-      setClipPlaying(true);
-    }
-  };
-
   const runPredict = async () => {
     setPredicting(true);
     try {
-      onPredict(extraction.id);
+      await onPredict(extraction.id);
     } finally {
       setPredicting(false);
     }
   };
 
-  useEffect(() => {
-    return () => {
-      clipRef.current?.pause();
-    };
-  }, []);
-
   const dimmed = hasLlmResult && !extraction.llm_relevant;
+  const hasRaw = !!extraction.raw_audio_clip;
+  const variants = extraction.variants ?? [];
 
   return (
     <div
@@ -215,7 +427,7 @@ function ExtractionCard({
         }`,
       }}
     >
-      {/* Header: timestamp + audio */}
+      {/* Header: timestamp + status + raw audio */}
       <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: "1px solid var(--panel-border)" }}>
         <span className="text-xs font-medium" style={{ color: "var(--panel-text)" }}>
           {time}
@@ -224,40 +436,53 @@ function ExtractionCard({
           {date}
         </span>
 
-        {!extraction.llm_relevant && (
+        {hasLlmResult && !extraction.llm_relevant && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-500/20 text-gray-400 font-medium">
             Not Relevant
           </span>
         )}
+        {!hasLlmResult && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-400 font-medium">
+            Pending
+          </span>
+        )}
 
-        <div className="ml-auto">
-          {extraction.audio_clip ? (
-            <button
-              onClick={playClip}
-              className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-all ${
-                clipPlaying
-                  ? "bg-blue-500 text-white"
-                  : "bg-white/5 hover:bg-white/10"
-              }`}
-              style={!clipPlaying ? { color: "var(--panel-text-secondary)" } : {}}
-            >
-              {clipPlaying ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-              Audio
-            </button>
-          ) : (
-            <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
-              No audio
-            </span>
+        {variants.length > 0 && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-medium">
+            {variants.length} variant{variants.length !== 1 ? "s" : ""}
+          </span>
+        )}
+
+        <div className="ml-auto flex items-center gap-1.5">
+          {hasRaw && (
+            <VariantAudioButton clipId={extraction.raw_audio_clip} endpoint="audio-raw" label="Raw Audio" />
           )}
         </div>
       </div>
 
-      {/* Transcript text */}
-      <div className="px-3 py-2.5">
-        <p className="text-xs leading-relaxed" style={{ color: "var(--panel-text, #e5e7eb)" }}>
-          {extraction.raw_text}
-        </p>
-      </div>
+      {/* Variant comparison columns (or fallback to raw_text) */}
+      {variants.length > 0 ? (
+        <div className="p-2.5">
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {variants.map((v, i) => (
+              <VariantColumn key={`${v.name}-${i}`} v={v} />
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="px-3 py-2.5">
+          <p className="text-xs leading-relaxed" style={{ color: "var(--panel-text, #e5e7eb)" }}>
+            {extraction.raw_text}
+          </p>
+        </div>
+      )}
+
+      {/* Re-transcribe form */}
+      {hasRaw && (
+        <div className="px-3 py-2" style={{ borderTop: "1px solid var(--panel-border)" }}>
+          <RetranscribeForm extractionId={extraction.id} onDone={() => {}} />
+        </div>
+      )}
 
       {/* LLM Decision + Pipeline Row */}
       <div
@@ -269,7 +494,6 @@ function ExtractionCard({
       >
         {hasLlmResult ? (
           <>
-            {/* Relevant status */}
             <div className="flex items-center gap-1.5">
               <Brain className="w-3 h-3 text-purple-400" />
               <span style={{ color: "var(--panel-text-muted)" }}>LLM:</span>
@@ -347,7 +571,6 @@ function ExtractionCard({
               </div>
             ) : null}
 
-            {/* Re-run prediction */}
             <button
               onClick={runPredict}
               disabled={predicting}

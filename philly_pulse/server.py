@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 import httpx
+import numpy as np
 import yaml
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,6 +38,7 @@ app.add_middleware(
 _config_path = Path(__file__).resolve().parent.parent / "config.yaml"
 _bf_username = ""
 _bf_password = ""
+_bf_config: dict = {}
 PHILLY_FEEDS = [
     {"feed_id": "4603",  "label": "PPD Citywide"},
     {"feed_id": "17310", "label": "PPD Central"},
@@ -59,6 +61,7 @@ if _config_path.exists():
             _cfg = yaml.safe_load(f)
         _bf_username = _cfg.get("credentials", {}).get("username", "")
         _bf_password = _cfg.get("credentials", {}).get("password", "")
+        _bf_config = _cfg
     except Exception:
         pass
 
@@ -82,6 +85,9 @@ class IngestRequest(BaseModel):
     timestamp: str | None = None
     feed_id: str | None = None
     audio_clip: str | None = None
+    raw_audio_clip: str | None = None
+    preprocess_meta: dict | None = None
+    variants: list[dict] | None = None
 
 
 class RouteDirectionsRequest(BaseModel):
@@ -192,6 +198,9 @@ async def ingest(req: IngestRequest):
             raw_text=req.text,
             reported_at=req.timestamp,
             audio_clip=req.audio_clip,
+            raw_audio_clip=req.raw_audio_clip,
+            preprocess_meta=req.preprocess_meta,
+            variants=req.variants,
         )
         return {"status": "collected", "reason": "LLM auto-processing paused; raw transcript stored"}
 
@@ -228,6 +237,9 @@ async def ingest(req: IngestRequest):
             raw_text=req.text,
             reported_at=req.timestamp,
             audio_clip=req.audio_clip,
+            raw_audio_clip=req.raw_audio_clip,
+            preprocess_meta=req.preprocess_meta,
+            variants=req.variants,
             llm_relevant=False,
             llm_confidence=0.0,
         )
@@ -293,6 +305,9 @@ async def ingest(req: IngestRequest):
             raw_text=req.text,
             reported_at=req.timestamp,
             audio_clip=req.audio_clip,
+            raw_audio_clip=req.raw_audio_clip,
+            preprocess_meta=req.preprocess_meta,
+            variants=req.variants,
             llm_relevant=True,
             llm_category=category,
             llm_confidence=confidence,
@@ -368,6 +383,9 @@ async def ingest(req: IngestRequest):
         raw_text=req.text,
         reported_at=req.timestamp,
         audio_clip=req.audio_clip,
+        raw_audio_clip=req.raw_audio_clip,
+        preprocess_meta=req.preprocess_meta,
+        variants=req.variants,
         llm_relevant=True,
         llm_category=category,
         llm_confidence=confidence,
@@ -597,6 +615,108 @@ async def admin_predict(req: PredictRequest):
     }
 
 
+class RetranscribeRequest(BaseModel):
+    extraction_id: str
+    highpass_hz: int = 100
+    vad_aggressiveness: int | None = 1
+    norm_percentile: int | None = 95
+    beam_size: int = 5
+
+
+@app.post("/api/admin/retranscribe")
+async def admin_retranscribe(req: RetranscribeRequest):
+    """Re-preprocess + re-transcribe an extraction with custom params.
+
+    Reads the raw audio clip from disk, applies the specified preprocessing,
+    runs Whisper, saves a new processed clip, and appends the result to the
+    extraction's variants array as 'custom_N'.
+    """
+    from .preprocess import VariantConfig, preprocess_audio
+
+    ext = store.get_extraction(req.extraction_id)
+    if ext is None:
+        raise HTTPException(status_code=404, detail="Extraction not found")
+
+    raw_clip_id = ext.get("raw_audio_clip")
+    if not raw_clip_id:
+        raise HTTPException(status_code=400, detail="No raw audio clip stored for this extraction")
+
+    raw_path = Path("audio_clips_raw") / f"{raw_clip_id}.wav"
+    if not raw_path.exists():
+        raise HTTPException(status_code=404, detail="Raw audio file not found on disk")
+
+    import wave as _wave
+    with _wave.open(str(raw_path), "r") as wf:
+        n_frames = wf.getnframes()
+        raw_bytes = wf.readframes(n_frames)
+        raw_pcm = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+
+    cfg = VariantConfig(
+        name="custom",
+        highpass_hz=req.highpass_hz,
+        vad_aggressiveness=req.vad_aggressiveness,
+        norm_percentile=req.norm_percentile,
+    )
+    processed, meta = preprocess_audio(raw_pcm, cfg)
+
+    from faster_whisper import WhisperModel as _WM
+
+    _model_size = _bf_config.get("tuning", {}).get("model_size", "base") if _bf_config else "base"
+    _language = _bf_config.get("tuning", {}).get("language", "en") if _bf_config else "en"
+    _initial_prompt = _bf_config.get("tuning", {}).get("initial_prompt", "") if _bf_config else ""
+    _no_speech = _bf_config.get("tuning", {}).get("no_speech_threshold", 0.6) if _bf_config else 0.6
+
+    whisper = _WM(_model_size, device="cpu", compute_type="int8", cpu_threads=2)
+    segments, _info = whisper.transcribe(
+        processed,
+        language=_language,
+        initial_prompt=_initial_prompt,
+        condition_on_previous_text=False,
+        temperature=0.0,
+        beam_size=req.beam_size,
+        patience=1.5,
+        suppress_blank=True,
+        no_speech_threshold=_no_speech,
+    )
+    segments = list(segments)
+    text = " ".join(s.text for s in segments).strip()
+    no_speech_prob = max((s.no_speech_prob for s in segments), default=0)
+    duration_s = round(len(processed) / 16000, 2)
+
+    import uuid as _uuid
+    clip_id = _uuid.uuid4().hex[:12]
+    clip_path = Path("audio_clips") / f"{clip_id}.wav"
+    pcm_out = (processed * 32767).astype(np.int16)
+    with _wave.open(str(clip_path), "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(16000)
+        wf.writeframes(pcm_out.tobytes())
+
+    existing_variants = ext.get("variants") or []
+    custom_count = sum(1 for v in existing_variants if v.get("name", "").startswith("custom"))
+
+    new_variant = {
+        "name": f"custom_{custom_count + 1}",
+        "audio_clip": clip_id,
+        "transcript": text,
+        "preprocess_meta": meta,
+        "whisper_meta": {
+            "no_speech_prob": round(no_speech_prob, 4),
+            "duration_s": duration_s,
+        },
+    }
+
+    existing_variants.append(new_variant)
+    store.update_extraction(req.extraction_id, {"variants": existing_variants})
+
+    del whisper
+    import gc
+    gc.collect()
+
+    return {"status": "ok", "variant": new_variant}
+
+
 @app.get("/api/admin/stream/{feed_id}")
 async def admin_stream(feed_id: str):
     """Proxy a Broadcastify MP3 stream for the admin audio player."""
@@ -635,7 +755,7 @@ async def admin_stream(feed_id: str):
 
 @app.get("/api/audio/{clip_id}")
 async def get_audio_clip(clip_id: str):
-    """Serve a saved audio clip WAV file by its clip ID."""
+    """Serve a saved processed audio clip WAV file by its clip ID."""
     import re
     if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
         raise HTTPException(status_code=400, detail="Invalid clip ID")
@@ -643,6 +763,25 @@ async def get_audio_clip(clip_id: str):
     clip_path = Path(__file__).resolve().parent.parent / "audio_clips" / f"{clip_id}.wav"
     if not clip_path.exists():
         raise HTTPException(status_code=404, detail="Audio clip not found")
+
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=str(clip_path),
+        media_type="audio/wav",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@app.get("/api/audio-raw/{clip_id}")
+async def get_raw_audio_clip(clip_id: str):
+    """Serve a saved raw (pre-normalization) audio clip WAV file."""
+    import re
+    if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
+        raise HTTPException(status_code=400, detail="Invalid clip ID")
+
+    clip_path = Path(__file__).resolve().parent.parent / "audio_clips_raw" / f"{clip_id}.wav"
+    if not clip_path.exists():
+        raise HTTPException(status_code=404, detail="Raw audio clip not found")
 
     from fastapi.responses import FileResponse
     return FileResponse(

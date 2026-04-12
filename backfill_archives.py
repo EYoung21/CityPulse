@@ -32,6 +32,7 @@ import requests
 import yaml
 from bs4 import BeautifulSoup
 from faster_whisper import WhisperModel
+from philly_pulse.preprocess import PIPELINE_VARIANTS, preprocess_audio
 
 # ── Config ──────────────────────────────────────────────────────────
 
@@ -54,7 +55,9 @@ BRIDGE_URL = PP_CFG.get("bridge_url", "http://127.0.0.1:8765/api/ingest")
 
 SAMPLE_RATE = 16000
 AUDIO_CLIPS_FOLDER = "audio_clips/"
+RAW_CLIPS_FOLDER = "audio_clips_raw/"
 os.makedirs(AUDIO_CLIPS_FOLDER, exist_ok=True)
+os.makedirs(RAW_CLIPS_FOLDER, exist_ok=True)
 
 PROGRESS_FILE = "backfill_progress.json"
 
@@ -201,6 +204,15 @@ def mp3_to_pcm(mp3_path: str) -> np.ndarray | None:
         return None
 
 
+def _save_wav(path: str, audio_f32: np.ndarray):
+    pcm = (audio_f32 * 32767).astype(np.int16)
+    with wave.open(path, "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(pcm.tobytes())
+
+
 def transcribe_and_post(
     model: WhisperModel,
     audio_data: np.ndarray,
@@ -208,70 +220,98 @@ def transcribe_and_post(
     feed_label: str,
     archive_timestamp: str,
 ):
-    """Transcribe audio, save clip, and POST to ingest."""
-    duration = len(audio_data) / SAMPLE_RATE
+    """Run all preprocessing variants, transcribe each, and POST to ingest."""
 
-    # Split long archives into ~60s chunks for better transcription
+    # Split long archives into ~60s chunks
     chunk_seconds = 60
     chunk_samples = chunk_seconds * SAMPLE_RATE
     chunks = []
-
     if len(audio_data) > chunk_samples * 2:
         for i in range(0, len(audio_data), chunk_samples):
             chunk = audio_data[i : i + chunk_samples]
-            if len(chunk) > SAMPLE_RATE:  # > 1 second
+            if len(chunk) > SAMPLE_RATE:
                 chunks.append(chunk)
     else:
         chunks = [audio_data]
 
     transcribed = 0
     for ci, chunk in enumerate(chunks):
-        chunk_duration = len(chunk) / SAMPLE_RATE
         try:
-            segments, info = model.transcribe(
-                chunk,
-                language=LANGUAGE,
-                initial_prompt=INITIAL_PROMPT,
-                condition_on_previous_text=False,
-                temperature=0.0,
-                beam_size=BEAM_SIZE,
-                patience=1.5,
-                suppress_blank=True,
-                no_speech_threshold=NO_SPEECH_THRESHOLD,
-            )
-            segments = list(segments)
-            text = " ".join(s.text for s in segments).strip()
-
-            no_speech_prob = max((s.no_speech_prob for s in segments), default=0)
-            if no_speech_prob > NO_SPEECH_THRESHOLD:
-                continue
-
-            text = cleanup_text(text, chunk_duration)
-            if not text:
-                continue
-
-            # Save audio clip
-            clip_id = uuid.uuid4().hex[:12]
-            clip_path = os.path.join(AUDIO_CLIPS_FOLDER, f"{clip_id}.wav")
+            # Save raw clip
+            raw_clip_id = uuid.uuid4().hex[:12]
             try:
-                pcm = (chunk * 32767).astype(np.int16)
-                with wave.open(clip_path, "w") as wf:
-                    wf.setnchannels(1)
-                    wf.setsampwidth(2)
-                    wf.setframerate(SAMPLE_RATE)
-                    wf.writeframes(pcm.tobytes())
+                _save_wav(os.path.join(RAW_CLIPS_FOLDER, f"{raw_clip_id}.wav"), chunk)
             except Exception as e:
-                print(f"    [CLIP ERROR] {e}")
-                clip_id = None
+                print(f"    [RAW CLIP ERROR] {e}")
+                raw_clip_id = None
 
-            # POST to ingest (will store as raw extraction since LLM is paused)
-            payload = {
-                "text": text,
+            variants_list = []
+            standard_text = None
+
+            for vcfg in PIPELINE_VARIANTS:
+                processed, meta = preprocess_audio(chunk, vcfg)
+                duration = len(processed) / SAMPLE_RATE
+
+                try:
+                    segments, _info = model.transcribe(
+                        processed,
+                        language=LANGUAGE,
+                        initial_prompt=INITIAL_PROMPT,
+                        condition_on_previous_text=False,
+                        temperature=0.0,
+                        beam_size=BEAM_SIZE,
+                        patience=1.5,
+                        suppress_blank=True,
+                        no_speech_threshold=NO_SPEECH_THRESHOLD,
+                    )
+                    segments = list(segments)
+                    text = " ".join(s.text for s in segments).strip()
+
+                    no_speech_prob = max((s.no_speech_prob for s in segments), default=0)
+                    if no_speech_prob > NO_SPEECH_THRESHOLD:
+                        continue
+
+                    text = cleanup_text(text, duration)
+                    if not text:
+                        continue
+
+                    clip_id = uuid.uuid4().hex[:12]
+                    try:
+                        _save_wav(os.path.join(AUDIO_CLIPS_FOLDER, f"{clip_id}.wav"), processed)
+                    except Exception as e:
+                        print(f"    [CLIP ERROR {vcfg.name}] {e}")
+                        clip_id = None
+
+                    variants_list.append({
+                        "name": vcfg.name,
+                        "audio_clip": clip_id,
+                        "transcript": text,
+                        "preprocess_meta": meta,
+                        "whisper_meta": {
+                            "no_speech_prob": round(no_speech_prob, 4),
+                            "duration_s": round(duration, 2),
+                        },
+                    })
+
+                    if vcfg.name == "standard":
+                        standard_text = text
+
+                except Exception as e:
+                    print(f"    [VARIANT {vcfg.name} ERROR chunk {ci}] {e}")
+
+            if not variants_list:
+                continue
+
+            if standard_text is None:
+                standard_text = variants_list[0]["transcript"]
+
+            payload: dict = {
+                "text": standard_text,
                 "timestamp": archive_timestamp,
                 "feed_id": feed_id,
+                "raw_audio_clip": raw_clip_id,
+                "variants": variants_list,
             }
-            if clip_id:
-                payload["audio_clip"] = clip_id
 
             try:
                 resp = requests.post(BRIDGE_URL, json=payload, timeout=30)
@@ -283,7 +323,7 @@ def transcribe_and_post(
                 print(f"    [INGEST ERROR] {e}")
 
         except Exception as e:
-            print(f"    [TRANSCRIBE ERROR chunk {ci}] {e}")
+            print(f"    [CHUNK ERROR {ci}] {e}")
 
     return transcribed
 
