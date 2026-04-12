@@ -30,7 +30,6 @@ import wave
 import numpy as np
 import requests
 import yaml
-from bs4 import BeautifulSoup
 from faster_whisper import WhisperModel
 from philly_pulse.preprocess import PIPELINE_VARIANTS, preprocess_audio
 
@@ -122,48 +121,51 @@ def get_broadcastify_session() -> requests.Session:
     """Login to Broadcastify and return an authenticated session."""
     session = requests.Session()
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (PhillyPulse Backfill)"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     })
 
     login_url = "https://www.broadcastify.com/login/"
-    resp = session.get(login_url)
-    resp.raise_for_status()
+    session.get(login_url)
 
     login_data = {
         "username": USERNAME,
         "password": PASSWORD,
         "action": "auth",
-        "redirect": "/",
+        "redirect": "https://www.broadcastify.com",
     }
     resp = session.post(login_url, data=login_data, allow_redirects=True)
     resp.raise_for_status()
 
-    if "logout" not in resp.text.lower() and "my account" not in resp.text.lower():
-        print("[WARN] Login may have failed — check credentials")
+    if "bcfyuser1" not in session.cookies.get_dict():
+        print("[WARN] Login may have failed — no auth cookie set")
 
     return session
 
 
 def fetch_archive_links(session: requests.Session, feed_id: str, day: str) -> list[dict]:
-    """Fetch archive MP3 download links for a feed on a given day.
+    """Fetch archive segments for a feed on a given day via the JSON API.
 
-    Returns list of {"url": ..., "time_label": ...} dicts.
+    Returns list of {"url": ..., "time_label": ..., "startTs": ...} dicts.
     """
-    url = f"https://www.broadcastify.com/archives/feed/{feed_id}/?d={day}"
-    resp = session.get(url, timeout=30)
-    if resp.status_code == 404:
+    api_url = f"https://www.broadcastify.com/archives/api/archives.php?feedId={feed_id}&date={day}"
+    try:
+        resp = session.get(api_url, timeout=30)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+    except Exception:
         return []
-    resp.raise_for_status()
 
-    soup = BeautifulSoup(resp.text, "html.parser")
     archives = []
-
-    for link in soup.find_all("a", href=True):
-        href = link["href"]
-        if "/archives/download/" in href:
-            full_url = href if href.startswith("http") else f"https://www.broadcastify.com{href}"
-            time_label = link.get_text(strip=True) or "unknown"
-            archives.append({"url": full_url, "time_label": time_label})
+    for item in data.get("archives", []):
+        aid = item.get("id", "")
+        dl_url = f"https://www.broadcastify.com/archives/download/{aid}"
+        time_label = item.get("start", "00:00")
+        archives.append({
+            "url": dl_url,
+            "time_label": time_label,
+            "startTs": item.get("startTs", 0),
+        })
 
     return archives
 
@@ -386,7 +388,13 @@ def main():
             for ai, archive in enumerate(archives):
                 archive_url = archive["url"]
                 time_label = archive["time_label"]
-                archive_ts = f"{day_str}T{time_label}" if re.match(r'\d{2}:\d{2}', time_label) else f"{day_str}T00:00:00"
+                start_ts = archive.get("startTs", 0)
+                if start_ts:
+                    archive_ts = datetime.datetime.fromtimestamp(start_ts, tz=datetime.timezone.utc).isoformat()
+                elif re.match(r'\d{2}:\d{2}', time_label):
+                    archive_ts = f"{day_str}T{time_label}"
+                else:
+                    archive_ts = f"{day_str}T00:00:00"
 
                 with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
                     tmp_path = tmp.name
