@@ -182,26 +182,29 @@ function AudioPlayer({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [waveform, setWaveform] = useState<number[] | null>(null);
   const ref = useRef<HTMLAudioElement | null>(null);
   const animRef = useRef<number>(0);
+  const waveformFetched = useRef(false);
   const accent = accentColor || "#3b82f6";
   const audioUrl = clipId ? `${API_BASE}/api/${endpoint}/${clipId}` : null;
 
-  useEffect(() => {
-    if (!audioUrl) return;
-    let cancelled = false;
+  const fetchWaveform = useCallback(() => {
+    if (!audioUrl || waveformFetched.current) return;
+    waveformFetched.current = true;
     fetch(audioUrl)
-      .then((r) => r.arrayBuffer())
+      .then((r) => {
+        if (!r.ok) throw new Error(`${r.status}`);
+        return r.arrayBuffer();
+      })
       .then((buf) => getAudioContext().decodeAudioData(buf))
       .then((decoded) => {
-        if (cancelled) return;
         setWaveform(computeWaveform(decoded, WAVEFORM_BARS));
         setDuration(decoded.duration);
         setLoaded(true);
       })
-      .catch(() => {});
-    return () => { cancelled = true; };
+      .catch(() => { setLoadError(true); });
   }, [audioUrl]);
 
   const ensureAudio = useCallback(() => {
@@ -218,6 +221,7 @@ function AudioPlayer({
     });
     a.addEventListener("error", () => {
       setPlaying(false);
+      setLoadError(true);
       cancelAnimationFrame(animRef.current);
     });
     ref.current = a;
@@ -232,12 +236,13 @@ function AudioPlayer({
   const togglePlay = () => {
     const a = ensureAudio();
     if (!a) return;
+    fetchWaveform();
     if (playing) {
       a.pause();
       cancelAnimationFrame(animRef.current);
       setPlaying(false);
     } else {
-      a.play().catch(() => setPlaying(false));
+      a.play().catch(() => { setPlaying(false); setLoadError(true); });
       animRef.current = requestAnimationFrame(tick);
       setPlaying(true);
     }
@@ -246,10 +251,11 @@ function AudioPlayer({
   const restart = () => {
     const a = ensureAudio();
     if (!a) return;
+    fetchWaveform();
     a.currentTime = 0;
     setCurrentTime(0);
     if (!playing) {
-      a.play().catch(() => setPlaying(false));
+      a.play().catch(() => { setPlaying(false); setLoadError(true); });
       animRef.current = requestAnimationFrame(tick);
       setPlaying(true);
     }
@@ -270,6 +276,11 @@ function AudioPlayer({
   }, []);
 
   if (!clipId) return null;
+  if (loadError) return (
+    <div className="flex items-center gap-1.5 px-2 py-1 rounded text-[10px]" style={{ color: "var(--panel-text-muted, #6b7280)" }}>
+      <XCircle className="w-3 h-3" /> Audio unavailable
+    </div>
+  );
 
   const progress = duration > 0 ? currentTime / duration : 0;
 
@@ -1079,9 +1090,11 @@ function AllFeedsSidebarItem({
   }, []);
 
   return (
-    <button
+    <div
       onClick={onClick}
-      className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition-all ${
+      role="button"
+      tabIndex={0}
+      className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition-all cursor-pointer ${
         isActive ? "bg-blue-500/10" : "hover:bg-white/5"
       }`}
       style={{
@@ -1111,7 +1124,7 @@ function AllFeedsSidebarItem({
       >
         {playing ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
       </button>
-    </button>
+    </div>
   );
 }
 
@@ -1129,21 +1142,24 @@ function SidebarFeedItem({
   onClick: () => void;
 }) {
   const [playing, setPlaying] = useState(false);
+  const [streamError, setStreamError] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const togglePlay = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!API_BASE) { setStreamError(true); return; }
     if (!audioRef.current) {
       const a = new Audio(`${API_BASE}/api/admin/stream/${feed.feed_id}`);
       a.addEventListener("ended", () => setPlaying(false));
-      a.addEventListener("error", () => setPlaying(false));
+      a.addEventListener("error", () => { setPlaying(false); setStreamError(true); });
       audioRef.current = a;
     }
     if (playing) {
       audioRef.current.pause();
       setPlaying(false);
     } else {
-      audioRef.current.play().catch(() => setPlaying(false));
+      setStreamError(false);
+      audioRef.current.play().catch(() => { setPlaying(false); setStreamError(true); });
       setPlaying(true);
     }
   };
@@ -1151,9 +1167,11 @@ function SidebarFeedItem({
   useEffect(() => () => { audioRef.current?.pause(); }, []);
 
   return (
-    <button
+    <div
       onClick={onClick}
-      className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-all ${
+      role="button"
+      tabIndex={0}
+      className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-all cursor-pointer ${
         isActive ? "bg-blue-500/10" : "hover:bg-white/5"
       }`}
       style={{
@@ -1176,15 +1194,17 @@ function SidebarFeedItem({
       <button
         onClick={togglePlay}
         className={`shrink-0 p-1 rounded transition-all ${
-          playing
-            ? "bg-blue-500 text-white"
-            : "bg-white/5 hover:bg-white/10 text-gray-500 hover:text-gray-300"
+          streamError
+            ? "bg-red-500/20 text-red-400"
+            : playing
+              ? "bg-blue-500 text-white"
+              : "bg-white/5 hover:bg-white/10 text-gray-500 hover:text-gray-300"
         }`}
-        title={playing ? "Pause live stream" : "Play live stream"}
+        title={streamError ? "Stream unavailable" : playing ? "Pause live stream" : "Play live stream"}
       >
-        {playing ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+        {streamError ? <WifiOff className="w-3 h-3" /> : playing ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
       </button>
-    </button>
+    </div>
   );
 }
 
