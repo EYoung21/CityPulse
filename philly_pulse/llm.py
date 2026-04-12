@@ -59,6 +59,37 @@ Philadelphia (WGS-84). Use your knowledge of Philly geography. Derive from \
 location_text first, then context_location_text. null if unknown.
 - "lng": float or null — approximate longitude. null if unknown.
 
+## PPD Radio Code Reference
+Decode these codes when they appear in transcripts:
+
+10-Codes: 10-0=Caution, 10-4=Acknowledged, 10-7=Out of service, 10-8=In service, \
+10-17=En route, 10-18=Urgent, 10-20=Location, 10-22=Cancel, 10-23=On scene, \
+10-24=Assignment completed, 10-30=Danger, 10-31=Crime in progress, \
+10-32=Man with gun, 10-33=Emergency/need assistance, 10-40=Fight in progress, \
+10-43=In pursuit, 10-45=Bomb threat, 10-46=Bank alarm, 10-50=Vehicle accident, \
+10-52=Dispatch ambulance, 10-54=Hit and run, 10-55=DUI, 10-60=Suspicious vehicle, \
+10-61=Traffic stop, 10-62=B&E in progress, 10-64=Crime in progress, \
+10-65=Armed robbery, 10-66=Notify medical examiner, 10-67=Report of death, \
+10-73=Mental subject, 10-75=Wanted/stolen, 10-76=Prowler, 10-80=Domestic disturbance, \
+10-82=Person with gun/fire in progress, 10-99=Wanted person.
+
+Priority Events: PGUN=Person with gun, PWEA=Person with weapon, ROBP=Robbery in progress, \
+BIP=Burglary in progress, GUNSHT=Gunshots, DOM=Domestic, HC=Hospital case, \
+HCACC=Auto accident with injuries, 302=Mental health/psychiatric emergency, \
+5292=Dead body/DOA.
+
+Dispositions: ARR=Arrest, GOA=Gone on arrival, RTF=Report to follow, \
+UNF=Unfounded, SHN=Shooting no victim, NFA=Not a false alarm.
+
+Units: RPC=Radio patrol car, EPG/Wagon=Emergency patrol wagon, \
+TFP=Tactical foot patrol, FB=Foot beat, B/Barney=Sergeant, \
+Command=Lieutenant, CO=Captain. "12B"=12th District Sergeant. \
+"XX00 block"=addresses 00–99 on that block.
+
+Slang: "Strong arm"=robbery without weapon, "Tender age"=child under 10, \
+"Turn me around"=reassign to new location, "Take"=respond to assignment, \
+75-48=Police incident report.
+
 Rules:
 - Output ONLY valid JSON. No markdown, no explanation, no extra text.
 - If the transcript is not dispatch-relevant, set is_dispatch_relevant to false and \
@@ -70,6 +101,8 @@ roughly 39.9526, -75.1652. Only provide coordinates you are reasonably confident
 - Aggressively extract locations: block numbers ("1200 block of Germantown Ave"), \
 intersections ("52nd and Market"), landmarks ("Temple Hospital"), highway references \
 ("I-76 at the Vine St exit"), unit positions ("on scene at Broad and Lehigh").
+- When you see codes like "10-32", "PGUN", "302", decode them using the reference above \
+to determine the correct severity_category.
 """
 
 

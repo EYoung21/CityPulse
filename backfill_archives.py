@@ -1,14 +1,13 @@
-"""Backfill Broadcastify archives for the last N days.
+"""Backfill Broadcastify archives.
 
 Downloads 30-minute MP3 archive segments, transcribes with Whisper,
-and POSTs to the ingest API (which stores as raw extractions — no LLM).
+and POSTs to the ingest API.
 
 Processes most recent days first so you get recent data quickly.
 
 Usage:
-    python backfill_archives.py              # default: 180 days, all feeds
-    python backfill_archives.py --days 7     # just last 7 days
-    python backfill_archives.py --feed 4603  # single feed only
+    python backfill_archives.py --days 30 --feed 4603
+    python backfill_archives.py --day-list days.txt --feed 4603
 
 Requires:
     - config.yaml with Broadcastify credentials
@@ -60,7 +59,11 @@ RAW_CLIPS_FOLDER = "audio_clips_raw/"
 os.makedirs(AUDIO_CLIPS_FOLDER, exist_ok=True)
 os.makedirs(RAW_CLIPS_FOLDER, exist_ok=True)
 
-PROGRESS_FILE = "backfill_progress.json"
+PROGRESS_DIR = "backfill_progress"
+os.makedirs(PROGRESS_DIR, exist_ok=True)
+
+DOWNLOAD_DELAY = 1.5
+RETRY_DELAYS = [30, 60, 120]
 
 PHILLY_FEEDS = [
     {"feed_id": "4603",  "label": "PPD Citywide"},
@@ -72,25 +75,30 @@ PHILLY_FEEDS = [
     {"feed_id": "15195", "label": "PPD Southwest/West"},
     {"feed_id": "34250", "label": "PFD South Fire/Medics"},
     {"feed_id": "15747", "label": "PFD North Fire"},
-    {"feed_id": "44308", "label": "SEPTA Transit Police"},
-    {"feed_id": "13975", "label": "SEPTA Regional Rail"},
-    {"feed_id": "13951", "label": "PA Turnpike Police East"},
-    {"feed_id": "36323", "label": "Delaware Co Police Dispatch"},
-    {"feed_id": "20795", "label": "Camden Co Fire/EMS Digital"},
 ]
 
 
-def load_progress() -> dict:
-    if os.path.exists(PROGRESS_FILE):
-        with open(PROGRESS_FILE, "r") as f:
+# ── Progress tracking (per-feed, per-segment) ────────────────────
+
+def _progress_path(feed_id: str) -> str:
+    return os.path.join(PROGRESS_DIR, f"{feed_id}.json")
+
+
+def load_progress(feed_id: str) -> dict:
+    path = _progress_path(feed_id)
+    if os.path.exists(path):
+        with open(path, "r") as f:
             return json.load(f)
     return {}
 
 
-def save_progress(progress: dict):
-    with open(PROGRESS_FILE, "w") as f:
+def save_progress(feed_id: str, progress: dict):
+    path = _progress_path(feed_id)
+    with open(path, "w") as f:
         json.dump(progress, f, indent=2)
 
+
+# ── Text cleanup ─────────────────────────────────────────────────
 
 def cleanup_text(text: str, duration: float) -> str | None:
     if re.fullmatch(r'[.\s]+', text):
@@ -119,6 +127,8 @@ def cleanup_text(text: str, duration: float) -> str | None:
     return text if text.strip() else None
 
 
+# ── Broadcastify session ─────────────────────────────────────────
+
 def get_broadcastify_session() -> requests.Session:
     """Login to Broadcastify and return an authenticated session."""
     session = requests.Session()
@@ -144,19 +154,33 @@ def get_broadcastify_session() -> requests.Session:
     return session
 
 
-def fetch_archive_links(session: requests.Session, feed_id: str, day: str) -> list[dict]:
-    """Fetch archive segments for a feed on a given day via the JSON API.
+# ── Broadcastify API with retry ──────────────────────────────────
 
-    Returns list of {"url": ..., "time_label": ..., "startTs": ...} dicts.
-    """
+def fetch_archive_links(session: requests.Session, feed_id: str, day: str) -> list[dict]:
+    """Fetch archive segments for a feed on a given day, with retry on 429."""
     api_url = f"https://www.broadcastify.com/archives/api/archives.php?feedId={feed_id}&date={day}"
-    try:
-        resp = session.get(api_url, timeout=30)
-        if resp.status_code != 200:
+
+    for attempt in range(1 + len(RETRY_DELAYS)):
+        try:
+            resp = session.get(api_url, timeout=30)
+            if resp.status_code == 429:
+                if attempt < len(RETRY_DELAYS):
+                    wait = RETRY_DELAYS[attempt]
+                    print(f"  [429 rate-limited on archive list] Waiting {wait}s (attempt {attempt+1})...")
+                    time.sleep(wait)
+                    continue
+                print(f"  [429] Giving up on archive list after {len(RETRY_DELAYS)} retries")
+                return []
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+        except Exception as e:
+            print(f"  [ARCHIVE LIST ERROR] {e}")
+            if attempt < len(RETRY_DELAYS):
+                time.sleep(RETRY_DELAYS[attempt])
+                continue
             return []
-        data = resp.json()
-    except Exception:
-        return []
+        break
 
     archives = []
     for item in data.get("archives", []):
@@ -167,24 +191,45 @@ def fetch_archive_links(session: requests.Session, feed_id: str, day: str) -> li
             "url": dl_url,
             "time_label": time_label,
             "startTs": item.get("startTs", 0),
+            "id": aid,
         })
 
     return archives
 
 
 def download_mp3(session: requests.Session, url: str, dest_path: str) -> bool:
-    """Download an archive MP3 to a local file."""
-    try:
-        resp = session.get(url, stream=True, timeout=120)
-        resp.raise_for_status()
-        with open(dest_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
-        return True
-    except Exception as e:
-        print(f"    [DL ERROR] {e}")
-        return False
+    """Download an archive MP3 with retry on 429."""
+    for attempt in range(1 + len(RETRY_DELAYS)):
+        try:
+            resp = session.get(url, stream=True, timeout=120)
+            if resp.status_code == 429:
+                if attempt < len(RETRY_DELAYS):
+                    wait = RETRY_DELAYS[attempt]
+                    print(f"[429] Waiting {wait}s...", end=" ", flush=True)
+                    time.sleep(wait)
+                    continue
+                print("[429] Giving up after retries")
+                return False
+            resp.raise_for_status()
+            with open(dest_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            return True
+        except requests.exceptions.HTTPError as e:
+            if "429" in str(e) and attempt < len(RETRY_DELAYS):
+                wait = RETRY_DELAYS[attempt]
+                print(f"[429] Waiting {wait}s...", end=" ", flush=True)
+                time.sleep(wait)
+                continue
+            print(f"[DL ERROR] {e}")
+            return False
+        except Exception as e:
+            print(f"[DL ERROR] {e}")
+            return False
+    return False
 
+
+# ── Audio conversion ─────────────────────────────────────────────
 
 def mp3_to_pcm(mp3_path: str) -> np.ndarray | None:
     """Convert MP3 to 16kHz mono float32 PCM using ffmpeg."""
@@ -202,7 +247,7 @@ def mp3_to_pcm(mp3_path: str) -> np.ndarray | None:
         if result.returncode != 0:
             return None
         pcm_data = np.frombuffer(result.stdout, dtype=np.int16).astype(np.float32) / 32768.0
-        return pcm_data if len(pcm_data) > SAMPLE_RATE else None  # Skip if < 1 second
+        return pcm_data if len(pcm_data) > SAMPLE_RATE else None
     except Exception as e:
         print(f"    [FFMPEG ERROR] {e}")
         return None
@@ -217,6 +262,8 @@ def _save_wav(path: str, audio_f32: np.ndarray):
         wf.writeframes(pcm.tobytes())
 
 
+# ── Transcription + ingest ───────────────────────────────────────
+
 def transcribe_and_post(
     model: WhisperModel,
     audio_data: np.ndarray,
@@ -224,9 +271,7 @@ def transcribe_and_post(
     feed_label: str,
     archive_timestamp: str,
 ):
-    """Run all preprocessing variants, transcribe each, and POST to ingest."""
-
-    # Split long archives into ~60s chunks
+    """Run preprocessing, transcribe, and POST to ingest."""
     chunk_seconds = 60
     chunk_samples = chunk_seconds * SAMPLE_RATE
     chunks = []
@@ -241,7 +286,6 @@ def transcribe_and_post(
     transcribed = 0
     for ci, chunk in enumerate(chunks):
         try:
-            # Save raw clip
             raw_clip_id = uuid.uuid4().hex[:12]
             try:
                 _save_wav(os.path.join(RAW_CLIPS_FOLDER, f"{raw_clip_id}.wav"), chunk)
@@ -297,7 +341,7 @@ def transcribe_and_post(
                         },
                     })
 
-                    if vcfg.name == "standard":
+                    if vcfg.name == "aggressive":
                         standard_text = text
 
                 except Exception as e:
@@ -332,12 +376,37 @@ def transcribe_and_post(
     return transcribed
 
 
+# ── Day list helpers ─────────────────────────────────────────────
+
+def load_day_list(path: str) -> list[str]:
+    """Read a file of YYYY-MM-DD dates, one per line."""
+    with open(path, "r") as f:
+        return [line.strip() for line in f if line.strip() and not line.startswith("#")]
+
+
+def generate_days_range(days: int) -> list[str]:
+    """Generate a contiguous list of the last N days (most recent first)."""
+    today = datetime.date.today()
+    return [(today - datetime.timedelta(days=d)).isoformat() for d in range(1, days + 1)]
+
+
+# ── Main ─────────────────────────────────────────────────────────
+
 def main():
     parser = argparse.ArgumentParser(description="Backfill Broadcastify archives")
-    parser.add_argument("--days", type=int, default=180, help="How many days back to go (default: 180)")
+    parser.add_argument("--days", type=int, default=None, help="How many days back to go")
+    parser.add_argument("--day-list", type=str, default=None, help="File with specific dates to process (one YYYY-MM-DD per line)")
     parser.add_argument("--feed", type=str, default=None, help="Single feed ID to process")
     parser.add_argument("--skip-existing", action="store_true", default=True, help="Skip already-processed feed+day combos")
     args = parser.parse_args()
+
+    if args.day_list:
+        day_strings = load_day_list(args.day_list)
+        print(f"Loaded {len(day_strings)} dates from {args.day_list}")
+    elif args.days:
+        day_strings = generate_days_range(args.days)
+    else:
+        day_strings = generate_days_range(180)
 
     feeds = PHILLY_FEEDS
     if args.feed:
@@ -347,7 +416,7 @@ def main():
             return
 
     print(f"=== PhillyPulse Archive Backfill ===")
-    print(f"Feeds: {len(feeds)}, Days: {args.days}, Bridge: {BRIDGE_URL}")
+    print(f"Feeds: {len(feeds)}, Days: {len(day_strings)}, Bridge: {BRIDGE_URL}")
     print(f"Loading Whisper model '{MODEL_SIZE}'...")
 
     try:
@@ -368,22 +437,16 @@ def main():
     session = get_broadcastify_session()
     print("Logged in.")
 
-    progress = load_progress()
-    today = datetime.date.today()
     total_transcribed = 0
     total_archives = 0
 
-    # Process most recent days first
-    for days_ago in range(1, args.days + 1):
-        day = today - datetime.timedelta(days=days_ago)
-        day_str = day.isoformat()
+    for feed in feeds:
+        feed_id = feed["feed_id"]
+        feed_label = feed["label"]
+        progress = load_progress(feed_id)
 
-        for feed in feeds:
-            feed_id = feed["feed_id"]
-            feed_label = feed["label"]
-            progress_key = f"{feed_id}_{day_str}"
-
-            if args.skip_existing and progress.get(progress_key):
+        for day_str in day_strings:
+            if args.skip_existing and progress.get(day_str):
                 continue
 
             print(f"\n[{day_str}] [{feed_label}] Fetching archives...")
@@ -391,14 +454,25 @@ def main():
 
             if not archives:
                 print(f"  No archives available.")
-                progress[progress_key] = "no_archives"
-                save_progress(progress)
+                progress[day_str] = "no_archives"
+                save_progress(feed_id, progress)
                 continue
 
-            print(f"  Found {len(archives)} archive segments.")
+            # Track per-segment progress for mid-day resume
+            day_progress = progress.get(day_str, {})
+            if isinstance(day_progress, str):
+                # Already fully done from a previous run format
+                continue
+            done_segments: set = set(day_progress.get("done_segments", []))
+
+            print(f"  Found {len(archives)} segments ({len(done_segments)} already done).")
             day_transcribed = 0
 
             for ai, archive in enumerate(archives):
+                seg_id = archive.get("id", str(ai))
+                if seg_id in done_segments:
+                    continue
+
                 archive_url = archive["url"]
                 time_label = archive["time_label"]
                 start_ts = archive.get("startTs", 0)
@@ -431,16 +505,21 @@ def main():
                     total_archives += 1
                     print(f"-> {count} transcripts")
 
+                    done_segments.add(seg_id)
+                    progress[day_str] = {"done_segments": list(done_segments), "transcripts": day_transcribed}
+                    save_progress(feed_id, progress)
+
                 finally:
                     if os.path.exists(tmp_path):
                         os.unlink(tmp_path)
 
-                time.sleep(0.5)  # Be polite to Broadcastify
+                time.sleep(DOWNLOAD_DELAY)
 
-            progress[progress_key] = f"done_{day_transcribed}"
-            save_progress(progress)
+            progress[day_str] = f"done_{day_transcribed}"
+            save_progress(feed_id, progress)
+            print(f"  --- Day {day_str} [{feed_label}]: {day_transcribed} transcripts ---")
 
-        print(f"\n--- Day {day_str} complete. Running total: {total_transcribed} transcripts from {total_archives} archives ---")
+        print(f"\n=== Feed {feed_label} complete ===")
 
     print(f"\n=== Backfill complete ===")
     print(f"Total: {total_transcribed} transcripts from {total_archives} archive segments")

@@ -373,9 +373,7 @@ function VariantColumn({ v }: { v: VariantResult }) {
   const meta = v.preprocess_meta;
   const wm = v.whisper_meta;
   const nameColors: Record<string, string> = {
-    minimal: "#f97316",
-    standard: "#3b82f6",
-    aggressive: "#a855f7",
+    aggressive: "#3b82f6",
   };
   const color = nameColors[v.name] ?? "#6b7280";
 
@@ -646,14 +644,26 @@ function ExtractionCard({
         )}
       </div>
 
-      {/* Variant comparison columns (or fallback to raw_text) */}
+      {/* Transcript + processed audio */}
       {variants.length > 0 ? (
-        <div className="p-2.5">
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {variants.map((v, i) => (
-              <VariantColumn key={`${v.name}-${i}`} v={v} />
-            ))}
-          </div>
+        <div className="px-3 py-2.5 space-y-2">
+          {variants[0].audio_clip && (
+            <div className="w-full">
+              <AudioPlayer clipId={variants[0].audio_clip} endpoint="audio" label="Processed" accentColor="#3b82f6" />
+            </div>
+          )}
+          <p className="text-xs leading-relaxed" style={{ color: "var(--panel-text, #e5e7eb)" }}>
+            {variants[0].transcript || <span className="italic text-gray-500">No transcript</span>}
+          </p>
+          {variants[0].whisper_meta && (
+            <div className="flex gap-3 text-[9px]" style={{ color: "var(--panel-text-muted)" }}>
+              <span>NSP: {(variants[0].whisper_meta.no_speech_prob * 100).toFixed(1)}%</span>
+              <span>Duration: {variants[0].whisper_meta.duration_s}s</span>
+              {variants[0].preprocess_meta && (
+                <span>VAD kept: {variants[0].preprocess_meta.vad_duration_s}s</span>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <div className="px-3 py-2.5">
@@ -789,7 +799,7 @@ function ExtractionCard({
 // ── Feed Tab Content ─────────────────────────────────────────────────
 
 function FeedTabContent({ feed }: { feed: FeedInfo }) {
-  const [timeFilter, setTimeFilter] = useState(24);
+  const [timeFilter, setTimeFilter] = useState(24 * 30);
   const [extractions, setExtractions] = useState<Extraction[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -904,7 +914,7 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
 // ── All Feeds Content ────────────────────────────────────────────────
 
 function AllFeedsContent({ feeds }: { feeds: FeedInfo[] }) {
-  const [timeFilter, setTimeFilter] = useState(24);
+  const [timeFilter, setTimeFilter] = useState(24 * 30);
   const [extractions, setExtractions] = useState<Extraction[]>([]);
   const [loading, setLoading] = useState(true);
 
