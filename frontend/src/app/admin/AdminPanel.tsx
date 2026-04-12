@@ -563,6 +563,57 @@ function RetranscribeForm({
   );
 }
 
+// ── Inline Verify Play Button (for LLM prediction row) ──────────────
+
+function VerifyPlayButton({ extraction }: { extraction: Extraction }) {
+  const [playing, setPlaying] = useState(false);
+  const [error, setError] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const clipId = extraction.variants?.[0]?.audio_clip ?? extraction.raw_audio_clip;
+  const endpoint = extraction.variants?.[0]?.audio_clip ? "audio" : "audio-raw";
+  const audioUrl = clipId ? `${API_BASE}/api/${endpoint}/${clipId}` : null;
+
+  const toggle = () => {
+    if (!audioUrl) { setError(true); return; }
+    if (!audioRef.current) {
+      const a = new Audio(audioUrl);
+      a.addEventListener("ended", () => setPlaying(false));
+      a.addEventListener("error", () => { setPlaying(false); setError(true); });
+      audioRef.current = a;
+    }
+    if (playing) {
+      audioRef.current.pause();
+      setPlaying(false);
+    } else {
+      setError(false);
+      audioRef.current.play().catch(() => { setPlaying(false); setError(true); });
+      setPlaying(true);
+    }
+  };
+
+  useEffect(() => () => { audioRef.current?.pause(); }, []);
+
+  if (!clipId) return null;
+
+  return (
+    <button
+      onClick={toggle}
+      className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
+        error
+          ? "bg-red-500/15 text-red-400"
+          : playing
+            ? "bg-blue-500/20 text-blue-400"
+            : "bg-white/5 hover:bg-white/10 text-gray-400 hover:text-gray-300"
+      }`}
+      title={error ? "Audio unavailable" : playing ? "Pause verification audio" : "Play audio to verify prediction"}
+    >
+      {playing ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+      <span>{error ? "Unavailable" : playing ? "Playing" : "Verify"}</span>
+    </button>
+  );
+}
+
 // ── Extraction Card ──────────────────────────────────────────────────
 
 function ExtractionCard({
@@ -778,13 +829,16 @@ function ExtractionCard({
               </div>
             ) : null}
 
-            <button
-              onClick={runPredict}
-              disabled={predicting}
-              className="ml-auto px-2 py-0.5 rounded text-[10px] font-medium bg-purple-500/15 text-purple-400 hover:bg-purple-500/25 transition-colors disabled:opacity-50"
-            >
-              {predicting ? "Running..." : "Re-run"}
-            </button>
+            <div className="ml-auto flex items-center gap-2">
+              <VerifyPlayButton extraction={extraction} />
+              <button
+                onClick={runPredict}
+                disabled={predicting}
+                className="px-2 py-0.5 rounded text-[10px] font-medium bg-purple-500/15 text-purple-400 hover:bg-purple-500/25 transition-colors disabled:opacity-50"
+              >
+                {predicting ? "Running..." : "Re-run"}
+              </button>
+            </div>
           </>
         ) : (
           <>
