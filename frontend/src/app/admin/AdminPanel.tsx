@@ -647,8 +647,22 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      {/* Live audio player */}
-      <LiveAudioHeader feed={feed} />
+      {/* Feed title */}
+      <div
+        className="flex items-center gap-2 px-4 py-2.5 shrink-0"
+        style={{
+          background: "var(--panel-input-bg, rgba(255,255,255,0.04))",
+          borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.08))",
+        }}
+      >
+        <Radio className="w-4 h-4 text-blue-400" />
+        <span className="text-sm font-medium" style={{ color: "var(--panel-text)" }}>
+          {feed.label}
+        </span>
+        <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+          Feed {feed.feed_id}
+        </span>
+      </div>
 
       {/* Date range filter */}
       <div
@@ -698,6 +712,79 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
         ))}
       </div>
     </div>
+  );
+}
+
+// ── Sidebar Feed Item (with inline live play button) ────────────────
+
+function SidebarFeedItem({
+  feed,
+  isActive,
+  hasActivity,
+  onClick,
+}: {
+  feed: FeedInfo;
+  isActive: boolean;
+  hasActivity: boolean;
+  onClick: () => void;
+}) {
+  const [playing, setPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const togglePlay = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!audioRef.current) {
+      const a = new Audio(`${API_BASE}/api/admin/stream/${feed.feed_id}`);
+      a.addEventListener("ended", () => setPlaying(false));
+      a.addEventListener("error", () => setPlaying(false));
+      audioRef.current = a;
+    }
+    if (playing) {
+      audioRef.current.pause();
+      setPlaying(false);
+    } else {
+      audioRef.current.play().catch(() => setPlaying(false));
+      setPlaying(true);
+    }
+  };
+
+  useEffect(() => () => { audioRef.current?.pause(); }, []);
+
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-all ${
+        isActive ? "bg-blue-500/10" : "hover:bg-white/5"
+      }`}
+      style={{
+        borderLeft: isActive ? "3px solid #3b82f6" : "3px solid transparent",
+      }}
+    >
+      {hasActivity && (
+        <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />
+      )}
+      <span
+        className="text-[11px] font-medium truncate flex-1"
+        style={{
+          color: isActive
+            ? "var(--panel-text, #e5e7eb)"
+            : "var(--panel-text-muted, #6b7280)",
+        }}
+      >
+        {feed.label}
+      </span>
+      <button
+        onClick={togglePlay}
+        className={`shrink-0 p-1 rounded transition-all ${
+          playing
+            ? "bg-blue-500 text-white"
+            : "bg-white/5 hover:bg-white/10 text-gray-500 hover:text-gray-300"
+        }`}
+        title={playing ? "Pause live stream" : "Play live stream"}
+      >
+        {playing ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+      </button>
+    </button>
   );
 }
 
@@ -772,60 +859,56 @@ export default function AdminPanel({ onBack }: Props) {
         </div>
       </div>
 
-      {/* Tab bar */}
-      <div
-        className="flex items-center gap-0.5 px-2 shrink-0 overflow-x-auto"
-        style={{
-          background: "var(--panel-bg, rgba(15,15,25,0.95))",
-          borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.08))",
-        }}
-      >
-        {feeds.map((feed) => {
-          const isActive = feed.feed_id === activeTab;
-          const hasActivity = activeFeedIds.has(feed.feed_id);
-          return (
-            <button
+      {/* Body: sidebar + content */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left sidebar: feed list */}
+        <div
+          className="w-56 shrink-0 flex flex-col overflow-y-auto"
+          style={{
+            background: "var(--panel-bg, rgba(15,15,25,0.95))",
+            borderRight: "1px solid var(--panel-border, rgba(255,255,255,0.08))",
+          }}
+        >
+          <div
+            className="px-3 py-2 text-[9px] font-bold uppercase tracking-wider shrink-0"
+            style={{
+              color: "var(--panel-text-muted)",
+              borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.06))",
+            }}
+          >
+            Feeds
+          </div>
+          {feeds.map((feed) => (
+            <SidebarFeedItem
               key={feed.feed_id}
+              feed={feed}
+              isActive={feed.feed_id === activeTab}
+              hasActivity={activeFeedIds.has(feed.feed_id)}
               onClick={() => setActiveTab(feed.feed_id)}
-              className={`relative flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap transition-all border-b-2 ${
-                isActive
-                  ? "border-blue-500"
-                  : "border-transparent hover:border-white/10"
-              }`}
-              style={{
-                color: isActive
-                  ? "var(--panel-text, #e5e7eb)"
-                  : "var(--panel-text-muted, #6b7280)",
-              }}
-            >
-              {hasActivity && (
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-              )}
-              {feed.label}
-            </button>
-          );
-        })}
-        {feeds.length === 0 && (
-          <div className="px-3 py-2 text-xs" style={{ color: "var(--panel-text-muted)" }}>
-            No feeds available. Check API connection.
-          </div>
-        )}
-      </div>
-
-      {/* Tab content */}
-      <div className="flex-1 flex flex-col overflow-hidden" style={{ background: "rgba(15,15,25,0.6)" }}>
-        {activeFeed ? (
-          <FeedTabContent key={activeFeed.feed_id} feed={activeFeed} />
-        ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <AlertTriangle className="w-8 h-8 mx-auto mb-3 text-yellow-500/50" />
-              <p className="text-sm" style={{ color: "var(--panel-text-muted)" }}>
-                Select a feed tab to view extractions
-              </p>
+            />
+          ))}
+          {feeds.length === 0 && (
+            <div className="px-3 py-4 text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+              No feeds available. Check API connection.
             </div>
-          </div>
-        )}
+          )}
+        </div>
+
+        {/* Main content */}
+        <div className="flex-1 flex flex-col overflow-hidden" style={{ background: "rgba(15,15,25,0.6)" }}>
+          {activeFeed ? (
+            <FeedTabContent key={activeFeed.feed_id} feed={activeFeed} />
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center">
+                <AlertTriangle className="w-8 h-8 mx-auto mb-3 text-yellow-500/50" />
+                <p className="text-sm" style={{ color: "var(--panel-text-muted)" }}>
+                  Select a feed to view extractions
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
