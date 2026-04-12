@@ -317,7 +317,7 @@ export default function SearchBar({
           onRoutesChange(null);
           setPreviewRoute(null);
           setRouteError(
-            "Could not load a street route. Start the PhillyPulse API (e.g. port 8765) or set NEXT_PUBLIC_API_URL."
+            "Could not load a street route. Check your network or try another mode."
           );
           return;
         }
@@ -381,7 +381,7 @@ export default function SearchBar({
       let directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
       if (!directRoute) {
         setRouteError(
-          "Could not calculate route. Start the API on port 8765 or set NEXT_PUBLIC_API_URL to your backend."
+          "Could not calculate route. Check your connection or try again."
         );
         return;
       }
