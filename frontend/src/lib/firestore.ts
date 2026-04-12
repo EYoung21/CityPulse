@@ -17,7 +17,12 @@ const MAX_DOCS = 5000;
 function toISOString(val: unknown): string {
   if (!val) return new Date().toISOString();
   if (typeof val === "string") {
-    const d = new Date(val);
+    let s = val;
+    // Treat timezone-naive ISO strings as UTC (server stores UTC without Z)
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s) && !s.endsWith("Z") && !/[+-]\d{2}:?\d{2}$/.test(s)) {
+      s += "Z";
+    }
+    const d = new Date(s);
     return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
   }
   if (typeof val === "object" && val !== null && "toDate" in val && typeof (val as { toDate: () => Date }).toDate === "function") {
