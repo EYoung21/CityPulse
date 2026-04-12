@@ -846,6 +846,80 @@ function AllFeedsContent({ feeds }: { feeds: FeedInfo[] }) {
   );
 }
 
+// ── All Feeds Sidebar Item (plays every stream at once) ─────────────
+
+function AllFeedsSidebarItem({
+  feeds,
+  isActive,
+  onClick,
+}: {
+  feeds: FeedInfo[];
+  isActive: boolean;
+  onClick: () => void;
+}) {
+  const [playing, setPlaying] = useState(false);
+  const audiosRef = useRef<HTMLAudioElement[]>([]);
+
+  const togglePlayAll = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (playing) {
+      audiosRef.current.forEach((a) => a.pause());
+      audiosRef.current = [];
+      setPlaying(false);
+    } else {
+      audiosRef.current.forEach((a) => a.pause());
+      const elements = feeds.map((f) => {
+        const a = new Audio(`${API_BASE}/api/admin/stream/${f.feed_id}`);
+        a.addEventListener("error", () => {});
+        a.play().catch(() => {});
+        return a;
+      });
+      audiosRef.current = elements;
+      setPlaying(true);
+    }
+  };
+
+  useEffect(() => () => {
+    audiosRef.current.forEach((a) => a.pause());
+  }, []);
+
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition-all ${
+        isActive ? "bg-blue-500/10" : "hover:bg-white/5"
+      }`}
+      style={{
+        borderLeft: isActive ? "3px solid #3b82f6" : "3px solid transparent",
+        borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.06))",
+      }}
+    >
+      <Layers className="w-3.5 h-3.5 shrink-0" style={{ color: isActive ? "#3b82f6" : "var(--panel-text-muted)" }} />
+      <span
+        className="text-[11px] font-semibold flex-1"
+        style={{
+          color: isActive
+            ? "var(--panel-text, #e5e7eb)"
+            : "var(--panel-text-muted, #6b7280)",
+        }}
+      >
+        All Feeds
+      </span>
+      <button
+        onClick={togglePlayAll}
+        className={`shrink-0 p-1 rounded transition-all ${
+          playing
+            ? "bg-red-500 text-white"
+            : "bg-white/5 hover:bg-white/10 text-gray-500 hover:text-gray-300"
+        }`}
+        title={playing ? "Stop all streams" : "Play ALL streams simultaneously"}
+      >
+        {playing ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+      </button>
+    </button>
+  );
+}
+
 // ── Sidebar Feed Item (with inline live play button) ────────────────
 
 function SidebarFeedItem({
@@ -993,28 +1067,11 @@ export default function AdminPanel({ onBack }: Props) {
           }}
         >
           {/* All Feeds tab */}
-          <button
+          <AllFeedsSidebarItem
+            feeds={feeds}
+            isActive={activeTab === ALL_TAB}
             onClick={() => setActiveTab(ALL_TAB)}
-            className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition-all ${
-              activeTab === ALL_TAB ? "bg-blue-500/10" : "hover:bg-white/5"
-            }`}
-            style={{
-              borderLeft: activeTab === ALL_TAB ? "3px solid #3b82f6" : "3px solid transparent",
-              borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.06))",
-            }}
-          >
-            <Layers className="w-3.5 h-3.5 shrink-0" style={{ color: activeTab === ALL_TAB ? "#3b82f6" : "var(--panel-text-muted)" }} />
-            <span
-              className="text-[11px] font-semibold"
-              style={{
-                color: activeTab === ALL_TAB
-                  ? "var(--panel-text, #e5e7eb)"
-                  : "var(--panel-text-muted, #6b7280)",
-              }}
-            >
-              All Feeds
-            </span>
-          </button>
+          />
 
           {/* Per-feed items */}
           <div
