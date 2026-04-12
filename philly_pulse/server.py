@@ -17,24 +17,6 @@ from pydantic import BaseModel
 
 from . import admin_events, geocode, inhibitor, llm, persistence as store, weights
 
-# District centroid fallback coordinates (approximate geographic center of each PPD/PFD area)
-DISTRICT_CENTROIDS: dict[str, tuple[float, float]] = {
-    "4603":  (39.9526, -75.1652),   # PPD Citywide — center city
-    "17310": (39.9526, -75.1652),   # PPD Central — center city
-    "21297": (39.9870, -75.1190),   # PPD East — Kensington/Frankford
-    "45495": (40.0450, -75.0550),   # PPD Northeast — NE Philly
-    "18836": (40.0350, -75.1750),   # PPD Northwest — Germantown/Mt Airy
-    "15102": (39.9230, -75.1700),   # PPD South — S Philly
-    "15195": (39.9550, -75.2300),   # PPD Southwest/West — W Philly
-    "34250": (39.9230, -75.1700),   # PFD South Fire/Medics — S Philly
-    "15747": (40.0200, -75.1500),   # PFD North Fire — N Philly
-    "44308": (39.9526, -75.1652),   # SEPTA Transit Police — citywide
-    "13975": (39.9526, -75.1652),   # SEPTA Regional Rail — citywide
-    "13951": (40.0800, -75.0200),   # PA Turnpike Police East
-    "36323": (39.9160, -75.3900),   # Delaware Co Police Dispatch
-    "20795": (39.9400, -75.1000),   # Camden Co Fire/EMS Digital
-}
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -364,12 +346,6 @@ async def ingest(req: IngestRequest):
         lat, lng = llm_lat, llm_lng
         geocode_status = "llm_fallback"
 
-    # Tier 3: district centroid fallback when no location at all
-    if lat is None and lng is None and feed_id in DISTRICT_CENTROIDS:
-        lat, lng = DISTRICT_CENTROIDS[feed_id]
-        geocode_status = "district_centroid"
-        location_confidence = "district"
-
     await admin_events.broadcast({
         "type": "geocode_result",
         "correlation": correlation,
@@ -380,36 +356,39 @@ async def ingest(req: IngestRequest):
         "location_confidence": location_confidence,
     })
 
-    # Store incident
-    incident = store.insert_incident(
-        raw_text=req.text,
-        severity_category=category,
-        s_base=s_base,
-        confidence=confidence,
-        location_text=location_text,
-        lat=lat,
-        lng=lng,
-        geocode_status=geocode_status,
-        location_confidence=location_confidence,
-        inhibitor_status=inh.status,
-        inhibitor_reason=inh.reason,
-        reported_at=req.timestamp,
-        audio_clip=req.audio_clip,
-        feed_id=feed_id,
-    )
+    # Only create an incident if we have a real location (Tier 1 or 2)
+    incident_id = None
+    if lat is not None and lng is not None:
+        incident = store.insert_incident(
+            raw_text=req.text,
+            severity_category=category,
+            s_base=s_base,
+            confidence=confidence,
+            location_text=location_text,
+            lat=lat,
+            lng=lng,
+            geocode_status=geocode_status,
+            location_confidence=location_confidence,
+            inhibitor_status=inh.status,
+            inhibitor_reason=inh.reason,
+            reported_at=req.timestamp,
+            audio_clip=req.audio_clip,
+            feed_id=feed_id,
+        )
+        incident_id = incident["id"]
 
-    await admin_events.broadcast({
-        "type": "incident_stored",
-        "correlation": correlation,
-        "feed_id": feed_id,
-        "outcome": "created",
-        "incident_id": incident["id"],
-        "category": category,
-        "confidence": confidence,
-        "location_text": location_text,
-        "lat": lat,
-        "lng": lng,
-    })
+        await admin_events.broadcast({
+            "type": "incident_stored",
+            "correlation": correlation,
+            "feed_id": feed_id,
+            "outcome": "created",
+            "incident_id": incident_id,
+            "category": category,
+            "confidence": confidence,
+            "location_text": location_text,
+            "lat": lat,
+            "lng": lng,
+        })
 
     store.insert_extraction(
         feed_id=feed_id,
@@ -427,10 +406,12 @@ async def ingest(req: IngestRequest):
         inhibitor_status=inh.status,
         inhibitor_reason=inh.reason,
         geocode_status=geocode_status,
-        incident_id=incident["id"],
+        incident_id=incident_id,
     )
 
-    return {"status": "created", "incident": incident}
+    if incident_id:
+        return {"status": "created", "incident": incident}
+    return {"status": "no_location", "extraction_only": True}
 
 
 @app.get("/api/incidents")
@@ -623,11 +604,6 @@ async def admin_predict(req: PredictRequest):
     elif llm_lat is not None and llm_lng is not None:
         lat, lng = llm_lat, llm_lng
         geocode_status = "llm_fallback"
-
-    if lat is None and lng is None and feed_id in DISTRICT_CENTROIDS:
-        lat, lng = DISTRICT_CENTROIDS[feed_id]
-        geocode_status = "district_centroid"
-        location_confidence = "district"
 
     store.update_extraction(req.extraction_id, {
         "llm_relevant": True,

@@ -70,16 +70,9 @@ export default function IncidentDetail({ incident, onClose }: Props) {
               <h3 className="font-semibold text-sm" style={{ color: "var(--panel-text)" }}>
                 {incident.location_text || "Unknown Location"}
               </h3>
-              {incident.location_confidence && incident.location_confidence !== "direct" && (
-                <span className={`text-[8px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${
-                  incident.location_confidence === "context"
-                    ? "bg-yellow-500/20 text-yellow-500"
-                    : incident.location_confidence === "district"
-                    ? "bg-orange-500/20 text-orange-500"
-                    : "bg-gray-500/20 text-gray-500"
-                }`}>
-                  {incident.location_confidence === "context" ? "Nearby Context" :
-                   incident.location_confidence === "district" ? "District Approx." : "No Location"}
+              {incident.location_confidence === "context" && (
+                <span className="text-[8px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-500">
+                  Nearby Context
                 </span>
               )}
             </div>

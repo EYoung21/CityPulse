@@ -1,6 +1,6 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
-export type LocationConfidence = "direct" | "context" | "district" | "none";
+export type LocationConfidence = "direct" | "context" | "none";
 
 export interface Incident {
   id: string;
