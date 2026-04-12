@@ -28,6 +28,7 @@ import SafetyScoreCard from "@/components/SafetyScoreCard";
 import AlertToast from "@/components/AlertToast";
 import IncidentDetail from "@/components/IncidentDetail";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
+import DistrictCard from "@/components/DistrictCard";
 import type { MapHandle, WaypointPin } from "@/components/IncidentMap";
 import {
   fetchIncidents,
@@ -42,7 +43,7 @@ import { isFirebaseConfigured } from "@/lib/firebase";
 import { subscribeIncidents } from "@/lib/firestore";
 import { enrichIncidents } from "@/lib/incident-weights";
 import { buildLocalSummary } from "@/lib/local-summary";
-import { getNeighborhood } from "@/lib/neighborhoods";
+import { getNeighborhood, NEIGHBORHOODS, type Neighborhood } from "@/lib/neighborhoods";
 import { assessSafety } from "@/lib/search";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -121,12 +122,14 @@ export default function Home() {
   const [showAbout, setShowAbout] = useState(false);
   const [showLayers, setShowLayers] = useState(false);
   const [heatmapEnabled, setHeatmapEnabled] = useState(true);
+  const [districtsEnabled, setDistrictsEnabled] = useState(false);
   const [showTheme, setShowTheme] = useState(false);
   const [tripProgress, setTripProgress] = useState(0);
   const [gpsStatus, setGpsStatus] = useState<"idle" | "loading" | "found" | "denied">("idle");
   const [routeDemoSimActive, setRouteDemoSimActive] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [selectedDistrict, setSelectedDistrict] = useState<{ neighborhood: Neighborhood; incidents: Incident[] } | null>(null);
   const mapRef = useRef<MapHandle>(null);
 
   const routeGeometryForDemo =
@@ -256,6 +259,8 @@ export default function Home() {
         liveTripGps={gpsStatus === "found" || routeDemoSimActive}
         timeFilterHours={timeFilter}
         heatmapDemoBoost={routeDemoSimActive}
+        districtsEnabled={districtsEnabled}
+        onDistrictClick={(n, incs) => setSelectedDistrict({ neighborhood: n, incidents: incs })}
       />
 
       {/* Mobile hamburger */}
@@ -463,6 +468,19 @@ export default function Home() {
                     <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${heatmapEnabled ? "left-4" : "left-0.5"}`} />
                   </div>
                 </button>
+                <button
+                  onClick={() => setDistrictsEnabled(!districtsEnabled)}
+                  className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
+                  style={{ color: "var(--panel-text-secondary)" }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                >
+                  <span>Districts</span>
+                  <div className={`w-8 h-4 rounded-full transition-colors relative ${districtsEnabled ? "bg-blue-500" : ""}`}
+                    style={!districtsEnabled ? { background: "var(--panel-input-bg)" } : {}}>
+                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${districtsEnabled ? "left-4" : "left-0.5"}`} />
+                  </div>
+                </button>
               </motion.div>
             )}
           </AnimatePresence>
@@ -602,6 +620,34 @@ export default function Home() {
               areaIncidents={analyticsAreaIncidents}
               areaName={analyticsAreaName}
               onClose={() => setShowAnalytics(false)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* District Stats Card */}
+      <AnimatePresence>
+        {selectedDistrict && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="absolute bottom-16 left-3 md:left-[396px] z-[1000] w-80 max-w-[calc(100vw-1.5rem)]"
+          >
+            <DistrictCard
+              neighborhood={selectedDistrict.neighborhood}
+              incidents={selectedDistrict.incidents}
+              color={(() => {
+                const DISTRICT_COLORS = [
+                  "#22c55e", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6",
+                  "#ec4899", "#14b8a6", "#f97316", "#06b6d4", "#a3e635",
+                  "#e879f9", "#fb923c", "#34d399", "#818cf8", "#fbbf24",
+                  "#f87171", "#2dd4bf", "#c084fc", "#4ade80", "#38bdf8",
+                ];
+                const idx = NEIGHBORHOODS.findIndex((n) => n.slug === selectedDistrict.neighborhood.slug);
+                return DISTRICT_COLORS[idx >= 0 ? idx % DISTRICT_COLORS.length : 0];
+              })()}
+              onClose={() => setSelectedDistrict(null)}
             />
           </motion.div>
         )}
