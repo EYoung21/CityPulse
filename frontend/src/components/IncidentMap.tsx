@@ -219,8 +219,8 @@ function createIncidentGlyphIcon(
   const kind = resolveBlipKind(inc);
   const mc = monoColor(kind);
   const w = Number.isFinite(wEff) ? wEff : 0.5;
-  const base = Math.round(24 + w * 8);
-  const box = Math.ceil(base * 1.25);
+  const base = Math.round(22 + w * 6);
+  const box = Math.ceil(base * 1.2);
   const half = box / 2;
   const opacity = greyed ? 0.28 : Math.max(0.88, Math.min(1, 0.75 + w * 0.25));
   const filt = greyed
@@ -799,11 +799,12 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }).addTo(map);
 
     markersRef.current = L.markerClusterGroup({
-      maxClusterRadius: 80,
+      maxClusterRadius: 60,
       spiderfyOnMaxZoom: true,
+      spiderfyDistanceMultiplier: 1.8,
       showCoverageOnHover: false,
       zoomToBoundsOnClick: true,
-      disableClusteringAtZoom: 18,
+      disableClusteringAtZoom: 16,
       iconCreateFunction: (cluster: L.MarkerCluster) => {
         const count = cluster.getChildCount();
         let size = 32;
