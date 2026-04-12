@@ -228,6 +228,7 @@ export default function Home() {
         onTripProgress={setTripProgress}
         liveTripGps={gpsStatus === "found" || routeDemoSimActive}
         timeFilterHours={timeFilter}
+        heatmapDemoBoost={routeDemoSimActive}
       />
 
       {/* === LEFT SIDEBAR === */}
