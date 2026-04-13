@@ -158,7 +158,10 @@ export default function Home() {
   const [gpsStatus, setGpsStatus] = useState<"idle" | "loading" | "found" | "denied">("idle");
   const [routeDemoSimActive, setRouteDemoSimActive] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.innerWidth >= 768;
+  });
   const [selectedDistrict, setSelectedDistrict] = useState<{ neighborhood: Neighborhood; incidents: Incident[] } | null>(null);
   const [clusterIncidentIds, setClusterIncidentIds] = useState<string[] | null>(null);
   const [showUpgrade, setShowUpgrade] = useState<string | null>(null);
@@ -383,7 +386,7 @@ export default function Home() {
         ref={mapRef}
         incidents={filteredIncidents}
         selectedId={selectedId}
-        onSelectIncident={(id) => { setMapTap(null); setSelectedId(id); }}
+        onSelectIncident={(id) => { setMapTap(null); setSelectedId(id); if (window.innerWidth < 768) setSidebarOpen(false); }}
         routes={routes}
         onMapTap={(lat, lng) => { setSelectedId(null); setMapTap({ lat, lng }); }}
         mapTapActive={mapTap !== null}
@@ -404,11 +407,18 @@ export default function Home() {
         onClusterClick={(ids) => { setSelectedId(null); setClusterIncidentIds(ids); }}
       />
 
-      {/* Mobile hamburger */}
+      {/* Mobile sidebar toggle */}
       <button
         onClick={() => setSidebarOpen(!sidebarOpen)}
-        className="md:hidden fixed top-3 left-3 z-[2001] w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg"
-        style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)", color: "var(--pill-text)" }}
+        className="md:hidden fixed z-[2001] w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg"
+        style={{
+          background: "var(--pill-bg)",
+          border: "1px solid var(--pill-border)",
+          color: "var(--pill-text)",
+          bottom: sidebarOpen ? "calc(55vh + 0.5rem)" : "1rem",
+          left: "0.75rem",
+          transition: "bottom 0.3s ease",
+        }}
       >
         {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
       </button>
@@ -445,13 +455,13 @@ export default function Home() {
       </div>
 
       {/* Top category pills */}
-      <div className="absolute top-3 left-0 md:left-[396px] right-3 z-[999] pointer-events-none max-md:pl-14">
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pointer-events-auto">
+      <div className="absolute top-3 left-3 md:left-[396px] right-3 z-[999] pointer-events-none">
+        <div className="flex flex-col gap-1.5 md:flex-row md:items-center md:gap-2 overflow-x-auto no-scrollbar pointer-events-auto">
           <div
             className="flex items-center rounded-full overflow-hidden shadow-lg shrink-0 backdrop-blur-md"
             style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)" }}
           >
-            <Clock className="w-3.5 h-3.5 ml-3" style={{ color: "var(--panel-text-muted)" }} />
+            <Clock className="w-3.5 h-3.5 ml-2 md:ml-3 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
             {TIME_FILTERS.map((tf) => {
               const locked = tf.pro && !isPro;
               return (
@@ -461,7 +471,7 @@ export default function Home() {
                     if (locked) { setShowUpgrade("Extended History"); return; }
                     setTimeFilter(tf.hours);
                   }}
-                  className={`px-2 md:px-3 py-2 text-xs font-medium transition-all relative ${
+                  className={`px-1.5 md:px-3 py-1.5 md:py-2 text-[10px] md:text-xs font-medium transition-all relative ${
                     timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
                   } ${locked ? "opacity-50" : ""}`}
                   style={timeFilter !== tf.hours ? { color: locked ? "var(--panel-text-muted)" : "var(--pill-text)" } : {}}
@@ -474,48 +484,50 @@ export default function Home() {
             })}
           </div>
 
-          <div className="w-px h-6 shrink-0 hidden md:block" style={{ background: "var(--pill-border)" }} />
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+            <div className="w-px h-6 shrink-0 hidden md:block" style={{ background: "var(--pill-border)" }} />
 
-          <button
-            onClick={() => setActiveCats(new Set())}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
-              activeCats.size === 0 ? "bg-blue-500/15 text-blue-500 ring-1 ring-blue-500/30" : "opacity-70 hover:opacity-100"
-            }`}
-            style={activeCats.size > 0 ? { background: "var(--pill-bg)", border: "1px solid var(--pill-border)", color: "var(--pill-text)" } : { background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.3)" }}
-          >
-            All
-          </button>
+            <button
+              onClick={() => setActiveCats(new Set())}
+              className={`flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 md:py-2 rounded-full text-[10px] md:text-xs font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
+                activeCats.size === 0 ? "bg-blue-500/15 text-blue-500 ring-1 ring-blue-500/30" : "opacity-70 hover:opacity-100"
+              }`}
+              style={activeCats.size > 0 ? { background: "var(--pill-bg)", border: "1px solid var(--pill-border)", color: "var(--pill-text)" } : { background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.3)" }}
+            >
+              All
+            </button>
 
-          {CATEGORY_PILLS.map((pill) => {
-            const Icon = pill.icon;
-            const isActive = pill.cats.some((c) => activeCats.has(c));
-            const count = filteredIncidents.filter(i => (pill.cats as readonly string[]).includes(i.severity_category)).length;
-            return (
-              <button
-                key={pill.label}
-                onClick={() => toggleCat(pill.cats)}
-                className={`flex items-center gap-2 px-3 py-2 rounded-full text-xs font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
-                  isActive ? "ring-1" : "opacity-70 hover:opacity-100"
-                }`}
-                style={{
-                  background: isActive ? pill.color + "18" : "var(--pill-bg)",
-                  border: `1px solid ${isActive ? pill.color + "40" : "var(--pill-border)"}`,
-                  color: isActive ? pill.color : "var(--pill-text)",
-                }}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                <span className="hidden md:inline">{pill.label}</span>
-                {count > 0 && (
-                  <span className="text-[10px] font-mono" style={{ opacity: isActive ? 1 : 0.5 }}>{count}</span>
-                )}
-              </button>
-            );
-          })}
+            {CATEGORY_PILLS.map((pill) => {
+              const Icon = pill.icon;
+              const isActive = pill.cats.some((c) => activeCats.has(c));
+              const count = filteredIncidents.filter(i => (pill.cats as readonly string[]).includes(i.severity_category)).length;
+              return (
+                <button
+                  key={pill.label}
+                  onClick={() => toggleCat(pill.cats)}
+                  className={`flex items-center gap-1.5 md:gap-2 px-2.5 md:px-3 py-1.5 md:py-2 rounded-full text-[10px] md:text-xs font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
+                    isActive ? "ring-1" : "opacity-70 hover:opacity-100"
+                  }`}
+                  style={{
+                    background: isActive ? pill.color + "18" : "var(--pill-bg)",
+                    border: `1px solid ${isActive ? pill.color + "40" : "var(--pill-border)"}`,
+                    color: isActive ? pill.color : "var(--pill-text)",
+                  }}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">{pill.label}</span>
+                  {count > 0 && (
+                    <span className="text-[10px] font-mono" style={{ opacity: isActive ? 1 : 0.5 }}>{count}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
       {/* Bottom-right controls (lifted so map markers under corner overlap UI less) */}
-      <div className="absolute bottom-[4.5rem] max-md:bottom-20 right-3 z-[1001] flex flex-col items-end gap-2 pointer-events-auto">
+      <div className="absolute bottom-[4.5rem] max-md:bottom-3 right-3 z-[1001] flex flex-col items-end gap-1.5 md:gap-2 pointer-events-auto">
         <button
           type="button"
           onClick={goToMyLocation}
@@ -695,7 +707,7 @@ export default function Home() {
       </div>
 
       {/* Bottom status bar */}
-      <div className="absolute bottom-0 left-0 md:left-[380px] right-0 z-[998] pointer-events-none">
+      <div className="absolute bottom-0 left-0 md:left-[380px] right-0 z-[998] pointer-events-none hidden md:block">
         <div
           className="flex items-center justify-between px-4 py-2 backdrop-blur-md"
           style={{ background: "var(--status-bg)", borderTop: "1px solid var(--status-border)" }}
@@ -803,7 +815,7 @@ export default function Home() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-16 left-3 md:left-[396px] z-[1000] w-80 max-w-[calc(100vw-1.5rem)]"
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[396px] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
           >
             <SafetyScoreCard
               lat={mapTap.lat}
@@ -822,7 +834,7 @@ export default function Home() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-16 left-3 md:left-[396px] z-[1000] w-96 max-w-[calc(100vw-1.5rem)]"
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[396px] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
           >
             <AnalyticsPanel
               incidents={filteredIncidents}
@@ -841,7 +853,7 @@ export default function Home() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-16 left-3 md:left-[396px] z-[1000] w-80 max-w-[calc(100vw-1.5rem)]"
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[396px] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
           >
             <DistrictCard
               neighborhood={selectedDistrict.neighborhood}
@@ -869,7 +881,7 @@ export default function Home() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-16 left-3 md:left-[396px] z-[1000] w-96 max-w-[calc(100vw-1.5rem)]"
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[396px] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
           >
             <ClusterListPanel
               incidents={clusterIncidents}
@@ -887,7 +899,7 @@ export default function Home() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-16 left-3 md:left-[396px] z-[1000] w-96 max-w-[calc(100vw-1.5rem)]"
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[396px] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
           >
             <IncidentDetail
               incident={selected}
