@@ -29,12 +29,9 @@ feeds:
   - { feed_id: "45707", label: "Hamilton County Sheriff" }
   - { feed_id: "44571", label: "Hamilton County Public Safety" }
   - { feed_id: "21572", label: "Hamilton County Fire Departments" }
-  - { feed_id: "45812", label: "Chattanooga Airport Public Safety" }
   - { feed_id: "45601", label: "East Ridge Public Safety" }
-  - { feed_id: "45705", label: "Lookout Mountain Police/Fire" }
   - { feed_id: "45706", label: "Soddy Daisy Police/Fire" }
   - { feed_id: "29255", label: "TN Highway Patrol Dist 2 - Chattanooga" }
-  - { feed_id: "25063", label: "Tri-Community Volunteer Fire" }
 
 tuning:
   initial_prompt: >-

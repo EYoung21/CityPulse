@@ -4,8 +4,6 @@ city:
 feeds:
   - feed_id: "46336"
     label: "DPD All Divisions"
-  - feed_id: "5318"
-    label: "DPD Central"
   - feed_id: "2681"
     label: "Dallas Fire/Rescue"
 
