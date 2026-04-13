@@ -1,20 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2026-03-25.dahlia",
-});
-
-const PRICE_IDS: Record<string, string | undefined> = {
-  monthly: process.env.STRIPE_PRICE_MONTHLY,
-  annual: process.env.STRIPE_PRICE_ANNUAL,
-};
+function getStripe() {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error("STRIPE_SECRET_KEY not configured");
+  return new Stripe(key, { apiVersion: "2026-03-25.dahlia" });
+}
 
 export async function POST(req: NextRequest) {
   try {
+    const stripe = getStripe();
+
     const { plan, uid, email } = await req.json();
 
-    const priceId = PRICE_IDS[plan];
+    const priceId = plan === "monthly"
+      ? process.env.STRIPE_PRICE_MONTHLY
+      : plan === "annual"
+        ? process.env.STRIPE_PRICE_ANNUAL
+        : undefined;
     if (!priceId) {
       return NextResponse.json({ error: "Invalid plan" }, { status: 400 });
     }
