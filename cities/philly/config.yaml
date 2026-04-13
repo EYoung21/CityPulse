@@ -1,0 +1,56 @@
+# PhillyPulse — Philadelphia, PA
+# This is the reference config; values migrated from the root config.yaml.
+
+city:
+  name: "Philadelphia"
+  short: "PHL"
+  slug: "philly"
+  domain: "phlpulse.com"
+  region: "Philadelphia, PA"
+  tagline: "Google Maps tells you the fastest way. PhillyPulse tells you the safest."
+
+map:
+  center_lat: 39.9526
+  center_lng: -75.1652
+  default_zoom: 12
+
+geocode:
+  viewbox: "-75.28,39.87,-74.96,40.14"
+  bounds:
+    lat_min: 39.85
+    lat_max: 40.15
+    lng_min: -75.30
+    lng_max: -74.94
+  suffix: ", Philadelphia, PA"
+
+feeds:
+  - { feed_id: "4603",  label: "PPD Citywide" }
+  - { feed_id: "17310", label: "PPD Central" }
+  - { feed_id: "21297", label: "PPD East" }
+  - { feed_id: "45495", label: "PPD Northeast" }
+  - { feed_id: "18836", label: "PPD Northwest" }
+  - { feed_id: "15102", label: "PPD South" }
+  - { feed_id: "15195", label: "PPD Southwest/West" }
+  - { feed_id: "34250", label: "PFD South Fire/Medics" }
+  - { feed_id: "15747", label: "PFD North Fire" }
+  - { feed_id: "44308", label: "SEPTA Transit Police" }
+  - { feed_id: "13975", label: "SEPTA Regional Rail" }
+  - { feed_id: "36323", label: "Delaware Co Police Dispatch" }
+  - { feed_id: "46438", label: "DelCo Fire/EMS - Countywide Ops" }
+  - { feed_id: "46435", label: "DelCo Fire - East" }
+  - { feed_id: "46439", label: "DelCo EMS - Countywide Ops" }
+  - { feed_id: "24104", label: "Chester Co Law Enforcement Dispatch" }
+  - { feed_id: "10489", label: "MontCo Fire and EMS - East" }
+  - { feed_id: "25767", label: "MontCo Police, Fire and EMS - Region 3" }
+
+tuning:
+  initial_prompt: >-
+    Philadelphia PA police radio dispatch. PPD districts 1-26. Units: Charlie,
+    David, Edward, Frank, King, Mary, Nora. Locations: Broad St, Market St,
+    Kensington Ave, Germantown Ave, Roosevelt Blvd, Girard Ave, Spring Garden,
+    Fairmount, University City, Center City, North Philly, South Philly, West
+    Philly, Fishtown, Manayunk, Chestnut Hill, Mt Airy, Olney, Frankford.
+    Hospitals: Temple, Jefferson, Penn, Hahnemann, Einstein. Phrases: responding,
+    en route, on location, in service, 10-4, copy, radio, highway, shots fired,
+    person with a gun, robbery in progress, assist officer. Short dispatch.
+    Numbers spoken separately.

@@ -4,6 +4,9 @@ import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Mail, Eye, EyeOff, AlertCircle, CheckCircle2 } from "lucide-react";
 
+const siteName = process.env.NEXT_PUBLIC_SITE_NAME || "PHLPulse";
+const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
+
 type Mode = "login" | "signup";
 
 export default function LoginScreen() {
@@ -105,11 +108,11 @@ export default function LoginScreen() {
         {/* Logo */}
         <div className="text-center space-y-2">
           <div className="flex items-center justify-center gap-3">
-            <img src="/logo.png" alt="PHLPulse" className="w-12 h-12" />
-            <span className="text-2xl font-bold tracking-tight" style={{ color: "var(--panel-text, white)" }}>PHLPulse</span>
+            <img src="/logo.png" alt={siteName} className="w-12 h-12" />
+            <span className="text-2xl font-bold tracking-tight" style={{ color: "var(--panel-text, white)" }}>{siteName}</span>
           </div>
           <p className="text-xs" style={{ color: "var(--panel-text-muted, #666)" }}>
-            AI-Powered Community Safety for Philadelphia
+            AI-Powered Community Safety for {cityName}
           </p>
         </div>
 
