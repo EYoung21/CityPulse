@@ -321,13 +321,17 @@ export default function SearchSidebar({
     <div className="absolute top-0 left-0 bottom-0 z-[1000] flex pointer-events-none">
       <div
         className="w-[380px] h-full flex flex-col pointer-events-auto backdrop-blur-xl shadow-2xl
-                   max-md:fixed max-md:inset-0 max-md:w-full max-md:z-[2000]"
+                   max-md:fixed max-md:bottom-0 max-md:left-0 max-md:right-0 max-md:top-auto max-md:w-full max-md:h-[55vh] max-md:z-[2000] max-md:rounded-t-2xl"
         style={{
           background: "var(--panel-bg)",
           borderRight: "1px solid var(--panel-border)",
           boxShadow: "4px 0 24px var(--panel-shadow)",
         }}
       >
+        {/* Mobile drag handle */}
+        <div className="md:hidden flex justify-center pt-2 pb-1 shrink-0">
+          <div className="w-10 h-1 rounded-full" style={{ background: "var(--panel-text-muted)", opacity: 0.4 }} />
+        </div>
         {view === "search" && (
           <>
             <SearchInput onFlyTo={onFlyTo} onDirections={openDirections} />
