@@ -216,6 +216,16 @@
   100% { transform: scale(2.5); opacity: 0; }
 }
 
+/* Selected incident highlight ring */
+.pp-selected-ring {
+  animation: selected-pulse 1.8s ease-in-out infinite;
+}
+@keyframes selected-pulse {
+  0%   { transform: scale(1);   opacity: 1;   }
+  50%  { transform: scale(1.25); opacity: 0.6; }
+  100% { transform: scale(1);   opacity: 1;   }
+}
+
 /* Expanding rings for live demo vehicle / user (heat-style radiate) */
 @keyframes demo-radial-expand {
   0% {

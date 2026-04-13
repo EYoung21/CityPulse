@@ -759,6 +759,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const trailLayerRef = useRef<L.LayerGroup | null>(null);
   const districtsLayerRef = useRef<L.LayerGroup | null>(null);
   const sonarLayerRef = useRef<L.LayerGroup | null>(null);
+  const selectedHighlightRef = useRef<L.LayerGroup | null>(null);
   /** Avoid map.fitBounds on every live GPS tick when only the origin (A) moves. */
   const previewFitDestRef = useRef<{ lat: number; lng: number } | null>(null);
   const previewFitWaypointsTailRef = useRef<string>("");
@@ -855,6 +856,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     previewLayerRef.current = L.layerGroup().addTo(map);
     trailLayerRef.current = L.layerGroup().addTo(map);
     sonarLayerRef.current = L.layerGroup().addTo(map);
+    selectedHighlightRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
     const setZoomCSSVar = (z: number) => {
@@ -1045,11 +1047,39 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   ]);
 
   useEffect(() => {
+    const highlight = selectedHighlightRef.current;
+    if (highlight) highlight.clearLayers();
+
     if (!selectedId || !mapRef.current) return;
     const inc = incidents.find((i) => i.id === selectedId);
-    if (inc?.lat != null && inc?.lng != null) {
-      flyToOffset(inc.lat, inc.lng, 15);
+    if (inc?.lat == null || inc?.lng == null) return;
+
+    flyToOffset(inc.lat, inc.lng, 15);
+
+    if (highlight) {
+      const kind = resolveBlipKind(inc);
+      const mc = monoColor(kind);
+      const ringSize = 52;
+      const half = ringSize / 2;
+      const ringIcon = L.divIcon({
+        className: "",
+        iconSize: [ringSize, ringSize],
+        iconAnchor: [half, half],
+        html: `<div class="pp-selected-ring" style="
+          width:${ringSize}px;height:${ringSize}px;border-radius:50%;
+          border:2.5px solid ${mc.fill};
+          box-shadow:0 0 12px ${mc.pulse}, 0 0 24px ${mc.pulse};
+          pointer-events:none;
+        "></div>`,
+      });
+      L.marker([inc.lat, inc.lng], {
+        icon: ringIcon,
+        zIndexOffset: 4000,
+        interactive: false,
+      }).addTo(highlight);
     }
+
+    return () => { highlight?.clearLayers(); };
   }, [selectedId, incidents, flyToOffset]);
 
   useEffect(() => {
