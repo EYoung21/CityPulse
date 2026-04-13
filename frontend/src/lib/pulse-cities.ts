@@ -25,6 +25,7 @@ export const PULSE_CITIES: PulseCity[] = [
   { slug: "seattle", name: "Seattle", domain: "206pulse.com", emoji: "☕", lat: 47.6062, lng: -122.3321 },
   { slug: "mountlaurel", name: "Mount Laurel", domain: "856pulse.com", emoji: "🌿", lat: 39.9340, lng: -74.8916 },
   { slug: "frisco", name: "Frisco", domain: "fscpulse.com", emoji: "⛳", lat: 33.1507, lng: -96.8236 },
+  { slug: "dallas", name: "Dallas", domain: "dalpulse.com", emoji: "🤠", lat: 32.7767, lng: -96.7970 },
 ];
 
 /** Get the current city based on NEXT_PUBLIC_CITY_SLUG env var. */
