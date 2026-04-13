@@ -10,14 +10,14 @@ logger = logging.getLogger(__name__)
 
 
 def post_transcript(
-    bridge_url: str,
-    text: str,
-    timestamp: str | None = None,
-    feed_id: str | None = None,
-    audio_clip: str | None = None,
-    raw_audio_clip: str | None = None,
-    preprocess_meta: dict | None = None,
-    variants: list[dict] | None = None,
+    bridge_url,
+    text,
+    timestamp=None,
+    feed_id=None,
+    audio_clip=None,
+    raw_audio_clip=None,
+    preprocess_meta=None,
+    variants=None,
 ):
     """Fire-and-forget POST of a transcript line to the ingest endpoint.
 
@@ -45,7 +45,7 @@ def post_transcript(
             method="POST",
         )
         try:
-            with urlopen(req, timeout=10) as resp:
+            with urlopen(req, timeout=30) as resp:
                 logger.info("Bridge POST %d: %s", resp.status, text[:60])
         except URLError as e:
             logger.warning("Bridge POST failed: %s", e)

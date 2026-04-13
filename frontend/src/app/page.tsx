@@ -26,6 +26,7 @@ import {
   TrendingDown,
   MapPin,
   Radio,
+  Lock,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import SearchSidebar from "@/components/SearchSidebar";
@@ -53,8 +54,12 @@ import { buildLocalSummary } from "@/lib/local-summary";
 import { getNeighborhood, incidentsInNeighborhood, NEIGHBORHOODS, type Neighborhood } from "@/lib/neighborhoods";
 import { assessSafety } from "@/lib/search";
 import Sparkline from "@/components/charts/Sparkline";
+import PulseNetworkNav from "@/components/PulseNetworkNav";
+import { useAuth } from "@/contexts/AuthContext";
+import UpgradePrompt, { ProBadge } from "@/components/UpgradePrompt";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+const CITY_NAME = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
 const WEIGHT_REFRESH_MS = 15000;
 
 function statsFromIncidents(incidents: Incident[]): StatsResponse {
@@ -78,21 +83,21 @@ const CATEGORY_PILLS = [
 ] as const;
 
 const TIME_FILTERS = [
-  { label: "5m", hours: 5 / 60 },
-  { label: "10m", hours: 10 / 60 },
-  { label: "30m", hours: 0.5 },
-  { label: "1h", hours: 1 },
-  { label: "3h", hours: 3 },
-  { label: "6h", hours: 6 },
-  { label: "24h", hours: 24 },
-  { label: "3d", hours: 72 },
-  { label: "1w", hours: 168 },
-  { label: "1mo", hours: 720 },
-  { label: "3mo", hours: 2160 },
-  { label: "6mo", hours: 4320 },
+  { label: "5m", hours: 5 / 60, pro: false },
+  { label: "10m", hours: 10 / 60, pro: false },
+  { label: "30m", hours: 0.5, pro: false },
+  { label: "1h", hours: 1, pro: false },
+  { label: "3h", hours: 3, pro: false },
+  { label: "6h", hours: 6, pro: true },
+  { label: "24h", hours: 24, pro: true },
+  { label: "3d", hours: 72, pro: true },
+  { label: "1w", hours: 168, pro: true },
+  { label: "1mo", hours: 720, pro: true },
+  { label: "3mo", hours: 2160, pro: true },
+  { label: "6mo", hours: 4320, pro: true },
 ] as const;
 
-const FEED_LABELS: Record<string, string> = {
+const DEFAULT_FEED_LABELS: Record<string, string> = {
   "4603": "Citywide",
   "17310": "Central",
   "21297": "East",
@@ -128,6 +133,7 @@ export default function Home() {
   const { mode, resolved, setMode } = useTheme();
   const isDark = resolved === "dark";
   const useFirestoreData = isFirebaseConfigured();
+  const { isPro } = useAuth();
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -155,7 +161,25 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedDistrict, setSelectedDistrict] = useState<{ neighborhood: Neighborhood; incidents: Incident[] } | null>(null);
   const [clusterIncidentIds, setClusterIncidentIds] = useState<string[] | null>(null);
+  const [showUpgrade, setShowUpgrade] = useState<string | null>(null);
+  const [feedLabels, setFeedLabels] = useState<Record<string, string>>(DEFAULT_FEED_LABELS);
   const mapRef = useRef<MapHandle>(null);
+
+  useEffect(() => {
+    const url = `${API_BASE}/api/admin/feeds`;
+    fetch(url)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.feeds && Array.isArray(data.feeds)) {
+          const labels: Record<string, string> = {};
+          for (const f of data.feeds) {
+            if (f.feed_id && f.label) labels[f.feed_id] = f.label;
+          }
+          if (Object.keys(labels).length > 0) setFeedLabels(labels);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const goToMyLocation = useCallback(() => {
     if (userLocation) {
@@ -333,8 +357,8 @@ export default function Home() {
     }
     return Array.from(feedCounts.entries())
       .sort((a, b) => b[1] - a[1])
-      .map(([id, count]) => ({ id, label: FEED_LABELS[id] || id, count }));
-  }, [filteredIncidents]);
+      .map(([id, count]) => ({ id, label: feedLabels[id] || id, count }));
+  }, [filteredIncidents, feedLabels]);
 
   const analyticsAreaName = mapTap
     ? getNeighborhood(mapTap.lat, mapTap.lng)?.name
@@ -428,18 +452,26 @@ export default function Home() {
             style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)" }}
           >
             <Clock className="w-3.5 h-3.5 ml-3" style={{ color: "var(--panel-text-muted)" }} />
-            {TIME_FILTERS.map((tf) => (
-              <button
-                key={tf.label}
-                onClick={() => setTimeFilter(tf.hours)}
-                className={`px-2 md:px-3 py-2 text-xs font-medium transition-all ${
-                  timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
-                }`}
-                style={timeFilter !== tf.hours ? { color: "var(--pill-text)" } : {}}
-              >
-                {tf.label}
-              </button>
-            ))}
+            {TIME_FILTERS.map((tf) => {
+              const locked = tf.pro && !isPro;
+              return (
+                <button
+                  key={tf.label}
+                  onClick={() => {
+                    if (locked) { setShowUpgrade("Extended History"); return; }
+                    setTimeFilter(tf.hours);
+                  }}
+                  className={`px-2 md:px-3 py-2 text-xs font-medium transition-all relative ${
+                    timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
+                  } ${locked ? "opacity-50" : ""}`}
+                  style={timeFilter !== tf.hours ? { color: locked ? "var(--panel-text-muted)" : "var(--pill-text)" } : {}}
+                  title={locked ? "Pro feature — upgrade to unlock" : undefined}
+                >
+                  {tf.label}
+                  {locked && <Lock className="w-2.5 h-2.5 absolute -top-0.5 -right-0.5 text-purple-400" />}
+                </button>
+              );
+            })}
           </div>
 
           <div className="w-px h-6 shrink-0 hidden md:block" style={{ background: "var(--pill-border)" }} />
@@ -502,7 +534,7 @@ export default function Home() {
           type="button"
           onClick={recenterCity}
           title="City overview"
-          aria-label="Recenter map on Philadelphia"
+          aria-label={`Recenter map on ${CITY_NAME}`}
           className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-opacity hover:opacity-90 active:scale-95"
           style={{
             background: "var(--pill-bg)",
@@ -513,20 +545,31 @@ export default function Home() {
           <House className="w-4 h-4" />
         </button>
         <AuthBar />
+        <PulseNetworkNav />
 
         {/* Analytics toggle */}
-        <button
-          onClick={() => setShowAnalytics(!showAnalytics)}
-          className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
-          style={{
-            background: showAnalytics ? "rgba(59,130,246,0.15)" : "var(--pill-bg)",
-            border: `1px solid ${showAnalytics ? "rgba(59,130,246,0.3)" : "var(--pill-border)"}`,
-            color: showAnalytics ? "#3b82f6" : "var(--pill-text)",
-          }}
-          title="Analytics"
-        >
-          <BarChart3 className="w-4 h-4" />
-        </button>
+        <div className="relative">
+          <button
+            onClick={() => {
+              if (!isPro) { setShowUpgrade("Analytics"); return; }
+              setShowAnalytics(!showAnalytics);
+            }}
+            className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
+            style={{
+              background: showAnalytics ? "rgba(59,130,246,0.15)" : "var(--pill-bg)",
+              border: `1px solid ${showAnalytics ? "rgba(59,130,246,0.3)" : "var(--pill-border)"}`,
+              color: showAnalytics ? "#3b82f6" : "var(--pill-text)",
+            }}
+            title={isPro ? "Analytics" : "Analytics (Pro)"}
+          >
+            <BarChart3 className="w-4 h-4" />
+          </button>
+          {!isPro && (
+            <span className="absolute -top-1 -right-1 w-3.5 h-3.5 flex items-center justify-center rounded-full" style={{ background: "rgba(139,92,246,0.9)" }}>
+              <Lock className="w-2 h-2 text-white" />
+            </span>
+          )}
+        </div>
 
         {/* Theme toggle */}
         <div className="relative">
@@ -645,7 +688,7 @@ export default function Home() {
             border: "1px solid var(--pill-border)",
             color: "var(--pill-text)",
           }}
-          title="About PHLPulse"
+          title={`About ${CITY_NAME} Pulse`}
         >
           {showAbout ? <X className="w-4 h-4" /> : <Shield className="w-4 h-4" />}
         </button>
@@ -664,7 +707,7 @@ export default function Home() {
             </div>
             <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>·</span>
             <span className="text-[10px]" style={{ color: "var(--panel-text-secondary)" }}>
-              {filteredIncidents.length} incident{filteredIncidents.length !== 1 ? "s" : ""}{activeTimeLabel ? ` (${activeTimeLabel.toLowerCase()})` : ""} in Philadelphia metro
+              {filteredIncidents.length} incident{filteredIncidents.length !== 1 ? "s" : ""}{activeTimeLabel ? ` (${activeTimeLabel.toLowerCase()})` : ""} in {CITY_NAME} metro
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -707,7 +750,7 @@ export default function Home() {
               Transparency & Responsible AI
             </h3>
             <p className="text-xs leading-relaxed" style={{ color: "var(--panel-text-secondary)" }}>
-              PHLPulse uses AI at every layer: speech-to-text (Whisper)
+              {CITY_NAME} Pulse uses AI at every layer: speech-to-text (Whisper)
               converts police scanner audio, an LLM extracts structured incident
               data, and geocoding places it on this map.
             </p>
@@ -850,6 +893,33 @@ export default function Home() {
               incident={selected}
               onClose={() => setSelectedId(null)}
             />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Upgrade prompt overlay */}
+      <AnimatePresence>
+        {showUpgrade && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+            style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}
+            onClick={() => setShowUpgrade(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <UpgradePrompt
+                feature={showUpgrade}
+                description="Get extended history, analytics, safe routing, audio clips, and multi-city access."
+                onClose={() => setShowUpgrade(null)}
+              />
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

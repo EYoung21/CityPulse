@@ -1,0 +1,239 @@
+"use client";
+
+import { useState, useRef, useEffect } from "react";
+import { Lock } from "lucide-react";
+import { PULSE_CITIES, getCurrentCity, type PulseCity } from "@/lib/pulse-cities";
+import { useAuth } from "@/contexts/AuthContext";
+
+/**
+ * Pulse Network navigation dropdown.
+ *
+ * Renders a compact globe button in the header that opens a dropdown
+ * listing all Pulse cities. The current city is highlighted; others
+ * link to their live domains. Free users see other cities as locked.
+ */
+export default function PulseNetworkNav() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const current = getCurrentCity();
+  const { isPro } = useAuth();
+
+  // Close on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
+      {/* Trigger button */}
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Pulse Network — Switch cities"
+        title="Pulse Network — Switch cities"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+          padding: "6px 12px",
+          border: "1px solid rgba(255,255,255,0.15)",
+          borderRadius: "8px",
+          background: "rgba(255,255,255,0.06)",
+          color: "rgba(255,255,255,0.8)",
+          cursor: "pointer",
+          fontSize: "13px",
+          fontWeight: 500,
+          transition: "all 0.2s ease",
+          backdropFilter: "blur(8px)",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "rgba(255,255,255,0.12)";
+          e.currentTarget.style.borderColor = "rgba(255,255,255,0.25)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "rgba(255,255,255,0.06)";
+          e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)";
+        }}
+      >
+        <span style={{ fontSize: "15px" }}>🌐</span>
+        <span>Pulse Network</span>
+        <span
+          style={{
+            fontSize: "10px",
+            transition: "transform 0.2s ease",
+            transform: open ? "rotate(180deg)" : "rotate(0deg)",
+          }}
+        >
+          ▼
+        </span>
+      </button>
+
+      {/* Dropdown */}
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            right: 0,
+            minWidth: "260px",
+            background: "rgba(20, 20, 30, 0.95)",
+            backdropFilter: "blur(20px)",
+            border: "1px solid rgba(255,255,255,0.12)",
+            borderRadius: "12px",
+            boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+            padding: "8px 0",
+            zIndex: 9999,
+            animation: "fadeSlideIn 0.15s ease",
+          }}
+        >
+          <div
+            style={{
+              padding: "8px 14px 6px",
+              fontSize: "10px",
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: "1px",
+              color: "rgba(255,255,255,0.4)",
+            }}
+          >
+            Live Cities
+          </div>
+
+          {PULSE_CITIES.map((city) => (
+            <CityRow
+              key={city.slug}
+              city={city}
+              isCurrent={city.slug === current.slug}
+              locked={!isPro && city.slug !== current.slug}
+              onSelect={() => setOpen(false)}
+            />
+          ))}
+
+          <div
+            style={{
+              borderTop: "1px solid rgba(255,255,255,0.08)",
+              margin: "6px 0",
+            }}
+          />
+          <div
+            style={{
+              padding: "6px 14px 8px",
+              fontSize: "11px",
+              color: "rgba(255,255,255,0.3)",
+              textAlign: "center",
+            }}
+          >
+            Real-time safety • Unverified scanner audio
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes fadeSlideIn {
+          from { opacity: 0; transform: translateY(-4px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function CityRow({
+  city,
+  isCurrent,
+  locked,
+  onSelect,
+}: {
+  city: PulseCity;
+  isCurrent: boolean;
+  locked?: boolean;
+  onSelect: () => void;
+}) {
+  const href = isCurrent || locked ? "#" : `https://${city.domain}`;
+
+  return (
+    <a
+      href={href}
+      onClick={isCurrent || locked ? (e) => e.preventDefault() : onSelect}
+      target={isCurrent || locked ? undefined : "_blank"}
+      rel={isCurrent || locked ? undefined : "noopener noreferrer"}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        padding: "8px 14px",
+        textDecoration: "none",
+        color: isCurrent ? "#60a5fa" : locked ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.8)",
+        fontSize: "14px",
+        fontWeight: isCurrent ? 600 : 400,
+        transition: "background 0.15s ease",
+        cursor: isCurrent || locked ? "default" : "pointer",
+        background: isCurrent ? "rgba(96,165,250,0.08)" : "transparent",
+        borderLeft: isCurrent ? "2px solid #60a5fa" : "2px solid transparent",
+        opacity: locked ? 0.6 : 1,
+      }}
+      onMouseEnter={(e) => {
+        if (!isCurrent && !locked) e.currentTarget.style.background = "rgba(255,255,255,0.06)";
+      }}
+      onMouseLeave={(e) => {
+        if (!isCurrent && !locked) e.currentTarget.style.background = "transparent";
+      }}
+    >
+      <span style={{ fontSize: "18px", width: "24px", textAlign: "center" }}>
+        {city.emoji}
+      </span>
+      <div style={{ flex: 1 }}>
+        <div>{city.name}</div>
+        <div
+          style={{
+            fontSize: "11px",
+            color: "rgba(255,255,255,0.35)",
+            marginTop: "1px",
+          }}
+        >
+          {city.domain}
+        </div>
+      </div>
+      {isCurrent && (
+        <span
+          style={{
+            fontSize: "10px",
+            padding: "2px 6px",
+            borderRadius: "4px",
+            background: "rgba(96,165,250,0.15)",
+            color: "#60a5fa",
+            fontWeight: 600,
+          }}
+        >
+          LIVE
+        </span>
+      )}
+      {locked && (
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "3px",
+            fontSize: "9px",
+            padding: "2px 6px",
+            borderRadius: "4px",
+            background: "rgba(139,92,246,0.15)",
+            color: "#a78bfa",
+            fontWeight: 600,
+          }}
+        >
+          <Lock size={9} />
+          PRO
+        </span>
+      )}
+      {!isCurrent && !locked && (
+        <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.25)" }}>↗</span>
+      )}
+    </a>
+  );
+}

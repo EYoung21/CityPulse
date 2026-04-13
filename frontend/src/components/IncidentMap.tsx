@@ -243,8 +243,11 @@ declare module "leaflet" {
   ): L.Layer;
 }
 
-const PHILLY_CENTER: [number, number] = [39.9526, -75.1652];
-const DEFAULT_ZOOM = 12;
+const CITY_CENTER: [number, number] = [
+  parseFloat(process.env.NEXT_PUBLIC_MAP_CENTER_LAT || "39.9526"),
+  parseFloat(process.env.NEXT_PUBLIC_MAP_CENTER_LNG || "-75.1652"),
+];
+const DEFAULT_ZOOM = parseInt(process.env.NEXT_PUBLIC_MAP_ZOOM || "12", 10);
 
 export interface MapHandle {
   flyTo: (lat: number, lng: number, zoom?: number) => void;
@@ -785,7 +788,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       flyToOffset(lat, lng, zoom);
     },
     resetView: () => {
-      mapRef.current?.flyTo(PHILLY_CENTER, DEFAULT_ZOOM, { duration: 0.75 });
+      mapRef.current?.flyTo(CITY_CENTER, DEFAULT_ZOOM, { duration: 0.75 });
     },
   }));
 
@@ -799,7 +802,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
     const map = L.map("incident-map", {
       zoomControl: false,
-    }).setView(PHILLY_CENTER, DEFAULT_ZOOM);
+    }).setView(CITY_CENTER, DEFAULT_ZOOM);
 
     L.control.zoom({ position: "topright" }).addTo(map);
 
