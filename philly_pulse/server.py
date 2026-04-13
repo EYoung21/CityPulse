@@ -1,6 +1,7 @@
-"""FastAPI server for PhillyPulse.
+"""FastAPI server for Pulse platform.
 
-Serves the PhillyPulse API: ingest, incidents, admin, health.
+Serves the API: ingest, incidents, admin, health.
+Set CITY_CONFIG env var to a city config YAML path to configure for a specific city.
 """
 
 import json
@@ -29,7 +30,18 @@ logger = logging.getLogger(__name__)
 # Flip to True (or set env PHILLY_PULSE_LLM_AUTO=1) to resume automatic processing.
 LLM_AUTO_ENABLED = os.environ.get("PHILLY_PULSE_LLM_AUTO", "0").strip().lower() in ("1", "true", "yes")
 
-app = FastAPI(title="PhillyPulse API", version="0.1.0")
+# ── City config ─────────────────────────────────────────────────────
+
+_city_config_path = os.environ.get("CITY_CONFIG")
+_city_config: dict = {}
+CITY_NAME = "Philadelphia"
+if _city_config_path and Path(_city_config_path).exists():
+    with open(_city_config_path, "r", encoding="utf-8") as f:
+        _city_config = yaml.safe_load(f) or {}
+    CITY_NAME = _city_config.get("city", {}).get("name", "Philadelphia")
+    logger.info("Loaded city config: %s from %s", CITY_NAME, _city_config_path)
+
+app = FastAPI(title=f"{CITY_NAME} Pulse API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,7 +56,8 @@ _config_path = Path(__file__).resolve().parent.parent / "config.yaml"
 _bf_username = ""
 _bf_password = ""
 _bf_config: dict = {}
-PHILLY_FEEDS = [
+
+_DEFAULT_FEEDS = [
     {"feed_id": "4603",  "label": "PPD Citywide"},
     {"feed_id": "17310", "label": "PPD Central"},
     {"feed_id": "21297", "label": "PPD East"},
@@ -55,6 +68,7 @@ PHILLY_FEEDS = [
     {"feed_id": "34250", "label": "PFD South Fire/Medics"},
     {"feed_id": "15747", "label": "PFD North Fire"},
 ]
+FEEDS = _city_config.get("feeds", _DEFAULT_FEEDS)
 if _config_path.exists():
     try:
         with open(_config_path, "r") as f:
@@ -107,8 +121,19 @@ OSRM_PROFILES = {
 
 @app.on_event("startup")
 async def startup():
-    """Ensure the database table exists (but don't auto-seed)."""
+    """Ensure the database table exists and configure per-city geocoder."""
     store.get_conn()  # creates table if missing
+
+    # Configure geocoder with city-specific bounds
+    geo_cfg = _city_config.get("geocode", {})
+    if geo_cfg:
+        geocode.configure_geocoder(
+            viewbox=geo_cfg.get("viewbox", "-75.28,39.87,-74.96,40.14"),
+            bounds=geo_cfg.get("bounds"),
+            suffix=geo_cfg.get("suffix", ", Philadelphia, PA"),
+            city_name=CITY_NAME,
+        )
+    logger.info("%s Pulse API starting up", CITY_NAME)
 
 
 @app.get("/api/health")
@@ -496,7 +521,7 @@ async def summary():
             for inc in recent[:10]
         ]
         return {
-            "summary": f"{len(recent)} recent incidents in Philadelphia:\n" + "\n".join(lines),
+            "summary": f"{len(recent)} recent incidents in {CITY_NAME}:\n" + "\n".join(lines),
             "incident_count": len(recent),
         }
 
@@ -509,7 +534,7 @@ async def summary():
 
     prompt = (
         "You are a helpful assistant that summarizes recent public safety activity "
-        "in Philadelphia. Given the following recent incidents extracted from police "
+        f"in {CITY_NAME}. Given the following recent incidents extracted from police "
         "scanner audio (all UNVERIFIED), write a brief 2-3 sentence summary suitable "
         "for display on a community safety dashboard. Be factual, mention specific "
         "neighborhoods, and note that all data is unverified scanner audio.\n\n"
@@ -539,7 +564,7 @@ async def summary():
         logger.warning("Summary LLM call failed: %s", e)
 
     return {
-        "summary": f"{len(recent)} recent incidents across Philadelphia. Check the map for details.",
+        "summary": f"{len(recent)} recent incidents across {CITY_NAME}. Check the map for details.",
         "incident_count": len(recent),
     }
 
@@ -571,7 +596,7 @@ async def admin_ws(ws: WebSocket):
 @app.get("/api/admin/feeds")
 async def admin_feeds():
     """List of available Broadcastify feeds."""
-    return {"feeds": PHILLY_FEEDS}
+    return {"feeds": FEEDS}
 
 
 class PredictRequest(BaseModel):
@@ -800,7 +825,7 @@ async def admin_stream(feed_id: str):
     if not _bf_username or not _bf_password:
         raise HTTPException(status_code=503, detail="Broadcastify credentials not configured")
 
-    valid_ids = {f["feed_id"] for f in PHILLY_FEEDS}
+    valid_ids = {f["feed_id"] for f in FEEDS}
     if feed_id not in valid_ids:
         raise HTTPException(status_code=404, detail=f"Unknown feed_id: {feed_id}")
 

@@ -10,7 +10,6 @@ export default function LoginScreen() {
   const {
     user,
     signInWithGoogle,
-    signInAsGuest,
     signUpWithEmail,
     signInWithEmail,
     resendVerification,
@@ -219,25 +218,6 @@ export default function LoginScreen() {
           )}
         </p>
 
-        {/* Divider */}
-        <div className="flex items-center gap-3">
-          <div className="flex-1 h-px" style={{ background: "var(--panel-border, rgba(255,255,255,0.1))" }} />
-          <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--panel-text-muted, #666)" }}>or</span>
-          <div className="flex-1 h-px" style={{ background: "var(--panel-border, rgba(255,255,255,0.1))" }} />
-        </div>
-
-        {/* Guest */}
-        <button
-          onClick={async () => {
-            setError("");
-            try { await signInAsGuest(); } catch { setError("Guest sign-in failed."); }
-          }}
-          className="w-full py-2.5 rounded-lg text-xs font-medium transition-colors hover:brightness-110"
-          style={{ color: "var(--panel-text-secondary, #999)" }}
-        >
-          Continue as Guest
-          <span className="block text-[10px] mt-0.5 opacity-50">No account needed · no saved history</span>
-        </button>
       </div>
     </div>
   );

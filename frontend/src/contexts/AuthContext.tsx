@@ -15,23 +15,25 @@ import {
   getAuth,
   onAuthStateChanged,
   sendEmailVerification,
-  signInAnonymously,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
   type User,
 } from "firebase/auth";
-import { doc, getFirestore, serverTimestamp, setDoc } from "firebase/firestore";
+import { doc, getDoc, getFirestore, serverTimestamp, setDoc } from "firebase/firestore";
 import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
 
 const ADMIN_EMAILS = ["eliyoung4now@gmail.com", "kethansany@gmail.com"];
+
+export type UserTier = "free" | "pro" | "enterprise";
 
 type AuthState = {
   user: User | null;
   loading: boolean;
   isAdmin: boolean;
+  tier: UserTier;
+  isPro: boolean;
   signInWithGoogle: () => Promise<void>;
-  signInAsGuest: () => Promise<void>;
   signUpWithEmail: (email: string, password: string) => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   resendVerification: () => Promise<void>;
@@ -45,6 +47,7 @@ const noop = async () => {};
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [tier, setTier] = useState<UserTier>("free");
 
   useEffect(() => {
     if (!isFirebaseConfigured()) {
@@ -52,8 +55,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     const auth = getAuth(getFirebaseApp());
-    const unsub = onAuthStateChanged(auth, (u) => {
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      if (u && u.isAnonymous) {
+        await signOut(auth);
+        setUser(null);
+        setLoading(false);
+        return;
+      }
       setUser(u);
+      if (u && u.email) {
+        try {
+          const db = getFirestore(getFirebaseApp());
+          const snap = await getDoc(doc(db, "users", u.uid));
+          const data = snap.data();
+          if (data?.tier && ["free", "pro", "enterprise"].includes(data.tier)) {
+            setTier(data.tier as UserTier);
+          } else {
+            setTier("free");
+          }
+        } catch {
+          setTier("free");
+        }
+      } else {
+        setTier("free");
+      }
       setLoading(false);
     });
     return () => unsub();
@@ -81,11 +106,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await signInWithPopup(auth, provider);
   }, []);
 
-  const signInAsGuest = useCallback(async () => {
-    const auth = getAuth(getFirebaseApp());
-    await signInAnonymously(auth);
-  }, []);
-
   const signUpWithEmail = useCallback(async (email: string, password: string) => {
     const auth = getAuth(getFirebaseApp());
     const cred = await createUserWithEmailAndPassword(auth, email, password);
@@ -110,20 +130,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const isAdmin = !!user?.email && ADMIN_EMAILS.includes(user.email.toLowerCase());
+  const isPro = tier === "pro" || tier === "enterprise" || isAdmin;
 
   const value = useMemo(
     () => ({
       user,
       loading,
       isAdmin,
+      tier,
+      isPro,
       signInWithGoogle,
-      signInAsGuest,
       signUpWithEmail,
       signInWithEmail,
       resendVerification,
       signOutUser,
     }),
-    [user, loading, isAdmin, signInWithGoogle, signInAsGuest, signUpWithEmail, signInWithEmail, resendVerification, signOutUser]
+    [user, loading, isAdmin, tier, isPro, signInWithGoogle, signUpWithEmail, signInWithEmail, resendVerification, signOutUser]
   );
 
   if (!isFirebaseConfigured()) {
@@ -133,8 +155,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           user: null,
           loading: false,
           isAdmin: false,
+          tier: "free",
+          isPro: false,
           signInWithGoogle: noop,
-          signInAsGuest: noop,
           signUpWithEmail: noop,
           signInWithEmail: noop,
           resendVerification: noop,

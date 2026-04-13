@@ -7,6 +7,7 @@ Processes most recent days first so you get recent data quickly.
 
 Usage:
     python backfill_archives.py --days 30 --feed 4603
+    python backfill_archives.py --config cities/chattanooga/config.yaml --days 30
     python backfill_archives.py --day-list days.txt --feed 4603
 
 Requires:
@@ -62,10 +63,18 @@ os.makedirs(RAW_CLIPS_FOLDER, exist_ok=True)
 PROGRESS_DIR = "backfill_progress"
 os.makedirs(PROGRESS_DIR, exist_ok=True)
 
-DOWNLOAD_DELAY = 1.5
-RETRY_DELAYS = [30, 60, 120]
+DOWNLOAD_DELAY = 10
+RETRY_DELAYS = [30, 60, 120, 240, 480, 960]
 
-PHILLY_FEEDS = [
+# ── Per-city config overlay ──────────────────────────────────────
+
+def _load_city_config(path: str | None) -> dict:
+    if path and os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    return {}
+
+_DEFAULT_PHILLY_FEEDS = [
     {"feed_id": "4603",  "label": "PPD Citywide"},
     {"feed_id": "17310", "label": "PPD Central"},
     {"feed_id": "21297", "label": "PPD East"},
@@ -75,6 +84,15 @@ PHILLY_FEEDS = [
     {"feed_id": "15195", "label": "PPD Southwest/West"},
     {"feed_id": "34250", "label": "PFD South Fire/Medics"},
     {"feed_id": "15747", "label": "PFD North Fire"},
+    {"feed_id": "44308", "label": "SEPTA Transit Police"},
+    {"feed_id": "13975", "label": "SEPTA Regional Rail"},
+    {"feed_id": "36323", "label": "Delaware Co Police Dispatch"},
+    {"feed_id": "46438", "label": "DelCo Fire/EMS - Countywide Ops"},
+    {"feed_id": "46435", "label": "DelCo Fire - East"},
+    {"feed_id": "46439", "label": "DelCo EMS - Countywide Ops"},
+    {"feed_id": "24104", "label": "Chester Co Law Enforcement Dispatch"},
+    {"feed_id": "10489", "label": "MontCo Fire and EMS - East"},
+    {"feed_id": "25767", "label": "MontCo Police, Fire and EMS - Region 3"},
 ]
 
 
@@ -398,7 +416,19 @@ def main():
     parser.add_argument("--day-list", type=str, default=None, help="File with specific dates to process (one YYYY-MM-DD per line)")
     parser.add_argument("--feed", type=str, default=None, help="Single feed ID to process")
     parser.add_argument("--skip-existing", action="store_true", default=True, help="Skip already-processed feed+day combos")
+    parser.add_argument("--config", type=str, default=None,
+                        help="Path to a city config YAML (e.g. cities/chattanooga/config.yaml)")
     args = parser.parse_args()
+
+    # Load city config overlay for feeds and initial_prompt
+    city_config = _load_city_config(args.config)
+    city_name = city_config.get("city", {}).get("name", "Philadelphia")
+
+    # Override initial_prompt from city config if present
+    global INITIAL_PROMPT
+    city_prompt = city_config.get("tuning", {}).get("initial_prompt")
+    if city_prompt:
+        INITIAL_PROMPT = city_prompt
 
     if args.day_list:
         day_strings = load_day_list(args.day_list)
@@ -408,14 +438,14 @@ def main():
     else:
         day_strings = generate_days_range(180)
 
-    feeds = PHILLY_FEEDS
+    feeds = city_config.get("feeds", _DEFAULT_PHILLY_FEEDS)
     if args.feed:
         feeds = [f for f in feeds if f["feed_id"] == args.feed]
         if not feeds:
             print(f"Unknown feed ID: {args.feed}")
             return
 
-    print(f"=== PhillyPulse Archive Backfill ===")
+    print(f"=== {city_name} Pulse Archive Backfill ===")
     print(f"Feeds: {len(feeds)}, Days: {len(day_strings)}, Bridge: {BRIDGE_URL}")
     print(f"Loading Whisper model '{MODEL_SIZE}'...")
 

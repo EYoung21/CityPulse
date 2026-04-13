@@ -1,5 +1,5 @@
 #!/bin/bash
-# Launch 9 parallel SLURM GPU jobs for 5-month exponential-decay backfill.
+# Launch 18 parallel SLURM GPU jobs for 5-month exponential-decay backfill.
 # One job per feed for maximum speed. Retry logic in the script handles 429s.
 
 set -e
@@ -21,6 +21,15 @@ FEEDS=(
     "15195:PPD-SW-West"
     "34250:PFD-SouthFire"
     "15747:PFD-NorthFire"
+    "44308:SEPTA-Transit"
+    "13975:SEPTA-Rail"
+    "36323:DelCo-Police"
+    "46438:DelCo-FireEMS"
+    "46435:DelCo-FireEast"
+    "46439:DelCo-EMS"
+    "24104:Chester-Police"
+    "10489:MontCo-FireEast"
+    "25767:MontCo-Region3"
 )
 
 echo "=== Submitting ${#FEEDS[@]} SLURM jobs (1 per feed, max speed) ==="

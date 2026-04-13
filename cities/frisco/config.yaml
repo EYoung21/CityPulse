@@ -1,0 +1,24 @@
+city:
+  name: "Frisco"
+
+feeds:
+  - feed_id: "40227"
+    label: "Collin Co / Frisco PD"
+
+geocode:
+  viewbox: "-96.92,33.09,-96.73,33.23"
+  bounds: "-96.92,33.09,-96.73,33.23"
+  suffix: ", Frisco, TX"
+
+tuning:
+  initial_prompt: >-
+    Frisco TX police radio dispatch. Frisco Police Department, Collin County, Texas.
+    Locations: Main Street, Preston Road, Eldorado Parkway, Lebanon Road,
+    Stonebrook Parkway, Teel Parkway, Coit Road, Legacy Drive, Warren Parkway,
+    Rolater Road, FM 423, Dallas North Tollway, Sam Rayburn Tollway.
+    Neighborhoods: Frisco Square, Stonebriar, Starwood, Phillips Creek Ranch,
+    Richwoods, Lawler Park, Newman Village, The Trails, Wade Park.
+    Nearby cities: Plano, McKinney, Allen, Prosper, Little Elm, The Colony.
+    Hospitals: Baylor Scott & White, Medical City Frisco, Texas Health.
+    Phrases: responding, en route, on scene, copy, radio, shots fired,
+    disturbance, traffic stop. Short dispatch. Numbers spoken separately.

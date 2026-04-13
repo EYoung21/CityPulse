@@ -1,5 +1,5 @@
 # === CREDENTIALS / SECRETS — NEVER COMMIT ===
-config.yaml
+/config.yaml
 .env
 .env.local
 .env.production

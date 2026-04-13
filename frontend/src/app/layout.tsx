@@ -14,10 +14,13 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
+const siteName = process.env.NEXT_PUBLIC_SITE_NAME || "PHLPulse";
+
 export const metadata: Metadata = {
-  title: "PHLPulse — AI-Powered Community Safety for Philadelphia",
+  title: `${siteName} — AI-Powered Community Safety for ${cityName}`,
   description:
-    "Real-time AI-powered safety awareness for Philadelphia. Live police scanner transcription, incident mapping, and safe routing.",
+    `Real-time AI-powered safety awareness for ${cityName}. Live police scanner transcription, incident mapping, and safe routing.`,
   icons: {
     icon: [
       { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },

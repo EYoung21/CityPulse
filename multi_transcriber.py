@@ -1,11 +1,12 @@
-"""Multi-feed transcriber for PhillyPulse.
+"""Multi-feed transcriber for Pulse platform.
 
-Streams ALL Philadelphia Broadcastify feeds simultaneously through a
-SINGLE shared Whisper model. Each feed gets its own ffmpeg process and
-VAD thread, but transcription segments are queued into one shared pool.
+Streams Broadcastify feeds simultaneously through a SINGLE shared Whisper
+model. Each feed gets its own ffmpeg process and VAD thread, but
+transcription segments are queued into one shared pool.
 
 Usage:
     python multi_transcriber.py
+    python multi_transcriber.py --config cities/chattanooga/config.yaml
 
 Requires config.yaml with Broadcastify credentials.
 """
@@ -23,8 +24,11 @@ import os
 import gc
 import re
 from collections import Counter
+import argparse
 import webrtcvad
 import yaml
+
+from urllib.parse import quote as _urlquote
 
 try:
     from philly_pulse.bridge import post_transcript as _pp_post
@@ -38,10 +42,26 @@ except Exception:
     preprocess_audio = None
 
 
+# ── CLI args (parsed early so city config can override globals) ─────
+
+_parser = argparse.ArgumentParser(add_help=False)
+_parser.add_argument("--config", type=str, default=None,
+                     help="Path to a city config YAML (e.g. cities/chattanooga/config.yaml)")
+_cli_args, _ = _parser.parse_known_args()
+
 # ── Config ──────────────────────────────────────────────────────────
 
 with open("config.yaml", "r", encoding="utf-8") as f:
     config = yaml.safe_load(f)
+
+# Optionally load a per-city config overlay
+_city_config = {}
+CITY_NAME = "Philadelphia"
+if _cli_args.config and os.path.exists(_cli_args.config):
+    with open(_cli_args.config, "r", encoding="utf-8") as f:
+        _city_config = yaml.safe_load(f) or {}
+    CITY_NAME = _city_config.get("city", {}).get("name", "Philadelphia")
+    print(f"Loaded city config: {CITY_NAME} from {_cli_args.config}")
 
 USERNAME = config["credentials"]["username"]
 PASSWORD = config["credentials"]["password"]
@@ -52,7 +72,8 @@ SILENCE_LIMIT = config["vad_and_silence"]["silence_limit"]
 
 MODEL_SIZE = config["tuning"].get("model_size", "base")
 LANGUAGE = config["tuning"]["language"]
-INITIAL_PROMPT = config["tuning"]["initial_prompt"]
+# City config can override the initial prompt for better transcription
+INITIAL_PROMPT = _city_config.get("tuning", {}).get("initial_prompt") or config["tuning"]["initial_prompt"]
 BEAM_SIZE = config["tuning"].get("beam_size", 5)
 NO_SPEECH_THRESHOLD = config["tuning"]["no_speech_threshold"]
 NORMALIZATION_PERCENTILE = config["tuning"]["normalization"]
@@ -64,8 +85,9 @@ PP_CFG = config.get("philly_pulse", {})
 PP_ENABLED = PP_CFG.get("enabled", False) and _pp_post is not None
 PP_BRIDGE_URL = PP_CFG.get("bridge_url", "http://127.0.0.1:8765/api/ingest")
 
-# All Philadelphia-area public safety feeds
-PHILLY_FEEDS = [
+# ── Feed list (from city config or hardcoded Philly defaults) ───────
+
+_DEFAULT_PHILLY_FEEDS = [
     {"feed_id": "4603",  "label": "PPD Citywide"},
     {"feed_id": "17310", "label": "PPD Central"},
     {"feed_id": "21297", "label": "PPD East"},
@@ -77,10 +99,16 @@ PHILLY_FEEDS = [
     {"feed_id": "15747", "label": "PFD North Fire"},
     {"feed_id": "44308", "label": "SEPTA Transit Police"},
     {"feed_id": "13975", "label": "SEPTA Regional Rail"},
-    {"feed_id": "13951", "label": "PA Turnpike Police East"},
     {"feed_id": "36323", "label": "Delaware Co Police Dispatch"},
-    {"feed_id": "20795", "label": "Camden Co Fire/EMS Digital"},
+    {"feed_id": "46438", "label": "DelCo Fire/EMS - Countywide Ops"},
+    {"feed_id": "46435", "label": "DelCo Fire - East"},
+    {"feed_id": "46439", "label": "DelCo EMS - Countywide Ops"},
+    {"feed_id": "24104", "label": "Chester Co Law Enforcement Dispatch"},
+    {"feed_id": "10489", "label": "MontCo Fire and EMS - East"},
+    {"feed_id": "25767", "label": "MontCo Police, Fire and EMS - Region 3"},
 ]
+
+FEEDS = _city_config.get("feeds", _DEFAULT_PHILLY_FEEDS)
 
 # ── Constants ───────────────────────────────────────────────────────
 
@@ -105,13 +133,41 @@ transcription_queue = queue.Queue()
 
 # ── Load ONE Whisper model ──────────────────────────────────────────
 
-print(f"Loading Whisper model '{MODEL_SIZE}' (shared across {len(PHILLY_FEEDS)} feeds)...")
-model = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8", cpu_threads=4)
-print(f"Model loaded. Starting {len(PHILLY_FEEDS)} feed streams...")
+print(f"Loading Whisper model '{MODEL_SIZE}' (shared across {len(FEEDS)} feeds) for {CITY_NAME}...")
+_gpu_available = False
+for _gpu_check in ["torch", "subprocess", "ctranslate2"]:
+    if _gpu_available:
+        break
+    try:
+        if _gpu_check == "torch":
+            import torch as _torch
+            _gpu_available = _torch.cuda.is_available()
+        elif _gpu_check == "subprocess":
+            _gpu_available = subprocess.run(
+                ["nvidia-smi"], capture_output=True, timeout=5
+            ).returncode == 0
+        elif _gpu_check == "ctranslate2":
+            import ctranslate2
+            _gpu_available = "cuda" in ctranslate2.get_supported_compute_types("cuda")
+    except Exception as _e:
+        print(f"  GPU check ({_gpu_check}): {_e}")
+
+if _gpu_available:
+    try:
+        model = WhisperModel(MODEL_SIZE, device="cuda", compute_type="float16")
+        print(f"Model loaded. (GPU mode: CUDA float16)")
+    except Exception as _e:
+        print(f"  GPU load failed ({_e}), falling back to CPU")
+        model = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8", cpu_threads=4)
+        print(f"Model loaded. (CPU mode: int8, GPU fallback)")
+else:
+    model = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8", cpu_threads=4)
+    print(f"Model loaded. (CPU mode: int8)")
+print(f"Starting {len(FEEDS)} feed streams...")
 
 
 def get_ffmpeg_stream(feed_id):
-    url = f"http://{USERNAME}:{PASSWORD}@audio.broadcastify.com/{feed_id}.mp3"
+    url = f"http://{_urlquote(USERNAME, safe='')}:{_urlquote(PASSWORD, safe='')}@audio.broadcastify.com/{feed_id}.mp3"
     command = [
         "ffmpeg",
         "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
@@ -312,6 +368,9 @@ def feed_capture_thread(feed_id, feed_label):
 
     print(f"   [{feed_label}] Stream connected")
 
+    chunks_read = 0
+    speech_chunks = 0
+
     while True:
         try:
             ready, _, _ = select.select([ffmpeg.stdout], [], [], 1.0)
@@ -328,6 +387,9 @@ def feed_capture_thread(feed_id, feed_label):
                 continue
 
             raw_bytes = ffmpeg.stdout.read(CHUNK_BYTES)
+            chunks_read += 1
+            if chunks_read % 500 == 0:
+                print(f"   [{feed_label}] alive: {chunks_read} chunks, {speech_chunks} speech, rec={is_recording}, buf={len(audio_buffer)}")
             if not raw_bytes:
                 print(f"   [{feed_label}] EOF, reconnecting...")
                 ffmpeg.kill()
@@ -349,6 +411,7 @@ def feed_capture_thread(feed_id, feed_label):
                         break
 
             if is_speech:
+                speech_chunks += 1
                 if not is_recording:
                     is_recording = True
                 audio_buffer.append(audio_chunk)
@@ -364,6 +427,9 @@ def feed_capture_thread(feed_id, feed_label):
                     if duration >= MIN_SPEECH_SECONDS:
                         ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                         transcription_queue.put((feed_id, feed_label, ts, raw_pcm.copy()))
+                        print(f"   [{feed_label}] QUEUED {duration:.1f}s segment")
+                    else:
+                        print(f"   [{feed_label}] skipped {duration:.1f}s (below {MIN_SPEECH_SECONDS}s min)")
 
                     audio_buffer = []
                     is_recording = False
@@ -378,7 +444,7 @@ def feed_capture_thread(feed_id, feed_label):
 
 def main():
     num_workers = min(3, max(1, os.cpu_count() or 2))
-    print(f"Starting {num_workers} transcription workers + {len(PHILLY_FEEDS)} feed threads")
+    print(f"Starting {num_workers} transcription workers + {len(FEEDS)} feed threads")
 
     if PP_ENABLED:
         print(f"PhillyPulse bridge enabled → {PP_BRIDGE_URL}")
@@ -390,7 +456,7 @@ def main():
         workers.append(w)
 
     feed_threads = []
-    for feed in PHILLY_FEEDS:
+    for feed in FEEDS:
         t = threading.Thread(
             target=feed_capture_thread,
             args=(feed["feed_id"], feed["label"]),
@@ -401,8 +467,8 @@ def main():
         time.sleep(0.5)  # stagger connections to avoid burst
 
     print(f"\n{'='*60}")
-    print(f"  PhillyPulse Multi-Feed Transcriber")
-    print(f"  {len(PHILLY_FEEDS)} feeds → {num_workers} Whisper workers → 1 ingest endpoint")
+    print(f"  {CITY_NAME} Pulse Multi-Feed Transcriber")
+    print(f"  {len(FEEDS)} feeds → {num_workers} Whisper workers → 1 ingest endpoint")
     print(f"  Queue depth shown every 30s. Press Ctrl+C to stop.")
     print(f"{'='*60}\n")
 
@@ -414,7 +480,7 @@ def main():
             alive = sum(1 for t in feed_threads if t.is_alive())
             qsize = transcription_queue.qsize()
             print(
-                f"   [Status] feeds={alive}/{len(PHILLY_FEEDS)} "
+                f"   [Status] feeds={alive}/{len(FEEDS)} "
                 f"queue={qsize} "
                 f"uptime={chunk_count * 30 // 60}m"
             )
