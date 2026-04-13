@@ -1,0 +1,35 @@
+city:
+  name: "New York City"
+
+feeds:
+  - feed_id: "40184"
+    label: "NYPD Citywide 1"
+  - feed_id: "40185"
+    label: "NYPD Citywide 2"
+  - feed_id: "40186"
+    label: "NYPD Citywide 3"
+  - feed_id: "46122"
+    label: "FDNY Manhattan Dispatch"
+
+geocode:
+  viewbox: "-74.26,40.49,-73.70,40.92"
+  bounds: "-74.26,40.49,-73.70,40.92"
+  suffix: ", New York, NY"
+
+tuning:
+  initial_prompt: >-
+    New York City police radio dispatch. NYPD precincts 1 through 123. Five boroughs:
+    Manhattan, Brooklyn, Queens, Bronx, Staten Island. Manhattan neighborhoods:
+    Harlem, East Harlem, Upper West Side, Upper East Side, Midtown, Chelsea,
+    Greenwich Village, East Village, Lower East Side, Tribeca, SoHo, Chinatown,
+    Financial District, Hell's Kitchen, Murray Hill, Gramercy, Washington Heights,
+    Inwood. Brooklyn: Bed-Stuy, Brownsville, East New York, Crown Heights,
+    Flatbush, Bushwick, Williamsburg, Park Slope, Sunset Park, Bay Ridge,
+    Coney Island, Canarsie. Bronx: South Bronx, Mott Haven, Fordham, Pelham Bay,
+    Tremont, Kingsbridge. Queens: Jamaica, Flushing, Astoria, Long Island City,
+    Far Rockaway, Jackson Heights. Avenues, streets, Broadway, FDR Drive, BQE,
+    Cross Bronx, Grand Central, LIE, Henry Hudson, West Side Highway.
+    Hospitals: Bellevue, Mount Sinai, NYU Langone, Columbia Presbyterian,
+    Lincoln, Jacobi, Kings County, Maimonides, Elmhurst.
+    Phrases: central, responding, 10-4, 10-13, 10-85, shots fired, robbery,
+    assault, in pursuit, on the scene. Short dispatch. Numbers spoken separately.

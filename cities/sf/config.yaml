@@ -1,0 +1,28 @@
+city:
+  name: "San Francisco"
+
+feeds:
+  - feed_id: "46180"
+    label: "SFPD Police"
+  - feed_id: "6336"
+    label: "SFFD Fire/EMS"
+
+geocode:
+  viewbox: "-122.52,37.70,-122.36,37.81"
+  bounds: "-122.52,37.70,-122.36,37.81"
+  suffix: ", San Francisco, CA"
+
+tuning:
+  initial_prompt: >-
+    San Francisco CA police radio dispatch. SFPD districts Southern, Tenderloin,
+    Bayview, Mission, Central, Northern, Park, Richmond, Ingleside, Taraval.
+    Locations: Market St, Mission St, Van Ness Ave, Geary Blvd, Divisadero,
+    Haight St, Castro, Tenderloin, SoMa, Financial District, Chinatown,
+    North Beach, Fisherman's Wharf, Marina, Pacific Heights, Nob Hill, Russian Hill,
+    Sunset, Richmond, Excelsior, Visitacion Valley, Bayview, Hunters Point,
+    Potrero Hill, Dogpatch, Mission Bay, Golden Gate Park, Twin Peaks, Embarcadero,
+    Union Square, Civic Center, Hayes Valley, Western Addition, Japantown.
+    I-80, US-101, I-280, Highway 1, Bay Bridge, Golden Gate Bridge, 19th Ave.
+    Hospitals: SF General, UCSF, Kaiser, St. Mary's, Chinese Hospital, CPMC.
+    Phrases: responding, en route, on scene, copy, radio, shots fired,
+    code 3, 10-4, 415, 211, 459, 187. Short dispatch. Numbers spoken separately.

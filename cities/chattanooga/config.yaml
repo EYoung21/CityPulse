@@ -1,0 +1,49 @@
+# 423Pulse — Chattanooga, TN
+
+city:
+  name: "Chattanooga"
+  short: "CHA"
+  slug: "chattanooga"
+  domain: "423pulse.com"
+  region: "Chattanooga / Hamilton County, TN"
+  tagline: "Real-time safety awareness for the Scenic City."
+
+map:
+  center_lat: 35.0456
+  center_lng: -85.3097
+  default_zoom: 12
+
+geocode:
+  viewbox: "-85.50,34.90,-85.10,35.20"
+  bounds:
+    lat_min: 34.88
+    lat_max: 35.22
+    lng_min: -85.52
+    lng_max: -85.08
+  suffix: ", Chattanooga, TN"
+
+feeds:
+  - { feed_id: "45708", label: "Chattanooga Police Department" }
+  - { feed_id: "34716", label: "Chattanooga Fire Department" }
+  - { feed_id: "45709", label: "Chattanooga Public Safety" }
+  - { feed_id: "45707", label: "Hamilton County Sheriff" }
+  - { feed_id: "44571", label: "Hamilton County Public Safety" }
+  - { feed_id: "21572", label: "Hamilton County Fire Departments" }
+  - { feed_id: "45812", label: "Chattanooga Airport Public Safety" }
+  - { feed_id: "45601", label: "East Ridge Public Safety" }
+  - { feed_id: "45705", label: "Lookout Mountain Police/Fire" }
+  - { feed_id: "45706", label: "Soddy Daisy Police/Fire" }
+  - { feed_id: "29255", label: "TN Highway Patrol Dist 2 - Chattanooga" }
+  - { feed_id: "25063", label: "Tri-Community Volunteer Fire" }
+
+tuning:
+  initial_prompt: >-
+    Chattanooga Tennessee police radio dispatch. Hamilton County. Chattanooga
+    Police Department sectors Adam Baker Charlie. Hamilton County Sheriff.
+    Locations: Lookout Mountain, Signal Mountain, Red Bank, East Ridge,
+    Soddy-Daisy, Hixson, Brainerd, Downtown, North Shore, Southside, MLK Blvd,
+    Rossville Blvd, Broad St, Market St, McCallie Ave, Amnicola Highway,
+    Tennessee River, Chickamauga Dam, Highway 27, I-24, I-75. Hospitals:
+    Erlanger, CHI Memorial, Parkridge. Phrases: responding, en route, on scene,
+    10-4, copy, dispatch, signal, code, fire department, EMS, medic. Short
+    dispatch. Numbers spoken separately.
