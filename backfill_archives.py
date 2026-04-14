@@ -69,14 +69,14 @@ os.makedirs(PROGRESS_DIR, exist_ok=True)
 # Once hit, every request returns 429 "Download limit exceeded" until
 # the quota resets (likely midnight US-Eastern).
 
-DOWNLOAD_DELAY_BASE = 20          # seconds between successful downloads
-DOWNLOAD_DELAY_JITTER = 10        # ± random jitter added to base delay
-BACKOFF_BASE = 60                 # initial backoff on 429 (seconds)
+DOWNLOAD_DELAY_BASE = 45          # seconds between successful downloads
+DOWNLOAD_DELAY_JITTER = 15        # ± random jitter added to base delay
+BACKOFF_BASE = 120                # initial backoff on 429 (seconds)
 BACKOFF_MULTIPLIER = 2            # exponential multiplier
 BACKOFF_MAX = 3600                # cap: 1 hour
 BACKOFF_JITTER_FRAC = 0.25        # ±25% jitter on backoff delays
-MAX_RETRIES_PER_REQUEST = 4       # per-request retry limit
-CONSECUTIVE_429_ABORT = 3         # stop the whole run after this many in a row
+MAX_RETRIES_PER_REQUEST = 6       # per-request retry limit
+CONSECUTIVE_429_ABORT = 8         # stop the whole run after this many in a row
 
 _consecutive_429_count = 0
 
@@ -562,10 +562,20 @@ def main():
     total_transcribed = 0
     total_archives = 0
     quota_exhausted = False
+    session_age = time.time()
 
     for feed in feeds:
         if quota_exhausted:
             break
+
+        if time.time() - session_age > 1800:
+            print("  [SESSION] Refreshing Broadcastify login...")
+            try:
+                session = get_broadcastify_session()
+                session_age = time.time()
+            except Exception as e:
+                print(f"  [SESSION ERROR] {e} — continuing with old session")
+
         feed_id = feed["feed_id"]
         feed_label = feed["label"]
         progress = load_progress(feed_id)
@@ -657,6 +667,9 @@ def main():
 
         if not quota_exhausted:
             print(f"\n=== Feed {feed_label} complete ===")
+            cooldown = _jittered_delay(90, 0.3)
+            print(f"  Cooling down {cooldown:.0f}s before next feed...")
+            time.sleep(cooldown)
 
     print(f"\n=== Backfill {'stopped (quota exhausted)' if quota_exhausted else 'complete'} ===")
     print(f"Total: {total_transcribed} transcripts from {total_archives} archive segments")
