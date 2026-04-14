@@ -19,6 +19,7 @@ import {
   Clock,
   Star,
   Plus,
+  Shield,
 } from "lucide-react";
 import { geocodePhilly, assessSafety } from "@/lib/search";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
@@ -26,7 +27,10 @@ import {
   getMultiStopRoute,
   buildAvoidZones,
   buildAvoidPolygons,
+  AVOIDANCE_CATEGORIES,
+  DEFAULT_AVOID_CATS,
   type TransportMode,
+  type AvoidCategoryId,
 } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
 import type { RouteData } from "@/components/RoutePanel";
@@ -83,6 +87,8 @@ interface Props {
   demoRouteSim: boolean;
   onDemoRouteSimChange: (active: boolean) => void;
   onHistoricalOverlay?: (incidents: Incident[] | null) => void;
+  avoidCats: Set<AvoidCategoryId>;
+  onAvoidCatsChange: (cats: Set<AvoidCategoryId>) => void;
 }
 
 export default function DirectionsPanel({
@@ -111,6 +117,8 @@ export default function DirectionsPanel({
   demoRouteSim,
   onDemoRouteSimChange,
   onHistoricalOverlay,
+  avoidCats,
+  onAvoidCatsChange,
 }: Props) {
   const [originSuggestions, setOriginSuggestions] = useState<StopLoc[]>([]);
   const [destSuggestions, setDestSuggestions] = useState<StopLoc[]>([]);
@@ -241,7 +249,8 @@ export default function DirectionsPanel({
           return;
         }
 
-        if (safety.nearbyCount === 0) {
+        const zones = buildAvoidZones(incSnap, avoidCats);
+        if (zones.length === 0) {
           onRoutesChange({ normal: directRoute, safe: null, avoidZones: [] });
           setPreviewRoute({
             distanceKm: directRoute.distanceKm,
@@ -250,7 +259,6 @@ export default function DirectionsPanel({
             nearbyCount: 0,
           });
         } else {
-          const zones = buildAvoidZones(incSnap);
           const safeRoute = await getMultiStopRoute(
             ORS_API_KEY,
             activeMode,
@@ -264,7 +272,7 @@ export default function DirectionsPanel({
             distanceKm: best.distanceKm,
             durationMin: best.durationMin,
             isSafe: !!safeRoute,
-            nearbyCount: safety.nearbyCount,
+            nearbyCount: zones.length,
           });
         }
         setRouteError(null);
@@ -280,7 +288,8 @@ export default function DirectionsPanel({
     })();
 
     return () => controller.abort();
-  }, [originLoc, destLoc, stops, activeMode, onRoutesChange]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [originLoc, destLoc, stops, activeMode, onRoutesChange, avoidCats]);
 
   const swapLocations = () => {
     const tmpQ = originQuery;
@@ -373,6 +382,41 @@ export default function DirectionsPanel({
             >
               <Icon className="w-5 h-5" />
               {m.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Avoidance category selector */}
+      <div
+        className="px-4 py-2.5 flex items-center gap-2 overflow-x-auto no-scrollbar"
+        style={{ borderBottom: "1px solid var(--panel-border)" }}
+      >
+        <Shield className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
+        <span className="text-[10px] font-semibold uppercase tracking-wider shrink-0" style={{ color: "var(--panel-text-muted)" }}>
+          Avoid
+        </span>
+        {AVOIDANCE_CATEGORIES.map((ac) => {
+          const active = avoidCats.has(ac.id);
+          return (
+            <button
+              key={ac.id}
+              onClick={() => {
+                const next = new Set(avoidCats);
+                if (active) next.delete(ac.id);
+                else next.add(ac.id);
+                onAvoidCatsChange(next);
+              }}
+              className={`px-2.5 py-1 rounded-full text-[10px] font-medium transition-all shrink-0 ${
+                active ? "ring-1 ring-blue-500/30" : "opacity-60 hover:opacity-100"
+              }`}
+              style={{
+                background: active ? "rgba(59,130,246,0.15)" : "var(--panel-input-bg)",
+                border: `1px solid ${active ? "rgba(59,130,246,0.3)" : "var(--panel-border)"}`,
+                color: active ? "#3b82f6" : "var(--panel-text-secondary)",
+              }}
+            >
+              {ac.label}
             </button>
           );
         })}
