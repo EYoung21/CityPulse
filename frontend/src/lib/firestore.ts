@@ -73,6 +73,7 @@ function mapDoc(id: string, data: Record<string, unknown>): Incident {
         ? null
         : String(data.description),
     hidden: data.hidden === true,
+    word_timings: Array.isArray(data.word_timings) ? data.word_timings : null,
   };
 }
 

@@ -236,6 +236,7 @@ def insert_incident(
     reported_at: Optional[str] = None,
     audio_clip: Optional[str] = None,
     feed_id: Optional[str] = None,
+    **kwargs,
 ) -> dict:
     conn = get_conn()
     incident_id = uuid.uuid4().hex[:12]

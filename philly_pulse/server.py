@@ -219,13 +219,21 @@ async def ingest(req: IngestRequest):
     correlation = f"{feed_id}_{req_timestamp}"
 
     effective_audio_clip = req.audio_clip
+    effective_word_timings = None
     if not effective_audio_clip and req.variants:
         for v in req.variants:
             if v.get("name") == "aggressive" and v.get("audio_clip"):
                 effective_audio_clip = v["audio_clip"]
+                effective_word_timings = v.get("word_timings")
                 break
         if not effective_audio_clip and req.variants:
             effective_audio_clip = req.variants[0].get("audio_clip")
+            effective_word_timings = req.variants[0].get("word_timings")
+    elif req.variants:
+        for v in req.variants:
+            if v.get("audio_clip") == effective_audio_clip:
+                effective_word_timings = v.get("word_timings")
+                break
 
     # Broadcast: transcript received
     await admin_events.broadcast({
@@ -352,6 +360,7 @@ async def ingest(req: IngestRequest):
             audio_clip=effective_audio_clip,
             location_confidence=location_confidence,
             description=description,
+            word_timings=effective_word_timings,
         )
         await admin_events.broadcast({
             "type": "incident_stored",
@@ -432,6 +441,7 @@ async def ingest(req: IngestRequest):
             audio_clip=effective_audio_clip,
             feed_id=feed_id,
             description=description,
+            word_timings=effective_word_timings,
         )
         incident_id = incident["id"]
 

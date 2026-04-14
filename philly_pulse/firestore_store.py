@@ -66,6 +66,7 @@ def insert_incident(
     audio_clip: Optional[str] = None,
     feed_id: Optional[str] = None,
     description: Optional[str] = None,
+    word_timings: Optional[list] = None,
 ) -> dict:
     db = _ensure_client()
     incident_id = uuid.uuid4().hex[:12]
@@ -88,6 +89,7 @@ def insert_incident(
         "audio_clip": audio_clip,
         "feed_id": feed_id,
         "description": description,
+        "word_timings": word_timings,
     }
     ref = db.collection("incidents").document(incident_id)
     ref.set(payload)

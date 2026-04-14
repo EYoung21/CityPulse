@@ -37,9 +37,11 @@ function formatTime(iso: string): string {
 function WaveformPlayer({
   src,
   transcript,
+  wordTimings,
 }: {
   src: string;
   transcript: string;
+  wordTimings?: { word: string; start: number; end: number }[] | null;
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -50,7 +52,10 @@ function WaveformPlayer({
   const [waveformData, setWaveformData] = useState<number[]>([]);
   const transcriptContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const words = transcript.split(/\s+/).filter(Boolean);
+  const hasTimings = wordTimings && wordTimings.length > 0;
+  const words = hasTimings
+    ? wordTimings.map((wt) => wt.word)
+    : transcript.split(/\s+/).filter(Boolean);
 
   useEffect(() => {
     const audio = new Audio(src);
@@ -166,10 +171,16 @@ function WaveformPlayer({
     drawWaveform();
   };
 
-  const currentWordIdx =
-    duration > 0 && words.length > 0
-      ? Math.min(Math.floor((currentTime / duration) * words.length), words.length - 1)
-      : -1;
+  const currentWordIdx = (() => {
+    if (words.length === 0 || duration <= 0) return -1;
+    if (hasTimings) {
+      for (let i = wordTimings.length - 1; i >= 0; i--) {
+        if (currentTime >= wordTimings[i].start) return i;
+      }
+      return -1;
+    }
+    return Math.min(Math.floor((currentTime / duration) * words.length), words.length - 1);
+  })();
 
   useEffect(() => {
     if (currentWordIdx < 0 || !transcriptContainerRef.current) return;
@@ -227,6 +238,13 @@ function WaveformPlayer({
                   idx === currentWordIdx && playing ? "rgba(59,130,246,0.3)" : "transparent",
                 borderRadius: idx === currentWordIdx && playing ? "2px" : "0",
                 padding: idx === currentWordIdx && playing ? "0 2px" : "0",
+                cursor: hasTimings ? "pointer" : "default",
+              }}
+              onClick={() => {
+                if (hasTimings && audioRef.current) {
+                  audioRef.current.currentTime = wordTimings[idx].start;
+                  drawWaveform();
+                }
               }}
             >
               {word}
@@ -333,6 +351,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
             <WaveformPlayer
               src={`${API_BASE}/api/audio/${incident.audio_clip}`}
               transcript={incident.raw_text}
+              wordTimings={incident.word_timings}
             />
           ) : (
             <p
