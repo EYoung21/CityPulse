@@ -1,6 +1,7 @@
 name: Deploy Backend
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -9,6 +10,7 @@ on:
       - "multi_transcriber.py"
       - "config.yaml"
       - "requirements-philly-pulse.txt"
+      - ".github/workflows/deploy-backend.yml"
 
 jobs:
   deploy:
