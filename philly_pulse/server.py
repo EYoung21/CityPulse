@@ -35,10 +35,12 @@ LLM_AUTO_ENABLED = os.environ.get("PHILLY_PULSE_LLM_AUTO", "0").strip().lower() 
 _city_config_path = os.environ.get("CITY_CONFIG")
 _city_config: dict = {}
 CITY_NAME = "Philadelphia"
+CITY_SLUG = "philly"
 if _city_config_path and Path(_city_config_path).exists():
     with open(_city_config_path, "r", encoding="utf-8") as f:
         _city_config = yaml.safe_load(f) or {}
     CITY_NAME = _city_config.get("city", {}).get("name", "Philadelphia")
+    CITY_SLUG = _city_config.get("city", {}).get("slug") or Path(_city_config_path).parent.name
     logger.info("Loaded city config: %s from %s", CITY_NAME, _city_config_path)
 
 app = FastAPI(title=f"{CITY_NAME} Pulse API", version="0.1.0")
@@ -102,6 +104,7 @@ class IngestRequest(BaseModel):
     raw_audio_clip: str | None = None
     preprocess_meta: dict | None = None
     variants: list[dict] | None = None
+    city: str | None = None
 
 
 class RouteDirectionsRequest(BaseModel):
@@ -209,6 +212,7 @@ async def ingest(req: IngestRequest):
     """
 
     feed_id = req.feed_id or "unknown"
+    city = req.city or CITY_SLUG
 
     # Normalize time-only timestamps (e.g. "14:30:00") to full ISO
     ts = req.timestamp
@@ -254,6 +258,7 @@ async def ingest(req: IngestRequest):
             raw_audio_clip=req.raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
             variants=req.variants,
+            city=city,
         )
         return {"status": "collected", "reason": "LLM auto-processing paused; raw transcript stored"}
 
@@ -282,6 +287,7 @@ async def ingest(req: IngestRequest):
             raw_audio_clip=req.raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
             variants=req.variants,
+            city=city,
         )
         return {"status": "collected", "reason": f"LLM error, raw stored: {e}"}
 
@@ -305,6 +311,7 @@ async def ingest(req: IngestRequest):
             variants=req.variants,
             llm_relevant=False,
             llm_confidence=0.0,
+            city=city,
         )
         return {"status": "rejected", "reason": "Not dispatch-relevant"}
 
@@ -361,6 +368,7 @@ async def ingest(req: IngestRequest):
             location_confidence=location_confidence,
             description=description,
             word_timings=effective_word_timings,
+            city=city,
         )
         await admin_events.broadcast({
             "type": "incident_stored",
@@ -385,6 +393,7 @@ async def ingest(req: IngestRequest):
             inhibitor_status="blocked",
             inhibitor_reason=inh.reason,
             incident_id=incident["id"],
+            city=city,
         )
         return {
             "status": "blocked",
@@ -442,6 +451,7 @@ async def ingest(req: IngestRequest):
             feed_id=feed_id,
             description=description,
             word_timings=effective_word_timings,
+            city=city,
         )
         incident_id = incident["id"]
 
@@ -475,6 +485,7 @@ async def ingest(req: IngestRequest):
         inhibitor_reason=inh.reason,
         geocode_status=geocode_status,
         incident_id=incident_id,
+        city=city,
     )
 
     if incident_id:

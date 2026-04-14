@@ -22,6 +22,7 @@ import argparse
 import datetime
 import json
 import os
+import random
 import re
 import subprocess
 import tempfile
@@ -63,8 +64,60 @@ os.makedirs(RAW_CLIPS_FOLDER, exist_ok=True)
 PROGRESS_DIR = "backfill_progress"
 os.makedirs(PROGRESS_DIR, exist_ok=True)
 
-DOWNLOAD_DELAY = 10
-RETRY_DELAYS = [30, 60, 120, 240, 480, 960]
+# ── Rate limiting / backoff ─────────────────────────────────────────
+# Broadcastify enforces an undocumented per-account daily download cap.
+# Once hit, every request returns 429 "Download limit exceeded" until
+# the quota resets (likely midnight US-Eastern).
+
+DOWNLOAD_DELAY_BASE = 20          # seconds between successful downloads
+DOWNLOAD_DELAY_JITTER = 10        # ± random jitter added to base delay
+BACKOFF_BASE = 60                 # initial backoff on 429 (seconds)
+BACKOFF_MULTIPLIER = 2            # exponential multiplier
+BACKOFF_MAX = 3600                # cap: 1 hour
+BACKOFF_JITTER_FRAC = 0.25        # ±25% jitter on backoff delays
+MAX_RETRIES_PER_REQUEST = 4       # per-request retry limit
+CONSECUTIVE_429_ABORT = 3         # stop the whole run after this many in a row
+
+_consecutive_429_count = 0
+
+
+class QuotaExhaustedError(Exception):
+    """Raised when the daily download cap appears to be hit."""
+
+
+def _jittered_delay(base: float, jitter_frac: float = 0.25) -> float:
+    """Add decorrelated jitter: uniform in [base*(1-j), base*(1+j)]."""
+    lo = base * (1.0 - jitter_frac)
+    hi = base * (1.0 + jitter_frac)
+    return random.uniform(lo, hi)
+
+
+def _backoff_delay(attempt: int) -> float:
+    """Exponential backoff with jitter, capped at BACKOFF_MAX."""
+    raw = min(BACKOFF_BASE * (BACKOFF_MULTIPLIER ** attempt), BACKOFF_MAX)
+    return _jittered_delay(raw, BACKOFF_JITTER_FRAC)
+
+
+def _record_429():
+    """Track consecutive 429s; raise QuotaExhaustedError if too many."""
+    global _consecutive_429_count
+    _consecutive_429_count += 1
+    if _consecutive_429_count >= CONSECUTIVE_429_ABORT:
+        raise QuotaExhaustedError(
+            f"{CONSECUTIVE_429_ABORT} consecutive 429s — daily download quota "
+            f"appears exhausted. Stopping to avoid wasting time."
+        )
+
+
+def _record_success():
+    global _consecutive_429_count
+    _consecutive_429_count = 0
+
+
+def _download_delay():
+    """Sleep between successful downloads with jitter."""
+    delay = DOWNLOAD_DELAY_BASE + random.uniform(-DOWNLOAD_DELAY_JITTER, DOWNLOAD_DELAY_JITTER)
+    time.sleep(max(5, delay))
 
 # ── Per-city config overlay ──────────────────────────────────────
 
@@ -169,30 +222,38 @@ def get_broadcastify_session() -> requests.Session:
     return session
 
 
-# ── Broadcastify API with retry ──────────────────────────────────
+# ── Broadcastify API with exponential backoff ───────────────────
 
 def fetch_archive_links(session: requests.Session, feed_id: str, day: str) -> list[dict]:
-    """Fetch archive segments for a feed on a given day, with retry on 429."""
+    """Fetch archive segments for a feed on a given day.
+
+    Uses exponential backoff with jitter on 429.  Raises
+    QuotaExhaustedError if the global consecutive-429 counter trips.
+    """
     api_url = f"https://www.broadcastify.com/archives/api/archives.php?feedId={feed_id}&date={day}"
 
-    for attempt in range(1 + len(RETRY_DELAYS)):
+    for attempt in range(MAX_RETRIES_PER_REQUEST + 1):
         try:
             resp = session.get(api_url, timeout=30)
             if resp.status_code == 429:
-                if attempt < len(RETRY_DELAYS):
-                    wait = RETRY_DELAYS[attempt]
-                    print(f"  [429 rate-limited on archive list] Waiting {wait}s (attempt {attempt+1})...")
+                _record_429()
+                if attempt < MAX_RETRIES_PER_REQUEST:
+                    wait = _backoff_delay(attempt)
+                    print(f"  [429 archive list] backoff {wait:.0f}s (attempt {attempt+1}/{MAX_RETRIES_PER_REQUEST})...")
                     time.sleep(wait)
                     continue
-                print(f"  [429] Giving up on archive list after {len(RETRY_DELAYS)} retries")
+                print(f"  [429] Giving up on archive list after {MAX_RETRIES_PER_REQUEST} retries")
                 return []
             if resp.status_code != 200:
                 return []
+            _record_success()
             data = resp.json()
+        except QuotaExhaustedError:
+            raise
         except Exception as e:
             print(f"  [ARCHIVE LIST ERROR] {e}")
-            if attempt < len(RETRY_DELAYS):
-                time.sleep(RETRY_DELAYS[attempt])
+            if attempt < MAX_RETRIES_PER_REQUEST:
+                time.sleep(_backoff_delay(attempt))
                 continue
             return []
         break
@@ -213,14 +274,18 @@ def fetch_archive_links(session: requests.Session, feed_id: str, day: str) -> li
 
 
 def download_mp3(session: requests.Session, url: str, dest_path: str) -> bool:
-    """Download an archive MP3 with retry on 429."""
-    for attempt in range(1 + len(RETRY_DELAYS)):
+    """Download an archive MP3 with exponential backoff + jitter.
+
+    Raises QuotaExhaustedError if consecutive 429s trip the global counter.
+    """
+    for attempt in range(MAX_RETRIES_PER_REQUEST + 1):
         try:
             resp = session.get(url, stream=True, timeout=120)
             if resp.status_code == 429:
-                if attempt < len(RETRY_DELAYS):
-                    wait = RETRY_DELAYS[attempt]
-                    print(f"[429] Waiting {wait}s...", end=" ", flush=True)
+                _record_429()
+                if attempt < MAX_RETRIES_PER_REQUEST:
+                    wait = _backoff_delay(attempt)
+                    print(f"[429] backoff {wait:.0f}s (attempt {attempt+1}/{MAX_RETRIES_PER_REQUEST})...", end=" ", flush=True)
                     time.sleep(wait)
                     continue
                 print("[429] Giving up after retries")
@@ -229,17 +294,25 @@ def download_mp3(session: requests.Session, url: str, dest_path: str) -> bool:
             with open(dest_path, "wb") as f:
                 for chunk in resp.iter_content(chunk_size=8192):
                     f.write(chunk)
+            _record_success()
             return True
+        except QuotaExhaustedError:
+            raise
         except requests.exceptions.HTTPError as e:
-            if "429" in str(e) and attempt < len(RETRY_DELAYS):
-                wait = RETRY_DELAYS[attempt]
-                print(f"[429] Waiting {wait}s...", end=" ", flush=True)
-                time.sleep(wait)
-                continue
+            if "429" in str(e):
+                _record_429()
+                if attempt < MAX_RETRIES_PER_REQUEST:
+                    wait = _backoff_delay(attempt)
+                    print(f"[429] backoff {wait:.0f}s...", end=" ", flush=True)
+                    time.sleep(wait)
+                    continue
             print(f"[DL ERROR] {e}")
             return False
         except Exception as e:
             print(f"[DL ERROR] {e}")
+            if attempt < MAX_RETRIES_PER_REQUEST:
+                time.sleep(_backoff_delay(attempt))
+                continue
             return False
     return False
 
@@ -285,6 +358,7 @@ def transcribe_and_post(
     feed_id: str,
     feed_label: str,
     archive_timestamp: str,
+    city: str = "philly",
 ):
     """Run preprocessing, transcribe, and POST to ingest."""
     chunk_seconds = 60
@@ -326,6 +400,7 @@ def transcribe_and_post(
                         patience=1.5,
                         suppress_blank=True,
                         no_speech_threshold=NO_SPEECH_THRESHOLD,
+                        word_timestamps=True,
                     )
                     segments = list(segments)
                     text = " ".join(s.text for s in segments).strip()
@@ -338,6 +413,16 @@ def transcribe_and_post(
                     if not text:
                         continue
 
+                    word_timings = []
+                    for seg in segments:
+                        if hasattr(seg, "words") and seg.words:
+                            for w in seg.words:
+                                word_timings.append({
+                                    "word": w.word.strip(),
+                                    "start": round(w.start, 3),
+                                    "end": round(w.end, 3),
+                                })
+
                     clip_id = uuid.uuid4().hex[:12]
                     try:
                         _save_wav(os.path.join(AUDIO_CLIPS_FOLDER, f"{clip_id}.wav"), processed)
@@ -345,7 +430,7 @@ def transcribe_and_post(
                         print(f"    [CLIP ERROR {vcfg.name}] {e}")
                         clip_id = None
 
-                    variants_list.append({
+                    variant_entry = {
                         "name": vcfg.name,
                         "audio_clip": clip_id,
                         "transcript": text,
@@ -354,7 +439,10 @@ def transcribe_and_post(
                             "no_speech_prob": round(no_speech_prob, 4),
                             "duration_s": round(duration, 2),
                         },
-                    })
+                    }
+                    if word_timings:
+                        variant_entry["word_timings"] = word_timings
+                    variants_list.append(variant_entry)
 
                     if vcfg.name == "aggressive":
                         standard_text = text
@@ -374,6 +462,7 @@ def transcribe_and_post(
                 "feed_id": feed_id,
                 "raw_audio_clip": raw_clip_id,
                 "variants": variants_list,
+                "city": city,
             }
 
             try:
@@ -420,6 +509,9 @@ def main():
     # Load city config overlay for feeds and initial_prompt
     city_config = _load_city_config(args.config)
     city_name = city_config.get("city", {}).get("name", "Philadelphia")
+    city_slug = city_config.get("city", {}).get("slug") or (
+        os.path.basename(os.path.dirname(args.config)) if args.config else "philly"
+    )
 
     # Override initial_prompt from city config if present
     global INITIAL_PROMPT
@@ -444,6 +536,9 @@ def main():
 
     print(f"=== {city_name} Pulse Archive Backfill ===")
     print(f"Feeds: {len(feeds)}, Days: {len(day_strings)}, Bridge: {BRIDGE_URL}")
+    print(f"Rate-limit settings: {DOWNLOAD_DELAY_BASE}s±{DOWNLOAD_DELAY_JITTER}s between downloads, "
+          f"backoff {BACKOFF_BASE}s×{BACKOFF_MULTIPLIER} (max {BACKOFF_MAX}s), "
+          f"abort after {CONSECUTIVE_429_ABORT} consecutive 429s")
     print(f"Loading Whisper model '{MODEL_SIZE}'...")
 
     try:
@@ -466,18 +561,28 @@ def main():
 
     total_transcribed = 0
     total_archives = 0
+    quota_exhausted = False
 
     for feed in feeds:
+        if quota_exhausted:
+            break
         feed_id = feed["feed_id"]
         feed_label = feed["label"]
         progress = load_progress(feed_id)
 
         for day_str in day_strings:
+            if quota_exhausted:
+                break
             if args.skip_existing and progress.get(day_str):
                 continue
 
             print(f"\n[{day_str}] [{feed_label}] Fetching archives...")
-            archives = fetch_archive_links(session, feed_id, day_str)
+            try:
+                archives = fetch_archive_links(session, feed_id, day_str)
+            except QuotaExhaustedError as e:
+                print(f"\n[QUOTA EXHAUSTED] {e}")
+                quota_exhausted = True
+                break
 
             if not archives:
                 print(f"  No archives available.")
@@ -485,10 +590,8 @@ def main():
                 save_progress(feed_id, progress)
                 continue
 
-            # Track per-segment progress for mid-day resume
             day_progress = progress.get(day_str, {})
             if isinstance(day_progress, str):
-                # Already fully done from a previous run format
                 continue
             done_segments: set = set(day_progress.get("done_segments", []))
 
@@ -515,8 +618,13 @@ def main():
 
                 try:
                     print(f"  [{ai+1}/{len(archives)}] Downloading {time_label}...", end=" ", flush=True)
-                    if not download_mp3(session, archive_url, tmp_path):
-                        continue
+                    try:
+                        if not download_mp3(session, archive_url, tmp_path):
+                            continue
+                    except QuotaExhaustedError as e:
+                        print(f"\n[QUOTA EXHAUSTED] {e}")
+                        quota_exhausted = True
+                        break
 
                     audio = mp3_to_pcm(tmp_path)
                     if audio is None:
@@ -526,7 +634,7 @@ def main():
                     duration_min = len(audio) / SAMPLE_RATE / 60
                     print(f"({duration_min:.1f}min)", end=" ", flush=True)
 
-                    count = transcribe_and_post(model, audio, feed_id, feed_label, archive_ts)
+                    count = transcribe_and_post(model, audio, feed_id, feed_label, archive_ts, city=city_slug)
                     day_transcribed += count
                     total_transcribed += count
                     total_archives += 1
@@ -540,16 +648,20 @@ def main():
                     if os.path.exists(tmp_path):
                         os.unlink(tmp_path)
 
-                time.sleep(DOWNLOAD_DELAY)
+                _download_delay()
 
-            progress[day_str] = f"done_{day_transcribed}"
-            save_progress(feed_id, progress)
-            print(f"  --- Day {day_str} [{feed_label}]: {day_transcribed} transcripts ---")
+            if not quota_exhausted:
+                progress[day_str] = f"done_{day_transcribed}"
+                save_progress(feed_id, progress)
+                print(f"  --- Day {day_str} [{feed_label}]: {day_transcribed} transcripts ---")
 
-        print(f"\n=== Feed {feed_label} complete ===")
+        if not quota_exhausted:
+            print(f"\n=== Feed {feed_label} complete ===")
 
-    print(f"\n=== Backfill complete ===")
+    print(f"\n=== Backfill {'stopped (quota exhausted)' if quota_exhausted else 'complete'} ===")
     print(f"Total: {total_transcribed} transcripts from {total_archives} archive segments")
+    if quota_exhausted:
+        print("Re-run later when the daily download quota resets (likely midnight US-Eastern).")
 
 
 if __name__ == "__main__":

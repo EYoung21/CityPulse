@@ -57,11 +57,13 @@ with open("config.yaml", "r", encoding="utf-8") as f:
 # Optionally load a per-city config overlay
 _city_config = {}
 CITY_NAME = "Philadelphia"
+CITY_SLUG = "philly"
 if _cli_args.config and os.path.exists(_cli_args.config):
     with open(_cli_args.config, "r", encoding="utf-8") as f:
         _city_config = yaml.safe_load(f) or {}
     CITY_NAME = _city_config.get("city", {}).get("name", "Philadelphia")
-    print(f"Loaded city config: {CITY_NAME} from {_cli_args.config}")
+    CITY_SLUG = _city_config.get("city", {}).get("slug") or os.path.basename(os.path.dirname(_cli_args.config))
+    print(f"Loaded city config: {CITY_NAME} (slug={CITY_SLUG}) from {_cli_args.config}")
 
 USERNAME = config["credentials"]["username"]
 PASSWORD = config["credentials"]["password"]
@@ -349,6 +351,7 @@ def transcriber_worker(worker_id):
                 feed_id=feed_id,
                 raw_audio_clip=raw_clip_id,
                 variants=variants_list,
+                city=CITY_SLUG,
             )
 
             transcription_queue.task_done()
