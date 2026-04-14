@@ -372,7 +372,7 @@ function ProfileContent({
           className="text-center text-[10px] py-4"
           style={{ color: "var(--panel-text-muted, #666)" }}
         >
-          PHLPulse · AI-Powered Community Safety · All data UNVERIFIED
+          CityPulse · AI-Powered Community Safety · All data UNVERIFIED
         </div>
       </div>
     </div>

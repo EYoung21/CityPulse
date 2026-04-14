@@ -18,9 +18,9 @@ const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
 const siteName = process.env.NEXT_PUBLIC_SITE_NAME || "PHLPulse";
 
 export const metadata: Metadata = {
-  title: `${siteName} — AI-Powered Community Safety for ${cityName}`,
+  title: `CityPulse — ${siteName} · ${cityName}`,
   description:
-    `Real-time AI-powered safety awareness for ${cityName}. Live police scanner transcription, incident mapping, and safe routing.`,
+    `CityPulse: Real-time AI-powered community safety for ${cityName}. Live police scanner transcription, incident mapping, and safe routing.`,
   icons: {
     icon: [
       { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
