@@ -1425,7 +1425,7 @@ export default function AdminPanel({ onBack }: Props) {
           <ArrowLeft className="w-4 h-4" />
         </button>
 
-        <img src="/logo.png" alt="PHLPulse" className="w-5 h-5" />
+        <img src="/logo.png" alt="CityPulse" className="w-5 h-5" />
         <span className="text-sm font-semibold" style={{ color: "var(--panel-text)" }}>
           Admin Panel
         </span>

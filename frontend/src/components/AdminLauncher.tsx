@@ -13,12 +13,12 @@ export default function AdminLauncher({ onChoose }: Props) {
       style={{ background: "var(--map-bg, #0a0a14)" }}
     >
       <div className="flex items-center gap-3 mb-2">
-        <img src="/logo.png" alt="PHLPulse" className="w-10 h-10" />
+        <img src="/logo.png" alt="CityPulse" className="w-10 h-10" />
         <h1
           className="text-2xl font-bold tracking-tight"
           style={{ color: "var(--panel-text, #e5e7eb)" }}
         >
-          PHLPulse
+          CityPulse
         </h1>
       </div>
       <p

@@ -106,14 +106,19 @@ export default function LoginScreen() {
         style={{ background: "var(--panel-bg, rgba(255,255,255,0.05))", border: "1px solid var(--panel-border, rgba(255,255,255,0.1))" }}
       >
         {/* Logo */}
-        <div className="text-center space-y-2">
+        <div className="text-center space-y-3">
           <div className="flex items-center justify-center gap-3">
-            <img src="/logo.png" alt={siteName} className="w-12 h-12" />
-            <span className="text-2xl font-bold tracking-tight" style={{ color: "var(--panel-text, white)" }}>{siteName}</span>
+            <img src="/logo.png" alt="CityPulse" className="w-12 h-12" />
+            <span className="text-2xl font-bold tracking-tight" style={{ color: "var(--panel-text, white)" }}>CityPulse</span>
           </div>
-          <p className="text-xs" style={{ color: "var(--panel-text-muted, #666)" }}>
-            AI-Powered Community Safety for {cityName}
-          </p>
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium" style={{ color: "var(--panel-text-secondary, #999)" }}>
+              {siteName} &middot; {cityName}
+            </p>
+            <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--panel-text-muted, #666)" }}>
+              AI-Powered Community Safety
+            </p>
+          </div>
         </div>
 
         {/* Google sign-in */}

@@ -16,10 +16,10 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const hood = getNeighborhoodBySlug(slug);
   const name = hood?.name ?? "Unknown";
   return {
-    title: `${name} Safety Profile | PHLPulse`,
-    description: `Real-time safety data for ${name}, Philadelphia. Crime trends, peak hours, and incident history powered by AI scanner analysis.`,
+    title: `${name} Safety Profile | CityPulse`,
+    description: `Real-time safety data for ${name}. Crime trends, peak hours, and incident history powered by AI scanner analysis.`,
     openGraph: {
-      title: `${name} — PHLPulse Safety Profile`,
+      title: `${name} — CityPulse Safety Profile`,
       description: `Live safety analytics for ${name}, Philadelphia.`,
     },
   };

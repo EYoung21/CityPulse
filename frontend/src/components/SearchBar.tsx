@@ -612,7 +612,7 @@ export default function SearchBar({
                   value={searchQuery}
                   onChange={(e) => { setSearchQuery(e.target.value); setActiveDropdown("search"); geocode(e.target.value, setSearchSuggestions, setSearchLoading); }}
                   onFocus={() => { if (searchQuery.length >= 2) setActiveDropdown("search"); }}
-                  placeholder="Search PHLPulse"
+                  placeholder="Search CityPulse"
                   className="flex-1 bg-transparent text-sm outline-none"
                   style={{ color: "var(--panel-text)" }}
                 />
@@ -753,7 +753,7 @@ export default function SearchBar({
 
             <div className="px-4 py-3 flex items-center gap-2" style={{ borderTop: "1px solid var(--panel-border)" }}>
               <Shield className="w-4 h-4 text-blue-500/60" />
-              <span className="text-[11px]" style={{ color: "var(--panel-text-muted)" }}>PHLPulse · AI-Powered Community Safety</span>
+              <span className="text-[11px]" style={{ color: "var(--panel-text-muted)" }}>CityPulse · AI-Powered Community Safety</span>
             </div>
           </>
         )}

@@ -66,7 +66,7 @@ export default function SearchInput({ onFlyTo, onDirections }: Props) {
           onFocus={() => {
             if (query.length >= 2) setOpen(true);
           }}
-          placeholder="Search PHLPulse"
+          placeholder="Search CityPulse"
           className="flex-1 bg-transparent text-sm outline-none"
           style={{ color: "var(--panel-text)" }}
         />

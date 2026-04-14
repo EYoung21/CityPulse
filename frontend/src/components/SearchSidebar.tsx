@@ -572,7 +572,7 @@ export default function SearchSidebar({
             >
               <Shield className="w-4 h-4 text-blue-500/60" />
               <span className="text-[11px]" style={{ color: "var(--panel-text-muted)" }}>
-                PHLPulse · AI-Powered Community Safety
+                CityPulse · AI-Powered Community Safety
               </span>
             </div>
           </>
