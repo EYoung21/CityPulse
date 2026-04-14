@@ -21,6 +21,7 @@ export interface Incident {
   feed_id: string | null;
   description: string | null;
   hidden?: boolean;
+  word_timings?: { word: string; start: number; end: number }[] | null;
 }
 
 export interface PreprocessMeta {

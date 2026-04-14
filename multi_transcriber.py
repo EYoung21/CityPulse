@@ -226,7 +226,7 @@ def _save_wav(path, audio_float32):
 
 
 def _transcribe_variant(variant_audio, worker_id, variant_name):
-    """Run Whisper on a single variant's preprocessed audio. Returns (text, whisper_meta) or None."""
+    """Run Whisper on a single variant's preprocessed audio. Returns (text, whisper_meta, word_timings) or None."""
     duration = len(variant_audio) / SAMPLE_RATE
     try:
         segments, _info = model.transcribe(
@@ -239,6 +239,7 @@ def _transcribe_variant(variant_audio, worker_id, variant_name):
             patience=1.5,
             suppress_blank=True,
             no_speech_threshold=NO_SPEECH_THRESHOLD,
+            word_timestamps=True,
         )
         segments = list(segments)
         text = " ".join(s.text for s in segments).strip()
@@ -251,11 +252,21 @@ def _transcribe_variant(variant_audio, worker_id, variant_name):
         if not text:
             return None
 
+        word_timings = []
+        for seg in segments:
+            if hasattr(seg, "words") and seg.words:
+                for w in seg.words:
+                    word_timings.append({
+                        "word": w.word.strip(),
+                        "start": round(w.start, 3),
+                        "end": round(w.end, 3),
+                    })
+
         whisper_meta = {
             "no_speech_prob": round(no_speech_prob, 4),
             "duration_s": round(duration, 2),
         }
-        return text, whisper_meta
+        return text, whisper_meta, word_timings
     except Exception as e:
         print(f"   [Worker-{worker_id}] Variant '{variant_name}' transcribe error: {e}")
         return None
@@ -295,7 +306,7 @@ def transcriber_worker(worker_id):
                 if result is None:
                     continue
 
-                text, whisper_meta = result
+                text, whisper_meta, word_timings = result
 
                 clip_id = _uuid.uuid4().hex[:12]
                 try:
@@ -304,13 +315,16 @@ def transcriber_worker(worker_id):
                     print(f"   [Worker-{worker_id}] Variant '{vcfg.name}' clip save error: {e}")
                     clip_id = None
 
-                variants_list.append({
+                variant_entry = {
                     "name": vcfg.name,
                     "audio_clip": clip_id,
                     "transcript": text,
                     "preprocess_meta": meta,
                     "whisper_meta": whisper_meta,
-                })
+                }
+                if word_timings:
+                    variant_entry["word_timings"] = word_timings
+                variants_list.append(variant_entry)
 
                 if vcfg.name == "standard":
                     standard_text = text
