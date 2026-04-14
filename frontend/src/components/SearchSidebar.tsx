@@ -8,7 +8,10 @@ import {
   getMultiStopRoute,
   buildAvoidZones,
   buildAvoidPolygons,
+  isNearRoute,
+  DEFAULT_AVOID_CATS,
   type TransportMode,
+  type AvoidCategoryId,
 } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
 import type { RouteData } from "@/components/RoutePanel";
@@ -112,6 +115,10 @@ export default function SearchSidebar({
     durationMin: number;
     nearbyCount: number;
   } | null>(null);
+  const [avoidCats, setAvoidCats] = useState<Set<AvoidCategoryId>>(new Set(DEFAULT_AVOID_CATS));
+  const avoidCatsRef = useRef(avoidCats);
+  avoidCatsRef.current = avoidCats;
+  const [rerouteAlert, setRerouteAlert] = useState<string | null>(null);
   const [demoRouteSim, setDemoRouteSim] = useState(false);
   const demoRouteSimRef = useRef(false);
   const demoDistMRef = useRef(0);
@@ -267,26 +274,22 @@ export default function SearchSidebar({
       [destLoc.lat, destLoc.lng],
     ];
     const incSnap = incidentsRef.current;
-    const safety = assessSafety(
-      { display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng },
-      incSnap
-    );
 
     const directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
     if (!directRoute) return;
 
+    const zones = buildAvoidZones(incSnap, avoidCatsRef.current);
     let routeData: RouteData;
     let meta: { distanceKm: number; durationMin: number; isSafe: boolean; nearbyCount: number };
 
-    if (safety.nearbyCount === 0) {
+    if (zones.length === 0) {
       routeData = { normal: directRoute, safe: null, avoidZones: [] };
       meta = { distanceKm: directRoute.distanceKm, durationMin: directRoute.durationMin, isSafe: false, nearbyCount: 0 };
     } else {
-      const zones = buildAvoidZones(incSnap);
       const safeRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints, buildAvoidPolygons(zones));
       const best = safeRoute || directRoute;
       routeData = { normal: directRoute, safe: safeRoute, avoidZones: zones };
-      meta = { distanceKm: best.distanceKm, durationMin: best.durationMin, isSafe: !!safeRoute, nearbyCount: safety.nearbyCount };
+      meta = { distanceKm: best.distanceKm, durationMin: best.durationMin, isSafe: !!safeRoute, nearbyCount: zones.length };
     }
 
     onRoutesChange(routeData);
@@ -294,12 +297,86 @@ export default function SearchSidebar({
       isSafe: meta.isSafe,
       distanceKm: meta.distanceKm,
       durationMin: meta.durationMin,
-      nearbyCount: safety.nearbyCount,
+      nearbyCount: meta.nearbyCount,
     });
+    setRerouteAlert(null);
     setView("trip");
     const geom = (routeData.safe || routeData.normal)?.geometry;
     onTripActive?.(true, geom, activeMode);
   }, [originLoc, destLoc, stops, activeMode, onRoutesChange, onTripActive]);
+
+  // Auto-reroute: watch for new incidents near the active route geometry
+  const activeRouteRef = useRef<[number, number][] | null>(null);
+  const knownIncIdsRef = useRef<Set<string>>(new Set());
+  const rerouteInFlightRef = useRef(false);
+
+  useEffect(() => {
+    if (view === "trip" && routeGeometryForDemo && routeGeometryForDemo.length >= 2) {
+      activeRouteRef.current = routeGeometryForDemo;
+      knownIncIdsRef.current = new Set(incidents.map((i) => i.id));
+    } else {
+      activeRouteRef.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, routeGeometryForDemo]);
+
+  useEffect(() => {
+    const route = activeRouteRef.current;
+    if (view !== "trip" || !route || route.length < 2 || rerouteInFlightRef.current) return;
+
+    const newNearby = incidents.filter(
+      (inc) =>
+        inc.lat != null &&
+        inc.lng != null &&
+        !knownIncIdsRef.current.has(inc.id) &&
+        (inc.w_eff ?? 0) > 0.25 &&
+        isNearRoute(inc.lat!, inc.lng!, route, 0.5)
+    );
+
+    if (newNearby.length === 0) return;
+
+    for (const inc of newNearby) knownIncIdsRef.current.add(inc.id);
+
+    if (!originLoc || !destLoc) return;
+    rerouteInFlightRef.current = true;
+    setRerouteAlert(`New incident detected nearby — rerouting...`);
+
+    const waypoints: [number, number][] = [
+      [originLoc.lat, originLoc.lng],
+      ...stops.filter((s) => s.loc).map((s) => [s.loc!.lat, s.loc!.lng] as [number, number]),
+      [destLoc.lat, destLoc.lng],
+    ];
+
+    (async () => {
+      try {
+        const zones = buildAvoidZones(incidents, avoidCatsRef.current);
+        const directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
+        if (!directRoute) return;
+        const safeRoute = zones.length > 0
+          ? await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints, buildAvoidPolygons(zones))
+          : null;
+        const best = safeRoute || directRoute;
+        const routeData: RouteData = { normal: directRoute, safe: safeRoute, avoidZones: zones };
+        onRoutesChange(routeData);
+        setRouteInfo({
+          isSafe: !!safeRoute,
+          distanceKm: best.distanceKm,
+          durationMin: best.durationMin,
+          nearbyCount: zones.length,
+        });
+        const geom = best.geometry;
+        activeRouteRef.current = geom;
+        onTripActive?.(true, geom, activeMode);
+        setRerouteAlert(`Route updated — avoiding ${newNearby.length} new incident${newNearby.length > 1 ? "s" : ""}`);
+        setTimeout(() => setRerouteAlert(null), 5000);
+      } catch {
+        setRerouteAlert(null);
+      } finally {
+        rerouteInFlightRef.current = false;
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incidents, view]);
 
   const resetTrip = useCallback(() => {
     setDemoRouteSim(false);
@@ -535,7 +612,23 @@ export default function SearchSidebar({
             routeGeometryForDemo={routeGeometryForDemo}
             demoRouteSim={demoRouteSim}
             onDemoRouteSimChange={setDemoRouteSim}
+            avoidCats={avoidCats}
+            onAvoidCatsChange={setAvoidCats}
           />
+        )}
+
+        {view === "trip" && rerouteAlert && (
+          <div
+            className="mx-3 mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium animate-pulse"
+            style={{
+              background: "rgba(245,158,11,0.12)",
+              border: "1px solid rgba(245,158,11,0.25)",
+              color: "#f59e0b",
+            }}
+          >
+            <Navigation className="w-3.5 h-3.5 shrink-0" />
+            {rerouteAlert}
+          </div>
         )}
 
         {view === "trip" && routeInfo && (

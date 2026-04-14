@@ -41,10 +41,37 @@ function circleToPolygon(
   return coords;
 }
 
-export function buildAvoidZones(incidents: Incident[]): AvoidZone[] {
+export const AVOIDANCE_CATEGORIES = [
+  { id: "violent", label: "Violent", cats: ["violent_weapon", "violent_no_weapon", "shots_heard", "robbery", "burglary_in_progress"] },
+  { id: "fire", label: "Fire", cats: ["fire_hazmat"] },
+  { id: "medical", label: "Medical", cats: ["medical_priority", "medical_other"] },
+  { id: "traffic", label: "Traffic", cats: ["traffic_crash_injury", "traffic_crash_no_injury"] },
+  { id: "disorder", label: "Disorder", cats: ["disorder", "admin_or_noise"] },
+] as const;
+
+export type AvoidCategoryId = typeof AVOIDANCE_CATEGORIES[number]["id"];
+
+export const DEFAULT_AVOID_CATS: Set<AvoidCategoryId> = new Set(["violent", "fire"]);
+
+export function buildAvoidZones(
+  incidents: Incident[],
+  avoidCats?: Set<AvoidCategoryId>
+): AvoidZone[] {
+  const cats = avoidCats ?? DEFAULT_AVOID_CATS;
+  const allowedSeverityCats = new Set<string>();
+  for (const ac of AVOIDANCE_CATEGORIES) {
+    if (cats.has(ac.id)) {
+      for (const c of ac.cats) allowedSeverityCats.add(c);
+    }
+  }
+
   return incidents
     .filter(
-      (inc) => inc.lat != null && inc.lng != null && (inc.w_eff ?? 0) > 0.25
+      (inc) =>
+        inc.lat != null &&
+        inc.lng != null &&
+        (inc.w_eff ?? 0) > 0.25 &&
+        (allowedSeverityCats.size === 0 || allowedSeverityCats.has(inc.severity_category))
     )
     .map((inc) => ({
       center: [inc.lat!, inc.lng!] as [number, number],
@@ -63,6 +90,32 @@ export function buildAvoidPolygons(
     type: "MultiPolygon",
     coordinates: polygons,
   };
+}
+
+/** Check if a point is within `thresholdKm` of any segment of a route. */
+export function isNearRoute(
+  lat: number,
+  lng: number,
+  route: [number, number][],
+  thresholdKm = 0.5
+): boolean {
+  const R = 6371;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  for (let i = 0; i < route.length - 1; i += 3) {
+    const j = Math.min(i + 3, route.length - 1);
+    const aLat = toRad(route[i][0]), aLng = toRad(route[i][1]);
+    const bLat = toRad(route[j][0]), bLng = toRad(route[j][1]);
+    const pLat = toRad(lat), pLng = toRad(lng);
+    const dAP = Math.acos(
+      Math.min(1, Math.sin(aLat) * Math.sin(pLat) + Math.cos(aLat) * Math.cos(pLat) * Math.cos(pLng - aLng))
+    ) * R;
+    if (dAP < thresholdKm) return true;
+    const dBP = Math.acos(
+      Math.min(1, Math.sin(bLat) * Math.sin(pLat) + Math.cos(bLat) * Math.cos(pLat) * Math.cos(pLng - bLng))
+    ) * R;
+    if (dBP < thresholdKm) return true;
+  }
+  return false;
 }
 
 function decodePolyline(encoded: string): [number, number][] {
