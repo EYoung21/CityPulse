@@ -1,5 +1,8 @@
 city:
   name: "New York City"
+  slug: "nyc"
+  short: "NYC"
+  domain: "newyorkcitypulse.com"
 
 feeds:
   - feed_id: "40184"

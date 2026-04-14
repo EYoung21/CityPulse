@@ -18,6 +18,7 @@ def post_transcript(
     raw_audio_clip=None,
     preprocess_meta=None,
     variants=None,
+    city=None,
 ):
     """Fire-and-forget POST of a transcript line to the ingest endpoint.
 
@@ -37,6 +38,8 @@ def post_transcript(
             payload["preprocess_meta"] = preprocess_meta
         if variants is not None:
             payload["variants"] = variants
+        if city:
+            payload["city"] = city
         body = json.dumps(payload).encode("utf-8")
         req = Request(
             bridge_url,

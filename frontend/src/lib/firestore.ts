@@ -13,6 +13,7 @@ import { enrichIncidents } from "@/lib/incident-weights";
 
 const COLLECTION = "incidents";
 const MAX_DOCS = 5000;
+const CITY_SLUG = process.env.NEXT_PUBLIC_CITY_SLUG || "philly";
 
 function toISOString(val: unknown): string {
   if (!val) return new Date().toISOString();
@@ -87,6 +88,7 @@ export function subscribeIncidents(
   const db = getFirestore(getFirebaseApp());
   const q = query(
     collection(db, COLLECTION),
+    where("city", "==", CITY_SLUG),
     orderBy("reported_at", "desc"),
     limitFn(MAX_DOCS)
   );

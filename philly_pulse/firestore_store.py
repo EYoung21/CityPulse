@@ -67,6 +67,7 @@ def insert_incident(
     feed_id: Optional[str] = None,
     description: Optional[str] = None,
     word_timings: Optional[list] = None,
+    city: Optional[str] = None,
 ) -> dict:
     db = _ensure_client()
     incident_id = uuid.uuid4().hex[:12]
@@ -90,6 +91,7 @@ def insert_incident(
         "feed_id": feed_id,
         "description": description,
         "word_timings": word_timings,
+        "city": city,
     }
     ref = db.collection("incidents").document(incident_id)
     ref.set(payload)
@@ -114,6 +116,7 @@ def insert_extraction(
     inhibitor_reason: Optional[str] = None,
     geocode_status: Optional[str] = None,
     incident_id: Optional[str] = None,
+    city: Optional[str] = None,
 ) -> dict:
     db = _ensure_client()
     eid = uuid.uuid4().hex[:12]
@@ -136,6 +139,7 @@ def insert_extraction(
         "inhibitor_reason": inhibitor_reason,
         "geocode_status": geocode_status,
         "incident_id": incident_id,
+        "city": city,
     }
     ref = db.collection("extractions").document(eid)
     ref.set(payload)

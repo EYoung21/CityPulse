@@ -1,5 +1,8 @@
 city:
   name: "San Francisco"
+  slug: "sf"
+  short: "SFO"
+  domain: "sfopulse.com"
 
 feeds:
   - feed_id: "46180"
