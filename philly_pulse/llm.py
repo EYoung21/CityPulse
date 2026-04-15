@@ -1,14 +1,20 @@
-"""OpenAI LLM structured extraction for PhillyPulse.
+"""OpenAI LLM structured extraction for CityPulse.
 
 Takes a raw scanner transcript line and returns structured incident data
 with a closed severity enum, location text, and confidence score.
+
+Supports multi-city operation: call configure_llm() at startup or pass
+city_context to extract_incident() for per-request city awareness.
 """
 
 import json
+import logging
 import os
 from typing import Optional
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -29,8 +35,47 @@ SEVERITY_CATEGORIES = [
     "admin_or_noise",
 ]
 
-SYSTEM_PROMPT = f"""\
-You are an AI assistant that extracts structured incident data from Philadelphia \
+# ── Per-city LLM context ────────────────────────────────────────────
+
+_PHILLY_BOUNDS = {"lat_min": 39.85, "lat_max": 40.15, "lng_min": -75.30, "lng_max": -74.94}
+_PHILLY_CENTER = (39.9526, -75.1652)
+
+_default_city_context: dict = {
+    "city_name": "Philadelphia",
+    "geocode_suffix": "Philadelphia, PA",
+    "center_lat": _PHILLY_CENTER[0],
+    "center_lng": _PHILLY_CENTER[1],
+    "bounds": _PHILLY_BOUNDS,
+}
+
+
+def configure_llm(
+    city_name: str = "Philadelphia",
+    geocode_suffix: str = "Philadelphia, PA",
+    center_lat: float = 39.9526,
+    center_lng: float = -75.1652,
+    bounds: dict | None = None,
+):
+    """Set default city context for the LLM. Call once on startup."""
+    global _default_city_context
+    _default_city_context = {
+        "city_name": city_name,
+        "geocode_suffix": geocode_suffix,
+        "center_lat": center_lat,
+        "center_lng": center_lng,
+        "bounds": bounds or _PHILLY_BOUNDS,
+    }
+    logger.info("LLM configured for %s (center: %.4f, %.4f)", city_name, center_lat, center_lng)
+
+
+def _build_system_prompt(ctx: dict) -> str:
+    city = ctx["city_name"]
+    suffix = ctx["geocode_suffix"]
+    clat = ctx["center_lat"]
+    clng = ctx["center_lng"]
+
+    return f"""\
+You are an AI assistant that extracts structured incident data from {city} \
 police/fire/EMS radio scanner transcripts.
 
 Given a raw transcript line, output ONLY a JSON object with these fields:
@@ -42,8 +87,7 @@ unit check-ins, or ambiguous fragments.
 best match. Use "admin_or_noise" for non-dispatch content.
 - "location_text": string or null — the most specific location mentioned in direct \
 connection to the incident (intersection, block, address, landmark). Include \
-"Philadelphia" for geocoding. null if no location is directly associated with the \
-incident.
+"{suffix}" for geocoding. null if no location is directly associated with the incident.
 - "context_location_text": string or null — if "location_text" is null, look for \
 ANY location mentioned elsewhere in the transcript, even if it is not in the same \
 sentence as the incident. Officers often state their position before reporting an \
@@ -54,16 +98,15 @@ location_text is set (location explicitly tied to the incident), "context" if on
 context_location_text is available, "none" if no location at all.
 - "description": string — one plain-English sentence summarizing the incident \
 for a civilian reader. No jargon, no police codes. Decode any radio codes into \
-plain language. Example: "Multiple gunshots reported near 52nd and Market, \
-suspect fled on foot wearing grey hoodie."
+plain language.
 - "confidence": float 0.0-1.0 — your confidence that the extraction is accurate. \
 Lower if the transcript is garbled, ambiguous, or partially inaudible.
 - "lat": float or null — approximate latitude of the incident location in \
-Philadelphia (WGS-84). Use your knowledge of Philly geography. Derive from \
+{city} (WGS-84). Use your knowledge of {city} geography. Derive from \
 location_text first, then context_location_text. null if unknown.
 - "lng": float or null — approximate longitude. null if unknown.
 
-## PPD Radio Code Reference
+## Common Radio Codes
 Decode these codes when they appear in transcripts:
 
 10-Codes: 10-0=Caution, 10-4=Acknowledged, 10-7=Out of service, 10-8=In service, \
@@ -73,41 +116,30 @@ Decode these codes when they appear in transcripts:
 10-43=In pursuit, 10-45=Bomb threat, 10-46=Bank alarm, 10-50=Vehicle accident, \
 10-52=Dispatch ambulance, 10-54=Hit and run, 10-55=DUI, 10-60=Suspicious vehicle, \
 10-61=Traffic stop, 10-62=B&E in progress, 10-64=Crime in progress, \
-10-65=Armed robbery, 10-66=Notify medical examiner, 10-67=Report of death, \
-10-73=Mental subject, 10-75=Wanted/stolen, 10-76=Prowler, 10-80=Domestic disturbance, \
-10-82=Person with gun/fire in progress, 10-99=Wanted person.
+10-65=Armed robbery, 10-73=Mental subject, 10-80=Domestic disturbance, \
+10-99=Wanted person.
 
 Priority Events: PGUN=Person with gun, PWEA=Person with weapon, ROBP=Robbery in progress, \
 BIP=Burglary in progress, GUNSHT=Gunshots, DOM=Domestic, HC=Hospital case, \
-HCACC=Auto accident with injuries, 302=Mental health/psychiatric emergency, \
-5292=Dead body/DOA.
-
-Dispositions: ARR=Arrest, GOA=Gone on arrival, RTF=Report to follow, \
-UNF=Unfounded, SHN=Shooting no victim, NFA=Not a false alarm.
-
-Units: RPC=Radio patrol car, EPG/Wagon=Emergency patrol wagon, \
-TFP=Tactical foot patrol, FB=Foot beat, B/Barney=Sergeant, \
-Command=Lieutenant, CO=Captain. "12B"=12th District Sergeant. \
-"XX00 block"=addresses 00–99 on that block.
-
-Slang: "Strong arm"=robbery without weapon, "Tender age"=child under 10, \
-"Turn me around"=reassign to new location, "Take"=respond to assignment, \
-75-48=Police incident report.
+HCACC=Auto accident with injuries, 302=Mental health/psychiatric emergency.
 
 Rules:
 - Output ONLY valid JSON. No markdown, no explanation, no extra text.
 - If the transcript is not dispatch-relevant, set is_dispatch_relevant to false and \
 severity_category to "admin_or_noise".
-- Prefer specific intersections ("5th and Market") over vague areas ("downtown").
+- Prefer specific intersections over vague areas.
 - If multiple incidents are mentioned, extract the most severe one.
-- For lat/lng, use your best estimate for Philadelphia locations. Philly center is \
-roughly 39.9526, -75.1652. Only provide coordinates you are reasonably confident about.
-- Aggressively extract locations: block numbers ("1200 block of Germantown Ave"), \
-intersections ("52nd and Market"), landmarks ("Temple Hospital"), highway references \
-("I-76 at the Vine St exit"), unit positions ("on scene at Broad and Lehigh").
-- When you see codes like "10-32", "PGUN", "302", decode them using the reference above \
-to determine the correct severity_category.
+- For lat/lng, use your best estimate for {city} locations. {city} center is \
+roughly {clat}, {clng}. Only provide coordinates you are reasonably confident about.
+- Aggressively extract locations: block numbers, intersections, landmarks, highway \
+references, unit positions.
+- When you see codes like "10-32", "PGUN", "302", decode them to determine the \
+correct severity_category.
 """
+
+
+# Legacy module-level prompt (backward compat for imports)
+SYSTEM_PROMPT = _build_system_prompt(_default_city_context)
 
 
 class LLMError(Exception):
@@ -115,8 +147,14 @@ class LLMError(Exception):
     pass
 
 
-async def extract_incident(raw_text: str) -> Optional[dict]:
+async def extract_incident(
+    raw_text: str,
+    city_context: dict | None = None,
+) -> Optional[dict]:
     """Extract structured incident data from a raw transcript line.
+
+    city_context, if provided, overrides the default city for this call.
+    Expected keys: city_name, geocode_suffix, center_lat, center_lng, bounds.
 
     Returns a dict with is_dispatch_relevant, severity_category,
     location_text, and confidence. Returns None if the LLM says
@@ -126,6 +164,10 @@ async def extract_incident(raw_text: str) -> Optional[dict]:
     """
     if not OPENAI_API_KEY:
         raise LLMError("OPENAI_API_KEY is not set. LLM extraction is required.")
+
+    ctx = city_context or _default_city_context
+    prompt = _build_system_prompt(ctx)
+    bounds = ctx.get("bounds", _PHILLY_BOUNDS)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(
@@ -137,7 +179,7 @@ async def extract_incident(raw_text: str) -> Optional[dict]:
             json={
                 "model": OPENAI_MODEL,
                 "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": prompt},
                     {"role": "user", "content": raw_text},
                 ],
                 "temperature": 0.0,
@@ -177,7 +219,8 @@ async def extract_incident(raw_text: str) -> Optional[dict]:
     if llm_lat is not None and llm_lng is not None:
         try:
             llm_lat, llm_lng = float(llm_lat), float(llm_lng)
-            if not (39.85 <= llm_lat <= 40.15 and -75.30 <= llm_lng <= -74.94):
+            if not (bounds["lat_min"] <= llm_lat <= bounds["lat_max"]
+                    and bounds["lng_min"] <= llm_lng <= bounds["lng_max"]):
                 llm_lat, llm_lng = None, None
         except (ValueError, TypeError):
             llm_lat, llm_lng = None, None
