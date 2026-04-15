@@ -2,6 +2,7 @@
 
 Serves the API: ingest, incidents, admin, health.
 Set CITY_CONFIG env var to a city config YAML path to configure for a specific city.
+Loads all city configs from the cities/ directory for multi-city LLM/geocode support.
 """
 
 import json
@@ -42,6 +43,76 @@ if _city_config_path and Path(_city_config_path).exists():
     CITY_NAME = _city_config.get("city", {}).get("name", "Philadelphia")
     CITY_SLUG = _city_config.get("city", {}).get("slug") or Path(_city_config_path).parent.name
     logger.info("Loaded city config: %s from %s", CITY_NAME, _city_config_path)
+
+# ── Multi-city registry (loaded from cities/ directory) ─────────────
+
+_PHILLY_BOUNDS = {"lat_min": 39.85, "lat_max": 40.15, "lng_min": -75.30, "lng_max": -74.94}
+
+CITY_REGISTRY: dict[str, dict] = {}
+
+
+def _load_city_registry():
+    """Load all city configs from the cities/ directory."""
+    cities_dir = Path(__file__).resolve().parent.parent / "cities"
+    if not cities_dir.is_dir():
+        logger.warning("No cities/ directory found at %s", cities_dir)
+        return
+    for cfg_dir in sorted(cities_dir.iterdir()):
+        cfg_path = cfg_dir / "config.yaml"
+        if not cfg_path.exists():
+            continue
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            slug = cfg.get("city", {}).get("slug") or cfg_dir.name
+            city_name = cfg.get("city", {}).get("name", slug)
+            geo = cfg.get("geocode", {})
+            map_cfg = cfg.get("map", {})
+
+            bounds_raw = geo.get("bounds", {})
+            if isinstance(bounds_raw, str):
+                parts = [float(x) for x in bounds_raw.split(",")]
+                bounds = {"lng_min": parts[0], "lat_min": parts[1],
+                          "lng_max": parts[2], "lat_max": parts[3]}
+            elif isinstance(bounds_raw, dict):
+                bounds = bounds_raw
+            else:
+                bounds = _PHILLY_BOUNDS
+
+            center_lat = map_cfg.get("center_lat") or (bounds["lat_min"] + bounds["lat_max"]) / 2
+            center_lng = map_cfg.get("center_lng") or (bounds["lng_min"] + bounds["lng_max"]) / 2
+
+            CITY_REGISTRY[slug] = {
+                "city_name": city_name,
+                "geocode_suffix": geo.get("suffix", f", {city_name}"),
+                "center_lat": center_lat,
+                "center_lng": center_lng,
+                "bounds": bounds,
+                "viewbox": geo.get("viewbox", ""),
+            }
+            logger.info("Registered city: %s (%s)", city_name, slug)
+        except Exception as e:
+            logger.warning("Failed to load city config %s: %s", cfg_path, e)
+
+
+_load_city_registry()
+
+
+def _get_city_llm_context(city_slug: str) -> dict | None:
+    """Look up LLM context dict for a city slug."""
+    return CITY_REGISTRY.get(city_slug)
+
+
+def _get_city_geo_context(city_slug: str) -> dict | None:
+    """Look up geocoder context for a city slug."""
+    entry = CITY_REGISTRY.get(city_slug)
+    if not entry:
+        return None
+    return {
+        "viewbox": entry["viewbox"],
+        "bounds": entry["bounds"],
+        "suffix": entry["geocode_suffix"],
+    }
 
 app = FastAPI(title=f"{CITY_NAME} Pulse API", version="0.1.0")
 
@@ -96,6 +167,12 @@ CANNED_TRANSCRIPTS = [
 ]
 
 
+_AUDIO_CLIPS_DIR = Path(__file__).resolve().parent.parent / "audio_clips"
+_RAW_CLIPS_DIR = Path(__file__).resolve().parent.parent / "audio_clips_raw"
+_AUDIO_CLIPS_DIR.mkdir(exist_ok=True)
+_RAW_CLIPS_DIR.mkdir(exist_ok=True)
+
+
 class IngestRequest(BaseModel):
     text: str
     timestamp: str | None = None
@@ -105,6 +182,7 @@ class IngestRequest(BaseModel):
     preprocess_meta: dict | None = None
     variants: list[dict] | None = None
     city: str | None = None
+    audio_data: dict | None = None  # {"<clip_id>": "<base64-wav>"} for uploading clips
 
 
 class RouteDirectionsRequest(BaseModel):
@@ -124,10 +202,10 @@ OSRM_PROFILES = {
 
 @app.on_event("startup")
 async def startup():
-    """Ensure the database table exists and configure per-city geocoder."""
+    """Ensure the database table exists and configure per-city geocoder/LLM."""
     store.get_conn()  # creates table if missing
 
-    # Configure geocoder with city-specific bounds
+    # Configure geocoder default with city-specific bounds
     geo_cfg = _city_config.get("geocode", {})
     if geo_cfg:
         geocode.configure_geocoder(
@@ -136,7 +214,20 @@ async def startup():
             suffix=geo_cfg.get("suffix", ", Philadelphia, PA"),
             city_name=CITY_NAME,
         )
-    logger.info("%s Pulse API starting up", CITY_NAME)
+
+    # Configure LLM default with the primary city
+    default_ctx = _get_city_llm_context(CITY_SLUG)
+    if default_ctx:
+        llm.configure_llm(
+            city_name=default_ctx["city_name"],
+            geocode_suffix=default_ctx["geocode_suffix"],
+            center_lat=default_ctx["center_lat"],
+            center_lng=default_ctx["center_lng"],
+            bounds=default_ctx["bounds"],
+        )
+
+    logger.info("%s Pulse API starting up (%d cities registered)",
+                CITY_NAME, len(CITY_REGISTRY))
 
 
 @app.get("/api/health")
@@ -202,6 +293,71 @@ async def route_directions(body: RouteDirectionsRequest):
     }
 
 
+def _save_audio_data(audio_data: dict):
+    """Save base64-encoded audio clips to disk.
+
+    audio_data is a dict of {"clip_id": "base64-wav-data", ...}.
+    Keys ending with "_raw" are saved to audio_clips_raw/, others to audio_clips/.
+    """
+    import base64
+
+    for clip_id, b64_data in audio_data.items():
+        if not re.fullmatch(r"[a-f0-9]{12}(_raw)?", clip_id):
+            logger.warning("Ignoring invalid clip_id: %s", clip_id)
+            continue
+        try:
+            wav_bytes = base64.b64decode(b64_data)
+        except Exception as e:
+            logger.warning("Failed to decode audio for %s: %s", clip_id, e)
+            continue
+
+        if clip_id.endswith("_raw"):
+            dest = _RAW_CLIPS_DIR / f"{clip_id[:-4]}.wav"
+        else:
+            dest = _AUDIO_CLIPS_DIR / f"{clip_id}.wav"
+
+        if not dest.exists():
+            dest.write_bytes(wav_bytes)
+            logger.info("Saved audio clip %s (%d bytes)", dest.name, len(wav_bytes))
+
+
+class AudioUploadRequest(BaseModel):
+    """Batch upload audio clips (used to sync clips to the server)."""
+    clips: dict  # {"clip_id": "base64-wav-data"}
+    raw_clips: dict | None = None  # {"clip_id": "base64-wav-data"} for raw clips
+
+
+@app.post("/api/audio/upload")
+async def upload_audio(req: AudioUploadRequest):
+    """Receive and save audio clip WAV files. Used by the transcriber bridge."""
+    import base64
+    saved = 0
+    for clip_id, b64 in req.clips.items():
+        if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
+            continue
+        try:
+            wav_bytes = base64.b64decode(b64)
+        except Exception:
+            continue
+        dest = _AUDIO_CLIPS_DIR / f"{clip_id}.wav"
+        if not dest.exists():
+            dest.write_bytes(wav_bytes)
+            saved += 1
+    if req.raw_clips:
+        for clip_id, b64 in req.raw_clips.items():
+            if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
+                continue
+            try:
+                wav_bytes = base64.b64decode(b64)
+            except Exception:
+                continue
+            dest = _RAW_CLIPS_DIR / f"{clip_id}.wav"
+            if not dest.exists():
+                dest.write_bytes(wav_bytes)
+                saved += 1
+    return {"status": "ok", "saved": saved}
+
+
 @app.post("/api/ingest")
 async def ingest(req: IngestRequest):
     """Ingest a scanner transcript.
@@ -213,6 +369,10 @@ async def ingest(req: IngestRequest):
 
     feed_id = req.feed_id or "unknown"
     city = req.city or CITY_SLUG
+
+    # Save any uploaded audio clip data to disk
+    if req.audio_data:
+        _save_audio_data(req.audio_data)
 
     # Normalize time-only timestamps (e.g. "14:30:00") to full ISO
     ts = req.timestamp
@@ -269,8 +429,11 @@ async def ingest(req: IngestRequest):
         "feed_id": feed_id,
     })
 
+    city_llm_ctx = _get_city_llm_context(city)
+    city_geo_ctx = _get_city_geo_context(city)
+
     try:
-        extraction = await llm.extract_incident(req.text)
+        extraction = await llm.extract_incident(req.text, city_context=city_llm_ctx)
     except llm.LLMError as e:
         await admin_events.broadcast({
             "type": "llm_error",
@@ -408,7 +571,7 @@ async def ingest(req: IngestRequest):
 
     # Tier 1 & 2: geocode the location text (direct or context)
     if location_text:
-        coords = await geocode.geocode(location_text)
+        coords = await geocode.geocode(location_text, geo_ctx=city_geo_ctx)
         if coords:
             lat, lng = coords
             geocode_status = f"success_{location_confidence}"
@@ -660,12 +823,16 @@ async def admin_predict(req: PredictRequest):
     feed_id = ext.get("feed_id", "unknown")
     audio_clip = ext.get("audio_clip")
     reported_at = ext.get("reported_at")
+    ext_city = ext.get("city", CITY_SLUG)
     if reported_at and re.match(r"^\d{1,2}:\d{2}(:\d{2})?$", str(reported_at).strip()):
         reported_at = f"{date.today().isoformat()}T{str(reported_at).strip()}"
 
+    predict_llm_ctx = _get_city_llm_context(ext_city)
+    predict_geo_ctx = _get_city_geo_context(ext_city)
+
     # LLM extraction
     try:
-        result = await llm.extract_incident(raw_text)
+        result = await llm.extract_incident(raw_text, city_context=predict_llm_ctx)
     except llm.LLMError as e:
         raise HTTPException(status_code=502, detail=f"LLM error: {e}")
 
@@ -698,7 +865,7 @@ async def admin_predict(req: PredictRequest):
     lat, lng = None, None
     geocode_status = "failed"
     if location_text:
-        coords = await geocode.geocode(location_text)
+        coords = await geocode.geocode(location_text, geo_ctx=predict_geo_ctx)
         if coords:
             lat, lng = coords
             geocode_status = f"success_{location_confidence}"
@@ -879,11 +1046,10 @@ async def admin_stream(feed_id: str):
 @app.get("/api/audio/{clip_id}")
 async def get_audio_clip(clip_id: str):
     """Serve a saved processed audio clip WAV file by its clip ID."""
-    import re
     if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
         raise HTTPException(status_code=400, detail="Invalid clip ID")
 
-    clip_path = Path(__file__).resolve().parent.parent / "audio_clips" / f"{clip_id}.wav"
+    clip_path = _AUDIO_CLIPS_DIR / f"{clip_id}.wav"
     if not clip_path.exists():
         raise HTTPException(status_code=404, detail="Audio clip not found")
 
@@ -898,11 +1064,10 @@ async def get_audio_clip(clip_id: str):
 @app.get("/api/audio-raw/{clip_id}")
 async def get_raw_audio_clip(clip_id: str):
     """Serve a saved raw (pre-normalization) audio clip WAV file."""
-    import re
     if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
         raise HTTPException(status_code=400, detail="Invalid clip ID")
 
-    clip_path = Path(__file__).resolve().parent.parent / "audio_clips_raw" / f"{clip_id}.wav"
+    clip_path = _RAW_CLIPS_DIR / f"{clip_id}.wav"
     if not clip_path.exists():
         raise HTTPException(status_code=404, detail="Raw audio clip not found")
 

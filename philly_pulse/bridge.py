@@ -1,12 +1,37 @@
-"""Non-blocking bridge from radiotranscriber.py to the PhillyPulse ingest API."""
+"""Non-blocking bridge from radiotranscriber.py to the PhillyPulse ingest API.
 
+Sends transcripts + audio clip data to the ingest endpoint. Audio files
+are base64-encoded and included in the JSON payload so they arrive on the
+API server even when the transcriber runs on a different machine.
+"""
+
+import base64
 import json
 import logging
+import os
 import threading
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 logger = logging.getLogger(__name__)
+
+AUDIO_CLIPS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "audio_clips")
+RAW_CLIPS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "audio_clips_raw")
+
+
+def _read_clip_b64(clip_id: str, folder: str) -> str | None:
+    """Read a WAV clip from disk and return base64-encoded bytes."""
+    if not clip_id:
+        return None
+    path = os.path.join(folder, f"{clip_id}.wav")
+    try:
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode("ascii")
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        logger.warning("Failed to read clip %s: %s", path, e)
+        return None
 
 
 def post_transcript(
@@ -22,6 +47,7 @@ def post_transcript(
 ):
     """Fire-and-forget POST of a transcript line to the ingest endpoint.
 
+    Includes base64-encoded audio clips so they're saved on the API server.
     Runs in a daemon thread so it never blocks the transcriber main loop.
     """
     def _send():
@@ -40,6 +66,28 @@ def post_transcript(
             payload["variants"] = variants
         if city:
             payload["city"] = city
+
+        # Collect audio clips to upload alongside metadata
+        audio_data: dict[str, str] = {}
+        if raw_audio_clip:
+            b64 = _read_clip_b64(raw_audio_clip, RAW_CLIPS_DIR)
+            if b64:
+                audio_data[f"{raw_audio_clip}_raw"] = b64
+        if variants:
+            for v in variants:
+                cid = v.get("audio_clip")
+                if cid:
+                    b64 = _read_clip_b64(cid, AUDIO_CLIPS_DIR)
+                    if b64:
+                        audio_data[cid] = b64
+        elif audio_clip:
+            b64 = _read_clip_b64(audio_clip, AUDIO_CLIPS_DIR)
+            if b64:
+                audio_data[audio_clip] = b64
+
+        if audio_data:
+            payload["audio_data"] = audio_data
+
         body = json.dumps(payload).encode("utf-8")
         req = Request(
             bridge_url,
@@ -48,8 +96,9 @@ def post_transcript(
             method="POST",
         )
         try:
-            with urlopen(req, timeout=30) as resp:
-                logger.info("Bridge POST %d: %s", resp.status, text[:60])
+            with urlopen(req, timeout=60) as resp:
+                logger.info("Bridge POST %d (%d clips): %s",
+                            resp.status, len(audio_data), text[:60])
         except URLError as e:
             logger.warning("Bridge POST failed: %s", e)
         except Exception as e:
