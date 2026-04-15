@@ -24,7 +24,7 @@ function AuthGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!user || user.isAnonymous) {
+  if (!user) {
     return <LoginScreen />;
   }
 

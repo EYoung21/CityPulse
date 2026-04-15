@@ -15,6 +15,7 @@ import {
   getAuth,
   onAuthStateChanged,
   sendEmailVerification,
+  signInAnonymously,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
@@ -129,6 +130,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await signOut(auth);
   }, []);
 
+  const continueAsGuest = useCallback(async () => {
+    const auth = getAuth(getFirebaseApp());
+    await signInAnonymously(auth);
+  }, []);
+
   const isAdmin = !!user?.email && ADMIN_EMAILS.includes(user.email.toLowerCase());
   const isPro = tier === "pro" || tier === "enterprise" || isAdmin;
 
@@ -162,6 +168,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           signInWithEmail: noop,
           resendVerification: noop,
           signOutUser: noop,
+          continueAsGuest: noop,
         }}
       >
         {children}
