@@ -16,6 +16,7 @@ export default function LoginScreen() {
     signUpWithEmail,
     signInWithEmail,
     resendVerification,
+    continueAsGuest,
   } = useAuth();
 
   const [mode, setMode] = useState<Mode>("login");
@@ -139,6 +140,33 @@ export default function LoginScreen() {
             <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
           </svg>
           Continue with Google
+        </button>
+
+        <button
+          type="button"
+          onClick={async () => {
+            setError("");
+            setBusy(true);
+            try {
+              await continueAsGuest();
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : "Guest sign-in failed.";
+              setError(msg.includes("operation-not-allowed")
+                ? "Guest sign-in is disabled in Firebase. Enable Anonymous under Authentication → Sign-in method."
+                : "Could not continue as guest. Try again.");
+            } finally {
+              setBusy(false);
+            }
+          }}
+          disabled={busy}
+          className="w-full py-2.5 rounded-lg text-sm font-medium transition-all hover:brightness-110 disabled:opacity-50"
+          style={{
+            background: "transparent",
+            color: "var(--panel-text-secondary, #aaa)",
+            border: "1px solid var(--panel-border, rgba(255,255,255,0.15))",
+          }}
+        >
+          Continue as guest
         </button>
 
         {/* Divider */}

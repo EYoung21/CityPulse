@@ -212,6 +212,33 @@ You only need to create this index once — it applies to all city queries.
 
 ---
 
+## Part 5b: Firebase Authentication (required for sign-in on new domains)
+
+Custom hostnames must be allowlisted, and **guest (anonymous) sign-in** must be turned on if you use “Continue as guest.”
+
+### Authorized domains
+
+1. Open [Firebase Console](https://console.firebase.google.com/) → project **phlpulse**
+2. **Authentication** → **Settings** → **Authorized domains**
+3. Add **each** of (apex + `www` for every Pulse site you use):
+
+   - `phlpulse.com`, `www.phlpulse.com`
+   - `sfopulse.com`, `www.sfopulse.com`
+   - `newyorkcitypulse.com`, `www.newyorkcitypulse.com`
+   - `423pulse.com`, `www.423pulse.com`
+   - Your Vercel preview hosts if you use OAuth on previews (optional), e.g. `*.vercel.app`
+
+Without this, **Google sign-in** can fail with an “unauthorized domain” error after the app loads.
+
+### Anonymous (guest) sign-in
+
+1. **Authentication** → **Sign-in method**
+2. Enable **Anonymous** and **Save**
+
+If Anonymous is off, the app shows an error when the user taps **Continue as guest**.
+
+---
+
 ## Part 6: Verify Everything Works
 
 For each domain, check:
@@ -232,6 +259,23 @@ For each domain, check:
 
 - **"Module not found"**: Root Directory is probably still `./` — change it to `frontend`
 - **Missing env vars**: Make sure all `NEXT_PUBLIC_*` variables are set. The build needs them at build time, not just runtime
+
+### Vercel shows `404: NOT_FOUND` (even when Domains say “Valid Configuration”)
+
+DNS can be correct while **no production deployment** is serving that hostname. Do this in order:
+
+1. **Open the default Vercel URL** for that project (e.g. `423-pulse.vercel.app`, `nyc-pulse-six.vercel.app`).  
+   - If **this also 404s**, the project has **no successful Production deployment** — open **Deployments**, fix the failed build, or **Redeploy** the latest `main`.
+   - If the `.vercel.app` URL **works** but the custom domain **404s**, continue below.
+
+2. **Confirm the domain is on the same project** as the working deployment: **Settings → Domains** — the custom domain must list that project (not an old or duplicate project).
+
+3. **Try `www` vs apex** in the browser (e.g. `https://www.423pulse.com` vs `https://423pulse.com`).  
+   If you configured a **307 redirect** from apex → `www`, both should eventually work; if only one works, compare GoDaddy DNS for **A @** and **CNAME www** to the exact values Vercel shows for **each** row in Domains.
+
+4. **Redeploy after adding domains**: **Deployments → … → Redeploy** (optional: “Clear cache and redeploy”) so Production is rebuilt with the current domain assignment.
+
+5. **Hard refresh / another network** to avoid stale DNS or browser cache.
 
 ### Site loads but shows Philadelphia data
 
