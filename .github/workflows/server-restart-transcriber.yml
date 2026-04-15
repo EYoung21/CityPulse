@@ -1,0 +1,31 @@
+name: Restart Transcriber
+
+on:
+  workflow_dispatch:
+
+jobs:
+  restart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start transcriber service
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            echo "=== Current status ==="
+            systemctl status philly-pulse-live --no-pager || true
+
+            echo ""
+            echo "=== Service file ==="
+            cat /etc/systemd/system/philly-pulse-live.service 2>/dev/null || echo "(not found)"
+
+            echo ""
+            echo "=== Starting transcriber ==="
+            systemctl start philly-pulse-live
+            sleep 3
+            systemctl is-active philly-pulse-live
+            echo ""
+            echo "=== Transcriber logs ==="
+            journalctl -u philly-pulse-live --no-pager -n 30
