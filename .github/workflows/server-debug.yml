@@ -14,34 +14,28 @@ jobs:
           username: root
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
-            echo "=== systemd services containing 'pulse' or 'transcrib' ==="
-            systemctl list-units --type=service --all --no-legend 2>/dev/null | grep -iE 'pulse|transcrib' || echo "(none found)"
+            echo "=== Transcriber status ==="
+            systemctl is-active philly-pulse-live
 
             echo ""
-            echo "=== running processes containing 'transcrib' or 'multi_trans' ==="
-            ps aux | grep -E 'transcrib|multi_trans' | grep -v grep || echo "(none found)"
+            echo "=== Recent transcriber logs (last 3 min) ==="
+            journalctl -u philly-pulse-live --no-pager -n 30 --since "3 minutes ago"
 
             echo ""
-            echo "=== running python processes ==="
-            ps aux | grep python | grep -v grep || echo "(none found)"
+            echo "=== Newest files in audio_clips ==="
+            ls -lt /root/PhillyPulse/audio_clips/ | head -8
 
             echo ""
-            echo "=== tmux sessions ==="
-            tmux list-sessions 2>/dev/null || echo "(no tmux sessions)"
+            echo "=== Total audio clips ==="
+            echo "Total: $(ls /root/PhillyPulse/audio_clips/ | wc -l)"
 
             echo ""
-            echo "=== screen sessions ==="
-            screen -ls 2>/dev/null || echo "(no screen sessions)"
+            echo "=== Test serving a recent clip ==="
+            NEWEST=$(ls -t /root/PhillyPulse/audio_clips/ | head -1)
+            CLIP_ID="${NEWEST%.wav}"
+            echo "Testing clip: $CLIP_ID"
+            curl -s -o /dev/null -w "HTTP %{http_code} (%{size_download} bytes)\n" http://127.0.0.1:8765/api/audio/$CLIP_ID
 
             echo ""
-            echo "=== supervisor status ==="
-            supervisorctl status 2>/dev/null || echo "(no supervisor)"
-
-            echo ""
-            echo "=== audio_clips directory ==="
-            ls -la /root/PhillyPulse/audio_clips/ 2>/dev/null | tail -5
-            echo "Total files: $(ls /root/PhillyPulse/audio_clips/ 2>/dev/null | wc -l)"
-
-            echo ""
-            echo "=== crontab ==="
-            crontab -l 2>/dev/null || echo "(no crontab)"
+            echo "=== API server logs (last 2 min, bridge-related) ==="
+            journalctl -u philly-pulse-api --no-pager -n 30 --since "2 minutes ago" 2>/dev/null | grep -iE 'audio|clip|bridge|save' || echo "(no audio-related logs)"
