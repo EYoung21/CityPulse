@@ -10,6 +10,7 @@ on:
       - "multi_transcriber.py"
       - "config.yaml"
       - "requirements-philly-pulse.txt"
+      - "scripts/deploy-backend-hetzner.sh"
       - ".github/workflows/deploy-backend.yml"
 
 jobs:
@@ -23,6 +24,17 @@ jobs:
           username: root
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           envs: GITHUB_TOKEN
-          script: /root/deploy.sh
+          script: |
+            /root/deploy.sh
+            # Keep /root/deploy.sh in sync with the repo copy
+            cp /root/PhillyPulse/scripts/deploy-backend-hetzner.sh /root/deploy.sh
+            # Restart transcribers so they pick up updated bridge.py
+            for svc in $(systemctl list-units --type=service --state=running --plain --no-legend 2>/dev/null \
+                         | awk '/pulse-transcriber/{print $1}'); do
+              echo "Restarting transcriber: $svc"
+              systemctl restart "$svc"
+              sleep 2
+              systemctl is-active "$svc" || echo "WARNING: $svc failed to start"
+            done
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

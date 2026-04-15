@@ -26,4 +26,13 @@ systemctl restart philly-pulse-api
 sleep 2
 systemctl is-active philly-pulse-api
 
+# Restart transcriber services so they pick up updated bridge.py / config
+for svc in $(systemctl list-units --type=service --state=running --plain --no-legend 2>/dev/null \
+             | awk '/pulse-transcriber/{print $1}'); do
+  echo "Restarting transcriber: $svc"
+  systemctl restart "$svc"
+  sleep 2
+  systemctl is-active "$svc" || echo "WARNING: $svc failed to start"
+done
+
 echo "Deploy complete at $(date)"
