@@ -1,0 +1,47 @@
+name: Server Debug
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Discover transcriber processes
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            echo "=== systemd services containing 'pulse' or 'transcrib' ==="
+            systemctl list-units --type=service --all --no-legend 2>/dev/null | grep -iE 'pulse|transcrib' || echo "(none found)"
+
+            echo ""
+            echo "=== running processes containing 'transcrib' or 'multi_trans' ==="
+            ps aux | grep -E 'transcrib|multi_trans' | grep -v grep || echo "(none found)"
+
+            echo ""
+            echo "=== running python processes ==="
+            ps aux | grep python | grep -v grep || echo "(none found)"
+
+            echo ""
+            echo "=== tmux sessions ==="
+            tmux list-sessions 2>/dev/null || echo "(no tmux sessions)"
+
+            echo ""
+            echo "=== screen sessions ==="
+            screen -ls 2>/dev/null || echo "(no screen sessions)"
+
+            echo ""
+            echo "=== supervisor status ==="
+            supervisorctl status 2>/dev/null || echo "(no supervisor)"
+
+            echo ""
+            echo "=== audio_clips directory ==="
+            ls -la /root/PhillyPulse/audio_clips/ 2>/dev/null | tail -5
+            echo "Total files: $(ls /root/PhillyPulse/audio_clips/ 2>/dev/null | wc -l)"
+
+            echo ""
+            echo "=== crontab ==="
+            crontab -l 2>/dev/null || echo "(no crontab)"
