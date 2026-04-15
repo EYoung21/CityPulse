@@ -125,51 +125,46 @@ A    @    76.223.105.230
 
 **Delete all existing A records for `@`** and any existing CNAME for `www`.
 
-### 3.2 Add Vercel DNS records
+### 3.2 Add DNS records — **copy from Vercel, not from this doc**
 
-Add these two records (same for all three domains):
+**Source of truth:** For each domain, open **Vercel → your project → Settings → Domains**, click the domain (apex and `www` are listed separately), and copy the **exact** **Type**, **Name**, and **Value** Vercel shows under “DNS Records”.
 
-| Type | Name | Value | TTL |
-|---|---|---|---|
-| **A** | `@` | `76.76.21.21` | 600 |
-| **CNAME** | `www` | `cname.vercel-dns.com` | 600 |
+- The **apex** (`example.com`) is usually an **A** record for `@` pointing at a Vercel IP (e.g. `216.150.1.1` as of Vercel’s 2026 IP expansion).
+- **`www`** is usually a **CNAME** pointing at a **project-specific** hostname like `xxxxxxxx.vercel-dns-016.com.` (the hex string is **different per domain / project**).
 
-### 3.3 Per-domain summary
+**Do not** paste another project’s `www` CNAME into a different domain. **423pulse** and **newyorkcitypulse** will have **different** `www` targets — each must match what **that** project’s Domains page shows.
 
-#### sfopulse.com
+#### Legacy records (still valid, not recommended)
 
-| Type | Name | Value | TTL |
-|---|---|---|---|
-| A | `@` | `76.76.21.21` | 600 |
-| CNAME | `www` | `cname.vercel-dns.com` | 600 |
+Vercel has stated that older values still work:
 
-#### newyorkcitypulse.com
+| Type | Name | Value (legacy) |
+|---|---|---|
+| A | `@` | `76.76.21.21` |
+| CNAME | `www` | `cname.vercel-dns.com` |
 
-| Type | Name | Value | TTL |
-|---|---|---|---|
-| A | `@` | `76.76.21.21` | 600 |
-| CNAME | `www` | `cname.vercel-dns.com` | 600 |
+If your Vercel UI recommends `216.150.1.1` and a `*.vercel-dns-016.com` host, **use those** — they are the current recommendation.
 
-#### 423pulse.com
+#### What you did in GoDaddy
 
-| Type | Name | Value | TTL |
-|---|---|---|---|
-| A | `@` | `76.76.21.21` | 600 |
-| CNAME | `www` | `cname.vercel-dns.com` | 600 |
+If you already entered **exactly** what Vercel showed for **423pulse** and **newyorkcitypulse** (e.g. `216.150.1.1` + `b86bb5ac4203f130.vercel-dns-016.com.` / `0ed78ee5bea1bba9.vercel-dns-016.com.`), that is **correct**. You do **not** need to switch back to `76.76.21.21` / `cname.vercel-dns.com` from an older guide.
+
+### 3.3 Per-domain checklist
+
+For **each** of `sfopulse.com`, `newyorkcitypulse.com`, and `423pulse.com`:
+
+1. In GoDaddy DNS: remove **A @** parking / wrong IPs and any **CNAME www** that does not match Vercel.
+2. Add the **A @** and **CNAME www** values shown on **that** project’s Vercel Domains page.
+3. Leave **NS**, **SOA**, **MX**, **TXT** (e.g. `_dmarc`), and **`_domainconnect`** unless you know you are changing email or another service.
 
 ### 3.4 Wait for propagation
 
-DNS changes typically propagate in 5-15 minutes. You can check with:
+DNS changes typically propagate in 5–30 minutes. Verify with `dig` — the apex should match **whatever IP Vercel gave you** for that project:
 
 ```bash
-dig sfopulse.com +short
-# Should return: 76.76.21.21
-
-dig newyorkcitypulse.com +short
-# Should return: 76.76.21.21
-
-dig 423pulse.com +short
-# Should return: 76.76.21.21
+dig +short 423pulse.com
+dig +short www.423pulse.com
+# CNAME should chain to Vercel’s hostnames
 ```
 
 ---
@@ -180,8 +175,8 @@ After DNS propagates, go back to each Vercel project's **Domains** settings. The
 
 If a domain shows "Invalid Configuration", double-check that:
 - The old GoDaddy parking A records are deleted
-- The new A record points to `76.76.21.21` (not any other IP)
-- The CNAME for `www` points to `cname.vercel-dns.com`
+- The **A** record for `@` matches **exactly** what Vercel shows for the **apex** domain (today often `216.150.1.1`; older docs used `76.76.21.21`)
+- The **CNAME** for `www` matches **exactly** what Vercel shows for that project (often `*.vercel-dns-016.com.` — **per-project**, not generic `cname.vercel-dns.com`)
 
 ---
 
