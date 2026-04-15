@@ -39,6 +39,7 @@ type AuthState = {
   signInWithEmail: (email: string, password: string) => Promise<void>;
   resendVerification: () => Promise<void>;
   signOutUser: () => Promise<void>;
+  continueAsGuest: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -57,12 +58,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const auth = getAuth(getFirebaseApp());
     const unsub = onAuthStateChanged(auth, async (u) => {
-      if (u && u.isAnonymous) {
-        await signOut(auth);
-        setUser(null);
-        setLoading(false);
-        return;
-      }
       setUser(u);
       if (u && u.email) {
         try {
@@ -150,8 +145,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signInWithEmail,
       resendVerification,
       signOutUser,
+      continueAsGuest,
     }),
-    [user, loading, isAdmin, tier, isPro, signInWithGoogle, signUpWithEmail, signInWithEmail, resendVerification, signOutUser]
+    [user, loading, isAdmin, tier, isPro, signInWithGoogle, signUpWithEmail, signInWithEmail, resendVerification, signOutUser, continueAsGuest]
   );
 
   if (!isFirebaseConfigured()) {

@@ -277,10 +277,16 @@ DNS can be correct while **no production deployment** is serving that hostname. 
 
 5. **Hard refresh / another network** to avoid stale DNS or browser cache.
 
-### Site loads but shows Philadelphia data
+### Site loads but shows Philadelphia data (map, labels, geocode)
 
-- `NEXT_PUBLIC_CITY_SLUG` is not set or is set to `philly`
-- The Firestore composite index hasn't been created yet (check browser console for the error link)
+- **Set Vercel env vars** for that project: `NEXT_PUBLIC_CITY_SLUG`, `NEXT_PUBLIC_CITY_NAME`, `NEXT_PUBLIC_SITE_NAME` (see Part 1). They are baked in at build time for metadata and are the most reliable fix.
+- The app also **infers the city from the production hostname** (e.g. `sfopulse.com` → San Francisco) for the **map center**, **in-app titles**, and **address search**, so the site can still behave correctly if env vars were omitted—**after** you redeploy with a current `main` build.
+- Browser tab **title** / **metadata** still come from `layout.tsx` and **only** use `NEXT_PUBLIC_CITY_NAME` / `NEXT_PUBLIC_SITE_NAME` at build time; add those in Vercel so SEO and the tab title match the city.
+- The Firestore composite index must exist (check browser console for the error link).
+
+### HOT SPOTS still list Philadelphia neighborhoods
+
+- The sidebar **HOT SPOTS** list is still backed by Philadelphia polygons in `neighborhoods.ts`. Multi-city neighborhood breakdowns are not wired yet; incident **pins** and **counts** are still correct for your `city` filter.
 
 ### Site loads but shows no incidents
 
