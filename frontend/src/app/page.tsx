@@ -52,6 +52,7 @@ import { subscribeIncidents } from "@/lib/firestore";
 import { enrichIncidents } from "@/lib/incident-weights";
 import { buildLocalSummary } from "@/lib/local-summary";
 import { getNeighborhood, incidentsInNeighborhood, NEIGHBORHOODS, type Neighborhood } from "@/lib/neighborhoods";
+import { getCurrentCity } from "@/lib/pulse-cities";
 import { assessSafety } from "@/lib/search";
 import Sparkline from "@/components/charts/Sparkline";
 import PulseNetworkNav from "@/components/PulseNetworkNav";
@@ -59,7 +60,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import UpgradePrompt, { ProBadge } from "@/components/UpgradePrompt";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
-const CITY_NAME = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
 const WEIGHT_REFRESH_MS = 15000;
 
 function statsFromIncidents(incidents: Incident[]): StatsResponse {
@@ -134,6 +134,15 @@ export default function Home() {
   const isDark = resolved === "dark";
   const useFirestoreData = isFirebaseConfigured();
   const { isPro } = useAuth();
+
+  const [cityDisplayName, setCityDisplayName] = useState(() =>
+    process.env.NEXT_PUBLIC_CITY_NAME?.trim() || "Philadelphia"
+  );
+  useEffect(() => {
+    if (!process.env.NEXT_PUBLIC_CITY_NAME?.trim()) {
+      setCityDisplayName(getCurrentCity().name);
+    }
+  }, []);
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -546,7 +555,7 @@ export default function Home() {
           type="button"
           onClick={recenterCity}
           title="City overview"
-          aria-label={`Recenter map on ${CITY_NAME}`}
+          aria-label={`Recenter map on ${cityDisplayName}`}
           className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-opacity hover:opacity-90 active:scale-95"
           style={{
             background: "var(--pill-bg)",
@@ -700,7 +709,7 @@ export default function Home() {
             border: "1px solid var(--pill-border)",
             color: "var(--pill-text)",
           }}
-          title={`About ${CITY_NAME} Pulse`}
+          title={`About ${cityDisplayName} Pulse`}
         >
           {showAbout ? <X className="w-4 h-4" /> : <Shield className="w-4 h-4" />}
         </button>
@@ -719,7 +728,7 @@ export default function Home() {
             </div>
             <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>·</span>
             <span className="text-[10px]" style={{ color: "var(--panel-text-secondary)" }}>
-              {filteredIncidents.length} incident{filteredIncidents.length !== 1 ? "s" : ""}{activeTimeLabel ? ` (${activeTimeLabel.toLowerCase()})` : ""} in {CITY_NAME} metro
+              {filteredIncidents.length} incident{filteredIncidents.length !== 1 ? "s" : ""}{activeTimeLabel ? ` (${activeTimeLabel.toLowerCase()})` : ""} in {cityDisplayName} metro
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -762,7 +771,7 @@ export default function Home() {
               Transparency & Responsible AI
             </h3>
             <p className="text-xs leading-relaxed" style={{ color: "var(--panel-text-secondary)" }}>
-              {CITY_NAME} Pulse uses AI at every layer: speech-to-text (Whisper)
+              {cityDisplayName} Pulse uses AI at every layer: speech-to-text (Whisper)
               converts police scanner audio, an LLM extracts structured incident
               data, and geocoding places it on this map.
             </p>

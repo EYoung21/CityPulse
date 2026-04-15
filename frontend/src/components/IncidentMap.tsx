@@ -15,6 +15,7 @@ import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import type { Incident } from "@/lib/api";
 import type { RouteData } from "@/components/RoutePanel";
 import { NEIGHBORHOODS, type Neighborhood, incidentsInNeighborhood } from "@/lib/neighborhoods";
+import { getCurrentCity } from "@/lib/pulse-cities";
 
 /** One colour per *category*; sub-types within a category share the same hue. */
 type MonoColor = { fill: string; stroke: string; pulse: string };
@@ -243,15 +244,9 @@ declare module "leaflet" {
   ): L.Layer;
 }
 
-const CITY_CENTER: [number, number] = [
-  parseFloat(process.env.NEXT_PUBLIC_MAP_CENTER_LAT || "39.9526"),
-  parseFloat(process.env.NEXT_PUBLIC_MAP_CENTER_LNG || "-75.1652"),
-];
-const DEFAULT_ZOOM = parseInt(process.env.NEXT_PUBLIC_MAP_ZOOM || "12", 10);
-
 export interface MapHandle {
   flyTo: (lat: number, lng: number, zoom?: number) => void;
-  /** Fly back to default Philadelphia overview. */
+  /** Fly back to default city overview. */
   resetView: () => void;
 }
 
@@ -768,6 +763,10 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const onTripProgressRef = useRef(onTripProgress);
   onTripProgressRef.current = onTripProgress;
 
+  /** Filled when the map is created (client-only); used by resetView. */
+  const cityCenterRef = useRef<[number, number]>([39.9526, -75.1652]);
+  const defaultZoomRef = useRef(12);
+
   const flyToOffset = useCallback((lat: number, lng: number, zoom = 14) => {
     const map = mapRef.current;
     if (!map) return;
@@ -789,7 +788,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       flyToOffset(lat, lng, zoom);
     },
     resetView: () => {
-      mapRef.current?.flyTo(CITY_CENTER, DEFAULT_ZOOM, { duration: 0.75 });
+      mapRef.current?.flyTo(cityCenterRef.current, defaultZoomRef.current, { duration: 0.75 });
     },
   }));
 
@@ -801,9 +800,18 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   useEffect(() => {
     if (mapRef.current) return;
 
+    const c = getCurrentCity();
+    const center: [number, number] = [
+      parseFloat(process.env.NEXT_PUBLIC_MAP_CENTER_LAT || String(c.lat)),
+      parseFloat(process.env.NEXT_PUBLIC_MAP_CENTER_LNG || String(c.lng)),
+    ];
+    const zoom = parseInt(process.env.NEXT_PUBLIC_MAP_ZOOM || "12", 10);
+    cityCenterRef.current = center;
+    defaultZoomRef.current = zoom;
+
     const map = L.map("incident-map", {
       zoomControl: false,
-    }).setView(CITY_CENTER, DEFAULT_ZOOM);
+    }).setView(center, zoom);
 
     L.control.zoom({ position: "topright" }).addTo(map);
 

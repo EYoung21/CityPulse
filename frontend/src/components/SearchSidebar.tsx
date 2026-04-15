@@ -23,6 +23,7 @@ import SavedPlaces from "@/components/SavedPlaces";
 import DirectionsPanel from "@/components/DirectionsPanel";
 import TripHUD from "@/components/TripHUD";
 import IncidentFeed from "@/components/IncidentFeed";
+import { getCurrentCity } from "@/lib/pulse-cities";
 
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
@@ -201,12 +202,21 @@ export default function SearchSidebar({
   }, [demoRouteSim, routeGeometryForDemo, onRouteDemoSimChange]);
 
   useEffect(() => {
+    const cityCenter = () => {
+      const c = getCurrentCity();
+      return {
+        lat: c.lat,
+        lng: c.lng,
+        label: `${c.name} (center)`,
+      };
+    };
+
     if (!navigator.geolocation) {
       setGpsStatus("denied");
-      const fb = { lat: 39.9526, lng: -75.1652 };
-      setOriginLoc({ display_name: "Philadelphia Center", ...fb });
-      setOriginQuery("Philadelphia Center");
-      onPreviewPinsRef.current?.(fb, null);
+      const fb = cityCenter();
+      setOriginLoc({ display_name: fb.label, lat: fb.lat, lng: fb.lng });
+      setOriginQuery(fb.label);
+      onPreviewPinsRef.current?.({ lat: fb.lat, lng: fb.lng }, null);
       onUserLocationRef.current?.(fb.lat, fb.lng);
       return;
     }
@@ -242,10 +252,10 @@ export default function SearchSidebar({
       () => {
         navigator.geolocation.clearWatch(watchId);
         setGpsStatus("denied");
-        const fb = { lat: 39.9526, lng: -75.1652 };
-        setOriginLoc({ display_name: "Philadelphia Center", ...fb });
-        setOriginQuery("Philadelphia Center");
-        onPreviewPinsRef.current?.(fb, null);
+        const fb = cityCenter();
+        setOriginLoc({ display_name: fb.label, lat: fb.lat, lng: fb.lng });
+        setOriginQuery(fb.label);
+        onPreviewPinsRef.current?.({ lat: fb.lat, lng: fb.lng }, null);
         onUserLocationRef.current?.(fb.lat, fb.lng);
       },
       { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }

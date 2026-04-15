@@ -1,7 +1,7 @@
 import type { Incident } from "./api";
+import { getCurrentCity } from "./pulse-cities";
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
-const PHILLY_VIEWBOX = "-75.28,39.87,-74.96,40.14";
 
 export interface GeoResult {
   display_name: string;
@@ -21,15 +21,15 @@ export interface SafetyResult {
 export async function geocodePhilly(query: string): Promise<GeoResult[]> {
   if (!query.trim()) return [];
 
-  const q = query.toLowerCase().includes("philadelphia")
-    ? query
-    : `${query}, Philadelphia, PA`;
+  const city = getCurrentCity();
+  const nameLower = city.name.toLowerCase();
+  const q = query.toLowerCase().includes(nameLower) ? query : `${query}${city.geocodeSuffix}`;
 
   const params = new URLSearchParams({
     q,
     format: "json",
     limit: "5",
-    viewbox: PHILLY_VIEWBOX,
+    viewbox: city.nominatimViewbox,
     bounded: "1",
   });
 

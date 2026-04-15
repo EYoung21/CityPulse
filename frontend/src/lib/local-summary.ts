@@ -1,4 +1,5 @@
 import type { Incident } from "@/lib/api";
+import { getCurrentCity } from "@/lib/pulse-cities";
 
 /** Lightweight summary when the Python summary API is unavailable. */
 export function buildLocalSummary(incidents: Incident[]): string {
@@ -11,5 +12,6 @@ export function buildLocalSummary(incidents: Incident[]): string {
     const loc = inc.location_text ?? "Unknown location";
     return `${cat} at ${loc}`;
   });
-  return `${incidents.length} recent incidents across Philadelphia:\n${lines.join("\n")}`;
+  const cityName = getCurrentCity().name;
+  return `${incidents.length} recent incidents across ${cityName}:\n${lines.join("\n")}`;
 }
