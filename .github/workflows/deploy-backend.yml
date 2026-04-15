@@ -28,13 +28,9 @@ jobs:
             /root/deploy.sh
             # Keep /root/deploy.sh in sync with the repo copy
             cp /root/PhillyPulse/scripts/deploy-backend-hetzner.sh /root/deploy.sh
-            # Restart transcribers so they pick up updated bridge.py
-            for svc in $(systemctl list-units --type=service --state=running --plain --no-legend 2>/dev/null \
-                         | awk '/pulse-transcriber/{print $1}'); do
-              echo "Restarting transcriber: $svc"
-              systemctl restart "$svc"
-              sleep 2
-              systemctl is-active "$svc" || echo "WARNING: $svc failed to start"
-            done
+            # Restart the live transcriber so it picks up updated code
+            systemctl restart philly-pulse-live
+            sleep 2
+            systemctl is-active philly-pulse-live || echo "WARNING: philly-pulse-live failed to start"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
