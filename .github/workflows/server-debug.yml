@@ -7,35 +7,33 @@ jobs:
   debug:
     runs-on: ubuntu-latest
     steps:
-      - name: Discover transcriber processes
+      - name: Check ingest sources
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: root
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
+            echo "=== Recent ingest IPs from API logs ==="
+            journalctl -u philly-pulse-api --no-pager -n 500 --since "10 minutes ago" 2>/dev/null \
+              | grep 'POST /api/ingest' | awk '{print $NF}' | sort | uniq -c | sort -rn || echo "(none)"
+
+            echo ""
+            echo "=== Sample ingest log lines ==="
+            journalctl -u philly-pulse-api --no-pager -n 500 --since "10 minutes ago" 2>/dev/null \
+              | grep 'POST /api/ingest' | tail -10
+
+            echo ""
+            echo "=== All recent POST requests by source IP ==="
+            journalctl -u philly-pulse-api --no-pager -n 1000 --since "10 minutes ago" 2>/dev/null \
+              | grep '"POST' | sed 's/.*INFO: *//' | awk -F' - ' '{print $1}' | sort | uniq -c | sort -rn
+
+            echo ""
+            echo "=== Netstat: who's connected to port 8765 ==="
+            ss -tn state established '( dport = :8765 or sport = :8765 )' 2>/dev/null | head -20
+
+            echo ""
             echo "=== Transcriber status ==="
             systemctl is-active philly-pulse-live
-
-            echo ""
-            echo "=== Recent transcriber logs (last 3 min) ==="
-            journalctl -u philly-pulse-live --no-pager -n 30 --since "3 minutes ago"
-
-            echo ""
-            echo "=== Newest files in audio_clips ==="
-            ls -lt /root/PhillyPulse/audio_clips/ | head -8
-
-            echo ""
-            echo "=== Total audio clips ==="
-            echo "Total: $(ls /root/PhillyPulse/audio_clips/ | wc -l)"
-
-            echo ""
-            echo "=== Test serving a recent clip ==="
-            NEWEST=$(ls -t /root/PhillyPulse/audio_clips/ | head -1)
-            CLIP_ID="${NEWEST%.wav}"
-            echo "Testing clip: $CLIP_ID"
-            curl -s -o /dev/null -w "HTTP %{http_code} (%{size_download} bytes)\n" http://127.0.0.1:8765/api/audio/$CLIP_ID
-
-            echo ""
-            echo "=== API server logs (last 2 min, bridge-related) ==="
-            journalctl -u philly-pulse-api --no-pager -n 30 --since "2 minutes ago" 2>/dev/null | grep -iE 'audio|clip|bridge|save' || echo "(no audio-related logs)"
+            echo "Clips on disk: $(ls /root/PhillyPulse/audio_clips/ | wc -l)"
+            echo "Newest clip: $(ls -t /root/PhillyPulse/audio_clips/ | head -1)"
