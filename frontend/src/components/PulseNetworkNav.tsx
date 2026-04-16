@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Lock } from "lucide-react";
+import { getAuth } from "firebase/auth";
 import { PULSE_CITIES, getCurrentCity, type PulseCity } from "@/lib/pulse-cities";
 import { useAuth } from "@/contexts/AuthContext";
+import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
 
 /**
  * Pulse Network navigation dropdown.
@@ -16,7 +18,21 @@ export default function PulseNetworkNav() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const current = getCurrentCity();
-  const { isPro } = useAuth();
+  const { user, isPro } = useAuth();
+
+  const navigateToCity = useCallback(async (city: PulseCity) => {
+    let url = `https://${city.domain}`;
+    if (user && isFirebaseConfigured()) {
+      try {
+        const auth = getAuth(getFirebaseApp());
+        const idToken = await auth.currentUser?.getIdToken();
+        if (idToken) {
+          url += `?__pulse_token=${encodeURIComponent(idToken)}`;
+        }
+      } catch { /* navigate without token */ }
+    }
+    window.location.href = url;
+  }, [user]);
 
   // Close on outside click
   useEffect(() => {
@@ -110,7 +126,8 @@ export default function PulseNetworkNav() {
               city={city}
               isCurrent={city.slug === current.slug}
               locked={!isPro && city.slug !== current.slug}
-              onSelect={() => setOpen(false)}
+              onNavigate={navigateToCity}
+              onClose={() => setOpen(false)}
             />
           ))}
 
@@ -147,21 +164,24 @@ function CityRow({
   city,
   isCurrent,
   locked,
-  onSelect,
+  onNavigate,
+  onClose,
 }: {
   city: PulseCity;
   isCurrent: boolean;
   locked?: boolean;
-  onSelect: () => void;
+  onNavigate: (city: PulseCity) => void;
+  onClose: () => void;
 }) {
-  const href = isCurrent || locked ? "#" : `https://${city.domain}`;
-
   return (
     <a
-      href={href}
-      onClick={isCurrent || locked ? (e) => e.preventDefault() : onSelect}
-      target={isCurrent || locked ? undefined : "_blank"}
-      rel={isCurrent || locked ? undefined : "noopener noreferrer"}
+      href={isCurrent || locked ? "#" : `https://${city.domain}`}
+      onClick={(e) => {
+        e.preventDefault();
+        if (isCurrent || locked) return;
+        onClose();
+        onNavigate(city);
+      }}
       style={{
         display: "flex",
         alignItems: "center",

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Mail, Eye, EyeOff, AlertCircle, CheckCircle2 } from "lucide-react";
+import { PULSE_CITIES, getCurrentCity } from "@/lib/pulse-cities";
 
 const siteName = process.env.NEXT_PUBLIC_SITE_NAME || "PHLPulse";
 const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
@@ -254,6 +255,43 @@ export default function LoginScreen() {
           )}
         </p>
 
+      </div>
+
+      {/* City navigator */}
+      <CityNav />
+    </div>
+  );
+}
+
+function CityNav() {
+  const current = getCurrentCity();
+  const others = PULSE_CITIES.filter((c) => c.slug !== current.slug);
+
+  return (
+    <div className="w-full max-w-sm mt-6">
+      <p
+        className="text-center text-[10px] uppercase tracking-widest mb-3"
+        style={{ color: "rgba(255,255,255,0.3)" }}
+      >
+        Pulse Network
+      </p>
+      <div className="flex flex-wrap justify-center gap-2">
+        {others.map((city) => (
+          <a
+            key={city.slug}
+            href={`https://${city.domain}`}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all hover:brightness-125"
+            style={{
+              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              color: "rgba(255,255,255,0.6)",
+              textDecoration: "none",
+            }}
+          >
+            <span>{city.emoji}</span>
+            <span>{city.name}</span>
+          </a>
+        ))}
       </div>
     </div>
   );
