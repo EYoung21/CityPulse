@@ -16,6 +16,7 @@ import {
   onAuthStateChanged,
   sendEmailVerification,
   signInAnonymously,
+  signInWithCustomToken as fbSignInWithCustomToken,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
@@ -50,6 +51,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [tier, setTier] = useState<UserTier>("free");
+
+  // Cross-domain auth: if we arrived with a __pulse_token param, exchange it
+  useEffect(() => {
+    if (!isFirebaseConfigured()) return;
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const idToken = params.get("__pulse_token");
+    if (!idToken) return;
+
+    // Remove token from URL immediately
+    params.delete("__pulse_token");
+    const clean = params.toString();
+    const newUrl = window.location.pathname + (clean ? `?${clean}` : "") + window.location.hash;
+    window.history.replaceState({}, "", newUrl);
+
+    (async () => {
+      try {
+        const res = await fetch("/api/auth/exchange", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idToken }),
+        });
+        if (!res.ok) return;
+        const { customToken } = await res.json();
+        const auth = getAuth(getFirebaseApp());
+        await fbSignInWithCustomToken(auth, customToken);
+      } catch (e) {
+        console.warn("Cross-domain auth failed:", e);
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     if (!isFirebaseConfigured()) {
