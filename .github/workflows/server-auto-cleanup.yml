@@ -31,13 +31,42 @@ jobs:
             fi
 
             echo ""
-            echo "=== Removing processed clips older than 3 days ==="
+            echo "=== Removing orphan clips (not referenced by any incident) ==="
             CLIPS_DIR="/root/PhillyPulse/audio_clips"
+            DB_PATH="/root/PhillyPulse/philly_pulse/data/philly_pulse.db"
+            if [ -d "$CLIPS_DIR" ] && [ -f "$DB_PATH" ]; then
+              # Get all clip IDs referenced by incidents in the database
+              REFERENCED=$(sqlite3 "$DB_PATH" "SELECT DISTINCT audio_clip FROM incidents WHERE audio_clip IS NOT NULL AND audio_clip != ''" 2>/dev/null)
+              if [ -n "$REFERENCED" ]; then
+                # Create a temp file with referenced clip filenames
+                echo "$REFERENCED" | sed 's/$/.wav/' > /tmp/referenced_clips.txt
+                REF_COUNT=$(wc -l < /tmp/referenced_clips.txt)
+                echo "Incidents reference $REF_COUNT audio clips in the database"
+
+                # List all clip files on disk, find orphans, and delete them
+                TOTAL_ON_DISK=$(find "$CLIPS_DIR" -name "*.wav" -type f 2>/dev/null | wc -l)
+                ORPHAN_COUNT=0
+                find "$CLIPS_DIR" -name "*.wav" -type f -printf "%f\n" 2>/dev/null | while read -r fname; do
+                  if ! grep -qxF "$fname" /tmp/referenced_clips.txt; then
+                    rm -f "$CLIPS_DIR/$fname"
+                    ORPHAN_COUNT=$((ORPHAN_COUNT + 1))
+                  fi
+                done
+                AFTER=$(find "$CLIPS_DIR" -name "*.wav" -type f 2>/dev/null | wc -l)
+                echo "Had $TOTAL_ON_DISK clips on disk, now $AFTER (removed $((TOTAL_ON_DISK - AFTER)) orphans)"
+                rm -f /tmp/referenced_clips.txt
+              else
+                echo "No referenced clips found in DB (or DB query failed)"
+              fi
+            fi
+
+            echo ""
+            echo "=== Removing referenced clips older than 150 days (5 months) ==="
             if [ -d "$CLIPS_DIR" ]; then
               BEFORE=$(find "$CLIPS_DIR" -type f 2>/dev/null | wc -l)
-              find "$CLIPS_DIR" -type f -mtime +3 -delete 2>/dev/null || true
+              find "$CLIPS_DIR" -type f -mtime +150 -delete 2>/dev/null || true
               AFTER=$(find "$CLIPS_DIR" -type f 2>/dev/null | wc -l)
-              echo "Removed $((BEFORE - AFTER)) processed clips (kept $AFTER recent)"
+              echo "Removed $((BEFORE - AFTER)) clips older than 5 months (kept $AFTER)"
             fi
 
             echo ""
