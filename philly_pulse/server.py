@@ -296,7 +296,7 @@ async def route_directions(body: RouteDirectionsRequest):
 # Firebase Admin SDK expects the GCS bucket name (typically "<project>.appspot.com").
 # Some configs mistakenly use "<project>.firebasestorage.app" (web domain), so we
 # normalize and try both where possible.
-_STORAGE_BUCKET = os.environ.get("FIREBASE_STORAGE_BUCKET", "phlpulse.appspot.com")
+_STORAGE_BUCKET = os.environ.get("FIREBASE_STORAGE_BUCKET", "phlpulse.firebasestorage.app")
 _DISCOVERED_STORAGE_BUCKETS: list[str] | None = None
 
 
@@ -355,8 +355,8 @@ def _discover_storage_buckets() -> list[str]:
         # Prefer canonical Firebase/GCS bucket patterns first.
         names.sort(
             key=lambda n: (
-                0 if n.endswith(".appspot.com") else
-                1 if n.endswith(".firebasestorage.app") else
+                0 if n.endswith(".firebasestorage.app") else
+                1 if n.endswith(".appspot.com") else
                 2
             )
         )
@@ -376,12 +376,8 @@ def _storage_bucket_candidates() -> list[str]:
     """Return preferred Firebase Storage bucket names to try."""
     primary = (_STORAGE_BUCKET or "").strip()
     if not primary:
-        primary = "phlpulse.appspot.com"
-    if primary.endswith(".firebasestorage.app"):
-        # Prefer the real GCS bucket first.
-        candidates = [primary.replace(".firebasestorage.app", ".appspot.com"), primary]
-    else:
-        candidates = [primary]
+        primary = "phlpulse.firebasestorage.app"
+    candidates = [primary]
     candidates.extend(_discover_storage_buckets())
     return list(dict.fromkeys(candidates))
 
