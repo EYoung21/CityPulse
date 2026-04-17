@@ -293,12 +293,27 @@ async def route_directions(body: RouteDirectionsRequest):
     }
 
 
-# Firebase Storage bucket name (same project as Firestore)
-_STORAGE_BUCKET = os.environ.get("FIREBASE_STORAGE_BUCKET", "phlpulse.firebasestorage.app")
+# Firebase Admin SDK expects the GCS bucket name (typically "<project>.appspot.com").
+# Some configs mistakenly use "<project>.firebasestorage.app" (web domain), so we
+# normalize and try both where possible.
+_STORAGE_BUCKET = os.environ.get("FIREBASE_STORAGE_BUCKET", "phlpulse.appspot.com")
 
 
-def _get_storage_bucket():
-    """Get (or initialize) the Firebase Storage bucket."""
+def _storage_bucket_candidates() -> list[str]:
+    """Return preferred Firebase Storage bucket names to try."""
+    primary = (_STORAGE_BUCKET or "").strip()
+    if not primary:
+        primary = "phlpulse.appspot.com"
+    if primary.endswith(".firebasestorage.app"):
+        # Prefer the real GCS bucket first.
+        candidates = [primary.replace(".firebasestorage.app", ".appspot.com"), primary]
+    else:
+        candidates = [primary]
+    return list(dict.fromkeys(candidates))
+
+
+def _get_storage_bucket(bucket_name: str):
+    """Get (or initialize) a Firebase Storage bucket by name."""
     try:
         import firebase_admin
         from firebase_admin import storage as fb_storage
@@ -314,7 +329,7 @@ def _get_storage_bucket():
             else:
                 return None
             firebase_admin.initialize_app(cred)
-        return fb_storage.bucket(_STORAGE_BUCKET)
+        return fb_storage.bucket(bucket_name)
     except Exception as e:
         logger.warning("Firebase Storage not available: %s", e)
         return None
@@ -325,19 +340,25 @@ def _upload_to_firebase_storage(clip_id: str, wav_bytes: bytes) -> str | None:
     
     Returns the public URL on success, or None on failure.
     """
-    bucket = _get_storage_bucket()
-    if bucket is None:
-        return None
-    try:
-        blob = bucket.blob(f"audio/{clip_id}.wav")
-        blob.upload_from_string(wav_bytes, content_type="audio/wav")
-        blob.make_public()
-        url = blob.public_url
-        logger.info("Uploaded audio clip %s to Firebase Storage (%d bytes)", clip_id, len(wav_bytes))
-        return url
-    except Exception as e:
-        logger.error("Failed to upload audio %s to Firebase Storage: %s", clip_id, e)
-        return None
+    for bucket_name in _storage_bucket_candidates():
+        bucket = _get_storage_bucket(bucket_name)
+        if bucket is None:
+            continue
+        try:
+            blob = bucket.blob(f"audio/{clip_id}.wav")
+            blob.upload_from_string(wav_bytes, content_type="audio/wav")
+            blob.make_public()
+            url = blob.public_url
+            logger.info(
+                "Uploaded audio clip %s to Firebase Storage bucket %s (%d bytes)",
+                clip_id,
+                bucket_name,
+                len(wav_bytes),
+            )
+            return url
+        except Exception as e:
+            logger.error("Failed to upload audio %s to bucket %s: %s", clip_id, bucket_name, e)
+    return None
 
 
 def _save_audio_data(audio_data: dict, only_clip_ids: set[str] | None = None) -> dict[str, str]:
