@@ -2,8 +2,8 @@ name: Server Auto-Cleanup (Daily)
 
 on:
   schedule:
-    # Run daily at 06:00 UTC (2 AM ET)
-    - cron: '0 6 * * *'
+    # Run twice daily at 06:00 and 18:00 UTC (2 AM / 2 PM ET)
+    - cron: '0 6,18 * * *'
   workflow_dispatch:
 
 jobs:
@@ -22,21 +22,20 @@ jobs:
             df -h / | tail -1
 
             echo ""
-            echo "=== Removing raw clips older than 3 days ==="
+            echo "=== Removing ALL raw clips (no longer needed) ==="
             RAW_DIR="/root/PhillyPulse/audio_clips_raw"
             if [ -d "$RAW_DIR" ]; then
               BEFORE=$(find "$RAW_DIR" -type f 2>/dev/null | wc -l)
-              find "$RAW_DIR" -type f -mtime +3 -delete 2>/dev/null || true
-              AFTER=$(find "$RAW_DIR" -type f 2>/dev/null | wc -l)
-              echo "Removed $((BEFORE - AFTER)) raw clips (kept $AFTER recent)"
+              find "$RAW_DIR" -type f -delete 2>/dev/null || true
+              echo "Removed $BEFORE raw clips (no longer saving raw audio)"
             fi
 
             echo ""
-            echo "=== Removing processed clips older than 14 days ==="
+            echo "=== Removing processed clips older than 3 days ==="
             CLIPS_DIR="/root/PhillyPulse/audio_clips"
             if [ -d "$CLIPS_DIR" ]; then
               BEFORE=$(find "$CLIPS_DIR" -type f 2>/dev/null | wc -l)
-              find "$CLIPS_DIR" -type f -mtime +14 -delete 2>/dev/null || true
+              find "$CLIPS_DIR" -type f -mtime +3 -delete 2>/dev/null || true
               AFTER=$(find "$CLIPS_DIR" -type f 2>/dev/null | wc -l)
               echo "Removed $((BEFORE - AFTER)) processed clips (kept $AFTER recent)"
             fi

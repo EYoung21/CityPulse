@@ -25,7 +25,7 @@ import {
 import { doc, getDoc, getFirestore, serverTimestamp, setDoc } from "firebase/firestore";
 import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
 
-const ADMIN_EMAILS = ["eliyoung4now@gmail.com", "kethansany@gmail.com"];
+const ADMIN_EMAILS = ["eliyoung4now@gmail.com", "kethansany@gmail.com", "rickywhy@gmail.com"];
 
 export type UserTier = "free" | "pro" | "enterprise";
 
