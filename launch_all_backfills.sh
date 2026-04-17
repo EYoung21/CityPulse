@@ -15,9 +15,6 @@ CITIES=(
     "cities/nyc/config.yaml"
     "cities/philly/config.yaml"
     "cities/chattanooga/config.yaml"
-    "cities/seattle/config.yaml"
-    "cities/frisco/config.yaml"
-    "cities/dallas/config.yaml"
 )
 
 echo "========================================="
