@@ -2,6 +2,11 @@ name: Server Cleanup (Disk Full Fix)
 
 on:
   workflow_dispatch:
+    inputs:
+      keep_days:
+        description: 'Keep processed clips newer than N days (0 = delete ALL old clips)'
+        required: false
+        default: '7'
 
 jobs:
   cleanup:
@@ -15,18 +20,27 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           command_timeout: 30m
           script: |
+            KEEP_DAYS="${{ github.event.inputs.keep_days || '7' }}"
+
             echo "=== BEFORE cleanup ==="
             df -h /
             echo ""
-            echo "audio_clips count: $(ls /root/PhillyPulse/audio_clips/ 2>/dev/null | wc -l)"
-            echo "audio_clips_raw count: $(ls /root/PhillyPulse/audio_clips_raw/ 2>/dev/null | wc -l)"
+            echo "audio_clips count: $(find /root/PhillyPulse/audio_clips/ -type f 2>/dev/null | wc -l)"
+            echo "audio_clips_raw count: $(find /root/PhillyPulse/audio_clips_raw/ -type f 2>/dev/null | wc -l)"
             echo "audio_clips size: $(du -sh /root/PhillyPulse/audio_clips/ 2>/dev/null | cut -f1)"
             echo "audio_clips_raw size: $(du -sh /root/PhillyPulse/audio_clips_raw/ 2>/dev/null | cut -f1)"
 
             echo ""
-            echo "=== Cleaning audio_clips_raw (pre-processing duplicates) ==="
-            rm -rf /root/PhillyPulse/audio_clips_raw/*
-            echo "Done. Remaining: $(ls /root/PhillyPulse/audio_clips_raw/ 2>/dev/null | wc -l)"
+            echo "=== Cleaning ALL raw clips (pre-processing duplicates) ==="
+            find /root/PhillyPulse/audio_clips_raw/ -type f -delete 2>/dev/null || true
+            echo "Done. Remaining: $(find /root/PhillyPulse/audio_clips_raw/ -type f 2>/dev/null | wc -l)"
+
+            echo ""
+            echo "=== Cleaning processed clips older than ${KEEP_DAYS} days ==="
+            BEFORE=$(find /root/PhillyPulse/audio_clips/ -type f 2>/dev/null | wc -l)
+            find /root/PhillyPulse/audio_clips/ -type f -mtime +${KEEP_DAYS} -delete 2>/dev/null || true
+            AFTER=$(find /root/PhillyPulse/audio_clips/ -type f 2>/dev/null | wc -l)
+            echo "Removed $((BEFORE - AFTER)) clips (kept $AFTER recent)"
 
             echo ""
             echo "=== Cleaning Python cache ==="
