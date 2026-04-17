@@ -36,9 +36,6 @@ interface Props {
   stops: { query: string }[];
   activeMode: TransportMode;
   tripProgress: number;
-  routeGeometryForDemo: [number, number][] | null;
-  demoRouteSim: boolean;
-  onDemoRouteSimChange: (active: boolean) => void;
   onResetTrip: () => void;
   recentIncidents: Incident[];
   onSelectIncident: (id: string) => void;
@@ -52,9 +49,6 @@ export default function TripHUD({
   stops,
   activeMode,
   tripProgress,
-  routeGeometryForDemo,
-  demoRouteSim,
-  onDemoRouteSimChange,
   onResetTrip,
   recentIncidents,
   onSelectIncident,
@@ -73,7 +67,7 @@ export default function TripHUD({
             <span
               className={`text-sm font-semibold ${routeInfo.isSafe ? "text-green-500" : "text-blue-500"}`}
             >
-              {routeInfo.isSafe ? "Safe Route Preview" : "Route Preview"}
+              {routeInfo.isSafe ? "Safe Route Active" : "Navigation Active"}
             </span>
           </div>
           <button
@@ -132,23 +126,6 @@ export default function TripHUD({
             <span>{Math.round(tripProgress * 100)}%</span>
           </div>
         </div>
-
-        {routeGeometryForDemo && routeGeometryForDemo.length >= 2 && (
-          <label
-            className="mt-3 flex items-start gap-2.5 cursor-pointer text-xs leading-snug"
-            style={{ color: "var(--panel-text-secondary)" }}
-          >
-            <input
-              type="checkbox"
-              checked={demoRouteSim}
-              onChange={(e) => onDemoRouteSimChange(e.target.checked)}
-              className="mt-0.5 rounded border-gray-500 accent-blue-500"
-            />
-            <span>
-              Demo: simulate ~100&nbsp;m/min along route (tests live vehicle without GPS walk).
-            </span>
-          </label>
-        )}
 
         {routeInfo.isSafe && (
           <div className="mt-3 flex items-center gap-2 text-xs text-green-600 dark:text-green-400/70 bg-green-500/10 rounded-lg px-3 py-2">
