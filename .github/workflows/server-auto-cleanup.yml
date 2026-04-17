@@ -71,17 +71,8 @@ jobs:
                 print(f'Deleted {deleted} orphan clips')
             except Exception as e:
                 print(f'Orphan cleanup failed: {e}', file=sys.stderr)
-                print('Falling back to age-based cleanup only')
+                print('Orphan cleanup skipped')
             " 2>&1
-
-            echo ""
-            echo "=== Removing clips older than 150 days (5 months) ==="
-            if [ -d "$CLIPS_DIR" ]; then
-              BEFORE=$(find "$CLIPS_DIR" -type f 2>/dev/null | wc -l)
-              find "$CLIPS_DIR" -type f -mtime +150 -delete 2>/dev/null || true
-              AFTER=$(find "$CLIPS_DIR" -type f 2>/dev/null | wc -l)
-              echo "Removed $((BEFORE - AFTER)) clips older than 5 months (kept $AFTER)"
-            fi
 
             echo ""
             echo "=== Cleaning Python cache and old logs ==="
