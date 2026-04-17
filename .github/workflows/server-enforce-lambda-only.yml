@@ -27,10 +27,10 @@ jobs:
             systemctl stop pulse-backfill.service || true
 
             # Kill any ad-hoc/background transcriber/backfill processes.
-            pkill -f "radiotranscriber.py" || true
-            pkill -f "multi_transcriber.py" || true
-            pkill -f "backfill_smart.py" || true
-            pkill -f "backfill_archives.py" || true
+            pkill -f "python.*radiotranscriber.py" || true
+            pkill -f "python.*multi_transcriber.py" || true
+            pkill -f "python.*backfill_smart.py" || true
+            pkill -f "python.*backfill_archives.py" || true
 
             echo "=== Producer process check ==="
             pgrep -af "radiotranscriber.py|multi_transcriber.py|backfill_smart.py|backfill_archives.py" || echo "none"
