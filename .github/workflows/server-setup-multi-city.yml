@@ -17,9 +17,70 @@ jobs:
           script: |
             set -e
             cd /root/PhillyPulse
-            git pull origin main
-            chmod +x scripts/setup-multi-city.sh
-            bash scripts/setup-multi-city.sh
+
+            cat >/etc/systemd/system/pulse-live@.service <<'EOF'
+            [Unit]
+            Description=Philly Pulse live transcriber (%i)
+            After=network-online.target
+            Wants=network-online.target
+
+            [Service]
+            Type=simple
+            WorkingDirectory=/root/PhillyPulse
+            Environment=CITY=%i
+            ExecStart=/root/PhillyPulse/venv/bin/python -u /root/PhillyPulse/radiotranscriber.py --city %i --config /root/PhillyPulse/cities/%i/config.yaml
+            Restart=always
+            RestartSec=5
+            User=root
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+
+            cat >/etc/systemd/system/pulse-backfill.service <<'EOF'
+            [Unit]
+            Description=Philly Pulse backfill run
+            After=network-online.target
+
+            [Service]
+            Type=oneshot
+            WorkingDirectory=/root/PhillyPulse
+            ExecStart=/root/PhillyPulse/venv/bin/python -u /root/PhillyPulse/multi_transcriber.py --mode backfill --rotate-cities sf,nyc,philly,chattanooga --hours 2
+            User=root
+            EOF
+
+            cat >/etc/systemd/system/pulse-backfill.timer <<'EOF'
+            [Unit]
+            Description=Run Philly Pulse backfill every 2 hours
+
+            [Timer]
+            OnBootSec=5m
+            OnUnitActiveSec=2h
+            Unit=pulse-backfill.service
+            Persistent=true
+
+            [Install]
+            WantedBy=timers.target
+            EOF
+
+            systemctl daemon-reload
+
+            if systemctl list-unit-files philly-pulse-live.service >/dev/null 2>&1; then
+              systemctl stop philly-pulse-live || true
+              systemctl disable philly-pulse-live || true
+            fi
+
+            for city in sf nyc philly chattanooga; do
+              if [ -f "/root/PhillyPulse/cities/${city}/config.yaml" ]; then
+                systemctl enable "pulse-live@${city}" || true
+                systemctl restart "pulse-live@${city}"
+              else
+                echo "Missing config for ${city}, skipping"
+              fi
+            done
+
+            systemctl enable pulse-backfill.timer || true
+            systemctl restart pulse-backfill.timer
 
             echo ""
             echo "=== Final service status ==="
