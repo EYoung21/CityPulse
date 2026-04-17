@@ -26,9 +26,20 @@ systemctl restart philly-pulse-api
 sleep 2
 systemctl is-active philly-pulse-api
 
-# Restart the live transcriber so it picks up updated code
-systemctl restart philly-pulse-live
-sleep 2
-systemctl is-active philly-pulse-live || echo "WARNING: philly-pulse-live failed to start"
+# Restart the live transcribers (multi-city or legacy single-city)
+if systemctl list-unit-files 'pulse-live@.service' &>/dev/null; then
+  for city in sf nyc philly chattanooga; do
+    if systemctl is-enabled "pulse-live@${city}" &>/dev/null; then
+      systemctl restart "pulse-live@${city}"
+      sleep 1
+      systemctl is-active "pulse-live@${city}" || echo "WARNING: pulse-live@${city} failed to start"
+    fi
+  done
+else
+  # Legacy single-city service
+  systemctl restart philly-pulse-live
+  sleep 2
+  systemctl is-active philly-pulse-live || echo "WARNING: philly-pulse-live failed to start"
+fi
 
 echo "Deploy complete at $(date)"

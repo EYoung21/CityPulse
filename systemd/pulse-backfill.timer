@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Pulse backfill every 2 hours (rotating cities)
+
+[Timer]
+OnCalendar=*-*-* 0/2:00:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target
