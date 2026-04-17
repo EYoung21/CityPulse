@@ -1,0 +1,41 @@
+name: Server Fix Runtime Config
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fix-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fix bucket env and disable invalid inhibitor key
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -e
+            ENV_FILE="/etc/philly-pulse.env"
+
+            if [ -f "$ENV_FILE" ]; then
+              # Firebase Admin SDK expects the GCS bucket name.
+              sed -i 's/^FIREBASE_STORAGE_BUCKET=phlpulse\.firebasestorage\.app$/FIREBASE_STORAGE_BUCKET=phlpulse.appspot.com/' "$ENV_FILE" || true
+
+              # Current key returns 401; blank it so the service cleanly bypasses
+              # inhibitor until a valid key is provided.
+              if grep -q '^INHIBITOR_API_KEY=' "$ENV_FILE"; then
+                sed -i 's/^INHIBITOR_API_KEY=.*/INHIBITOR_API_KEY=/' "$ENV_FILE" || true
+              else
+                echo 'INHIBITOR_API_KEY=' >> "$ENV_FILE"
+              fi
+            fi
+
+            systemctl restart philly-pulse-api
+            sleep 2
+
+            echo "=== Runtime config status ==="
+            systemctl is-active philly-pulse-api && echo "API: running" || echo "API: failed"
+            grep -E '^(FIREBASE_STORAGE_BUCKET|INHIBITOR_API_KEY)=' "$ENV_FILE" \
+              | sed 's/^INHIBITOR_API_KEY=.*/INHIBITOR_API_KEY=<set>/' \
+              | sed 's/^INHIBITOR_API_KEY=$/INHIBITOR_API_KEY=<empty>/'
