@@ -1,20 +1,36 @@
-"""Applied AI Studio Inhibitor API wrapper for PhillyPulse.
+"""Local ethical guardrail for PhillyPulse.
 
-Evaluates LLM-extracted incident data through the Inhibitor ethical
-guardrail before it gets displayed on the public map.
+This replaces the prior sponsor-specific external Inhibitor integration
+with a built-in, deterministic guardrail that blocks obvious sensitive
+content before map display.
 """
 
 import logging
 import os
+import re
 from dataclasses import dataclass
-
-import httpx
 
 logger = logging.getLogger(__name__)
 
-INHIBITOR_API_KEY = os.environ.get("INHIBITOR_API_KEY", "")
-INHIBITOR_URL = "https://iaas.appliedai.studio/check"
-INHIBITOR_TIMEOUT = float(os.environ.get("INHIBITOR_TIMEOUT", "10"))
+GUARDRAIL_MODE = os.environ.get("GUARDRAIL_MODE", "local").strip().lower()
+
+# Conservative PII indicators.
+_SSN_RE = re.compile(r"\b\d{3}-?\d{2}-?\d{4}\b")
+_PHONE_RE = re.compile(r"(?:\+?1[\s.-]*)?(?:\(?\d{3}\)?[\s.-]*)\d{3}[\s.-]*\d{4}\b")
+_EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
+_CREDIT_CARD_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
+
+# Extra keywords for highly sensitive contexts.
+_SENSITIVE_KEYWORDS = (
+    "social security",
+    "ssn",
+    "date of birth",
+    "dob",
+    "driver license",
+    "driver's license",
+    "license number",
+    "full legal name",
+)
 
 
 @dataclass
@@ -30,77 +46,33 @@ async def check_incident(
     location_text: str | None,
     confidence: float,
 ) -> InhibitorResult:
-    """Run the Inhibitor ethical guardrail on an extracted incident.
+    """Run local ethical guardrail on an extracted incident.
 
     Returns InhibitorResult with status="passed" if safe to display,
     "blocked" if the content should be suppressed, or "bypassed" if
-    the Inhibitor service is unavailable.
+    guardrail checks are intentionally disabled.
     """
-    if not INHIBITOR_API_KEY:
-        logger.warning("INHIBITOR_API_KEY not set — bypassing ethical guardrail")
-        return InhibitorResult(status="bypassed", reason="API key not configured")
+    if GUARDRAIL_MODE in {"off", "disabled", "none"}:
+        return InhibitorResult(status="bypassed", reason="Local guardrail disabled")
 
-    agent_content = (
-        f"Extracted incident from Philadelphia police scanner: "
-        f"category={severity_category}, "
-        f"location={location_text or 'unknown'}, "
-        f"confidence={confidence:.2f}. "
-        f"Preparing to display on public community safety map with UNVERIFIED label."
-    )
+    text = raw_transcript or ""
+    lowered = text.lower()
 
-    payload = {
-        "thought_chain": [
-            {"role": "human", "content": f"Police scanner transcript: '{raw_transcript}'"},
-            {"role": "agent", "content": agent_content},
-        ],
-        "mode": "performance",
-    }
+    if _SSN_RE.search(text):
+        return InhibitorResult(status="blocked", reason="Possible SSN detected")
+    if _EMAIL_RE.search(text):
+        return InhibitorResult(status="blocked", reason="Email address detected")
+    if _PHONE_RE.search(text):
+        return InhibitorResult(status="blocked", reason="Phone number detected")
 
-    try:
-        async with httpx.AsyncClient(timeout=INHIBITOR_TIMEOUT) as client:
-            resp = await client.post(
-                INHIBITOR_URL,
-                headers={
-                    "X-API-Key": INHIBITOR_API_KEY,
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
+    # Card regex can over-match; require likely card context.
+    if _CREDIT_CARD_RE.search(text) and any(
+        token in lowered for token in ("card", "credit", "debit", "visa", "mastercard", "amex")
+    ):
+        return InhibitorResult(status="blocked", reason="Payment card-like data detected")
 
-        if resp.status_code == 401:
-            logger.error("Inhibitor API returned 401 — invalid API key")
-            return InhibitorResult(status="bypassed", reason="Invalid API key")
+    for token in _SENSITIVE_KEYWORDS:
+        if token in lowered:
+            return InhibitorResult(status="blocked", reason=f"Sensitive content: {token}")
 
-        if resp.status_code != 200:
-            logger.error("Inhibitor API returned %d: %s", resp.status_code, resp.text)
-            return InhibitorResult(
-                status="bypassed",
-                reason=f"API returned {resp.status_code}",
-            )
-
-        data = resp.json()
-        result = data.get("result", {})
-
-        # The Inhibitor API returns evaluation results in the result object.
-        # Check for inhibition/block signals in the response.
-        inhibited = result.get("inhibited", False)
-        should_block = result.get("blocked", False) or inhibited
-
-        if should_block:
-            reason = result.get("reason") or result.get("explanation") or "Flagged by ethical guardrail"
-            logger.info("Inhibitor BLOCKED: %s", reason)
-            return InhibitorResult(
-                status="blocked",
-                reason=str(reason),
-                raw_response=data,
-            )
-
-        logger.info("Inhibitor PASSED")
-        return InhibitorResult(status="passed", reason=None, raw_response=data)
-
-    except httpx.TimeoutException:
-        logger.warning("Inhibitor API timed out after %.1fs — bypassing", INHIBITOR_TIMEOUT)
-        return InhibitorResult(status="bypassed", reason="Timeout")
-    except Exception as e:
-        logger.warning("Inhibitor API error: %s — bypassing", e)
-        return InhibitorResult(status="bypassed", reason=str(e))
+    return InhibitorResult(status="passed", reason=None)
