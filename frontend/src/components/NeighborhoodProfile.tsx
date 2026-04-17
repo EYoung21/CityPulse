@@ -387,13 +387,18 @@ function NotableIncidentCard({
   sev: { label: string; markerColor: string };
 }) {
   const [playing, setPlaying] = useState(false);
+  const audioSrc = inc.audio_url
+    ? inc.audio_url
+    : inc.audio_clip && API_BASE
+      ? `${API_BASE}/api/audio/${inc.audio_clip}`
+      : null;
+  const hasAudio = !!audioSrc;
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const hasAudio = !!inc.audio_clip && !!API_BASE;
 
   const toggleAudio = () => {
-    if (!hasAudio) return;
+    if (!audioSrc) return;
     if (!audioRef.current) {
-      audioRef.current = new Audio(`${API_BASE}/api/audio/${inc.audio_clip}`);
+      audioRef.current = new Audio(audioSrc);
       audioRef.current.addEventListener("ended", () => setPlaying(false));
       audioRef.current.addEventListener("error", () => setPlaying(false));
     }

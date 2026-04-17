@@ -18,6 +18,7 @@ export interface Incident {
   inhibitor_reason: string | null;
   w_eff: number;
   audio_clip: string | null;
+  audio_url: string | null;
   feed_id: string | null;
   description: string | null;
   hidden?: boolean;

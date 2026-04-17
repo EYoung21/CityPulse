@@ -99,9 +99,14 @@ function IncidentCard({
 
   const toggleAudio = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!inc.audio_clip || !API_BASE) return;
+    const audioSrc = inc.audio_url
+      ? inc.audio_url
+      : inc.audio_clip && API_BASE
+        ? `${API_BASE}/api/audio/${inc.audio_clip}`
+        : null;
+    if (!audioSrc) return;
     if (!audioRef.current) {
-      audioRef.current = new Audio(`${API_BASE}/api/audio/${inc.audio_clip}`);
+      audioRef.current = new Audio(audioSrc);
       audioRef.current.addEventListener("ended", () => setPlaying(false));
       audioRef.current.addEventListener("error", () => setPlaying(false));
     }
@@ -165,7 +170,7 @@ function IncidentCard({
         )}
 
         <div className="mt-1.5 flex items-center gap-2">
-          {inc.audio_clip && API_BASE && (
+          {(inc.audio_url || (inc.audio_clip && API_BASE)) && (
             <button
               onClick={toggleAudio}
               className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium transition-all ${

@@ -65,6 +65,10 @@ function mapDoc(id: string, data: Record<string, unknown>): Incident {
       data.audio_clip === null || data.audio_clip === undefined
         ? null
         : String(data.audio_clip),
+    audio_url:
+      data.audio_url === null || data.audio_url === undefined
+        ? null
+        : String(data.audio_url),
     feed_id:
       data.feed_id === null || data.feed_id === undefined
         ? null

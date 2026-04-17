@@ -264,7 +264,12 @@ interface Props {
 export default function IncidentDetail({ incident, onClose }: Props) {
   const sev = getSeverity(incident.severity_category);
   const confidencePct = Math.round(incident.confidence * 100);
-  const hasAudio = !!incident.audio_clip && !!API_BASE;
+  const audioSrc = incident.audio_url
+    ? incident.audio_url
+    : incident.audio_clip && API_BASE
+      ? `${API_BASE}/api/audio/${incident.audio_clip}`
+      : null;
+  const hasAudio = !!audioSrc;
 
   return (
     <div
@@ -349,7 +354,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
 
           {hasAudio ? (
             <WaveformPlayer
-              src={`${API_BASE}/api/audio/${incident.audio_clip}`}
+              src={audioSrc!}
               transcript={incident.raw_text}
               wordTimings={incident.word_timings}
             />

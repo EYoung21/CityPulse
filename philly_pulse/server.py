@@ -293,14 +293,64 @@ async def route_directions(body: RouteDirectionsRequest):
     }
 
 
-def _save_audio_data(audio_data: dict, only_clip_ids: set[str] | None = None):
-    """Save base64-encoded audio clips to disk.
+# Firebase Storage bucket name (same project as Firestore)
+_STORAGE_BUCKET = os.environ.get("FIREBASE_STORAGE_BUCKET", "phlpulse.firebasestorage.app")
+
+
+def _get_storage_bucket():
+    """Get (or initialize) the Firebase Storage bucket."""
+    try:
+        import firebase_admin
+        from firebase_admin import storage as fb_storage
+        if not firebase_admin._apps:
+            # Should already be initialized by firestore_store, but just in case
+            import json
+            cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+            json_str = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+            if cred_path and os.path.isfile(cred_path):
+                cred = firebase_admin.credentials.Certificate(cred_path)
+            elif json_str:
+                cred = firebase_admin.credentials.Certificate(json.loads(json_str))
+            else:
+                return None
+            firebase_admin.initialize_app(cred)
+        return fb_storage.bucket(_STORAGE_BUCKET)
+    except Exception as e:
+        logger.warning("Firebase Storage not available: %s", e)
+        return None
+
+
+def _upload_to_firebase_storage(clip_id: str, wav_bytes: bytes) -> str | None:
+    """Upload a WAV file to Firebase Storage and return the public URL.
+    
+    Returns the public URL on success, or None on failure.
+    """
+    bucket = _get_storage_bucket()
+    if bucket is None:
+        return None
+    try:
+        blob = bucket.blob(f"audio/{clip_id}.wav")
+        blob.upload_from_string(wav_bytes, content_type="audio/wav")
+        blob.make_public()
+        url = blob.public_url
+        logger.info("Uploaded audio clip %s to Firebase Storage (%d bytes)", clip_id, len(wav_bytes))
+        return url
+    except Exception as e:
+        logger.error("Failed to upload audio %s to Firebase Storage: %s", clip_id, e)
+        return None
+
+
+def _save_audio_data(audio_data: dict, only_clip_ids: set[str] | None = None) -> dict[str, str]:
+    """Upload base64-encoded audio clips to Firebase Storage.
 
     audio_data is a dict of {"clip_id": "base64-wav-data", ...}.
-    Only saves processed clips (not raw) to audio_clips/.
+    Only saves processed clips (not raw).
     If only_clip_ids is given, only save clips whose ID is in that set.
+    
+    Returns a dict of {clip_id: public_url} for successfully uploaded clips.
     """
     import base64
+    urls: dict[str, str] = {}
 
     for clip_id, b64_data in audio_data.items():
         # Skip raw clips entirely — they are only used for reprocessing
@@ -317,10 +367,18 @@ def _save_audio_data(audio_data: dict, only_clip_ids: set[str] | None = None):
             logger.warning("Failed to decode audio for %s: %s", clip_id, e)
             continue
 
-        dest = _AUDIO_CLIPS_DIR / f"{clip_id}.wav"
-        if not dest.exists():
-            dest.write_bytes(wav_bytes)
-            logger.info("Saved audio clip %s (%d bytes)", dest.name, len(wav_bytes))
+        # Upload to Firebase Storage (primary)
+        url = _upload_to_firebase_storage(clip_id, wav_bytes)
+        if url:
+            urls[clip_id] = url
+        else:
+            # Fallback: save to local disk if Firebase Storage fails
+            dest = _AUDIO_CLIPS_DIR / f"{clip_id}.wav"
+            if not dest.exists():
+                dest.write_bytes(wav_bytes)
+                logger.info("Saved audio clip %s to disk (Storage fallback, %d bytes)", dest.name, len(wav_bytes))
+    
+    return urls
 
 
 class AudioUploadRequest(BaseModel):
@@ -621,11 +679,20 @@ async def ingest(req: IngestRequest):
         incident_id = incident["id"]
 
         # Save audio ONLY for incidents that make it onto the map
+        audio_url = None
         if _pending_audio_data and effective_audio_clip:
             try:
-                _save_audio_data(_pending_audio_data, only_clip_ids={effective_audio_clip})
+                urls = _save_audio_data(_pending_audio_data, only_clip_ids={effective_audio_clip})
+                audio_url = urls.get(effective_audio_clip)
             except OSError as e:
                 logger.error("Failed to save audio clip (disk full?): %s", e)
+
+        # Store the Firebase Storage URL in the incident document
+        if audio_url and incident_id:
+            try:
+                store.update_incident(incident_id, {"audio_url": audio_url})
+            except Exception as e:
+                logger.warning("Failed to store audio_url: %s", e)
 
         await admin_events.broadcast({
             "type": "incident_stored",
@@ -1054,20 +1121,24 @@ async def admin_stream(feed_id: str):
 
 @app.get("/api/audio/{clip_id}")
 async def get_audio_clip(clip_id: str):
-    """Serve a saved processed audio clip WAV file by its clip ID."""
+    """Serve an audio clip — checks local disk first, then redirects to Firebase Storage."""
     if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
         raise HTTPException(status_code=400, detail="Invalid clip ID")
 
+    # Try local disk first (for backward compatibility with existing clips)
     clip_path = _AUDIO_CLIPS_DIR / f"{clip_id}.wav"
-    if not clip_path.exists():
-        raise HTTPException(status_code=404, detail="Audio clip not found")
+    if clip_path.exists():
+        from fastapi.responses import FileResponse
+        return FileResponse(
+            path=str(clip_path),
+            media_type="audio/wav",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
-    from fastapi.responses import FileResponse
-    return FileResponse(
-        path=str(clip_path),
-        media_type="audio/wav",
-        headers={"Cache-Control": "public, max-age=86400"},
-    )
+    # Try Firebase Storage — construct the public URL and redirect
+    storage_url = f"https://storage.googleapis.com/{_STORAGE_BUCKET}/audio/{clip_id}.wav"
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=storage_url, status_code=302)
 
 
 @app.get("/api/audio-raw/{clip_id}")
