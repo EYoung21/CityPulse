@@ -1,0 +1,30 @@
+name: Server Setup Multi-City
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run multi-city setup on Hetzner
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 30m
+          script: |
+            set -e
+            cd /root/PhillyPulse
+            git pull origin main
+            chmod +x scripts/setup-multi-city.sh
+            bash scripts/setup-multi-city.sh
+
+            echo ""
+            echo "=== Final service status ==="
+            systemctl is-active philly-pulse-api && echo "API: running" || echo "API: not running"
+            for city in sf nyc philly chattanooga; do
+              systemctl is-active "pulse-live@${city}" && echo "pulse-live@${city}: running" || echo "pulse-live@${city}: not running"
+            done
+            systemctl is-active pulse-backfill.timer && echo "pulse-backfill.timer: active" || echo "pulse-backfill.timer: not active"
