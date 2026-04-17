@@ -297,6 +297,79 @@ async def route_directions(body: RouteDirectionsRequest):
 # Some configs mistakenly use "<project>.firebasestorage.app" (web domain), so we
 # normalize and try both where possible.
 _STORAGE_BUCKET = os.environ.get("FIREBASE_STORAGE_BUCKET", "phlpulse.appspot.com")
+_DISCOVERED_STORAGE_BUCKETS: list[str] | None = None
+
+
+def _infer_firebase_project_id() -> str | None:
+    """Best-effort project id resolution for bucket discovery."""
+    pid = (
+        os.environ.get("FIREBASE_PROJECT_ID")
+        or os.environ.get("NEXT_PUBLIC_FIREBASE_PROJECT_ID")
+        or ""
+    ).strip()
+    if pid:
+        return pid
+
+    cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if cred_path and os.path.isfile(cred_path):
+        try:
+            import json
+            with open(cred_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            pid = (data.get("project_id") or "").strip()
+            if pid:
+                return pid
+        except Exception:
+            pass
+
+    json_str = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+    if json_str:
+        try:
+            import json
+            data = json.loads(json_str)
+            pid = (data.get("project_id") or "").strip()
+            if pid:
+                return pid
+        except Exception:
+            pass
+
+    return None
+
+
+def _discover_storage_buckets() -> list[str]:
+    """List candidate GCS buckets for the Firebase project once per process."""
+    global _DISCOVERED_STORAGE_BUCKETS
+    if _DISCOVERED_STORAGE_BUCKETS is not None:
+        return _DISCOVERED_STORAGE_BUCKETS
+
+    project_id = _infer_firebase_project_id()
+    if not project_id:
+        _DISCOVERED_STORAGE_BUCKETS = []
+        return _DISCOVERED_STORAGE_BUCKETS
+
+    try:
+        from google.cloud import storage as gcs_storage
+
+        client = gcs_storage.Client(project=project_id)
+        names = [b.name for b in client.list_buckets(max_results=50)]
+        # Prefer canonical Firebase/GCS bucket patterns first.
+        names.sort(
+            key=lambda n: (
+                0 if n.endswith(".appspot.com") else
+                1 if n.endswith(".firebasestorage.app") else
+                2
+            )
+        )
+        _DISCOVERED_STORAGE_BUCKETS = list(dict.fromkeys(names))
+        if _DISCOVERED_STORAGE_BUCKETS:
+            logger.info("Discovered storage buckets for project %s: %s", project_id, _DISCOVERED_STORAGE_BUCKETS)
+        else:
+            logger.warning("No storage buckets discovered for Firebase project %s", project_id)
+    except Exception as e:
+        logger.warning("Failed to discover Firebase storage buckets: %s", e)
+        _DISCOVERED_STORAGE_BUCKETS = []
+
+    return _DISCOVERED_STORAGE_BUCKETS
 
 
 def _storage_bucket_candidates() -> list[str]:
@@ -309,6 +382,7 @@ def _storage_bucket_candidates() -> list[str]:
         candidates = [primary.replace(".firebasestorage.app", ".appspot.com"), primary]
     else:
         candidates = [primary]
+    candidates.extend(_discover_storage_buckets())
     return list(dict.fromkeys(candidates))
 
 
