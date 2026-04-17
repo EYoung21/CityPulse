@@ -293,17 +293,23 @@ async def route_directions(body: RouteDirectionsRequest):
     }
 
 
-def _save_audio_data(audio_data: dict):
+def _save_audio_data(audio_data: dict, only_clip_ids: set[str] | None = None):
     """Save base64-encoded audio clips to disk.
 
     audio_data is a dict of {"clip_id": "base64-wav-data", ...}.
-    Keys ending with "_raw" are saved to audio_clips_raw/, others to audio_clips/.
+    Only saves processed clips (not raw) to audio_clips/.
+    If only_clip_ids is given, only save clips whose ID is in that set.
     """
     import base64
 
     for clip_id, b64_data in audio_data.items():
-        if not re.fullmatch(r"[a-f0-9]{12}(_raw)?", clip_id):
+        # Skip raw clips entirely — they are only used for reprocessing
+        if clip_id.endswith("_raw"):
+            continue
+        if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
             logger.warning("Ignoring invalid clip_id: %s", clip_id)
+            continue
+        if only_clip_ids is not None and clip_id not in only_clip_ids:
             continue
         try:
             wav_bytes = base64.b64decode(b64_data)
@@ -311,11 +317,7 @@ def _save_audio_data(audio_data: dict):
             logger.warning("Failed to decode audio for %s: %s", clip_id, e)
             continue
 
-        if clip_id.endswith("_raw"):
-            dest = _RAW_CLIPS_DIR / f"{clip_id[:-4]}.wav"
-        else:
-            dest = _AUDIO_CLIPS_DIR / f"{clip_id}.wav"
-
+        dest = _AUDIO_CLIPS_DIR / f"{clip_id}.wav"
         if not dest.exists():
             dest.write_bytes(wav_bytes)
             logger.info("Saved audio clip %s (%d bytes)", dest.name, len(wav_bytes))
@@ -370,12 +372,9 @@ async def ingest(req: IngestRequest):
     feed_id = req.feed_id or "unknown"
     city = req.city or CITY_SLUG
 
-    # Save any uploaded audio clip data to disk (non-fatal if disk is full)
-    if req.audio_data:
-        try:
-            _save_audio_data(req.audio_data)
-        except OSError as e:
-            logger.error("Failed to save audio clips (disk full?): %s", e)
+    # Audio data is saved AFTER the pipeline determines the incident is map-worthy.
+    # This avoids wasting disk on rejected/no-location transcripts (~95% reduction).
+    _pending_audio_data = req.audio_data
 
     # Normalize time-only timestamps (e.g. "14:30:00") to full ISO
     ts = req.timestamp
@@ -620,6 +619,13 @@ async def ingest(req: IngestRequest):
             city=city,
         )
         incident_id = incident["id"]
+
+        # Save audio ONLY for incidents that make it onto the map
+        if _pending_audio_data and effective_audio_clip:
+            try:
+                _save_audio_data(_pending_audio_data, only_clip_ids={effective_audio_clip})
+            except OSError as e:
+                logger.error("Failed to save audio clip (disk full?): %s", e)
 
         await admin_events.broadcast({
             "type": "incident_stored",
