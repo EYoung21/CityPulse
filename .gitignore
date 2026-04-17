@@ -22,8 +22,12 @@ __pycache__/
 *.pyc
 *.pyo
 venv/
+venv_local/
 .venv/
 *.egg-info/
+
+# Backfill runtime state
+backfill_progress/
 
 # Backup files
 *.bak
