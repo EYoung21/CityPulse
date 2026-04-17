@@ -1,0 +1,22 @@
+[Unit]
+Description=Pulse Live Transcriber — %I
+After=network.target philly-pulse-api.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/PhillyPulse
+EnvironmentFile=/etc/philly-pulse.env
+ExecStart=/root/PhillyPulse/venv/bin/python3 -u multi_transcriber.py --config cities/%i/config.yaml
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pulse-live-%i
+
+# Resource limits per city transcriber
+MemoryMax=2G
+CPUQuota=80%
+
+[Install]
+WantedBy=multi-user.target
