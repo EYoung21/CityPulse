@@ -15,9 +15,6 @@ CITIES = [
     ("nyc", "New York City"),
     ("philly", "Philadelphia"),
     ("chattanooga", "Chattanooga"),
-    ("seattle", "Seattle"),
-    ("dallas", "Dallas"),
-    ("frisco", "Frisco"),
 ]
 
 STATE_FILE = os.path.expanduser("~/PhillyPulse/backfill_progress/smart_state.txt")
