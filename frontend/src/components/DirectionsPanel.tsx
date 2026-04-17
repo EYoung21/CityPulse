@@ -21,25 +21,19 @@ import {
   Plus,
   Shield,
 } from "lucide-react";
-import { geocodePhilly, assessSafety } from "@/lib/search";
+import { geocodePhilly } from "@/lib/search";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
 import {
   getMultiStopRoute,
   buildAvoidZones,
   buildAvoidPolygons,
   AVOIDANCE_CATEGORIES,
-  DEFAULT_AVOID_CATS,
   type TransportMode,
   type AvoidCategoryId,
 } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
 import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
-import {
-  routeSafetyByHour,
-  bestTravelWindow,
-  incidentsNearRoute,
-} from "@/lib/analytics";
 
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
@@ -83,10 +77,6 @@ interface Props {
   ) => void;
   onPreviewWaypoints?: (waypoints: WaypointPin[] | null) => void;
   onStartTrip: () => Promise<void>;
-  routeGeometryForDemo?: [number, number][] | null;
-  demoRouteSim: boolean;
-  onDemoRouteSimChange: (active: boolean) => void;
-  onHistoricalOverlay?: (incidents: Incident[] | null) => void;
   avoidCats: Set<AvoidCategoryId>;
   onAvoidCatsChange: (cats: Set<AvoidCategoryId>) => void;
 }
@@ -113,10 +103,6 @@ export default function DirectionsPanel({
   onPreviewPins,
   onPreviewWaypoints,
   onStartTrip,
-  routeGeometryForDemo,
-  demoRouteSim,
-  onDemoRouteSimChange,
-  onHistoricalOverlay,
   avoidCats,
   onAvoidCatsChange,
 }: Props) {
@@ -137,7 +123,6 @@ export default function DirectionsPanel({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [startNavBusy, setStartNavBusy] = useState(false);
-  const [showHistorical, setShowHistorical] = useState(false);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const previewAbortRef = useRef<AbortController | null>(null);
@@ -232,11 +217,6 @@ export default function DirectionsPanel({
       [destLoc.lat, destLoc.lng],
     ];
     const incSnap = incidentsRef.current;
-    const safety = assessSafety(
-      { display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng },
-      incSnap
-    );
-
     (async () => {
       try {
         const directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
@@ -288,7 +268,6 @@ export default function DirectionsPanel({
     })();
 
     return () => controller.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [originLoc, destLoc, stops, activeMode, onRoutesChange, avoidCats]);
 
   const swapLocations = () => {
@@ -665,116 +644,6 @@ export default function DirectionsPanel({
           </div>
         )}
 
-        {/* Route Safety Timeline */}
-        {previewRoute && !previewLoading && routeGeometryForDemo && routeGeometryForDemo.length >= 2 && (() => {
-          const hourCounts = routeSafetyByHour(routeGeometryForDemo, incidents);
-          const maxCount = Math.max(...hourCounts, 1);
-          const best = bestTravelWindow(hourCounts);
-          const fmtH = (h: number) => `${h % 12 || 12}${h < 12 ? "am" : "pm"}`;
-
-          return (
-            <div
-              className="mt-3 rounded-lg overflow-hidden"
-              style={{ border: "1px solid var(--panel-border)" }}
-            >
-              <div className="px-3 py-2">
-                <p
-                  className="text-[10px] font-bold uppercase tracking-wider mb-2"
-                  style={{ color: "var(--panel-text-muted)" }}
-                >
-                  Safety by Hour of Day
-                </p>
-                <div className="flex h-4 rounded-sm overflow-hidden gap-px">
-                  {hourCounts.map((count, h) => {
-                    const intensity = count / maxCount;
-                    const color =
-                      intensity < 0.2
-                        ? "#22c55e"
-                        : intensity < 0.5
-                          ? "#eab308"
-                          : intensity < 0.75
-                            ? "#f97316"
-                            : "#ef4444";
-                    return (
-                      <div
-                        key={h}
-                        className="flex-1 transition-colors"
-                        style={{ backgroundColor: color, opacity: Math.max(0.3, intensity) }}
-                        title={`${fmtH(h)}: ${count} incident${count !== 1 ? "s" : ""}`}
-                      />
-                    );
-                  })}
-                </div>
-                <div
-                  className="flex justify-between mt-1 text-[8px]"
-                  style={{ color: "var(--panel-text-muted)" }}
-                >
-                  <span>12am</span>
-                  <span>6am</span>
-                  <span>12pm</span>
-                  <span>6pm</span>
-                  <span>12am</span>
-                </div>
-              </div>
-
-              <div
-                className="flex items-center gap-2 px-3 py-2 text-xs bg-green-500/5"
-                style={{ borderTop: "1px solid var(--panel-border)" }}
-              >
-                <Clock className="w-3.5 h-3.5 text-green-500 shrink-0" />
-                <span style={{ color: "var(--panel-text-secondary)" }}>
-                  Best time:{" "}
-                  <strong className="text-green-500">
-                    {fmtH(best.startHour)} – {fmtH(best.endHour)}
-                  </strong>
-                </span>
-              </div>
-
-              <label
-                className="flex items-center gap-2.5 px-3 py-2 cursor-pointer text-xs"
-                style={{
-                  borderTop: "1px solid var(--panel-border)",
-                  color: "var(--panel-text-secondary)",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={showHistorical}
-                  onChange={(e) => {
-                    setShowHistorical(e.target.checked);
-                    if (e.target.checked) {
-                      const nearby = incidentsNearRoute(routeGeometryForDemo!, incidents);
-                      onHistoricalOverlay?.(nearby);
-                    } else {
-                      onHistoricalOverlay?.(null);
-                    }
-                  }}
-                  className="rounded border-gray-500 accent-blue-500"
-                />
-                Show 30-day incidents near route
-              </label>
-            </div>
-          );
-        })()}
-
-        {routeGeometryForDemo && routeGeometryForDemo.length >= 2 && (
-          <label
-            className="mt-3 flex items-start gap-2.5 cursor-pointer text-xs px-1 leading-snug"
-            style={{ color: "var(--panel-text-secondary)" }}
-          >
-            <input
-              type="checkbox"
-              checked={demoRouteSim}
-              onChange={(e) => onDemoRouteSimChange(e.target.checked)}
-              className="mt-0.5 rounded border-gray-500 accent-blue-500"
-            />
-            <span>
-              Demo: simulate walking speed (~100&nbsp;m per minute) along the route to test the
-              live icon.
-            </span>
-          </label>
-        )}
-
         <div className="mt-3 flex gap-2">
           <button
             onClick={() => void handleStartTrip()}
@@ -797,7 +666,7 @@ export default function DirectionsPanel({
             ) : (
               <Play className="w-4 h-4 fill-current" />
             )}
-            {startNavBusy ? "Starting…" : "Preview Route"}
+            {startNavBusy ? "Starting…" : "Start Navigation"}
           </button>
           {canSave && destLoc && (
             <button

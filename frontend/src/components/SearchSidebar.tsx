@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Navigation, Flame, Radio, Shield, TrendingUp, TrendingDown, MapPin, Minus } from "lucide-react";
 import Sparkline from "@/components/charts/Sparkline";
-import { assessSafety } from "@/lib/search";
 import {
   getMultiStopRoute,
   buildAvoidZones,
@@ -16,8 +15,6 @@ import {
 import type { Incident } from "@/lib/api";
 import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
-import { getSeverity } from "@/lib/severity";
-import { pointAtDistanceMeters, routeLengthMeters } from "@/lib/route-geometry";
 import SearchInput from "@/components/SearchInput";
 import SavedPlaces from "@/components/SavedPlaces";
 import DirectionsPanel from "@/components/DirectionsPanel";
@@ -72,8 +69,6 @@ interface Props {
   selectedId?: string | null;
   tripProgress?: number;
   onGpsStatusChange?: (status: "idle" | "loading" | "found" | "denied") => void;
-  routeGeometryForDemo?: [number, number][] | null;
-  onRouteDemoSimChange?: (active: boolean) => void;
   timeFilterLabel?: string;
   trendPct?: number;
   hotNeighborhoods?: HotNeighborhood[];
@@ -94,8 +89,6 @@ export default function SearchSidebar({
   selectedId,
   tripProgress = 0,
   onGpsStatusChange,
-  routeGeometryForDemo = null,
-  onRouteDemoSimChange,
   timeFilterLabel,
   trendPct = 0,
   hotNeighborhoods = [],
@@ -120,9 +113,6 @@ export default function SearchSidebar({
   const avoidCatsRef = useRef(avoidCats);
   avoidCatsRef.current = avoidCats;
   const [rerouteAlert, setRerouteAlert] = useState<string | null>(null);
-  const [demoRouteSim, setDemoRouteSim] = useState(false);
-  const demoRouteSimRef = useRef(false);
-  const demoDistMRef = useRef(0);
   const [userPos, setUserPos] = useState<{ lat: number; lng: number } | null>(null);
   const [gpsStatus, setGpsStatus] = useState<"idle" | "loading" | "found" | "denied">("idle");
   const destLocRef = useRef(destLoc);
@@ -141,65 +131,6 @@ export default function SearchSidebar({
   useEffect(() => {
     onGpsStatusChangeRef.current?.(gpsStatus);
   }, [gpsStatus]);
-
-  useEffect(() => {
-    demoRouteSimRef.current = demoRouteSim;
-  }, [demoRouteSim]);
-
-  useEffect(() => {
-    if (view !== "directions" && view !== "trip") {
-      setDemoRouteSim(false);
-    }
-  }, [view]);
-
-  useEffect(() => {
-    if (!routeGeometryForDemo || routeGeometryForDemo.length < 2) {
-      setDemoRouteSim(false);
-    }
-  }, [routeGeometryForDemo]);
-
-  useEffect(() => {
-    if (!demoRouteSim || !routeGeometryForDemo || routeGeometryForDemo.length < 2) {
-      onRouteDemoSimChange?.(false);
-      return;
-    }
-    const geo = routeGeometryForDemo;
-    const totalM = routeLengthMeters(geo);
-    if (totalM < 1) {
-      onRouteDemoSimChange?.(false);
-      return;
-    }
-    onRouteDemoSimChange?.(true);
-    demoDistMRef.current = 0;
-    const metersPerSecond = 100 / 60;
-
-    const apply = (distM: number) => {
-      const p = pointAtDistanceMeters(geo, distM);
-      if (!p) return;
-      const loc = { lat: p[0], lng: p[1] };
-      setUserPos(loc);
-      setOriginLoc((prev) => {
-        if (prev?.display_name === "Your location") return { ...prev, ...loc };
-        return prev;
-      });
-      onUserLocationRef.current?.(loc.lat, loc.lng);
-      const d = destLocRef.current;
-      onPreviewPinsRef.current?.(loc, d ? { lat: d.lat, lng: d.lng } : null);
-    };
-
-    const tick = () => {
-      demoDistMRef.current += metersPerSecond;
-      if (demoDistMRef.current >= totalM) demoDistMRef.current = 0;
-      apply(demoDistMRef.current);
-    };
-
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => {
-      clearInterval(id);
-      onRouteDemoSimChange?.(false);
-    };
-  }, [demoRouteSim, routeGeometryForDemo, onRouteDemoSimChange]);
 
   useEffect(() => {
     const cityCenter = () => {
@@ -223,7 +154,6 @@ export default function SearchSidebar({
     setGpsStatus("loading");
 
     const emit = (loc: { lat: number; lng: number }) => {
-      if (demoRouteSimRef.current) return;
       const now = Date.now();
       const prev = lastGpsEmitRef.current;
       const movedM = prev ? haversineM(prev.lat, prev.lng, loc.lat, loc.lng) : Infinity;
@@ -312,23 +242,15 @@ export default function SearchSidebar({
     setRerouteAlert(null);
     setView("trip");
     const geom = (routeData.safe || routeData.normal)?.geometry;
+    activeRouteRef.current = geom ?? null;
+    knownIncIdsRef.current = new Set(incidents.map((i) => i.id));
     onTripActive?.(true, geom, activeMode);
-  }, [originLoc, destLoc, stops, activeMode, onRoutesChange, onTripActive]);
+  }, [originLoc, destLoc, stops, activeMode, onRoutesChange, onTripActive, incidents]);
 
   // Auto-reroute: watch for new incidents near the active route geometry
   const activeRouteRef = useRef<[number, number][] | null>(null);
   const knownIncIdsRef = useRef<Set<string>>(new Set());
   const rerouteInFlightRef = useRef(false);
-
-  useEffect(() => {
-    if (view === "trip" && routeGeometryForDemo && routeGeometryForDemo.length >= 2) {
-      activeRouteRef.current = routeGeometryForDemo;
-      knownIncIdsRef.current = new Set(incidents.map((i) => i.id));
-    } else {
-      activeRouteRef.current = null;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, routeGeometryForDemo]);
 
   useEffect(() => {
     const route = activeRouteRef.current;
@@ -389,7 +311,6 @@ export default function SearchSidebar({
   }, [incidents, view]);
 
   const resetTrip = useCallback(() => {
-    setDemoRouteSim(false);
     setRouteInfo(null);
     setDestLoc(null);
     setDestQuery("");
@@ -399,8 +320,8 @@ export default function SearchSidebar({
     onTripActive?.(false);
     onPreviewPins?.(originLoc, null);
     onPreviewWaypoints?.(null);
-    onRouteDemoSimChange?.(false);
-  }, [onRoutesChange, onTripActive, onPreviewPins, onPreviewWaypoints, originLoc, onRouteDemoSimChange]);
+    activeRouteRef.current = null;
+  }, [onRoutesChange, onTripActive, onPreviewPins, onPreviewWaypoints, originLoc]);
 
   const highCount = incidents.filter((i) => i.s_base >= 0.7).length;
 
@@ -619,9 +540,6 @@ export default function SearchSidebar({
             onPreviewPins={onPreviewPins}
             onPreviewWaypoints={onPreviewWaypoints}
             onStartTrip={startTrip}
-            routeGeometryForDemo={routeGeometryForDemo}
-            demoRouteSim={demoRouteSim}
-            onDemoRouteSimChange={setDemoRouteSim}
             avoidCats={avoidCats}
             onAvoidCatsChange={setAvoidCats}
           />
@@ -649,9 +567,6 @@ export default function SearchSidebar({
             stops={stops}
             activeMode={activeMode}
             tripProgress={tripProgress}
-            routeGeometryForDemo={routeGeometryForDemo}
-            demoRouteSim={demoRouteSim}
-            onDemoRouteSimChange={setDemoRouteSim}
             onResetTrip={resetTrip}
             recentIncidents={incidents.slice(0, 12)}
             onSelectIncident={(id) => onSelectIncident?.(id)}
