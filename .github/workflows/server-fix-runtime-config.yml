@@ -7,7 +7,7 @@ jobs:
   fix-runtime:
     runs-on: ubuntu-latest
     steps:
-      - name: Fix bucket env and disable invalid inhibitor key
+      - name: Auto-fix bucket env and disable invalid inhibitor key
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -19,8 +19,63 @@ jobs:
             ENV_FILE="/etc/philly-pulse.env"
 
             if [ -f "$ENV_FILE" ]; then
-              # Firebase Admin SDK expects the GCS bucket name.
-              sed -i 's/^FIREBASE_STORAGE_BUCKET=phlpulse\.firebasestorage\.app$/FIREBASE_STORAGE_BUCKET=phlpulse.appspot.com/' "$ENV_FILE" || true
+              # Load env so python bucket discovery can use service account/project info.
+              set -a
+              . "$ENV_FILE"
+              set +a
+
+              # Try to discover an actual accessible bucket for this Firebase project.
+              DISCOVERED_BUCKET="$(python3 - <<'PY'
+import json
+import os
+
+def pick_bucket(names):
+    if not names:
+        return ""
+    ordered = sorted(
+        set(names),
+        key=lambda n: (
+            0 if n.endswith(".appspot.com") else
+            1 if n.endswith(".firebasestorage.app") else
+            2,
+            n,
+        ),
+    )
+    return ordered[0]
+
+project_id = (os.getenv("FIREBASE_PROJECT_ID") or os.getenv("NEXT_PUBLIC_FIREBASE_PROJECT_ID") or "").strip()
+cred_path = (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+if not project_id and cred_path and os.path.isfile(cred_path):
+    try:
+        with open(cred_path, "r", encoding="utf-8") as f:
+            project_id = (json.load(f).get("project_id") or "").strip()
+    except Exception:
+        pass
+
+if not project_id:
+    print("")
+    raise SystemExit(0)
+
+try:
+    from google.cloud import storage
+    client = storage.Client(project=project_id)
+    buckets = [b.name for b in client.list_buckets(max_results=50)]
+    print(pick_bucket(buckets))
+except Exception:
+    print("")
+PY
+)"
+
+              if [ -n "$DISCOVERED_BUCKET" ]; then
+                if grep -q '^FIREBASE_STORAGE_BUCKET=' "$ENV_FILE"; then
+                  sed -i "s|^FIREBASE_STORAGE_BUCKET=.*|FIREBASE_STORAGE_BUCKET=$DISCOVERED_BUCKET|" "$ENV_FILE" || true
+                else
+                  echo "FIREBASE_STORAGE_BUCKET=$DISCOVERED_BUCKET" >> "$ENV_FILE"
+                fi
+                echo "Using discovered FIREBASE_STORAGE_BUCKET=$DISCOVERED_BUCKET"
+              else
+                echo "WARNING: No Firebase bucket discovered; keeping existing FIREBASE_STORAGE_BUCKET value"
+              fi
 
               # Current key returns 401; blank it so the service cleanly bypasses
               # inhibitor until a valid key is provided.
