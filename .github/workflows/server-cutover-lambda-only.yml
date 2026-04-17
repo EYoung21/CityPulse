@@ -1,0 +1,54 @@
+name: Server Cutover Lambda Only
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cutover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disable Hetzner ingest services and keep API only
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 20m
+          script: |
+            set -e
+            echo "=== Stopping/disabling live transcribers ==="
+            for city in sf nyc philly chattanooga; do
+              systemctl stop "pulse-live@${city}" || true
+              systemctl disable "pulse-live@${city}" || true
+            done
+            systemctl stop philly-pulse-live || true
+            systemctl disable philly-pulse-live || true
+
+            echo ""
+            echo "=== Stopping/disabling backfill scheduler ==="
+            systemctl stop pulse-backfill.timer || true
+            systemctl disable pulse-backfill.timer || true
+            systemctl stop pulse-backfill.service || true
+
+            echo ""
+            echo "=== Ensure API remains running ==="
+            systemctl restart philly-pulse-api
+            sleep 2
+            systemctl is-active philly-pulse-api && echo "API: running" || echo "API: FAILED"
+
+            echo ""
+            echo "=== Final unit status ==="
+            for city in sf nyc philly chattanooga; do
+              echo -n "pulse-live@${city}: "
+              systemctl is-active "pulse-live@${city}" || true
+              echo -n "pulse-live@${city} enabled: "
+              systemctl is-enabled "pulse-live@${city}" || true
+            done
+            echo -n "philly-pulse-live: "
+            systemctl is-active philly-pulse-live || true
+            echo -n "philly-pulse-live enabled: "
+            systemctl is-enabled philly-pulse-live || true
+            echo -n "pulse-backfill.timer: "
+            systemctl is-active pulse-backfill.timer || true
+            echo -n "pulse-backfill.timer enabled: "
+            systemctl is-enabled pulse-backfill.timer || true
