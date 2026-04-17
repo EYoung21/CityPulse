@@ -25,46 +25,11 @@ jobs:
               set +a
 
               # Try to discover an actual accessible bucket for this Firebase project.
-              DISCOVERED_BUCKET="$(python3 - <<'PY'
-import json
-import os
-
-def pick_bucket(names):
-    if not names:
-        return ""
-    ordered = sorted(
-        set(names),
-        key=lambda n: (
-            0 if n.endswith(".appspot.com") else
-            1 if n.endswith(".firebasestorage.app") else
-            2,
-            n,
-        ),
-    )
-    return ordered[0]
-
-project_id = (os.getenv("FIREBASE_PROJECT_ID") or os.getenv("NEXT_PUBLIC_FIREBASE_PROJECT_ID") or "").strip()
-cred_path = (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
-if not project_id and cred_path and os.path.isfile(cred_path):
-    try:
-        with open(cred_path, "r", encoding="utf-8") as f:
-            project_id = (json.load(f).get("project_id") or "").strip()
-    except Exception:
-        pass
-
-if not project_id:
-    print("")
-    raise SystemExit(0)
-
-try:
-    from google.cloud import storage
-    client = storage.Client(project=project_id)
-    buckets = [b.name for b in client.list_buckets(max_results=50)]
-    print(pick_bucket(buckets))
-except Exception:
-    print("")
-PY
-)"
+              DISCOVERED_BUCKET="$(python3 -c 'import json,os; pid=(os.getenv("FIREBASE_PROJECT_ID") or os.getenv("NEXT_PUBLIC_FIREBASE_PROJECT_ID") or "").strip(); cp=(os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip(); \
+if (not pid) and cp and os.path.isfile(cp): \
+  pid=((json.load(open(cp, "r", encoding="utf-8")).get("project_id") or "").strip()); \
+names=[]; \
+print("" if not pid else (lambda out: out[0] if out else "")(sorted(set([b.name for b in __import__("google.cloud.storage", fromlist=["storage"]).Client(project=pid).list_buckets(max_results=50)]), key=lambda n:(0 if n.endswith(".appspot.com") else 1 if n.endswith(".firebasestorage.app") else 2, n))))' 2>/dev/null || true)"
 
               if [ -n "$DISCOVERED_BUCKET" ]; then
                 if grep -q '^FIREBASE_STORAGE_BUCKET=' "$ENV_FILE"; then
