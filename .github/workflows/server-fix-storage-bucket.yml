@@ -27,7 +27,7 @@ jobs:
             . "$ENV_FILE"
             set +a
 
-            DISCOVERED_BUCKET="$(python3 -c 'import json,os;pid=(os.getenv("FIREBASE_PROJECT_ID") or os.getenv("NEXT_PUBLIC_FIREBASE_PROJECT_ID") or "").strip();cp=(os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip();pid=((json.load(open(cp, "r", encoding="utf-8")).get("project_id") or "").strip()) if (not pid and cp and os.path.isfile(cp)) else pid;print("" if not pid else (lambda out: out[0] if out else "")(sorted(set([b.name for b in __import__("google.cloud.storage", fromlist=["storage"]).Client(project=pid).list_buckets(max_results=50)]), key=lambda n:(0 if n.endswith(".appspot.com") else 1 if n.endswith(".firebasestorage.app") else 2, n))))' 2>/dev/null || true)"
+            DISCOVERED_BUCKET="$(python3 -c 'import json,os;pid=(os.getenv("FIREBASE_PROJECT_ID") or os.getenv("NEXT_PUBLIC_FIREBASE_PROJECT_ID") or "").strip();cp=(os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip();pid=((json.load(open(cp, "r", encoding="utf-8")).get("project_id") or "").strip()) if (not pid and cp and os.path.isfile(cp)) else pid;print("" if not pid else (lambda c: (lambda names: ((lambda ordered: ordered[0] if ordered else "")(sorted(set(names), key=lambda n:(0 if n.endswith(".appspot.com") else 1 if n.endswith(".firebasestorage.app") else 2, n)))))(([b.name for b in c.list_buckets(max_results=50)] or ([c.create_bucket(f\"{pid}.appspot.com\", location=\"us-central1\").name] if True else []))))(__import__(\"google.cloud.storage\", fromlist=[\"storage\"]).Client(project=pid))))' 2>/dev/null || true)"
 
             if [ -z "$DISCOVERED_BUCKET" ]; then
               echo "No bucket discovered; leaving FIREBASE_STORAGE_BUCKET unchanged"
