@@ -35,5 +35,18 @@ jobs:
             echo ""
             echo "=== Transcriber status ==="
             systemctl is-active philly-pulse-live
-            echo "Clips on disk: $(ls /root/PhillyPulse/audio_clips/ | wc -l)"
+            echo "Clips on disk: $(find /root/PhillyPulse/audio_clips/ -type f | wc -l)"
             echo "Newest clip: $(ls -t /root/PhillyPulse/audio_clips/ | head -1)"
+
+            echo ""
+            echo "=== Disk usage ==="
+            df -h /
+
+            echo ""
+            echo "=== API errors/tracebacks (last 100 lines) ==="
+            journalctl -u philly-pulse-api --no-pager -n 200 --since "5 minutes ago" 2>/dev/null \
+              | grep -A5 -i 'error\|traceback\|exception\|errno' | tail -100
+
+            echo ""
+            echo "=== Full recent API logs (last 30 lines) ==="
+            journalctl -u philly-pulse-api --no-pager -n 30
