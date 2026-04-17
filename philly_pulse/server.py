@@ -370,9 +370,12 @@ async def ingest(req: IngestRequest):
     feed_id = req.feed_id or "unknown"
     city = req.city or CITY_SLUG
 
-    # Save any uploaded audio clip data to disk
+    # Save any uploaded audio clip data to disk (non-fatal if disk is full)
     if req.audio_data:
-        _save_audio_data(req.audio_data)
+        try:
+            _save_audio_data(req.audio_data)
+        except OSError as e:
+            logger.error("Failed to save audio clips (disk full?): %s", e)
 
     # Normalize time-only timestamps (e.g. "14:30:00") to full ISO
     ts = req.timestamp
