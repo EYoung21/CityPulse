@@ -1,0 +1,36 @@
+name: Server Enforce Lambda Only
+
+on:
+  workflow_dispatch:
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stop any local ingest producers on Hetzner
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -e
+            for city in sf nyc philly chattanooga; do
+              systemctl stop "pulse-live@${city}" || true
+              systemctl disable "pulse-live@${city}" || true
+            done
+            systemctl stop philly-pulse-live || true
+            systemctl disable philly-pulse-live || true
+            systemctl stop pulse-backfill.timer || true
+            systemctl disable pulse-backfill.timer || true
+            systemctl stop pulse-backfill.service || true
+
+            # Kill any ad-hoc/background transcriber/backfill processes.
+            pkill -f "radiotranscriber.py" || true
+            pkill -f "multi_transcriber.py" || true
+            pkill -f "backfill_smart.py" || true
+            pkill -f "backfill_archives.py" || true
+
+            echo "=== Producer process check ==="
+            pgrep -af "radiotranscriber.py|multi_transcriber.py|backfill_smart.py|backfill_archives.py" || echo "none"
