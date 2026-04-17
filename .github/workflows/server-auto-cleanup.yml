@@ -1,0 +1,50 @@
+name: Server Auto-Cleanup (Daily)
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC (2 AM ET)
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  auto-cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clean old raw clips and temp files
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 15m
+          script: |
+            echo "=== Disk usage before ==="
+            df -h / | tail -1
+
+            echo ""
+            echo "=== Removing raw clips older than 3 days ==="
+            RAW_DIR="/root/PhillyPulse/audio_clips_raw"
+            if [ -d "$RAW_DIR" ]; then
+              BEFORE=$(ls "$RAW_DIR" 2>/dev/null | wc -l)
+              find "$RAW_DIR" -type f -mtime +3 -delete 2>/dev/null || true
+              AFTER=$(ls "$RAW_DIR" 2>/dev/null | wc -l)
+              echo "Removed $((BEFORE - AFTER)) raw clips (kept $AFTER recent)"
+            else
+              echo "No raw clips directory found"
+            fi
+
+            echo ""
+            echo "=== Cleaning Python cache ==="
+            find /root/PhillyPulse -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
+            echo ""
+            echo "=== Cleaning old logs (>7 days) ==="
+            find /root/PhillyPulse -name "*.log" -mtime +7 -delete 2>/dev/null || true
+
+            echo ""
+            echo "=== Vacuuming journal logs ==="
+            journalctl --vacuum-time=3d --vacuum-size=100M 2>/dev/null || true
+
+            echo ""
+            echo "=== Disk usage after ==="
+            df -h / | tail -1

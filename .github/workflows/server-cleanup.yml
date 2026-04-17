@@ -1,0 +1,60 @@
+name: Server Cleanup (Disk Full Fix)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clean disk and restart services
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 30m
+          script: |
+            echo "=== BEFORE cleanup ==="
+            df -h /
+            echo ""
+            echo "audio_clips count: $(ls /root/PhillyPulse/audio_clips/ 2>/dev/null | wc -l)"
+            echo "audio_clips_raw count: $(ls /root/PhillyPulse/audio_clips_raw/ 2>/dev/null | wc -l)"
+            echo "audio_clips size: $(du -sh /root/PhillyPulse/audio_clips/ 2>/dev/null | cut -f1)"
+            echo "audio_clips_raw size: $(du -sh /root/PhillyPulse/audio_clips_raw/ 2>/dev/null | cut -f1)"
+
+            echo ""
+            echo "=== Cleaning audio_clips_raw (pre-processing duplicates) ==="
+            rm -rf /root/PhillyPulse/audio_clips_raw/*
+            echo "Done. Remaining: $(ls /root/PhillyPulse/audio_clips_raw/ 2>/dev/null | wc -l)"
+
+            echo ""
+            echo "=== Cleaning Python cache ==="
+            find /root/PhillyPulse -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
+            echo ""
+            echo "=== Cleaning old log files ==="
+            find /root/PhillyPulse -name "*.log" -mtime +7 -delete 2>/dev/null || true
+
+            echo ""
+            echo "=== Vacuuming journal logs ==="
+            journalctl --vacuum-time=3d --vacuum-size=100M 2>/dev/null || true
+
+            echo ""
+            echo "=== AFTER cleanup ==="
+            df -h /
+
+            echo ""
+            echo "=== Restarting services ==="
+            systemctl restart philly-pulse-api
+            systemctl restart philly-pulse-live
+            sleep 5
+
+            echo ""
+            echo "=== Service status ==="
+            systemctl is-active philly-pulse-api && echo "API: running" || echo "API: FAILED"
+            systemctl is-active philly-pulse-live && echo "Transcriber: running" || echo "Transcriber: FAILED"
+
+            echo ""
+            echo "=== Health check ==="
+            curl -s http://localhost:8765/api/health || echo "(health check failed)"
