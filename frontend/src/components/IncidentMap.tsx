@@ -848,7 +848,11 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       const span =
         Math.abs(bounds.getNorth() - bounds.getSouth()) +
         Math.abs(bounds.getEast() - bounds.getWest());
-      if (span < 0.0003) {
+      const currentZoom = map.getZoom();
+      // Show the scrollable list panel when:
+      // - markers are very close together (< ~110m), OR
+      // - we're already zoomed in close (≥16) so further zooming won't help
+      if (span < 0.001 || currentZoom >= 16) {
         const ids: string[] = cluster
           .getAllChildMarkers()
           .map((m: any) => m._ppIncidentId as string)
