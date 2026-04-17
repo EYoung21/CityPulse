@@ -132,7 +132,8 @@ const THEME_OPTIONS = [
 export default function Home() {
   const { mode, resolved, setMode } = useTheme();
   const isDark = resolved === "dark";
-  const useFirestoreData = isFirebaseConfigured();
+  const [firestoreAvailable, setFirestoreAvailable] = useState(() => isFirebaseConfigured());
+  const useFirestoreData = firestoreAvailable;
   const { isPro } = useAuth();
 
   const [cityDisplayName, setCityDisplayName] = useState(() =>
@@ -241,7 +242,12 @@ export default function Home() {
     if (useFirestoreData) {
       const unsub = subscribeIncidents(
         (next) => setIncidents(next),
-        (e) => console.error("Firestore incidents:", e)
+        (e) => {
+          console.error("Firestore incidents:", e);
+          // If realtime Firestore fails at runtime (bad key, rules, missing index),
+          // gracefully fall back to REST polling so live data still renders.
+          setFirestoreAvailable(false);
+        }
       );
       return unsub;
     }
