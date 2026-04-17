@@ -37,11 +37,8 @@ jobs:
             # Use Python + Firestore to get referenced clip IDs, then purge orphans
             /root/PhillyPulse/venv/bin/python3 -c "
             import os, sys
+            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/root/firebase-sa.json'
             try:
-                # Load Firestore credentials
-                os.environ.setdefault('FIREBASE_SERVICE_ACCOUNT_JSON',
-                    open('/root/PhillyPulse/firebase-key.json').read()
-                    if os.path.isfile('/root/PhillyPulse/firebase-key.json') else '')
                 from philly_pulse.firestore_store import _ensure_client
                 db = _ensure_client()
                 # Get all clip IDs referenced by incidents
