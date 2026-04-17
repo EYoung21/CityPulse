@@ -28,9 +28,5 @@ jobs:
             /root/deploy.sh
             # Keep /root/deploy.sh in sync with the repo copy
             cp /root/PhillyPulse/scripts/deploy-backend-hetzner.sh /root/deploy.sh
-            # Restart the live transcriber so it picks up updated code
-            systemctl restart philly-pulse-live
-            sleep 2
-            systemctl is-active philly-pulse-live || echo "WARNING: philly-pulse-live failed to start"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
