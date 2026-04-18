@@ -17,8 +17,21 @@ const geistMono = Geist_Mono({
 
 const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
 const siteName = process.env.NEXT_PUBLIC_SITE_NAME || "PHLPulse";
+const siteOrigin =
+  process.env.NEXT_PUBLIC_SITE_URL ||
+  process.env.NEXT_PUBLIC_VERCEL_URL ||
+  "http://localhost:3000";
+const metadataBaseUrl = (() => {
+  try {
+    const u = siteOrigin.startsWith("http") ? siteOrigin : `https://${siteOrigin}`;
+    return new URL(u);
+  } catch {
+    return new URL("http://localhost:3000");
+  }
+})();
 
 export const metadata: Metadata = {
+  metadataBase: metadataBaseUrl,
   title: `CityPulse — ${siteName} · ${cityName}`,
   description:
     `CityPulse: Real-time AI-powered community safety for ${cityName}. Live police scanner transcription, incident mapping, and safe routing.`,
@@ -37,6 +50,19 @@ export const metadata: Metadata = {
     apple: "/apple-touch-icon.png",
   },
   formatDetection: { telephone: false },
+  openGraph: {
+    title: `CityPulse — ${siteName} · ${cityName}`,
+    description: `Real-time AI-powered community safety map for ${cityName}.`,
+    type: "website",
+    siteName: "PhillyPulse",
+    images: [{ url: "/api/og", width: 1200, height: 630, alt: "PhillyPulse — live safety map" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: `CityPulse — ${siteName} · ${cityName}`,
+    description: `Real-time AI-powered community safety map for ${cityName}.`,
+    images: ["/api/og"],
+  },
 };
 
 export const viewport: Viewport = {

@@ -421,6 +421,8 @@ export default function IncidentDetail({ incident, onClose }: Props) {
                 lng={incident.lng}
                 label={incident.location_text ?? undefined}
                 incidentId={incident.id}
+                incidentCategory={incident.severity_category}
+                incidentTime={incident.reported_at}
               />
             </div>
           </div>

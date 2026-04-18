@@ -30,9 +30,13 @@ interface Props {
   label?: string;
   /** When true, hides "Directions to" (e.g. you wouldn't navigate to your own dropped pin from itself). Default false. */
   hideDirections?: boolean;
-  /** When set, the share link deep-links to this incident
-   *  (`?incident=<id>`) instead of just centering on coordinates. */
+  /** When set, the share link routes through `/share?incident=<id>&…` so
+   *  social-link previews render a per-incident OG card. */
   incidentId?: string;
+  /** Severity slug used for the OG card accent color. */
+  incidentCategory?: string;
+  /** ISO timestamp; rendered as "X min ago" on the OG card. */
+  incidentTime?: string;
 }
 
 type ToastKind = "copied-coords" | "copied-pluscode" | "saved" | null;
@@ -48,7 +52,15 @@ const SAVE_OPTIONS: { id: SavedCategory; Icon: LucideIcon; color: string }[] = [
   { id: "custom",   Icon: MapPin,    color: "#94a3b8" },
 ];
 
-export default function PlaceActions({ lat, lng, label, hideDirections = false, incidentId }: Props) {
+export default function PlaceActions({
+  lat,
+  lng,
+  label,
+  hideDirections = false,
+  incidentId,
+  incidentCategory,
+  incidentTime,
+}: Props) {
   const [toast, setToast] = useState<ToastKind>(null);
   const [savePickerOpen, setSavePickerOpen] = useState(false);
   const { canSave, addDestination, destinations } = useSavedDestinations();
@@ -91,17 +103,25 @@ export default function PlaceActions({ lat, lng, label, hideDirections = false, 
 
   const onShare = useCallback(async () => {
     haptic();
-    // Incident links deep-link to the IncidentDetail card; place links just
-    // recenter the map and pop the SafetyScoreCard.
+    // Share links route through `/share?...` so the unfurl card is rich
+    // (incident accent color, location, "X min ago"). The /share page reads
+    // these params, generates per-link OG metadata, then bounces real users
+    // into the live app at `/?incident=<id>` or `/?lat=&lng=&zoom=`.
     const params = new URLSearchParams();
     if (incidentId) {
       params.set("incident", incidentId);
+      if (incidentCategory) params.set("c", incidentCategory);
+      if (incidentTime) params.set("time", incidentTime);
+      if (label) params.set("loc", label);
+      params.set("t", label || "Incident report");
     } else {
       params.set("lat", lat.toFixed(6));
       params.set("lng", lng.toFixed(6));
       params.set("zoom", "16");
+      params.set("t", displayLabel);
+      if (label) params.set("loc", label);
     }
-    const url = `${window.location.origin}/?${params.toString()}`;
+    const url = `${window.location.origin}/share?${params.toString()}`;
     const shareText = incidentId
       ? `Incident near ${displayLabel}`
       : displayLabel;
@@ -116,7 +136,7 @@ export default function PlaceActions({ lat, lng, label, hideDirections = false, 
       await navigator.clipboard.writeText(url);
       flashToast("copied-coords");
     } catch { /* ignore */ }
-  }, [lat, lng, displayLabel, incidentId, flashToast, haptic]);
+  }, [lat, lng, displayLabel, incidentId, incidentCategory, incidentTime, label, flashToast, haptic]);
 
   const onOpenInMaps = useCallback(() => {
     haptic();

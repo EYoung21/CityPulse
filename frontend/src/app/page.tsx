@@ -38,6 +38,8 @@ import ClusterListPanel from "@/components/ClusterListPanel";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
 import DistrictCard from "@/components/DistrictCard";
 import DroppedPinCard from "@/components/DroppedPinCard";
+import ManeuverChip from "@/components/ManeuverChip";
+import type { ManeuverStep } from "@/lib/routing";
 import type { MapHandle, WaypointPin } from "@/components/IncidentMap";
 import {
   fetchIncidents,
@@ -158,6 +160,7 @@ export default function Home() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [tripGeometry, setTripGeometry] = useState<[number, number][] | null>(null);
   const [tripMode, setTripMode] = useState<string | null>(null);
+  const [tripSteps, setTripSteps] = useState<ManeuverStep[] | null>(null);
   const [previewOrigin, setPreviewOrigin] = useState<{ lat: number; lng: number } | null>(null);
   const [previewDest, setPreviewDest] = useState<{ lat: number; lng: number } | null>(null);
   const [previewWaypoints, setPreviewWaypoints] = useState<WaypointPin[] | null>(null);
@@ -504,10 +507,11 @@ export default function Home() {
         onFlyTo={(lat, lng) => mapRef.current?.flyTo(lat, lng)}
         onRoutesChange={setRoutes}
         onUserLocation={(lat, lng) => setUserLocation({ lat, lng })}
-        onTripActive={(active, geometry, m) => {
-          setTripGeometry(active && geometry ? geometry : null);
-          setTripMode(active && m ? m : null);
-        }}
+          onTripActive={(active, geometry, m, steps) => {
+            setTripGeometry(active && geometry ? geometry : null);
+            setTripMode(active && m ? m : null);
+            setTripSteps(active && steps && steps.length > 0 ? steps : null);
+          }}
         onPreviewPins={(origin, dest) => {
           setPreviewOrigin(origin);
           setPreviewDest(dest);
@@ -598,6 +602,23 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      {/* Maneuver chip — floating turn-by-turn pill (active trip + ORS steps only) */}
+      {tripGeometry && tripSteps && tripSteps.length > 0 && (
+        <div
+          className="absolute z-[1002] left-1/2 -translate-x-1/2 pointer-events-none flex justify-center"
+          style={{
+            top: "calc(env(safe-area-inset-top, 0px) + 4rem)",
+            width: "min(440px, calc(100vw - 1.5rem))",
+          }}
+        >
+          <ManeuverChip
+            steps={tripSteps}
+            geometry={tripGeometry}
+            tripProgress={tripProgress}
+          />
+        </div>
+      )}
 
       {/* Bottom-right controls (lifted so map markers under corner overlap UI less) */}
       <div className="absolute md:bottom-[4.5rem] pp-bottom-controls right-3 z-[1001] flex flex-col items-end gap-1.5 md:gap-2 pointer-events-auto">
