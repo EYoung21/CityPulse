@@ -50,6 +50,7 @@ import OffscreenIncidentChip from "@/components/OffscreenIncidentChip";
 import IncidentAheadChip from "@/components/IncidentAheadChip";
 import AlertsInbox from "@/components/AlertsInbox";
 import { recordAlert, subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
+import { recordTrip, updateTrip, type TripHistoryEntry } from "@/lib/trip-history";
 import { fetchPoisInBounds, SAFETY_POI_CATEGORIES, type SafetyPoiCategory } from "@/lib/overpass";
 import ResumeTripPill from "@/components/ResumeTripPill";
 import { loadTripSnapshot, clearTripSnapshot, type TripResumeSnapshot } from "@/lib/trip-resume";
@@ -354,12 +355,17 @@ export default function Home() {
   // captured at trip start (since SearchSidebar's local routeInfo is
   // gone by the time the callback fires `active=false`).
   const [tripRecap, setTripRecap] = useState<TripRecap | null>(null);
+  // Pinned to the latest recorded trip-history entry id, so the recap
+  // card can patch it with rating/notes inline rather than re-recording.
+  const [tripRecapHistoryId, setTripRecapHistoryId] = useState<string | null>(null);
   const tripStatsRef = useRef<{
     startedAt: number;
     totalDistanceKm: number;
     mode: string;
     nearbyIncidents: number;
     wasSafeRoute: boolean;
+    origin?: { display_name: string; lat: number; lng: number };
+    dest?: { display_name: string; lat: number; lng: number };
   } | null>(null);
   const lastTripProgressRef = useRef(0);
   useEffect(() => { lastTripProgressRef.current = tripProgress; }, [tripProgress]);
@@ -950,6 +956,8 @@ export default function Home() {
                   mode: m || "driving-car",
                   nearbyIncidents: meta.nearbyCount,
                   wasSafeRoute: meta.isSafe,
+                  origin: meta.origin,
+                  dest: meta.dest,
                 };
               }
             } else if (tripStatsRef.current) {
@@ -958,7 +966,7 @@ export default function Home() {
               const stats = tripStatsRef.current;
               const progress = lastTripProgressRef.current;
               const completed = progress >= 0.95;
-              setTripRecap({
+              const recap: TripRecap = {
                 startedAt: stats.startedAt,
                 endedAt: Date.now(),
                 totalDistanceKm: stats.totalDistanceKm,
@@ -967,7 +975,21 @@ export default function Home() {
                 nearbyIncidents: stats.nearbyIncidents,
                 wasSafeRoute: stats.wasSafeRoute,
                 completed,
-              });
+              };
+              setTripRecap(recap);
+              // Persist to history so the SearchSidebar's Recent Trips
+              // section picks it up. Skip 0-distance "trips" (e.g. user
+              // immediately bailed) since they'd just clutter the list.
+              if (recap.traveledKm >= 0.05) {
+                const entry = recordTrip({
+                  ...recap,
+                  origin: stats.origin,
+                  dest: stats.dest,
+                });
+                setTripRecapHistoryId(entry.id);
+              } else {
+                setTripRecapHistoryId(null);
+              }
               tripStatsRef.current = null;
             }
           }}
@@ -1085,7 +1107,11 @@ export default function Home() {
 
       {/* Trip recap — shown briefly when the user ends a trip. */}
       {tripRecap && (
-        <TripRecapCard recap={tripRecap} onClose={() => setTripRecap(null)} />
+        <TripRecapCard
+          recap={tripRecap}
+          historyId={tripRecapHistoryId}
+          onClose={() => { setTripRecap(null); setTripRecapHistoryId(null); }}
+        />
       )}
 
       {/* Resume-trip pill — surfaces a recent in-progress trip after a

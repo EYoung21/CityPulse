@@ -18,7 +18,9 @@ import {
   Play,
   Star,
   Plus,
+  Calendar,
 } from "lucide-react";
+import { downloadIcs } from "@/lib/ics";
 import { geocodePhilly } from "@/lib/search";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
 import {
@@ -212,6 +214,13 @@ export default function DirectionsPanel({
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [startNavBusy, setStartNavBusy] = useState(false);
+  // Optional shifted-departure: when null, ETA is computed against
+  // "now". When set to a future Date, the displayed ETA is shifted by
+  // the offset (no actual time-of-day routing — OSRM/ORS free tier
+  // doesn't support it — but the projected arrival is still useful for
+  // planning trips later in the day).
+  const [departAt, setDepartAt] = useState<Date | null>(null);
+  const [departPickerOpen, setDepartPickerOpen] = useState(false);
   // Recent destinations strip — populated from the same localStorage
   // ring the search box uses, so picking somewhere in the search shows
   // up here too. Hidden once a destination is chosen.
@@ -812,6 +821,131 @@ export default function DirectionsPanel({
             )}
           </div>
         )}
+
+        {previewRoute && originLoc && destLoc && !previewLoading && (() => {
+          const departTs = (departAt?.getTime() ?? Date.now());
+          const arriveTs = departTs + previewRoute.durationMin * 60_000;
+          const fmtTime = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+          const fmtDay = (d: Date) => {
+            const now = new Date();
+            const sameDay = d.toDateString() === now.toDateString();
+            const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+            const isTomorrow = d.toDateString() === tomorrow.toDateString();
+            if (sameDay) return "Today";
+            if (isTomorrow) return "Tomorrow";
+            return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+          };
+          const arrive = new Date(arriveTs);
+          const depart = new Date(departTs);
+          const handleAddToCalendar = () => {
+            downloadIcs({
+              uid: `pp-trip-${departTs}@phillypulse.app`,
+              title: `Trip to ${destLoc.display_name.split(",")[0]}`,
+              location: destLoc.display_name,
+              description:
+                `Planned via PhillyPulse.\n` +
+                `From: ${originLoc.display_name}\n` +
+                `To: ${destLoc.display_name}\n` +
+                `Mode: ${activeMode}\n` +
+                `Distance: ${previewRoute.distanceKm.toFixed(1)} km\n` +
+                (typeof window !== "undefined"
+                  ? `Open in PhillyPulse: ${window.location.origin}/?dest_lat=${destLoc.lat}&dest_lng=${destLoc.lng}\n`
+                  : ""),
+              startUtc: depart,
+              endUtc: arrive,
+              reminderMin: 15,
+              geo: { lat: destLoc.lat, lng: destLoc.lng },
+              url: typeof window !== "undefined"
+                ? `${window.location.origin}/?dest_lat=${destLoc.lat}&dest_lng=${destLoc.lng}`
+                : undefined,
+            }, `phillypulse-${destLoc.display_name.split(",")[0].replace(/\s+/g, "-").toLowerCase()}.ics`);
+          };
+          return (
+            <div className="mt-3 space-y-2">
+              <div
+                className="flex items-center justify-between gap-2 rounded-lg px-3 py-2"
+                style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)" }}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <ClockIcon className="w-3 h-3 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
+                    <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: "var(--panel-text-muted)" }}>
+                      {departAt ? "Leave at" : "Leave now → arrive"}
+                    </span>
+                  </div>
+                  <p className="text-xs font-semibold mt-0.5 truncate" style={{ color: "var(--panel-text)" }}>
+                    {departAt
+                      ? `${fmtDay(depart)} ${fmtTime(depart)} → ${fmtTime(arrive)}`
+                      : `${fmtTime(arrive)}${depart.toDateString() !== arrive.toDateString() ? ` (${fmtDay(arrive)})` : ""}`}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDepartPickerOpen((v) => !v)}
+                  className="text-[11px] font-medium hover:underline shrink-0"
+                  style={{ color: "var(--panel-text-secondary)" }}
+                >
+                  {departPickerOpen ? "Done" : (departAt ? "Edit" : "Schedule")}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddToCalendar}
+                  className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors hover:bg-blue-500/15 text-blue-500"
+                  title="Download .ics for your calendar"
+                  aria-label="Add trip to calendar"
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Add to calendar</span>
+                </button>
+              </div>
+              {departPickerOpen && (
+                <div
+                  className="flex items-center gap-2 rounded-lg px-3 py-2"
+                  style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)" }}
+                >
+                  <input
+                    type="datetime-local"
+                    value={(() => {
+                      const d = departAt ?? new Date(Date.now() + 60 * 60_000);
+                      // datetime-local needs YYYY-MM-DDTHH:MM in *local* time.
+                      const off = d.getTimezoneOffset() * 60_000;
+                      return new Date(d.getTime() - off).toISOString().slice(0, 16);
+                    })()}
+                    min={(() => {
+                      const off = new Date().getTimezoneOffset() * 60_000;
+                      return new Date(Date.now() - off).toISOString().slice(0, 16);
+                    })()}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!v) { setDepartAt(null); return; }
+                      const d = new Date(v);
+                      if (Number.isNaN(d.getTime())) return;
+                      setDepartAt(d);
+                    }}
+                    className="flex-1 text-xs px-2 py-1.5 rounded-md outline-none focus:ring-1 focus:ring-blue-500/40"
+                    style={{
+                      background: "var(--panel-bg)",
+                      color: "var(--panel-text)",
+                      border: "1px solid var(--panel-border)",
+                    }}
+                  />
+                  {departAt && (
+                    <button
+                      type="button"
+                      onClick={() => { setDepartAt(null); setDepartPickerOpen(false); }}
+                      className="text-[11px] font-medium px-2 py-1.5 rounded-md transition-colors"
+                      style={{ color: "var(--panel-text-muted)" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         <div className="mt-3 flex gap-2">
           <button
