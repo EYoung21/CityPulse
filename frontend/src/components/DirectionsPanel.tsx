@@ -17,7 +17,6 @@ import {
   Play,
   Star,
   Plus,
-  Shield,
 } from "lucide-react";
 import { geocodePhilly } from "@/lib/search";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
@@ -25,15 +24,17 @@ import {
   getRouteOptions,
   buildAvoidZones,
   buildAvoidPolygons,
-  AVOIDANCE_CATEGORIES,
   type TransportMode,
-  type AvoidCategoryId,
+  type AvoidancePrefs,
   type RouteOption,
 } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
 import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
 import RouteOptionPicker from "@/components/RouteOptionPicker";
+import AvoidancePrefsPicker from "@/components/AvoidancePrefsPicker";
+import { loadRecent, type RecentSearch } from "@/lib/recent-searches";
+import { Clock as ClockIcon } from "lucide-react";
 
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
@@ -77,8 +78,12 @@ interface Props {
   ) => void;
   onPreviewWaypoints?: (waypoints: WaypointPin[] | null) => void;
   onStartTrip: () => Promise<void>;
-  avoidCats: Set<AvoidCategoryId>;
-  onAvoidCatsChange: (cats: Set<AvoidCategoryId>) => void;
+  avoidPrefs: AvoidancePrefs;
+  onAvoidPrefsChange: (prefs: AvoidancePrefs) => void;
+  /** Hours of incident history currently feeding routing (driven by the
+   *  global time-filter slider). Used purely for the long-window
+   *  inline note. */
+  timeFilterHours: number;
 }
 
 export default function DirectionsPanel({
@@ -103,9 +108,20 @@ export default function DirectionsPanel({
   onPreviewPins,
   onPreviewWaypoints,
   onStartTrip,
-  avoidCats,
-  onAvoidCatsChange,
+  avoidPrefs,
+  onAvoidPrefsChange,
+  timeFilterHours,
 }: Props) {
+  /** Compact label for a duration in hours, used by the long-window
+   *  note ("3mo", "1w", "12h", etc.). Mirrors the TIME_FILTERS labels
+   *  in page.tsx but avoids needing to thread that constant down. */
+  const fmtWindow = (h: number): string => {
+    if (h >= 720) return `${Math.round(h / 720)}mo`;
+    if (h >= 168) return `${Math.round(h / 168)}w`;
+    if (h >= 24) return `${Math.round(h / 24)}d`;
+    if (h >= 1) return `${Math.round(h)}h`;
+    return `${Math.round(h * 60)}m`;
+  };
   const [originSuggestions, setOriginSuggestions] = useState<StopLoc[]>([]);
   const [destSuggestions, setDestSuggestions] = useState<StopLoc[]>([]);
   const [stopSuggestions, setStopSuggestions] = useState<StopLoc[]>([]);
@@ -125,6 +141,18 @@ export default function DirectionsPanel({
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [startNavBusy, setStartNavBusy] = useState(false);
+  // Recent destinations strip — populated from the same localStorage
+  // ring the search box uses, so picking somewhere in the search shows
+  // up here too. Hidden once a destination is chosen.
+  const [recents, setRecents] = useState<RecentSearch[]>([]);
+  useEffect(() => {
+    setRecents(loadRecent());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "pp:recent-searches") setRecents(loadRecent());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const previewAbortRef = useRef<AbortController | null>(null);
@@ -221,7 +249,7 @@ export default function DirectionsPanel({
     const incSnap = incidentsRef.current;
     (async () => {
       try {
-        const zones = buildAvoidZones(incSnap, avoidCats);
+        const zones = buildAvoidZones(incSnap, avoidPrefs);
         const avoidPolygons = zones.length > 0 ? buildAvoidPolygons(zones) : null;
 
         const opts = await getRouteOptions({
@@ -281,7 +309,7 @@ export default function DirectionsPanel({
     })();
 
     return () => controller.abort();
-  }, [originLoc, destLoc, stops, activeMode, onRoutesChange, avoidCats]);
+  }, [originLoc, destLoc, stops, activeMode, onRoutesChange, avoidPrefs]);
 
   const swapLocations = () => {
     const tmpQ = originQuery;
@@ -313,7 +341,7 @@ export default function DirectionsPanel({
         routeOptions.find((o) => !o.isSafer && o.avoidedFeatures.length === 0)?.route ??
         routeOptions[0].route;
       const safer = routeOptions.find((o) => o.isSafer)?.route ?? null;
-      const zones = buildAvoidZones(incidentsRef.current, avoidCats);
+      const zones = buildAvoidZones(incidentsRef.current, avoidPrefs);
       onRoutesChange({
         normal: direct,
         safe: safer,
@@ -328,7 +356,7 @@ export default function DirectionsPanel({
         nearbyCount: zones.length,
       });
     },
-    [routeOptions, avoidCats, onRoutesChange]
+    [routeOptions, avoidPrefs, onRoutesChange]
   );
 
   const renderSuggestion = (
@@ -408,40 +436,26 @@ export default function DirectionsPanel({
         })}
       </div>
 
-      {/* Avoidance category selector */}
-      <div
-        className="px-4 py-2.5 flex items-center gap-2 overflow-x-auto no-scrollbar"
-        style={{ borderBottom: "1px solid var(--panel-border)" }}
-      >
-        <Shield className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
-        <span className="text-[10px] font-semibold uppercase tracking-wider shrink-0" style={{ color: "var(--panel-text-muted)" }}>
-          Avoid
-        </span>
-        {AVOIDANCE_CATEGORIES.map((ac) => {
-          const active = avoidCats.has(ac.id);
-          return (
-            <button
-              key={ac.id}
-              onClick={() => {
-                const next = new Set(avoidCats);
-                if (active) next.delete(ac.id);
-                else next.add(ac.id);
-                onAvoidCatsChange(next);
-              }}
-              className={`px-2.5 py-1 rounded-full text-[10px] font-medium transition-all shrink-0 ${
-                active ? "ring-1 ring-blue-500/30" : "opacity-60 hover:opacity-100"
-              }`}
-              style={{
-                background: active ? "rgba(59,130,246,0.15)" : "var(--panel-input-bg)",
-                border: `1px solid ${active ? "rgba(59,130,246,0.3)" : "var(--panel-border)"}`,
-                color: active ? "#3b82f6" : "var(--panel-text-secondary)",
-              }}
-            >
-              {ac.label}
-            </button>
-          );
-        })}
-      </div>
+      {/* Avoidance preferences (per-leaf categories + severity floor) */}
+      <AvoidancePrefsPicker prefs={avoidPrefs} onChange={onAvoidPrefsChange} />
+
+      {/* Long-window note: routing currently consumes whatever the global
+          time filter is showing (5m up through 3mo). Past ~1w of history
+          the avoid set explodes — the merger handles it but detours can
+          balloon, so heads-up the user. */}
+      {timeFilterHours > 168 && avoidPrefs.leaves.size > 0 && (
+        <div
+          className="px-4 py-2 text-[11px]"
+          style={{
+            background: "rgba(245,158,11,0.08)",
+            color: "var(--panel-text-secondary)",
+            borderBottom: "1px solid var(--panel-border)",
+          }}
+        >
+          Routing around incidents from the last {fmtWindow(timeFilterHours)}.
+          Long windows can produce big detours.
+        </div>
+      )}
 
       <div className="p-4">
         <div className="flex gap-2">
@@ -605,6 +619,46 @@ export default function DirectionsPanel({
             <ArrowUpDown className="w-4 h-4" />
           </button>
         </div>
+
+        {!destLoc && recents.length > 0 && (
+          <div className="mt-3">
+            <p
+              className="text-[10px] uppercase tracking-wider font-semibold mb-1.5 px-1"
+              style={{ color: "var(--panel-text-muted)" }}
+            >
+              Recent
+            </p>
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1 pb-1">
+              {recents.slice(0, 6).map((r) => {
+                // Compact label: take just the first comma-separated chunk
+                // (street name / POI name) so chips stay small.
+                const short = r.display_name.split(",")[0]?.trim() || r.display_name;
+                return (
+                  <button
+                    key={`${r.lat},${r.lng},${r.at}`}
+                    type="button"
+                    onClick={() => {
+                      setDestQuery(short);
+                      setDestLoc({ display_name: r.display_name, lat: r.lat, lng: r.lng });
+                      setActiveDropdown(null);
+                    }}
+                    className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all hover:scale-[1.02] active:scale-[0.98]"
+                    style={{
+                      background: "var(--panel-input-bg)",
+                      border: "1px solid var(--panel-border)",
+                      color: "var(--panel-text-secondary)",
+                      maxWidth: "200px",
+                    }}
+                    title={r.display_name}
+                  >
+                    <ClockIcon className="w-3 h-3 shrink-0" />
+                    <span className="truncate">{short}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {stops.length < 5 && (
           <button

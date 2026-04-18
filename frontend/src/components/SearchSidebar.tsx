@@ -8,9 +8,10 @@ import {
   buildAvoidZones,
   buildAvoidPolygons,
   isNearRoute,
-  DEFAULT_AVOID_CATS,
+  defaultAvoidancePrefs,
   type TransportMode,
-  type AvoidCategoryId,
+  type AvoidancePrefs,
+  type SeverityFloor,
   type ManeuverStep,
 } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
@@ -82,6 +83,7 @@ interface Props {
   tripProgress?: number;
   onGpsStatusChange?: (status: "idle" | "loading" | "found" | "denied") => void;
   timeFilterLabel?: string;
+  timeFilterHours?: number;
   trendPct?: number;
   hotNeighborhoods?: HotNeighborhood[];
   categoryBreakdown?: CategoryBreakdownItem[];
@@ -105,6 +107,7 @@ export default function SearchSidebar({
   tripProgress = 0,
   onGpsStatusChange,
   timeFilterLabel,
+  timeFilterHours,
   trendPct = 0,
   hotNeighborhoods = [],
   categoryBreakdown = [],
@@ -136,9 +139,40 @@ export default function SearchSidebar({
     durationMin: number;
     nearbyCount: number;
   } | null>(null);
-  const [avoidCats, setAvoidCats] = useState<Set<AvoidCategoryId>>(new Set(DEFAULT_AVOID_CATS));
-  const avoidCatsRef = useRef(avoidCats);
-  avoidCatsRef.current = avoidCats;
+  // Per-category avoidance + severity floor, persisted across reloads
+  // so a user who turned off "shots fired" yesterday isn't surprised
+  // when it comes back on. Read once on mount; serialised on every change.
+  const [avoidPrefs, setAvoidPrefsState] = useState<AvoidancePrefs>(() => {
+    if (typeof window === "undefined") return defaultAvoidancePrefs();
+    try {
+      const raw = window.localStorage.getItem("pp:avoid-prefs-v2");
+      if (!raw) return defaultAvoidancePrefs();
+      const parsed = JSON.parse(raw) as { leaves?: string[]; minSeverity?: SeverityFloor };
+      return {
+        leaves: new Set(Array.isArray(parsed.leaves) ? parsed.leaves : []),
+        minSeverity:
+          parsed.minSeverity === "any" || parsed.minSeverity === "low" ||
+          parsed.minSeverity === "medium" || parsed.minSeverity === "high"
+            ? parsed.minSeverity
+            : "low",
+      };
+    } catch {
+      return defaultAvoidancePrefs();
+    }
+  });
+  const setAvoidPrefs = useCallback((next: AvoidancePrefs) => {
+    setAvoidPrefsState(next);
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(
+          "pp:avoid-prefs-v2",
+          JSON.stringify({ leaves: Array.from(next.leaves), minSeverity: next.minSeverity })
+        );
+      } catch { /* storage full / blocked — non-fatal */ }
+    }
+  }, []);
+  const avoidPrefsRef = useRef(avoidPrefs);
+  avoidPrefsRef.current = avoidPrefs;
 
   // Latest RouteData reported by the directions picker. Used by
   // `startTrip` so the option the user picked (e.g. "No tolls" /
@@ -298,7 +332,7 @@ export default function SearchSidebar({
       const directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
       if (!directRoute) return;
 
-      const zones = buildAvoidZones(incSnap, avoidCatsRef.current);
+      const zones = buildAvoidZones(incSnap, avoidPrefsRef.current);
       if (zones.length === 0) {
         routeData = { normal: directRoute, safe: null, avoidZones: [], chosen: directRoute, chosenLabel: "Fastest" };
         meta = { distanceKm: directRoute.distanceKm, durationMin: directRoute.durationMin, isSafe: false, nearbyCount: 0 };
@@ -373,7 +407,7 @@ export default function SearchSidebar({
 
     (async () => {
       try {
-        const zones = buildAvoidZones(incidents, avoidCatsRef.current);
+        const zones = buildAvoidZones(incidents, avoidPrefsRef.current);
         const directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
         if (!directRoute) return;
         const safeRoute = zones.length > 0
@@ -630,8 +664,9 @@ export default function SearchSidebar({
             onPreviewPins={onPreviewPins}
             onPreviewWaypoints={onPreviewWaypoints}
             onStartTrip={startTrip}
-            avoidCats={avoidCats}
-            onAvoidCatsChange={setAvoidCats}
+            avoidPrefs={avoidPrefs}
+            onAvoidPrefsChange={setAvoidPrefs}
+            timeFilterHours={timeFilterHours ?? 24}
           />
         )}
 
