@@ -46,6 +46,7 @@ import SearchAreaPill from "@/components/SearchAreaPill";
 import RecenterPill from "@/components/RecenterPill";
 import AlongRoutePanel from "@/components/AlongRoutePanel";
 import UndoToastHost from "@/components/UndoToastHost";
+import KeyboardShortcutsHelp from "@/components/KeyboardShortcutsHelp";
 import SharedTripCard from "@/components/SharedTripCard";
 import SpeedChip from "@/components/SpeedChip";
 import TripRecapCard, { type TripRecap } from "@/components/TripRecapCard";
@@ -618,6 +619,75 @@ export default function Home() {
   const recenterCity = useCallback(() => {
     mapRef.current?.resetView();
   }, []);
+
+  // Global keyboard shortcuts. The `?` key (handled inside
+  // KeyboardShortcutsHelp) opens the cheat sheet — every other binding
+  // lives here so it has access to the page-level state setters.
+  // We intentionally bail out when typing in any input/contenteditable
+  // so single-letter shortcuts (b/m/n/s/l/f) don't hijack normal input.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null;
+      if (t) {
+        const tag = t.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        if (t.isContentEditable) return;
+      }
+      // Modifier-bearing combos: only Cmd/Ctrl+K is meaningful here.
+      // Everything else with a modifier we let through to the browser.
+      if (e.metaKey || e.ctrlKey) {
+        if (e.key.toLowerCase() === "k") {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent("pp:focus-search"));
+        }
+        return;
+      }
+      // Plain key shortcuts — single character, no modifiers.
+      switch (e.key) {
+        case "/":
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent("pp:focus-search"));
+          break;
+        case "l": case "L":
+          e.preventDefault();
+          recenterCity();
+          break;
+        case "f": case "F":
+          e.preventDefault();
+          setFollowMe((v) => !v);
+          break;
+        case "b": case "B": {
+          e.preventDefault();
+          // Cycle through the same order the Layers menu lists them.
+          const order: BasemapStyle[] = ["auto", "voyager", "positron", "dark", "streets"];
+          const idx = order.indexOf(basemapStyle);
+          const next = order[(idx + 1) % order.length];
+          setBasemapStyle(next);
+          break;
+        }
+        case "m": case "M":
+          e.preventDefault();
+          setShowLayers((v) => !v);
+          break;
+        case "s": case "S":
+          e.preventDefault();
+          setSavedPlacesOverlay((v) => !v);
+          break;
+        case "n": case "N":
+          // Cycle nearby-POI overlay: off → fuel/food/coffee minimal set
+          // → off. Keeping the toggle binary-ish avoids needing a
+          // category picker for keyboard users.
+          e.preventDefault();
+          setNearbyPoiCats((prev) => {
+            if (prev.size > 0) return new Set();
+            return new Set<NearbyPoiCategory>(["fuel", "food", "coffee"]);
+          });
+          break;
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [basemapStyle, recenterCity]);
 
   const loadFromApi = useCallback(async () => {
     try {
@@ -1299,6 +1369,11 @@ export default function Home() {
           (trip-history delete, parked-pin clear, list delete) route
           through `requestUndoableAction` and surface here. */}
       <UndoToastHost />
+
+      {/* Press `?` (or Shift+/) to open the keyboard shortcuts cheat
+          sheet. The component owns its own open state and listens for
+          the key directly — page only mounts it. */}
+      <KeyboardShortcutsHelp />
 
       {/* Resume-trip pill — surfaces a recent in-progress trip after a
           page refresh / accidental tab close. Hides once the user

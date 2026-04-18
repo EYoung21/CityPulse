@@ -50,6 +50,7 @@ export const SYNCED_PREF_KEYS = [
   "pp:nearby-poi-cats",
   "pp:avoid-prefs-v2",
   "pp:tod-overlay",
+  "pp:recent-searches",
 ] as const;
 
 export type SyncedPrefKey = typeof SYNCED_PREF_KEYS[number];
