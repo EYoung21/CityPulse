@@ -11,6 +11,7 @@ import {
   DEFAULT_AVOID_CATS,
   type TransportMode,
   type AvoidCategoryId,
+  type ManeuverStep,
 } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
 import type { RouteData } from "@/components/RoutePanel";
@@ -64,7 +65,12 @@ interface Props {
   onFlyTo: (lat: number, lng: number) => void;
   onRoutesChange: (routes: RouteData | null) => void;
   onUserLocation?: (lat: number, lng: number) => void;
-  onTripActive?: (active: boolean, routeGeometry?: [number, number][], mode?: TransportMode) => void;
+  onTripActive?: (
+    active: boolean,
+    routeGeometry?: [number, number][],
+    mode?: TransportMode,
+    steps?: ManeuverStep[]
+  ) => void;
   onPreviewPins?: (origin: { lat: number; lng: number } | null, dest: { lat: number; lng: number } | null) => void;
   onPreviewWaypoints?: (waypoints: WaypointPin[] | null) => void;
   onSelectIncident?: (id: string) => void;
@@ -272,10 +278,11 @@ export default function SearchSidebar({
     });
     setRerouteAlert(null);
     setView("trip");
-    const geom = (routeData.safe || routeData.normal)?.geometry;
+    const best = routeData.safe || routeData.normal;
+    const geom = best?.geometry;
     activeRouteRef.current = geom ?? null;
     knownIncIdsRef.current = new Set(incidents.map((i) => i.id));
-    onTripActive?.(true, geom, activeMode);
+    onTripActive?.(true, geom, activeMode, best?.steps);
   }, [originLoc, destLoc, stops, activeMode, onRoutesChange, onTripActive, incidents]);
 
   // Auto-reroute: watch for new incidents near the active route geometry
@@ -329,7 +336,7 @@ export default function SearchSidebar({
         });
         const geom = best.geometry;
         activeRouteRef.current = geom;
-        onTripActive?.(true, geom, activeMode);
+        onTripActive?.(true, geom, activeMode, best.steps);
         setRerouteAlert(`Route updated — avoiding ${newNearby.length} new incident${newNearby.length > 1 ? "s" : ""}`);
         setTimeout(() => setRerouteAlert(null), 5000);
       } catch {

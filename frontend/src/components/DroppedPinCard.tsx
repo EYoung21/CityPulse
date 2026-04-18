@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { MapPin, X, Hash } from "lucide-react";
 import PlaceActions from "@/components/PlaceActions";
+import NearbyPois from "@/components/NearbyPois";
 import { reverseGeocode } from "@/lib/search";
 import { plusCode } from "@/lib/plus-code";
 
@@ -95,6 +96,10 @@ export default function DroppedPinCard({ lat, lng, onClose }: Props) {
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 
         <PlaceActions lat={lat} lng={lng} label={address ?? undefined} />
+
+        <div className="h-px" style={{ background: "var(--panel-border)" }} />
+
+        <NearbyPois lat={lat} lng={lng} />
 
         <p
           className="text-[9px] text-center pt-0.5"

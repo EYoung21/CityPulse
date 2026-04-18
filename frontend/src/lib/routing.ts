@@ -11,11 +11,30 @@ function routeDirectionsUrl(): string {
 
 export type TransportMode = "foot-walking" | "cycling-regular" | "driving-car";
 
+/** A single turn-by-turn step. ORS returns per-segment steps with:
+ *   instruction → human-readable ("Turn left onto Main St")
+ *   distance    → meters until the maneuver completes
+ *   duration    → seconds for that step
+ *   type        → ORS maneuver code (0..13). 10 = arrive, 11 = depart, etc.
+ *   way_points  → [startIdx, endIdx] into the route geometry array
+ *   name        → upcoming road name (best-effort)
+ *
+ *  Only populated when the route comes from ORS (OSRM fallback omits it). */
+export interface ManeuverStep {
+  instruction: string;
+  distance: number;
+  duration: number;
+  type: number;
+  way_points: [number, number];
+  name?: string;
+}
+
 export interface RouteResult {
   geometry: [number, number][];
   distanceKm: number;
   durationMin: number;
   isSafe: boolean;
+  steps?: ManeuverStep[];
 }
 
 export interface AvoidZone {
@@ -275,11 +294,28 @@ export async function getMultiStopRoute(
       const route = data.routes?.[0];
       if (route) {
         const geometry = decodePolyline(route.geometry);
+        const steps: ManeuverStep[] = [];
+        if (Array.isArray(route.segments)) {
+          for (const seg of route.segments) {
+            if (!Array.isArray(seg.steps)) continue;
+            for (const s of seg.steps) {
+              steps.push({
+                instruction: String(s.instruction ?? ""),
+                distance: Number(s.distance ?? 0),
+                duration: Number(s.duration ?? 0),
+                type: Number(s.type ?? 0),
+                way_points: [Number(s.way_points?.[0] ?? 0), Number(s.way_points?.[1] ?? 0)],
+                name: typeof s.name === "string" && s.name !== "-" ? s.name : undefined,
+              });
+            }
+          }
+        }
         return {
           geometry,
           distanceKm: route.summary.distance / 1000,
           durationMin: route.summary.duration / 60,
           isSafe: !!avoidPolygons,
+          steps: steps.length > 0 ? steps : undefined,
         };
       }
     }

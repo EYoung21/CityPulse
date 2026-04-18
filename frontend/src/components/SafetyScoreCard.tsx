@@ -4,6 +4,7 @@ import { Shield, MapPin, X, AlertTriangle, CheckCircle } from "lucide-react";
 import type { Incident } from "@/lib/api";
 import { assessSafety } from "@/lib/search";
 import PlaceActions from "@/components/PlaceActions";
+import NearbyPois from "@/components/NearbyPois";
 
 interface Props {
   lat: number;
@@ -94,6 +95,10 @@ export default function SafetyScoreCard({ lat, lng, incidents, onClose }: Props)
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 
         <PlaceActions lat={lat} lng={lng} />
+
+        <div className="h-px" style={{ background: "var(--panel-border)" }} />
+
+        <NearbyPois lat={lat} lng={lng} />
 
         <p className="text-[9px] text-center pt-0.5" style={{ color: "var(--panel-text-muted)" }}>
           Tap to score · long-press to drop a pin
