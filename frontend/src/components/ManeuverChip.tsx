@@ -20,6 +20,9 @@ interface Props {
   geometry: [number, number][];
   /** 0..1 progress along the geometry. */
   tripProgress: number;
+  /** Optional callback fired when the user taps the "Steps" button on
+   *  the chip. The host (page.tsx) opens the full TurnList overlay. */
+  onShowSteps?: () => void;
 }
 
 /** ORS maneuver type → icon. Reference (ORS docs):
@@ -57,7 +60,7 @@ function fmtMeters(m: number): string {
  *  remaining distance to that maneuver point, and announces the next
  *  instruction once via SpeechSynthesis at two thresholds (~300m and ~50m).
  *  Voice can be muted; preference persists in localStorage. */
-export default function ManeuverChip({ steps, geometry, tripProgress }: Props) {
+export default function ManeuverChip({ steps, geometry, tripProgress, onShowSteps }: Props) {
   const [muted, setMuted] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem(VOICE_PREF_KEY) === "off";
@@ -166,6 +169,22 @@ export default function ManeuverChip({ steps, geometry, tripProgress }: Props) {
       >
         {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
       </button>
+      {onShowSteps && (
+        <button
+          type="button"
+          onClick={onShowSteps}
+          title="Show all turn-by-turn steps"
+          aria-label="Show all turn-by-turn steps"
+          className="shrink-0 px-2 h-8 rounded-lg inline-flex items-center justify-center text-[10px] font-bold uppercase tracking-wider"
+          style={{
+            background: "var(--panel-input-bg)",
+            color: "var(--panel-text-secondary)",
+            border: "1px solid var(--panel-border)",
+          }}
+        >
+          Steps
+        </button>
+      )}
     </div>
   );
 }

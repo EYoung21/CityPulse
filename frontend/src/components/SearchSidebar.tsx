@@ -26,6 +26,7 @@ import MobileSheet from "@/components/MobileSheet";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { getCurrentCity } from "@/lib/pulse-cities";
 import { buildTripShareUrl } from "@/lib/share-trip";
+import { saveTripSnapshot, clearTripSnapshot, updateTripProgress } from "@/lib/trip-resume";
 import { share as nativeShare } from "@/lib/native";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -131,7 +132,10 @@ export default function SearchSidebar({
   const [destQuery, setDestQuery] = useState("");
   const [originLoc, setOriginLoc] = useState<StopLoc | null>(null);
   const [destLoc, setDestLoc] = useState<StopLoc | null>(null);
-  const [stops, setStops] = useState<{ query: string; loc: StopLoc | null }[]>([]);
+  // `id` is a synthetic stable key used by the drag-to-reorder list in
+  // DirectionsPanel — we can't key on array index there because reorder
+  // would unmount + remount every input on each move.
+  const [stops, setStops] = useState<{ id: string; query: string; loc: StopLoc | null }[]>([]);
   const [activeMode, setActiveMode] = useState<TransportMode>("driving-car");
   const [routeInfo, setRouteInfo] = useState<{
     isSafe: boolean;
@@ -303,6 +307,46 @@ export default function SearchSidebar({
     return () => window.removeEventListener("pp:plan-route", handler);
   }, [originLoc, onPreviewPins]);
 
+  /** Resume-trip wiring. The pill in page.tsx fires this event after
+   *  user confirmation; we hydrate origin/dest/stops/mode from the
+   *  payload and signal startTrip via a ref-set flag (the actual
+   *  startTrip call must wait for the state updates to flush). */
+  const pendingResumeRef = useRef(false);
+  useEffect(() => {
+    function handler(e: Event) {
+      const detail = (e as CustomEvent<{
+        origin: { display_name: string; lat: number; lng: number };
+        dest: { display_name: string; lat: number; lng: number };
+        stops: { id: string; query: string; loc: { display_name: string; lat: number; lng: number } | null }[];
+        mode: TransportMode;
+      }>).detail;
+      if (!detail) return;
+      setOriginQuery(detail.origin.display_name);
+      setOriginLoc(detail.origin);
+      setDestQuery(detail.dest.display_name);
+      setDestLoc(detail.dest);
+      setStops(detail.stops);
+      setActiveMode(detail.mode);
+      setView("directions");
+      pendingResumeRef.current = true;
+    }
+    window.addEventListener("pp:resume-trip", handler);
+    return () => window.removeEventListener("pp:resume-trip", handler);
+  }, []);
+
+  // Once originLoc + destLoc have flushed from the resume hydration,
+  // kick off startTrip() exactly once.
+  useEffect(() => {
+    if (!pendingResumeRef.current) return;
+    if (!originLoc || !destLoc) return;
+    pendingResumeRef.current = false;
+    void startTrip();
+    // startTrip is intentionally outside the deps — we only want this
+    // useEffect to fire when the hydrated locs settle, not on every
+    // re-render of startTrip.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [originLoc, destLoc]);
+
   const startTrip = useCallback(async () => {
     if (!originLoc || !destLoc) return;
 
@@ -370,6 +414,22 @@ export default function SearchSidebar({
       durationMin: meta.durationMin,
       nearbyCount: meta.nearbyCount,
       isSafe: meta.isSafe,
+    });
+
+    // Persist trip inputs so a refresh / accidental tab close can offer
+    // a "Resume trip?" pill on next mount. Geometry isn't stored — we
+    // rerun startTrip() with the same waypoints to rebuild it.
+    saveTripSnapshot({
+      origin: { display_name: originLoc.display_name, lat: originLoc.lat, lng: originLoc.lng },
+      dest: { display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng },
+      stops: stops.map((s) => ({
+        id: s.id,
+        query: s.query,
+        loc: s.loc ? { display_name: s.loc.display_name, lat: s.loc.lat, lng: s.loc.lng } : null,
+      })),
+      mode: activeMode,
+      startedAt: Date.now(),
+      progress: 0,
     });
   }, [originLoc, destLoc, stops, activeMode, handleRoutesChange, onTripActive, incidents]);
 
@@ -447,6 +507,18 @@ export default function SearchSidebar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incidents, view]);
 
+  // Flush the latest progress into the resume snapshot whenever it
+  // moves. Throttled to whole-percent boundaries so we don't write to
+  // localStorage on every animation frame.
+  const lastProgressFlushRef = useRef(0);
+  useEffect(() => {
+    if (view !== "trip") return;
+    const pct = Math.floor(tripProgress * 100);
+    if (pct === lastProgressFlushRef.current) return;
+    lastProgressFlushRef.current = pct;
+    updateTripProgress(tripProgress);
+  }, [view, tripProgress]);
+
   const resetTrip = useCallback(() => {
     setRouteInfo(null);
     setDestLoc(null);
@@ -455,6 +527,7 @@ export default function SearchSidebar({
     setView("search");
     onRoutesChange(null);
     onTripActive?.(false);
+    clearTripSnapshot();
     onPreviewPins?.(originLoc, null);
     onPreviewWaypoints?.(null);
     activeRouteRef.current = null;

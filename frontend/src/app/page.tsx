@@ -39,6 +39,7 @@ import AnalyticsPanel from "@/components/AnalyticsPanel";
 import DistrictCard from "@/components/DistrictCard";
 import DroppedPinCard from "@/components/DroppedPinCard";
 import ManeuverChip from "@/components/ManeuverChip";
+import TurnList from "@/components/TurnList";
 import SearchAreaPill from "@/components/SearchAreaPill";
 import RecenterPill from "@/components/RecenterPill";
 import SharedTripCard from "@/components/SharedTripCard";
@@ -46,6 +47,8 @@ import SpeedChip from "@/components/SpeedChip";
 import TripRecapCard, { type TripRecap } from "@/components/TripRecapCard";
 import OffscreenIncidentChip from "@/components/OffscreenIncidentChip";
 import IncidentAheadChip from "@/components/IncidentAheadChip";
+import ResumeTripPill from "@/components/ResumeTripPill";
+import { loadTripSnapshot, clearTripSnapshot, type TripResumeSnapshot } from "@/lib/trip-resume";
 import { distanceAlongRoute } from "@/lib/routing";
 import { notifyIfBackgrounded } from "@/lib/notifications";
 import { getSeverity } from "@/lib/severity";
@@ -187,6 +190,14 @@ export default function Home() {
   const [pillTarget, setPillTarget] = useState<{ lat: number; lng: number } | null>(null);
   const [droppedPin, setDroppedPin] = useState<{ lat: number; lng: number } | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  // Resume-trip prompt — populated on mount if there's a < 2h-old trip
+  // snapshot in localStorage. The pill stays up until the user either
+  // resumes (dispatches pp:resume-trip) or dismisses (clears snapshot).
+  const [resumeSnap, setResumeSnap] = useState<TripResumeSnapshot | null>(null);
+  useEffect(() => {
+    const snap = loadTripSnapshot();
+    if (snap) setResumeSnap(snap);
+  }, []);
   const userHeading = useDeviceHeading(userLocation !== null);
 
   // Off-screen incident alert — pops a chip whenever a fresh, high-severity
@@ -226,6 +237,12 @@ export default function Home() {
   const [tripGeometry, setTripGeometry] = useState<[number, number][] | null>(null);
   const [tripMode, setTripMode] = useState<string | null>(null);
   const [tripSteps, setTripSteps] = useState<ManeuverStep[] | null>(null);
+  // Toggles the full step-by-step list overlay. Auto-cleared when the
+  // trip ends so it never lingers after navigation finishes.
+  const [showTurnList, setShowTurnList] = useState(false);
+  useEffect(() => {
+    if (!tripGeometry && showTurnList) setShowTurnList(false);
+  }, [tripGeometry, showTurnList]);
   const [previewOrigin, setPreviewOrigin] = useState<{ lat: number; lng: number } | null>(null);
   const [previewDest, setPreviewDest] = useState<{ lat: number; lng: number } | null>(null);
   const [previewWaypoints, setPreviewWaypoints] = useState<WaypointPin[] | null>(null);
@@ -919,6 +936,26 @@ export default function Home() {
         <TripRecapCard recap={tripRecap} onClose={() => setTripRecap(null)} />
       )}
 
+      {/* Resume-trip pill — surfaces a recent in-progress trip after a
+          page refresh / accidental tab close. Hides once the user
+          chooses (resume re-fires startTrip via pp:resume-trip; dismiss
+          drops the snapshot from localStorage). */}
+      {resumeSnap && !tripGeometry && (
+        <ResumeTripPill
+          destName={resumeSnap.dest.display_name.split(",")[0] || "destination"}
+          startedAt={resumeSnap.startedAt}
+          onResume={() => {
+            const snap = resumeSnap;
+            setResumeSnap(null);
+            window.dispatchEvent(new CustomEvent("pp:resume-trip", { detail: snap }));
+          }}
+          onDismiss={() => {
+            clearTripSnapshot();
+            setResumeSnap(null);
+          }}
+        />
+      )}
+
       {/* Off-screen incident chip — pops up for fresh, high-severity
           incidents outside the current viewport. Tap to fly there. */}
       {offscreenAlert && (
@@ -985,8 +1022,19 @@ export default function Home() {
             steps={tripSteps}
             geometry={tripGeometry}
             tripProgress={tripProgress}
+            onShowSteps={() => setShowTurnList(true)}
           />
         </div>
+      )}
+
+      {/* Full upcoming-turns list (toggled by the chip's "Steps" button) */}
+      {showTurnList && tripGeometry && tripSteps && tripSteps.length > 0 && (
+        <TurnList
+          steps={tripSteps}
+          geometry={tripGeometry}
+          tripProgress={tripProgress}
+          onClose={() => setShowTurnList(false)}
+        />
       )}
 
       {/* Bottom-right controls (lifted so map markers under corner overlap UI less) */}
