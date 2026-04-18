@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { setColorBlindMode } from "./severity";
 
 type ThemeMode = "auto" | "light" | "dark";
 type ResolvedTheme = "light" | "dark";
@@ -9,12 +10,18 @@ interface ThemeContextValue {
   mode: ThemeMode;
   resolved: ResolvedTheme;
   setMode: (m: ThemeMode) => void;
+  /** Color-blind-safe palette opt-in (IBM-derived). Mirrors the regular
+   *  severity map so consumers don't need to special case anything. */
+  colorBlindSafe: boolean;
+  setColorBlindSafe: (on: boolean) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
   mode: "auto",
   resolved: "dark",
   setMode: () => {},
+  colorBlindSafe: false,
+  setColorBlindSafe: () => {},
 });
 
 function resolveAuto(): ResolvedTheme {
@@ -23,15 +30,22 @@ function resolveAuto(): ResolvedTheme {
 }
 
 const STORAGE_KEY = "phlpulse-theme";
+const CB_STORAGE_KEY = "phlpulse-cb-palette";
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [mode, setModeState] = useState<ThemeMode>("auto");
   const [resolved, setResolved] = useState<ResolvedTheme>("dark");
+  const [colorBlindSafe, setColorBlindSafeState] = useState<boolean>(false);
 
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY) as ThemeMode | null;
     if (saved && ["auto", "light", "dark"].includes(saved)) {
       setModeState(saved);
+    }
+    const cb = localStorage.getItem(CB_STORAGE_KEY) === "1";
+    if (cb) {
+      setColorBlindSafeState(true);
+      setColorBlindMode(true);
     }
   }, []);
 
@@ -63,8 +77,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(STORAGE_KEY, m);
   }, []);
 
+  const setColorBlindSafe = useCallback((on: boolean) => {
+    setColorBlindSafeState(on);
+    setColorBlindMode(on);
+    try { localStorage.setItem(CB_STORAGE_KEY, on ? "1" : "0"); }
+    catch { /* storage blocked — non-fatal */ }
+  }, []);
+
   return (
-    <ThemeContext.Provider value={{ mode, resolved, setMode }}>
+    <ThemeContext.Provider value={{ mode, resolved, setMode, colorBlindSafe, setColorBlindSafe }}>
       {children}
     </ThemeContext.Provider>
   );

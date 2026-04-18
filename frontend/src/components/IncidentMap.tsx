@@ -283,6 +283,11 @@ interface Props {
   previewWaypoints?: WaypointPin[] | null;
   tripMode?: string | null;
   heatmapEnabled?: boolean;
+  /** When set to an integer 0..23, the heatmap downweights incidents whose
+   *  reported_at hour-of-day differs from the focus hour by more than ±1h
+   *  (wrapping at midnight). Used by the "This hour's hotspots" overlay
+   *  to surface time-of-day patterns from the long backfill. */
+  todHourFocus?: number | null;
   isDark?: boolean;
   onTripProgress?: (progress: number) => void;
   liveTripGps?: boolean;
@@ -315,6 +320,17 @@ interface Props {
    *  the follow-me logic to disable auto-recenter when the rider takes
    *  manual control. Does not fire for programmatic panTo(). */
   onUserDrag?: () => void;
+  /** Persistent safety-POI overlay (hospitals/police/fire). Rendered as
+   *  a separate Leaflet layer-group so toggling it doesn't disturb the
+   *  incident-marker cluster. Page-level fetcher hands us a pre-filtered
+   *  list keyed by viewport bounds. */
+  safetyPois?: Array<{
+    id: string;
+    name: string;
+    category: "hospital" | "police" | "fire_station";
+    lat: number;
+    lng: number;
+  }> | null;
 }
 
 function distToSegmentKm(
@@ -823,6 +839,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     previewWaypoints,
     tripMode,
     heatmapEnabled = true,
+    todHourFocus = null,
     isDark = true,
     onTripProgress,
     liveTripGps = false,
@@ -839,6 +856,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     sharedTripGeometry,
     sharedTripDestination,
     onUserDrag,
+    safetyPois = null,
   },
   ref
 ) {
@@ -847,6 +865,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const heatRef = useRef<L.Layer | null>(null);
   const heatPulseRafRef = useRef<number | null>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
+  const safetyPoiLayerRef = useRef<L.LayerGroup | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
   const previewLayerRef = useRef<L.LayerGroup | null>(null);
   const transportMarkerRef = useRef<L.Marker | null>(null);
@@ -1014,6 +1033,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     previewLayerRef.current = L.layerGroup().addTo(map);
     trailLayerRef.current = L.layerGroup().addTo(map);
     selectedHighlightRef.current = L.layerGroup().addTo(map);
+    safetyPoiLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
     const setZoomCSSVar = (z: number) => {
@@ -1234,6 +1254,14 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     if (heatmapEnabled) {
       const useDensity = timeFilterHours >= 168;
       const heatData: [number, number, number][] = [];
+      // Wrap-around hour distance: e.g. a 23h incident is just 2h away
+      // from a 1am focus, not 22h. Used to weight the time-of-day
+      // overlay so the hotspots reflect "what happens around this hour"
+      // rather than the average over the whole window.
+      const hourDist = (a: number, b: number): number => {
+        const d = Math.abs(a - b) % 24;
+        return Math.min(d, 24 - d);
+      };
       for (const inc of incidents) {
         if (inc.lat == null || inc.lng == null) continue;
         // Severity-weighted intensity so the hotspots reflect *what* is
@@ -1242,7 +1270,19 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         // incident density rather than collapsing toward a few violent
         // pinpoints.
         const base = useDensity ? 0.6 : Math.max(inc.w_eff, 0.2);
-        const weight = useDensity ? base : heatmapWeight(inc.severity_category, base);
+        let weight = useDensity ? base : heatmapWeight(inc.severity_category, base);
+        if (todHourFocus != null) {
+          // Triangular kernel centered on the focus hour: 1.0 at the
+          // peak hour, ramping linearly down to a small floor over a
+          // ±2h window. Outside that, the incident still contributes a
+          // sliver so the overall map context isn't lost — but the
+          // peak-hour hotspots clearly dominate.
+          const t = new Date(inc.reported_at);
+          const h = t.getHours();
+          const d = hourDist(h, todHourFocus);
+          const k = d <= 1 ? 1 : d <= 2 ? 0.55 : d <= 3 ? 0.25 : 0.08;
+          weight = Math.min(1, weight * k);
+        }
         if (isTripMode && tripRouteGeometry) {
           const dist = minDistToRouteKm([inc.lat, inc.lng], tripRouteGeometry);
           if (dist <= TRIP_PROXIMITY_KM) heatData.push([inc.lat, inc.lng, weight]);
@@ -1320,9 +1360,54 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     stableOnSelect,
     tripRouteGeometry,
     heatmapEnabled,
+    todHourFocus,
     timeFilterHours,
     heatmapDemoBoost,
   ]);
+
+  // Persistent safety-POI overlay (hospitals/police/fire). Lives in its
+  // own layer-group so toggling it doesn't disturb the cluster of
+  // incident markers — and so it can be styled with a deliberately
+  // different visual language (badge-style, semi-transparent, no click
+  // handler beyond a tooltip) since these are reference points, not
+  // primary content.
+  useEffect(() => {
+    const layer = safetyPoiLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (!safetyPois || safetyPois.length === 0) return;
+
+    const palette: Record<string, { bg: string; emoji: string; label: string }> = {
+      hospital:     { bg: "#22c55e", emoji: "H", label: "Hospital" },
+      police:       { bg: "#3b82f6", emoji: "P", label: "Police" },
+      fire_station: { bg: "#ef4444", emoji: "F", label: "Fire" },
+    };
+
+    for (const poi of safetyPois) {
+      const p = palette[poi.category];
+      if (!p) continue;
+      const icon = L.divIcon({
+        className: "pp-safety-poi-marker",
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+        html: `<div title="${poi.name.replace(/"/g, "&quot;")}" style="width:20px;height:20px;border-radius:50%;background:${p.bg};display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,0.35),0 0 0 2px rgba(255,255,255,0.85);opacity:0.92;font-family:system-ui,-apple-system,sans-serif;letter-spacing:-0.02em;">${p.emoji}</div>`,
+      });
+      const m = L.marker([poi.lat, poi.lng], {
+        icon,
+        // Sit underneath incident markers so user-relevant content wins
+        // any z-fight when they overlap.
+        zIndexOffset: -200,
+        keyboard: false,
+        interactive: true,
+      });
+      m.bindTooltip(`${p.label}: ${poi.name}`, {
+        direction: "top",
+        offset: [0, -12],
+        className: "pp-safety-poi-tooltip",
+      });
+      layer.addLayer(m);
+    }
+  }, [safetyPois]);
 
   useEffect(() => {
     const highlight = selectedHighlightRef.current;

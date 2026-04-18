@@ -9,7 +9,11 @@ function routeDirectionsUrl(): string {
   return `${API_BASE}/api/route-directions`;
 }
 
-export type TransportMode = "foot-walking" | "cycling-regular" | "driving-car";
+export type TransportMode =
+  | "foot-walking"
+  | "cycling-regular"
+  | "driving-car"
+  | "wheelchair";
 
 /** A single turn-by-turn step. ORS returns per-segment steps with:
  *   instruction → human-readable ("Turn left onto Main St")

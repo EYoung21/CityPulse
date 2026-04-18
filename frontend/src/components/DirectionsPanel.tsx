@@ -6,6 +6,7 @@ import {
   Footprints,
   Bike,
   Car,
+  Accessibility,
   Loader2,
   LocateFixed,
   X,
@@ -109,6 +110,10 @@ const MODES: { id: TransportMode; label: string; icon: typeof Footprints }[] = [
   { id: "foot-walking", label: "Walking", icon: Footprints },
   { id: "cycling-regular", label: "Cycling", icon: Bike },
   { id: "driving-car", label: "Driving", icon: Car },
+  // Wheelchair routing leans on ORS's `wheelchair` profile, which
+  // adds curb-ramp and surface-quality preferences. Same response
+  // shape as the others, so no special-casing downstream.
+  { id: "wheelchair", label: "Accessible", icon: Accessibility },
 ];
 
 const STOP_COLORS = ["#f97316", "#a855f7", "#06b6d4", "#ec4899", "#84cc16"];

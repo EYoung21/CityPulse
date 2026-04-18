@@ -27,6 +27,7 @@ import {
   MapPin,
   Radio,
   Lock,
+  Bell,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import SearchSidebar from "@/components/SearchSidebar";
@@ -47,6 +48,9 @@ import SpeedChip from "@/components/SpeedChip";
 import TripRecapCard, { type TripRecap } from "@/components/TripRecapCard";
 import OffscreenIncidentChip from "@/components/OffscreenIncidentChip";
 import IncidentAheadChip from "@/components/IncidentAheadChip";
+import AlertsInbox from "@/components/AlertsInbox";
+import { recordAlert, subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
+import { fetchPoisInBounds, SAFETY_POI_CATEGORIES, type SafetyPoiCategory } from "@/lib/overpass";
 import ResumeTripPill from "@/components/ResumeTripPill";
 import { loadTripSnapshot, clearTripSnapshot, type TripResumeSnapshot } from "@/lib/trip-resume";
 import { distanceAlongRoute } from "@/lib/routing";
@@ -160,7 +164,7 @@ function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): nu
 }
 
 export default function Home() {
-  const { mode, resolved, setMode } = useTheme();
+  const { mode, resolved, setMode, colorBlindSafe, setColorBlindSafe } = useTheme();
   const isDark = resolved === "dark";
   const [firestoreAvailable, setFirestoreAvailable] = useState(() => isFirebaseConfigured());
   const useFirestoreData = firestoreAvailable;
@@ -250,6 +254,76 @@ export default function Home() {
   const [showLayers, setShowLayers] = useState(false);
   const [heatmapEnabled, setHeatmapEnabled] = useState(true);
   const [districtsEnabled, setDistrictsEnabled] = useState(false);
+  // "This hour's hotspots" overlay — when on, the heatmap weights
+  // incidents within ±1h of the current hour-of-day at full strength
+  // and gracefully tapers the rest down. Useful with longer time
+  // windows (week / month / 5-month) where the hotspots otherwise
+  // average across all hours of the day.
+  const [todOverlayEnabled, setTodOverlayEnabled] = useState(false);
+  const [todHourFocus, setTodHourFocus] = useState<number | null>(null);
+
+  // Persistent Safety-POI overlay state. Each enabled category triggers
+  // a viewport-bbox Overpass fetch; results are de-duplicated across
+  // categories and handed to IncidentMap as a single flat list. We
+  // gate the fetch on min zoom (≥ 12) since denser zooms would pull
+  // hundreds of POIs and obscure incident markers.
+  const [safetyPoiCats, setSafetyPoiCats] = useState<Set<SafetyPoiCategory>>(() => new Set());
+  const [safetyPois, setSafetyPois] = useState<
+    Array<{ id: string; name: string; category: SafetyPoiCategory; lat: number; lng: number }>
+  >([]);
+  const safetyFetchSeqRef = useRef(0);
+  const lastSafetyBboxRef = useRef<string>("");
+
+  const toggleSafetyCat = useCallback((id: SafetyPoiCategory) => {
+    setSafetyPoiCats((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Kick off an initial fetch whenever the set of enabled categories
+  // changes — otherwise the user has to pan the map before anything
+  // appears, which makes the toggle feel broken.
+  useEffect(() => {
+    if (safetyPoiCats.size === 0) {
+      setSafetyPois([]);
+      lastSafetyBboxRef.current = "";
+      return;
+    }
+    const bounds = mapRef.current?.getBounds();
+    if (!bounds) return;
+    const seq = ++safetyFetchSeqRef.current;
+    lastSafetyBboxRef.current = ""; // force the next move to also refetch if needed
+    void (async () => {
+      const enabled = [...safetyPoiCats];
+      const results = await Promise.all(
+        enabled.map((cat) => fetchPoisInBounds(cat, bounds, 60))
+      );
+      if (seq !== safetyFetchSeqRef.current) return;
+      setSafetyPois(
+        results.flat().map((p) => ({
+          id: p.id,
+          name: p.name,
+          category: p.category as SafetyPoiCategory,
+          lat: p.lat,
+          lng: p.lng,
+        }))
+      );
+    })();
+  }, [safetyPoiCats]);
+  useEffect(() => {
+    if (!todOverlayEnabled) {
+      setTodHourFocus(null);
+      return;
+    }
+    setTodHourFocus(new Date().getHours());
+    // Re-anchor every 5 minutes so the focus tracks across hour
+    // boundaries without per-render thrash.
+    const t = setInterval(() => setTodHourFocus(new Date().getHours()), 5 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [todOverlayEnabled]);
   const [basemapStyle, setBasemapStyle] = useState<BasemapStyle>(() => {
     if (typeof window === "undefined") return "auto";
     const saved = localStorage.getItem("pp:basemap");
@@ -262,6 +336,18 @@ export default function Home() {
     if (typeof window !== "undefined") localStorage.setItem("pp:basemap", basemapStyle);
   }, [basemapStyle]);
   const [showTheme, setShowTheme] = useState(false);
+  const [showInbox, setShowInbox] = useState(false);
+  // Tracked separately from the inbox panel itself so the bell badge
+  // updates even while the panel is closed (e.g. an alert lands while
+  // the user is mid-trip).
+  const [unreadAlerts, setUnreadAlerts] = useState(0);
+  useEffect(() => {
+    setUnreadAlerts(unreadCount());
+    const unsub = subscribeAlerts((next) => {
+      setUnreadAlerts(next.reduce((n, a) => n + (a.read ? 0 : 1), 0));
+    });
+    return unsub;
+  }, []);
   const [tripProgress, setTripProgress] = useState(0);
   const [gpsStatus, setGpsStatus] = useState<"idle" | "loading" | "found" | "denied">("idle");
   // Recap card shown when a trip ends — populated from `tripStatsRef`
@@ -315,13 +401,14 @@ export default function Home() {
       if (selectedDistrict)       { setSelectedDistrict(null);   ev.preventDefault(); return; }
       if (mapTap)                 { setMapTap(null);             ev.preventDefault(); return; }
       if (droppedPin)             { setDroppedPin(null);         ev.preventDefault(); return; }
+      if (showInbox)              { setShowInbox(false);         ev.preventDefault(); return; }
       if (showLayers)             { setShowLayers(false);        ev.preventDefault(); return; }
       if (showAbout)              { setShowAbout(false);         ev.preventDefault(); return; }
       if (showTheme)              { setShowTheme(false);         ev.preventDefault(); return; }
     }
     window.addEventListener("pp:native-back", onBack);
     return () => window.removeEventListener("pp:native-back", onBack);
-  }, [selectedId, clusterIncidentIds, selectedDistrict, mapTap, droppedPin, showLayers, showAbout, showTheme]);
+  }, [selectedId, clusterIncidentIds, selectedDistrict, mapTap, droppedPin, showLayers, showAbout, showTheme, showInbox]);
 
   /** Deep-link bootstrap (read once on mount):
    *   ?incident=<id>            → select that incident when it arrives in the feed
@@ -510,6 +597,26 @@ export default function Home() {
 
     setOffscreenAlert({ incident: best.inc, bearingDeg });
 
+    // Persist to the bell-icon inbox so users can scroll back through
+    // alerts they may have missed. Same severity threshold (`w >= 0.55`)
+    // means inbox stays in sync with what the chip surfaces.
+    {
+      const inc = best.inc;
+      const sev = getSeverity(inc.severity_category);
+      if (inc.lat != null && inc.lng != null) {
+        recordAlert({
+          id: `offscreen-${inc.id}`,
+          incidentId: inc.id,
+          kind: "offscreen",
+          title: `${sev.label} reported nearby`,
+          body: inc.location_text || "Off-screen incident",
+          category: inc.severity_category,
+          lat: inc.lat,
+          lng: inc.lng,
+        });
+      }
+    }
+
     // If the page isn't visible (user has switched tabs / locked phone),
     // also fire a Web Notification so they don't miss the alert. Same
     // severity threshold (`w >= 0.55`) so chip + notification stay in
@@ -574,6 +681,19 @@ export default function Home() {
       if (!best || ahead < best.distM) best = { inc, distM: ahead };
     }
     setAheadAlert(best ? { incident: best.inc, distanceM: best.distM } : null);
+    if (best && best.inc.lat != null && best.inc.lng != null) {
+      const sev = getSeverity(best.inc.severity_category);
+      recordAlert({
+        id: `ahead-${best.inc.id}`,
+        incidentId: best.inc.id,
+        kind: "ahead",
+        title: `${sev.label} ahead on route`,
+        body: best.inc.location_text || `In ${Math.round(best.distM)} m`,
+        category: best.inc.severity_category,
+        lat: best.inc.lat,
+        lng: best.inc.lng,
+      });
+    }
   }, [tripGeometry, userLocation, incidents, aheadAlert]);
 
   useEffect(() => {
@@ -719,21 +839,51 @@ export default function Home() {
         onMapTap={(lat, lng) => { setSelectedId(null); setDroppedPin(null); setMapTap({ lat, lng }); setScoreAnchor({ lat, lng }); setPillTarget(null); }}
         onLongPress={(lat, lng) => { setSelectedId(null); setMapTap(null); setDroppedPin({ lat, lng }); setScoreAnchor({ lat, lng }); setPillTarget(null); }}
         droppedPin={droppedPin}
-        onMapMove={(lat, lng) => {
+        onMapMove={(lat, lng, zoom) => {
           // Pill suppressed while any overlay card is up — they obscure
           // most of the map and the action would feel duplicative.
           if (mapTap || droppedPin || selectedId || tripGeometry) {
             setPillTarget(null);
-            return;
+          } else {
+            const anchor = scoreAnchor;
+            if (!anchor) setPillTarget({ lat, lng });
+            else {
+              const km = haversineKm(anchor.lat, anchor.lng, lat, lng);
+              if (km > 0.6) setPillTarget({ lat, lng });
+              else setPillTarget(null);
+            }
           }
-          const anchor = scoreAnchor;
-          if (!anchor) {
-            setPillTarget({ lat, lng });
-            return;
+
+          // Persistent Safety-POI overlay: refetch when the viewport
+          // shifts meaningfully *and* at least one category is on. We
+          // gate on zoom ≥ 12 to avoid pulling thousands of POIs at
+          // city-wide zooms; the layer toggles a hint when off-zoom.
+          if (safetyPoiCats.size > 0 && zoom >= 12) {
+            const bounds = mapRef.current?.getBounds();
+            if (!bounds) return;
+            const bboxKey = `${bounds.south.toFixed(2)},${bounds.west.toFixed(2)},${bounds.north.toFixed(2)},${bounds.east.toFixed(2)}:${[...safetyPoiCats].sort().join(",")}`;
+            if (bboxKey === lastSafetyBboxRef.current) return;
+            lastSafetyBboxRef.current = bboxKey;
+            const seq = ++safetyFetchSeqRef.current;
+            void (async () => {
+              const enabled = [...safetyPoiCats];
+              const results = await Promise.all(
+                enabled.map((cat) => fetchPoisInBounds(cat, bounds, 60))
+              );
+              if (seq !== safetyFetchSeqRef.current) return;
+              const flat = results.flat().map((p) => ({
+                id: p.id,
+                name: p.name,
+                category: p.category as SafetyPoiCategory,
+                lat: p.lat,
+                lng: p.lng,
+              }));
+              setSafetyPois(flat);
+            })();
+          } else if (safetyPoiCats.size === 0 && safetyPois.length > 0) {
+            setSafetyPois([]);
+            lastSafetyBboxRef.current = "";
           }
-          const km = haversineKm(anchor.lat, anchor.lng, lat, lng);
-          if (km > 0.6) setPillTarget({ lat, lng });
-          else setPillTarget(null);
         }}
         mapTapActive={mapTap !== null}
         userLocation={userLocation}
@@ -750,6 +900,8 @@ export default function Home() {
         previewWaypoints={previewWaypoints}
         tripMode={tripMode}
         heatmapEnabled={heatmapEnabled}
+        todHourFocus={todHourFocus}
+        safetyPois={safetyPois}
         isDark={isDark}
         onTripProgress={setTripProgress}
         liveTripGps={gpsStatus === "found"}
@@ -1094,10 +1246,50 @@ export default function Home() {
           )}
         </div>
 
+        {/* Alerts inbox bell — surfaces persisted off-screen / on-route
+            alerts so users can scroll back through what they may have
+            missed. Unread badge updates live via the alerts-inbox pubsub. */}
+        <div className="relative">
+          <button
+            onClick={() => {
+              setShowInbox(!showInbox);
+              setShowTheme(false);
+              setShowLayers(false);
+            }}
+            className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
+            style={{
+              background: showInbox ? "rgba(59,130,246,0.15)" : "var(--pill-bg)",
+              border: `1px solid ${showInbox ? "rgba(59,130,246,0.3)" : "var(--pill-border)"}`,
+              color: showInbox ? "#3b82f6" : "var(--pill-text)",
+            }}
+            title={`Alerts (${unreadAlerts} unread)`}
+            aria-label={`Alerts inbox, ${unreadAlerts} unread`}
+          >
+            <Bell className="w-4 h-4" />
+            {unreadAlerts > 0 && (
+              <span
+                className="absolute -top-0.5 -right-0.5 min-w-[1rem] h-4 px-1 flex items-center justify-center text-[9px] font-bold rounded-full tabular-nums"
+                style={{ background: "#ef4444", color: "#fff" }}
+                aria-hidden="true"
+              >
+                {unreadAlerts > 9 ? "9+" : unreadAlerts}
+              </span>
+            )}
+          </button>
+          <AlertsInbox
+            open={showInbox}
+            onClose={() => setShowInbox(false)}
+            onJump={(incidentId, lat, lng) => {
+              mapRef.current?.flyTo(lat, lng, 16);
+              setSelectedId(incidentId);
+            }}
+          />
+        </div>
+
         {/* Theme toggle */}
         <div className="relative">
           <button
-            onClick={() => { setShowTheme(!showTheme); setShowLayers(false); }}
+            onClick={() => { setShowTheme(!showTheme); setShowLayers(false); setShowInbox(false); }}
             className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
             style={{
               background: "var(--pill-bg)",
@@ -1142,6 +1334,25 @@ export default function Home() {
                     </button>
                   );
                 })}
+                {/* IBM-derived blue/orange/yellow/purple palette that
+                    distinguishes well across the most common forms of
+                    color-vision deficiency. The toggle flips a runtime
+                    flag so every getSeverity() consumer (markers, pills,
+                    heatmap legend, OG card) updates in lockstep. */}
+                <div className="px-3 pt-2.5 pb-3 border-t" style={{ borderColor: "var(--panel-border)" }}>
+                  <label className="flex items-center justify-between gap-2 cursor-pointer text-xs font-medium" style={{ color: "var(--panel-text-secondary)" }}>
+                    <span>Color-blind safe</span>
+                    <input
+                      type="checkbox"
+                      checked={colorBlindSafe}
+                      onChange={(e) => setColorBlindSafe(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded accent-blue-500"
+                    />
+                  </label>
+                  <p className="text-[10px] leading-snug mt-1" style={{ color: "var(--panel-text-muted)" }}>
+                    IBM palette for badges & alerts. Map glyphs stay shape-coded.
+                  </p>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -1150,7 +1361,7 @@ export default function Home() {
         {/* Layers toggle */}
         <div className="relative">
           <button
-            onClick={() => { setShowLayers(!showLayers); setShowTheme(false); }}
+            onClick={() => { setShowLayers(!showLayers); setShowTheme(false); setShowInbox(false); }}
             className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
             style={{
               background: "var(--pill-bg)",
@@ -1197,6 +1408,62 @@ export default function Home() {
                     <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${districtsEnabled ? "left-4" : "left-0.5"}`} />
                   </div>
                 </button>
+
+                <button
+                  onClick={() => setTodOverlayEnabled(!todOverlayEnabled)}
+                  className="w-full flex items-start justify-between gap-2 px-2 py-2 rounded-lg transition-colors text-xs"
+                  style={{ color: "var(--panel-text-secondary)" }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                  title="Highlight hotspots that peak around the current hour-of-day. Best with a week+ time filter."
+                >
+                  <span className="flex flex-col items-start gap-0.5 min-w-0">
+                    <span>This hour&apos;s hotspots</span>
+                    {todOverlayEnabled && todHourFocus != null && (
+                      <span className="text-[9px] tabular-nums" style={{ color: "var(--panel-text-muted)" }}>
+                        Peaks near {todHourFocus.toString().padStart(2, "0")}:00
+                      </span>
+                    )}
+                  </span>
+                  <div
+                    className={`w-8 h-4 rounded-full transition-colors relative shrink-0 mt-0.5 ${todOverlayEnabled ? "bg-blue-500" : ""}`}
+                    style={!todOverlayEnabled ? { background: "var(--panel-input-bg)" } : {}}
+                  >
+                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${todOverlayEnabled ? "left-4" : "left-0.5"}`} />
+                  </div>
+                </button>
+
+                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
+                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Safety POIs</p>
+                {SAFETY_POI_CATEGORIES.map((c) => {
+                  const on = safetyPoiCats.has(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => toggleSafetyCat(c.id)}
+                      className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
+                      style={{ color: "var(--panel-text-secondary)" }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
+                      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span aria-hidden="true">{c.emoji}</span>
+                        <span>{c.label}</span>
+                      </span>
+                      <div
+                        className={`w-8 h-4 rounded-full transition-colors relative ${on ? "" : ""}`}
+                        style={on ? { background: c.color } : { background: "var(--panel-input-bg)" }}
+                      >
+                        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${on ? "left-4" : "left-0.5"}`} />
+                      </div>
+                    </button>
+                  );
+                })}
+                {safetyPoiCats.size > 0 && (
+                  <p className="text-[9px] px-2 pb-1 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
+                    Zoom in to street level for full coverage. Loaded: {safetyPois.length}.
+                  </p>
+                )}
 
                 <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
                 <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Basemap</p>
