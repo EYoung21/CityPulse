@@ -250,6 +250,9 @@ export interface MapHandle {
   flyTo: (lat: number, lng: number, zoom?: number) => void;
   /** Fly back to default city overview. */
   resetView: () => void;
+  /** Cheap pan-only motion (no zoom change). Used by follow-me mode so we
+   *  don't fight the user with constant flyTo zooms. */
+  panTo: (lat: number, lng: number) => void;
 }
 
 export interface WaypointPin {
@@ -302,6 +305,10 @@ interface Props {
   /** Optional destination marker for the shared trip. Rendered with the
    *  standard red end-pin so it visually matches a normal `endPin`. */
   sharedTripDestination?: [number, number] | null;
+  /** Fires once when the user drags the map (manual gesture). Used by
+   *  the follow-me logic to disable auto-recenter when the rider takes
+   *  manual control. Does not fire for programmatic panTo(). */
+  onUserDrag?: () => void;
 }
 
 function distToSegmentKm(
@@ -825,6 +832,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     basemapStyle = "auto",
     sharedTripGeometry,
     sharedTripDestination,
+    onUserDrag,
   },
   ref
 ) {
@@ -877,7 +885,22 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     resetView: () => {
       mapRef.current?.flyTo(cityCenterRef.current, defaultZoomRef.current, { duration: 0.75 });
     },
+    panTo: (lat: number, lng: number) => {
+      const map = mapRef.current;
+      if (!map) return;
+      // 250ms eased pan keeps follow-me smooth without "jumping". The flag
+      // tells the dragstart listener to ignore the implicit drag this pan
+      // would otherwise look like to Leaflet's internals.
+      programmaticPanRef.current = true;
+      map.panTo([lat, lng], { animate: true, duration: 0.25 });
+      // Clear the flag after the pan settles.
+      setTimeout(() => { programmaticPanRef.current = false; }, 320);
+    },
   }));
+
+  // Distinguishes our own panTo() calls from real user drags so the
+  // follow-me cancel logic only fires on actual gestures.
+  const programmaticPanRef = useRef(false);
 
   const onMapTapRef = useRef(onMapTap);
   onMapTapRef.current = onMapTap;
@@ -887,6 +910,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   onLongPressRef.current = onLongPress;
   const onMapMoveRef = useRef(onMapMove);
   onMapMoveRef.current = onMapMove;
+  const onUserDragRef = useRef(onUserDrag);
+  onUserDragRef.current = onUserDrag;
 
   useEffect(() => {
     if (mapRef.current) return;
@@ -1015,6 +1040,15 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     map.on("moveend", dispatchMove);
     map.on("zoomend", dispatchMove);
 
+    // Manual-drag detection for follow-me cancellation. We attach to
+    // dragstart (real user gesture) and ignore programmatic panTo() calls
+    // that we mark via `programmaticPanRef`.
+    const onDragStart = () => {
+      if (programmaticPanRef.current) return;
+      onUserDragRef.current?.();
+    };
+    map.on("dragstart", onDragStart);
+
     /**
      * Tap-vs-long-press disambiguation:
      *  - Long-press (>= 500ms with < 8px movement) drops a pin and is consumed.
@@ -1118,6 +1152,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       map.off("zoomend", scheduleHashWrite);
       map.off("moveend", dispatchMove);
       map.off("zoomend", dispatchMove);
+      map.off("dragstart", onDragStart);
       if (hashWriteTimer) clearTimeout(hashWriteTimer);
       if (movePillTimer) clearTimeout(movePillTimer);
       cancelAnimationFrame(zoomRaf);

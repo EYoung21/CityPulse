@@ -40,8 +40,12 @@ import DistrictCard from "@/components/DistrictCard";
 import DroppedPinCard from "@/components/DroppedPinCard";
 import ManeuverChip from "@/components/ManeuverChip";
 import SearchAreaPill from "@/components/SearchAreaPill";
+import RecenterPill from "@/components/RecenterPill";
 import SharedTripCard from "@/components/SharedTripCard";
+import SpeedChip from "@/components/SpeedChip";
+import TripRecapCard, { type TripRecap } from "@/components/TripRecapCard";
 import { useDeviceHeading } from "@/hooks/useDeviceHeading";
+import { useGpsSpeed } from "@/hooks/useGpsSpeed";
 import { decodeTripToken, type DecodedTripToken } from "@/lib/share-trip";
 import type { ManeuverStep } from "@/lib/routing";
 import type { MapHandle, WaypointPin, BasemapStyle } from "@/components/IncidentMap";
@@ -179,6 +183,30 @@ export default function Home() {
   const [droppedPin, setDroppedPin] = useState<{ lat: number; lng: number } | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const userHeading = useDeviceHeading(userLocation !== null);
+  // "Follow-me" mode keeps the map centered on the user's GPS during an
+  // active trip. Default ON when a trip starts; turned OFF when the user
+  // drags the map; re-enabled by tapping the floating Re-center pill.
+  const [followMe, setFollowMe] = useState(true);
+  // Auto-pan the map to the user when their GPS updates *and* a trip is
+  // active *and* follow-me hasn't been turned off by manual drag. We use
+  // the cheap panTo (no zoom change) instead of flyTo to avoid fighting
+  // the user during gentle position adjustments.
+  const lastFollowPanRef = useRef<{ lat: number; lng: number; t: number } | null>(null);
+  useEffect(() => {
+    if (!followMe || !userLocation) return;
+    // Limit follow-me pans to one every 1.5s so we don't churn the map
+    // animation queue during noisy GPS updates.
+    const last = lastFollowPanRef.current;
+    const now = performance.now();
+    if (last && now - last.t < 1500) {
+      const dLat = Math.abs(last.lat - userLocation.lat);
+      const dLng = Math.abs(last.lng - userLocation.lng);
+      // Skip if movement was tiny (< ~10m) and we panned very recently.
+      if (dLat < 0.0001 && dLng < 0.0001) return;
+    }
+    lastFollowPanRef.current = { lat: userLocation.lat, lng: userLocation.lng, t: now };
+    mapRef.current?.panTo?.(userLocation.lat, userLocation.lng);
+  }, [followMe, userLocation]);
   const [tripGeometry, setTripGeometry] = useState<[number, number][] | null>(null);
   const [tripMode, setTripMode] = useState<string | null>(null);
   const [tripSteps, setTripSteps] = useState<ManeuverStep[] | null>(null);
@@ -203,6 +231,24 @@ export default function Home() {
   const [showTheme, setShowTheme] = useState(false);
   const [tripProgress, setTripProgress] = useState(0);
   const [gpsStatus, setGpsStatus] = useState<"idle" | "loading" | "found" | "denied">("idle");
+  // Recap card shown when a trip ends — populated from `tripStatsRef`
+  // captured at trip start (since SearchSidebar's local routeInfo is
+  // gone by the time the callback fires `active=false`).
+  const [tripRecap, setTripRecap] = useState<TripRecap | null>(null);
+  const tripStatsRef = useRef<{
+    startedAt: number;
+    totalDistanceKm: number;
+    mode: string;
+    nearbyIncidents: number;
+    wasSafeRoute: boolean;
+  } | null>(null);
+  const lastTripProgressRef = useRef(0);
+  useEffect(() => { lastTripProgressRef.current = tripProgress; }, [tripProgress]);
+
+  // Live speed readout — only watched while driving / cycling so we
+  // don't burn battery on the search screen.
+  const speedTracked = Boolean(tripGeometry && (tripMode === "driving-car" || tripMode === "cycling-regular"));
+  const { mps: tripSpeedMps } = useGpsSpeed(speedTracked);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     if (typeof window === "undefined") return true;
@@ -548,6 +594,9 @@ export default function Home() {
         basemapStyle={basemapStyle}
         sharedTripGeometry={sharedTrip?.geometry || null}
         sharedTripDestination={sharedTrip?.destination || null}
+        onUserDrag={() => {
+          if (tripGeometry && followMe) setFollowMe(false);
+        }}
         tripRouteGeometry={tripGeometry}
         previewOrigin={previewOrigin}
         previewDest={previewDest}
@@ -586,10 +635,42 @@ export default function Home() {
         onFlyTo={(lat, lng) => mapRef.current?.flyTo(lat, lng)}
         onRoutesChange={setRoutes}
         onUserLocation={(lat, lng) => setUserLocation({ lat, lng })}
-          onTripActive={(active, geometry, m, steps) => {
+          onTripActive={(active, geometry, m, steps, meta) => {
             setTripGeometry(active && geometry ? geometry : null);
             setTripMode(active && m ? m : null);
             setTripSteps(active && steps && steps.length > 0 ? steps : null);
+            if (active) {
+              // Snapshot the trip's static metadata at start so we can
+              // build a recap card when it ends (the SearchSidebar's
+              // `routeInfo` is gone by then).
+              setFollowMe(true);
+              if (meta) {
+                tripStatsRef.current = {
+                  startedAt: Date.now(),
+                  totalDistanceKm: meta.distanceKm,
+                  mode: m || "driving-car",
+                  nearbyIncidents: meta.nearbyCount,
+                  wasSafeRoute: meta.isSafe,
+                };
+              }
+            } else if (tripStatsRef.current) {
+              // Trip ended — emit a recap. We treat 95%+ progress as a
+              // completed arrival, anything less as a manual end.
+              const stats = tripStatsRef.current;
+              const progress = lastTripProgressRef.current;
+              const completed = progress >= 0.95;
+              setTripRecap({
+                startedAt: stats.startedAt,
+                endedAt: Date.now(),
+                totalDistanceKm: stats.totalDistanceKm,
+                traveledKm: stats.totalDistanceKm * Math.min(1, Math.max(0, progress)),
+                mode: stats.mode,
+                nearbyIncidents: stats.nearbyIncidents,
+                wasSafeRoute: stats.wasSafeRoute,
+                completed,
+              });
+              tripStatsRef.current = null;
+            }
           }}
         onPreviewPins={(origin, dest) => {
           setPreviewOrigin(origin);
@@ -697,6 +778,25 @@ export default function Home() {
       {/* Recipient view of a "Share my live ETA" link (?trip=<token>). */}
       {sharedTrip && (
         <SharedTripCard trip={sharedTrip} onClose={() => setSharedTrip(null)} />
+      )}
+
+      {/* Live GPS speed readout for driving / cycling trips. */}
+      {speedTracked && <SpeedChip mps={tripSpeedMps} />}
+
+      {/* Trip recap — shown briefly when the user ends a trip. */}
+      {tripRecap && (
+        <TripRecapCard recap={tripRecap} onClose={() => setTripRecap(null)} />
+      )}
+
+      {/* Re-center pill — shown only during a trip when follow-me has been
+          disabled by manual drag. Tapping it pans back to the user. */}
+      {tripGeometry && !followMe && userLocation && (
+        <RecenterPill
+          onClick={() => {
+            setFollowMe(true);
+            mapRef.current?.panTo?.(userLocation.lat, userLocation.lng);
+          }}
+        />
       )}
 
       {/* Maneuver chip — floating turn-by-turn pill (active trip + ORS steps only) */}
