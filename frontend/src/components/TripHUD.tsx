@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   ShieldCheck,
   Navigation,
@@ -9,6 +10,7 @@ import {
   Footprints,
   Bike,
   Car,
+  Share2,
 } from "lucide-react";
 import type { Incident } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
@@ -40,6 +42,10 @@ interface Props {
   recentIncidents: Incident[];
   onSelectIncident: (id: string) => void;
   onFlyTo: (lat: number, lng: number) => void;
+  /** Build a share link from the current trip snapshot (no backend; the
+   *  whole trip is encoded into the URL). When omitted, the share button
+   *  is hidden. */
+  onShareEta?: () => Promise<boolean>;
 }
 
 export default function TripHUD({
@@ -53,7 +59,16 @@ export default function TripHUD({
   recentIncidents,
   onSelectIncident,
   onFlyTo,
+  onShareEta,
 }: Props) {
+  const [shareState, setShareState] = useState<"idle" | "sharing" | "copied">("idle");
+  const handleShareEta = async () => {
+    if (!onShareEta || shareState === "sharing") return;
+    setShareState("sharing");
+    const ok = await onShareEta();
+    setShareState(ok ? "copied" : "idle");
+    if (ok) setTimeout(() => setShareState("idle"), 1800);
+  };
   return (
     <>
       <div className={`p-4 ${routeInfo.isSafe ? "bg-green-500/10" : "bg-blue-500/10"}`}>
@@ -70,16 +85,34 @@ export default function TripHUD({
               {routeInfo.isSafe ? "Safe Route Active" : "Navigation Active"}
             </span>
           </div>
-          <button
-            onClick={onResetTrip}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs transition-colors"
-            style={{
-              color: "var(--panel-text-secondary)",
-              background: "var(--panel-input-bg)",
-            }}
-          >
-            <RotateCcw className="w-3 h-3" /> End
-          </button>
+          <div className="flex items-center gap-2">
+            {onShareEta && (
+              <button
+                type="button"
+                onClick={handleShareEta}
+                aria-label="Share live ETA"
+                title="Share live ETA"
+                className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs transition-colors"
+                style={{
+                  color: shareState === "copied" ? "#22c55e" : "var(--panel-text-secondary)",
+                  background: shareState === "copied" ? "rgba(34,197,94,0.15)" : "var(--panel-input-bg)",
+                }}
+              >
+                <Share2 className="w-3 h-3" />
+                {shareState === "copied" ? "Link copied" : shareState === "sharing" ? "…" : "Share ETA"}
+              </button>
+            )}
+            <button
+              onClick={onResetTrip}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs transition-colors"
+              style={{
+                color: "var(--panel-text-secondary)",
+                background: "var(--panel-input-bg)",
+              }}
+            >
+              <RotateCcw className="w-3 h-3" /> End
+            </button>
+          </div>
         </div>
 
         <div className="flex gap-6 items-end">
