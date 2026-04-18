@@ -14,10 +14,12 @@ import {
   Briefcase,
   Star,
   MapPin,
+  Car,
   type LucideIcon,
 } from "lucide-react";
 import { plusCode } from "@/lib/plus-code";
 import { share as nativeShare, haptic as nativeHaptic } from "@/lib/native";
+import { setParkedPin } from "@/lib/parked-pin";
 import {
   CATEGORY_LABELS,
   useSavedDestinations,
@@ -40,7 +42,7 @@ interface Props {
   incidentTime?: string;
 }
 
-type ToastKind = "copied-coords" | "copied-pluscode" | "saved" | null;
+type ToastKind = "copied-coords" | "copied-pluscode" | "saved" | "parked" | null;
 
 /** Compact action-button row shared by SafetyScoreCard, IncidentDetail, and
  *  DroppedPinCard. Buttons: Directions to / from, Share, Open in Maps,
@@ -166,6 +168,12 @@ export default function PlaceActions({
     );
   }, [lat, lng, displayLabel, haptic]);
 
+  const onParkHere = useCallback(() => {
+    haptic();
+    setParkedPin({ lat, lng, label: displayLabel });
+    flashToast("parked");
+  }, [lat, lng, displayLabel, flashToast, haptic]);
+
   const onDirectionsFrom = useCallback(() => {
     haptic();
     window.dispatchEvent(
@@ -188,7 +196,9 @@ export default function PlaceActions({
         ? "Plus Code copied"
         : toast === "saved"
           ? "Saved"
-          : "";
+          : toast === "parked"
+            ? "Parked here"
+            : "";
 
   return (
     <div className="relative">
@@ -254,6 +264,16 @@ export default function PlaceActions({
           style={btnStyle}
         >
           <Hash className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          onClick={onParkHere}
+          title="Mark as parked here (24h reminder)"
+          aria-label="Mark this location as where you parked"
+          className={btn}
+          style={btnStyle}
+        >
+          <Car className="w-4 h-4" />
         </button>
         {canSave && (
           <div className="relative shrink-0">
