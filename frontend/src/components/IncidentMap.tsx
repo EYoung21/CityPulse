@@ -253,6 +253,12 @@ export interface MapHandle {
   /** Cheap pan-only motion (no zoom change). Used by follow-me mode so we
    *  don't fight the user with constant flyTo zooms. */
   panTo: (lat: number, lng: number) => void;
+  /** Current viewport bounds. Returns null before the map has mounted.
+   *  Used to detect when an incoming incident is off-screen so we can
+   *  surface a "fly here" alert. */
+  getBounds: () => { north: number; south: number; east: number; west: number } | null;
+  /** Current map center. */
+  getCenter: () => { lat: number; lng: number } | null;
 }
 
 export interface WaypointPin {
@@ -896,6 +902,23 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       // Clear the flag after the pan settles.
       setTimeout(() => { programmaticPanRef.current = false; }, 320);
     },
+    getBounds: () => {
+      const map = mapRef.current;
+      if (!map) return null;
+      const b = map.getBounds();
+      return {
+        north: b.getNorth(),
+        south: b.getSouth(),
+        east: b.getEast(),
+        west: b.getWest(),
+      };
+    },
+    getCenter: () => {
+      const map = mapRef.current;
+      if (!map) return null;
+      const c = map.getCenter();
+      return { lat: c.lat, lng: c.lng };
+    },
   }));
 
   // Distinguishes our own panTo() calls from real user drags so the
@@ -1491,33 +1514,82 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
     const hasSafe = routes.safe?.geometry && routes.safe.geometry.length > 0;
     const hasNormal = routes.normal?.geometry && routes.normal.geometry.length > 0;
+    const hasChosen = routes.chosen?.geometry && routes.chosen.geometry.length > 0;
 
-    if (hasNormal && routes.normal) {
-      if (hasSafe) {
-        L.polyline(routes.normal.geometry, {
-          color: "#6b7280",
-          weight: 3,
-          opacity: 0.3,
-          dashArray: "8 8",
-        }).addTo(routeLayer);
-      } else {
-        L.polyline(routes.normal.geometry, {
-          color: "#3b82f6",
-          weight: 14,
-          opacity: 0.12,
-        }).addTo(routeLayer);
-        L.polyline(routes.normal.geometry, {
-          color: "#3b82f6",
-          weight: 6,
-          opacity: 0.95,
-          lineCap: "round",
-          lineJoin: "round",
-        }).addTo(routeLayer);
-      }
+    // Identity check for "this is the highlighted option" — compare by
+    // reference first (cheap), fall back to first/last point match for
+    // safety. This determines which polyline gets the bold treatment.
+    const sameGeom = (
+      a: [number, number][] | undefined,
+      b: [number, number][] | undefined
+    ): boolean => {
+      if (!a || !b) return false;
+      if (a === b) return true;
+      if (a.length !== b.length) return false;
+      const f1 = a[0], f2 = b[0];
+      const l1 = a[a.length - 1], l2 = b[b.length - 1];
+      return f1[0] === f2[0] && f1[1] === f2[1] && l1[0] === l2[0] && l1[1] === l2[1];
+    };
+
+    const chosenIsSafe = hasChosen && hasSafe && sameGeom(routes.chosen!.geometry, routes.safe!.geometry);
+    const chosenIsNormal = hasChosen && hasNormal && sameGeom(routes.chosen!.geometry, routes.normal!.geometry);
+
+    // Dim background polylines for any non-chosen options that exist.
+    if (hasNormal && routes.normal && !chosenIsNormal) {
+      L.polyline(routes.normal.geometry, {
+        color: "#6b7280",
+        weight: 3,
+        opacity: 0.3,
+        dashArray: "8 8",
+      }).addTo(routeLayer);
+    }
+    if (hasSafe && routes.safe && !chosenIsSafe) {
+      const dim = L.polyline(routes.safe.geometry, {
+        color: "#22c55e",
+        weight: 3,
+        opacity: 0.35,
+        dashArray: "8 8",
+      }).addTo(routeLayer);
+      safePolylinesRef.current = [dim];
     }
 
-    // Draw safe route polylines (will be hidden when trip animation starts)
-    if (hasSafe && routes.safe) {
+    // Highlight the chosen route. Color reflects which kind it is.
+    if (hasChosen && routes.chosen) {
+      const isSaferPick = chosenIsSafe || routes.chosen.isSafe;
+      const avoidsFeatures = (routes.chosen.avoidedFeatures?.length ?? 0) > 0;
+      const color = isSaferPick ? "#22c55e" : avoidsFeatures ? "#f59e0b" : "#3b82f6";
+      const glow = L.polyline(routes.chosen.geometry, {
+        color,
+        weight: 16,
+        opacity: 0.12,
+      }).addTo(routeLayer);
+      const line = L.polyline(routes.chosen.geometry, {
+        color,
+        weight: 6,
+        opacity: 0.95,
+        lineCap: "round",
+        lineJoin: "round",
+      }).addTo(routeLayer);
+      // safePolylinesRef is misnamed historically — it actually holds
+      // *the highlighted* polylines so the trip animation can hide them
+      // when the live animated route takes over. Always populate it
+      // with the chosen pair regardless of safer-ness.
+      safePolylinesRef.current = [glow, line];
+    } else if (hasNormal && routes.normal && !hasSafe) {
+      // No chosen + no safe — fall back to highlighting normal.
+      L.polyline(routes.normal.geometry, {
+        color: "#3b82f6",
+        weight: 14,
+        opacity: 0.12,
+      }).addTo(routeLayer);
+      L.polyline(routes.normal.geometry, {
+        color: "#3b82f6",
+        weight: 6,
+        opacity: 0.95,
+        lineCap: "round",
+        lineJoin: "round",
+      }).addTo(routeLayer);
+    } else if (hasSafe && routes.safe && !hasChosen) {
       const glow = L.polyline(routes.safe.geometry, {
         color: "#22c55e",
         weight: 16,
@@ -1533,7 +1605,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       safePolylinesRef.current = [glow, line];
     }
 
-    const primary = routes.safe || routes.normal;
+    const primary = routes.chosen || routes.safe || routes.normal;
     if (primary?.geometry && primary.geometry.length >= 2) {
       if (previewWaypoints && previewWaypoints.length > 0) {
         for (const wp of previewWaypoints) {

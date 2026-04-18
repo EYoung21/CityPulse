@@ -139,6 +139,19 @@ export default function SearchSidebar({
   const [avoidCats, setAvoidCats] = useState<Set<AvoidCategoryId>>(new Set(DEFAULT_AVOID_CATS));
   const avoidCatsRef = useRef(avoidCats);
   avoidCatsRef.current = avoidCats;
+
+  // Latest RouteData reported by the directions picker. Used by
+  // `startTrip` so the option the user picked (e.g. "No tolls" /
+  // "Safer") becomes the active trip rather than always defaulting to
+  // safe ?? normal.
+  const latestRouteDataRef = useRef<RouteData | null>(null);
+  const handleRoutesChange = useCallback(
+    (data: RouteData | null) => {
+      latestRouteDataRef.current = data;
+      onRoutesChange(data);
+    },
+    [onRoutesChange]
+  );
   const [rerouteAlert, setRerouteAlert] = useState<string | null>(null);
   const [userPos, setUserPos] = useState<{ lat: number; lng: number } | null>(null);
   const [gpsStatus, setGpsStatus] = useState<"idle" | "loading" | "found" | "denied">("idle");
@@ -258,31 +271,54 @@ export default function SearchSidebar({
 
   const startTrip = useCallback(async () => {
     if (!originLoc || !destLoc) return;
-    const waypoints: [number, number][] = [
-      [originLoc.lat, originLoc.lng],
-      ...stops.filter((s) => s.loc).map((s) => [s.loc!.lat, s.loc!.lng] as [number, number]),
-      [destLoc.lat, destLoc.lng],
-    ];
-    const incSnap = incidentsRef.current;
 
-    const directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
-    if (!directRoute) return;
+    // If the picker has already produced a chosen route, prefer that —
+    // it may be an alternate, "Safer", "No tolls", etc., and re-running
+    // routing here would discard the user's selection.
+    const picked = latestRouteDataRef.current;
+    let routeData: RouteData | null = null;
+    let meta: { distanceKm: number; durationMin: number; isSafe: boolean; nearbyCount: number } | null = null;
 
-    const zones = buildAvoidZones(incSnap, avoidCatsRef.current);
-    let routeData: RouteData;
-    let meta: { distanceKm: number; durationMin: number; isSafe: boolean; nearbyCount: number };
-
-    if (zones.length === 0) {
-      routeData = { normal: directRoute, safe: null, avoidZones: [] };
-      meta = { distanceKm: directRoute.distanceKm, durationMin: directRoute.durationMin, isSafe: false, nearbyCount: 0 };
+    if (picked && picked.chosen) {
+      routeData = picked;
+      meta = {
+        distanceKm: picked.chosen.distanceKm,
+        durationMin: picked.chosen.durationMin,
+        isSafe: picked.chosen.isSafe,
+        nearbyCount: picked.avoidZones.length,
+      };
     } else {
-      const safeRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints, buildAvoidPolygons(zones));
-      const best = safeRoute || directRoute;
-      routeData = { normal: directRoute, safe: safeRoute, avoidZones: zones };
-      meta = { distanceKm: best.distanceKm, durationMin: best.durationMin, isSafe: !!safeRoute, nearbyCount: zones.length };
+      const waypoints: [number, number][] = [
+        [originLoc.lat, originLoc.lng],
+        ...stops.filter((s) => s.loc).map((s) => [s.loc!.lat, s.loc!.lng] as [number, number]),
+        [destLoc.lat, destLoc.lng],
+      ];
+      const incSnap = incidentsRef.current;
+
+      const directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
+      if (!directRoute) return;
+
+      const zones = buildAvoidZones(incSnap, avoidCatsRef.current);
+      if (zones.length === 0) {
+        routeData = { normal: directRoute, safe: null, avoidZones: [], chosen: directRoute, chosenLabel: "Fastest" };
+        meta = { distanceKm: directRoute.distanceKm, durationMin: directRoute.durationMin, isSafe: false, nearbyCount: 0 };
+      } else {
+        const safeRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints, buildAvoidPolygons(zones));
+        const best = safeRoute || directRoute;
+        routeData = {
+          normal: directRoute,
+          safe: safeRoute,
+          avoidZones: zones,
+          chosen: best,
+          chosenLabel: safeRoute ? "Safer" : "Fastest",
+        };
+        meta = { distanceKm: best.distanceKm, durationMin: best.durationMin, isSafe: !!safeRoute, nearbyCount: zones.length };
+      }
     }
 
-    onRoutesChange(routeData);
+    if (!routeData || !meta) return;
+
+    handleRoutesChange(routeData);
     setRouteInfo({
       isSafe: meta.isSafe,
       distanceKm: meta.distanceKm,
@@ -291,17 +327,17 @@ export default function SearchSidebar({
     });
     setRerouteAlert(null);
     setView("trip");
-    const best = routeData.safe || routeData.normal;
-    const geom = best?.geometry;
+    const active = routeData.chosen ?? routeData.safe ?? routeData.normal;
+    const geom = active?.geometry;
     activeRouteRef.current = geom ?? null;
     knownIncIdsRef.current = new Set(incidents.map((i) => i.id));
-    onTripActive?.(true, geom, activeMode, best?.steps, {
+    onTripActive?.(true, geom, activeMode, active?.steps, {
       distanceKm: meta.distanceKm,
       durationMin: meta.durationMin,
       nearbyCount: meta.nearbyCount,
       isSafe: meta.isSafe,
     });
-  }, [originLoc, destLoc, stops, activeMode, onRoutesChange, onTripActive, incidents]);
+  }, [originLoc, destLoc, stops, activeMode, handleRoutesChange, onTripActive, incidents]);
 
   // Auto-reroute: watch for new incidents near the active route geometry
   const activeRouteRef = useRef<[number, number][] | null>(null);
@@ -344,8 +380,14 @@ export default function SearchSidebar({
           ? await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints, buildAvoidPolygons(zones))
           : null;
         const best = safeRoute || directRoute;
-        const routeData: RouteData = { normal: directRoute, safe: safeRoute, avoidZones: zones };
-        onRoutesChange(routeData);
+        const routeData: RouteData = {
+          normal: directRoute,
+          safe: safeRoute,
+          avoidZones: zones,
+          chosen: best,
+          chosenLabel: safeRoute ? "Safer" : "Fastest",
+        };
+        handleRoutesChange(routeData);
         setRouteInfo({
           isSafe: !!safeRoute,
           distanceKm: best.distanceKm,
@@ -579,12 +621,12 @@ export default function SearchSidebar({
               setDestLoc(null);
               setDestQuery("");
               setStops([]);
-              onRoutesChange(null);
+              handleRoutesChange(null);
               onPreviewPins?.(originLoc, null);
               onPreviewWaypoints?.(null);
             }}
             onFlyTo={onFlyTo}
-            onRoutesChange={onRoutesChange}
+            onRoutesChange={handleRoutesChange}
             onPreviewPins={onPreviewPins}
             onPreviewWaypoints={onPreviewWaypoints}
             onStartTrip={startTrip}

@@ -35,6 +35,28 @@ export interface RouteResult {
   durationMin: number;
   isSafe: boolean;
   steps?: ManeuverStep[];
+  /** ORS-defined road features avoided when this route was computed
+   *  (e.g. ["tollways", "highways"]). Empty/undefined when the call was
+   *  not constrained. */
+  avoidedFeatures?: string[];
+}
+
+/** Subset of ORS `avoid_features` we expose in the UI. */
+export type AvoidFeature = "tollways" | "highways" | "ferries";
+
+/** A user-selectable route option presented before trip start. */
+export interface RouteOption {
+  id: string;
+  /** Short label rendered on the picker card ("Fastest", "Safer", …). */
+  label: string;
+  /** One-liner displayed below the label. */
+  subtitle?: string;
+  route: RouteResult;
+  /** Whether this option came from the safer-routes pipeline (avoid
+   *  polygons applied). */
+  isSafer: boolean;
+  /** Pinned avoid-features used when computing this option. */
+  avoidedFeatures: AvoidFeature[];
 }
 
 export interface AvoidZone {
@@ -262,21 +284,61 @@ export async function getRoute(
   return getMultiStopRoute(apiKey, mode, [start, end], avoidPolygons);
 }
 
+export interface RouteRequestOptions {
+  /** When set, ORS will compute up to this many alternative routes in
+   *  addition to the primary. ORS caps practical N at ~3. Each result
+   *  comes back as its own RouteResult in `getMultiRouteVariants`. */
+  alternatives?: number;
+  /** Road features to avoid (driving mode only). */
+  avoidFeatures?: AvoidFeature[];
+}
+
 export async function getMultiStopRoute(
   apiKey: string,
   mode: TransportMode,
   waypoints: [number, number][],
-  avoidPolygons?: GeoJSON.MultiPolygon | null
+  avoidPolygons?: GeoJSON.MultiPolygon | null,
+  options?: RouteRequestOptions
 ): Promise<RouteResult | null> {
-  if (waypoints.length < 2) return null;
+  const variants = await getMultiRouteVariants(apiKey, mode, waypoints, avoidPolygons, options);
+  return variants[0] ?? null;
+}
 
-  // Try ORS first (supports avoidance polygons)
+/** Same as `getMultiStopRoute` but returns every alternative ORS sent
+ *  back (primary + up to `options.alternatives` more). Falls back to a
+ *  single OSRM result when ORS is unavailable. */
+export async function getMultiRouteVariants(
+  apiKey: string,
+  mode: TransportMode,
+  waypoints: [number, number][],
+  avoidPolygons?: GeoJSON.MultiPolygon | null,
+  options?: RouteRequestOptions
+): Promise<RouteResult[]> {
+  if (waypoints.length < 2) return [];
+
+  // Try ORS first (supports avoidance polygons + alternatives)
   const body: Record<string, unknown> = {
     coordinates: waypoints.map(([lat, lng]) => [lng, lat]),
   };
 
+  const orsOptions: Record<string, unknown> = {};
   if (avoidPolygons && avoidPolygons.coordinates.length > 0) {
-    body.options = { avoid_polygons: avoidPolygons };
+    orsOptions.avoid_polygons = avoidPolygons;
+  }
+  if (options?.avoidFeatures && options.avoidFeatures.length > 0) {
+    orsOptions.avoid_features = options.avoidFeatures;
+  }
+  if (Object.keys(orsOptions).length > 0) {
+    body.options = orsOptions;
+  }
+  if (options?.alternatives && options.alternatives > 0) {
+    // ORS caps target_count at 3. share_factor & weight_factor tuned to
+    // produce visibly distinct alternates rather than near-duplicates.
+    body.alternative_routes = {
+      target_count: Math.min(3, options.alternatives + 1),
+      share_factor: 0.6,
+      weight_factor: 1.4,
+    };
   }
 
   try {
@@ -291,8 +353,9 @@ export async function getMultiStopRoute(
 
     if (res.ok) {
       const data = await res.json();
-      const route = data.routes?.[0];
-      if (route) {
+      const routesRaw = Array.isArray(data.routes) ? data.routes : [];
+      const out: RouteResult[] = [];
+      for (const route of routesRaw) {
         const geometry = decodePolyline(route.geometry);
         const steps: ManeuverStep[] = [];
         if (Array.isArray(route.segments)) {
@@ -310,24 +373,150 @@ export async function getMultiStopRoute(
             }
           }
         }
-        return {
+        out.push({
           geometry,
           distanceKm: route.summary.distance / 1000,
           durationMin: route.summary.duration / 60,
           isSafe: !!avoidPolygons,
           steps: steps.length > 0 ? steps : undefined,
-        };
+          avoidedFeatures: options?.avoidFeatures,
+        });
       }
+      if (out.length > 0) return out;
     }
   } catch {
     // ORS failed, will try OSRM below
   }
 
   const isSafe = !!avoidPolygons;
-  // OSRM via backend proxy (street geometry)
+  // OSRM via backend proxy (street geometry) — single route only.
   let osrm = await getRouteOSRM(mode, waypoints, isSafe);
   if (!osrm && waypoints.length > 2) {
     osrm = await getRouteOSRMChained(mode, waypoints, isSafe);
   }
-  return osrm;
+  return osrm ? [osrm] : [];
+}
+
+/** Cheap geometry similarity: returns true when two routes share ≥ `min`
+ *  fraction of points (rounded to ~10m grid). Used to dedupe ORS
+ *  alternates that come back nearly identical to the primary route. */
+function geometriesAreSimilar(
+  a: [number, number][],
+  b: [number, number][],
+  min = 0.85
+): boolean {
+  if (a.length === 0 || b.length === 0) return false;
+  const key = (p: [number, number]) =>
+    `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
+  const setA = new Set(a.map(key));
+  let hits = 0;
+  for (const p of b) {
+    if (setA.has(key(p))) hits++;
+  }
+  const overlap = hits / Math.min(a.length, b.length);
+  return overlap >= min;
+}
+
+interface RouteVariantsRequest {
+  apiKey: string;
+  mode: TransportMode;
+  waypoints: [number, number][];
+  /** Pre-built avoidance polygons (incident zones). When provided, a
+   *  "safer" variant will be requested in parallel with the direct one. */
+  avoidPolygons: GeoJSON.MultiPolygon | null;
+  /** Whether to also request avoid-tollways / avoid-highways variants
+   *  (only meaningful for driving mode — caller should pre-filter). */
+  includeRoadFeatureVariants?: boolean;
+}
+
+/** Fetches every variant we want to surface in the route picker
+ *  (direct + alternates + safer + avoid-tolls + avoid-highways) in
+ *  parallel, then dedupes near-identical geometries and returns a
+ *  ranked list of `RouteOption`s ready to render. */
+export async function getRouteOptions(
+  req: RouteVariantsRequest
+): Promise<RouteOption[]> {
+  const { apiKey, mode, waypoints, avoidPolygons, includeRoadFeatureVariants } = req;
+  if (waypoints.length < 2) return [];
+
+  const featureVariantsRequested = includeRoadFeatureVariants && mode === "driving-car";
+
+  const [direct, safer, noTolls, noHighways] = await Promise.all([
+    getMultiRouteVariants(apiKey, mode, waypoints, null, { alternatives: 2 }),
+    avoidPolygons ? getMultiRouteVariants(apiKey, mode, waypoints, avoidPolygons) : Promise.resolve([]),
+    featureVariantsRequested
+      ? getMultiRouteVariants(apiKey, mode, waypoints, null, { avoidFeatures: ["tollways"] })
+      : Promise.resolve([]),
+    featureVariantsRequested
+      ? getMultiRouteVariants(apiKey, mode, waypoints, null, { avoidFeatures: ["highways"] })
+      : Promise.resolve([]),
+  ]);
+
+  const collected: RouteOption[] = [];
+  const pushUnique = (opt: RouteOption) => {
+    for (const existing of collected) {
+      if (geometriesAreSimilar(existing.route.geometry, opt.route.geometry)) {
+        // Prefer the option with the better label specificity ("Safer" /
+        // "No tolls" beat the generic "Fastest" / "Alternate").
+        if (
+          (opt.isSafer && !existing.isSafer) ||
+          (opt.avoidedFeatures.length > 0 && existing.avoidedFeatures.length === 0)
+        ) {
+          const idx = collected.indexOf(existing);
+          collected[idx] = opt;
+        }
+        return;
+      }
+    }
+    collected.push(opt);
+  };
+
+  direct.forEach((r, i) => {
+    pushUnique({
+      id: `direct-${i}`,
+      label: i === 0 ? "Fastest" : `Alternate ${i}`,
+      route: r,
+      isSafer: false,
+      avoidedFeatures: [],
+    });
+  });
+
+  safer.forEach((r, i) =>
+    pushUnique({
+      id: `safer-${i}`,
+      label: "Safer",
+      subtitle: "Avoids reported incidents",
+      route: { ...r, isSafe: true },
+      isSafer: true,
+      avoidedFeatures: [],
+    })
+  );
+
+  noTolls.forEach((r, i) =>
+    pushUnique({
+      id: `no-tolls-${i}`,
+      label: "No tolls",
+      route: { ...r, avoidedFeatures: ["tollways"] },
+      isSafer: false,
+      avoidedFeatures: ["tollways"],
+    })
+  );
+
+  noHighways.forEach((r, i) =>
+    pushUnique({
+      id: `no-highways-${i}`,
+      label: "No highways",
+      route: { ...r, avoidedFeatures: ["highways"] },
+      isSafer: false,
+      avoidedFeatures: ["highways"],
+    })
+  );
+
+  // Sort: safer first (when present), then by ETA ascending.
+  collected.sort((a, b) => {
+    if (a.isSafer !== b.isSafer) return a.isSafer ? -1 : 1;
+    return a.route.durationMin - b.route.durationMin;
+  });
+
+  return collected;
 }

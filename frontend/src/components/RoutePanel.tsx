@@ -38,6 +38,13 @@ export interface RouteData {
   normal: RouteResult | null;
   safe: RouteResult | null;
   avoidZones: AvoidZone[];
+  /** When the user explicitly picks a non-default option in the route
+   *  picker (e.g. "No tolls" or one of ORS's alternates), this is the
+   *  one that should be highlighted on the map and used to start the
+   *  trip. When null/undefined, the map falls back to safe ?? normal. */
+  chosen?: RouteResult | null;
+  /** Label for the chosen variant ("Fastest", "Safer", "No tolls", …). */
+  chosenLabel?: string | null;
 }
 
 interface Props {

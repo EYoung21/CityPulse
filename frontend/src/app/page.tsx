@@ -44,6 +44,7 @@ import RecenterPill from "@/components/RecenterPill";
 import SharedTripCard from "@/components/SharedTripCard";
 import SpeedChip from "@/components/SpeedChip";
 import TripRecapCard, { type TripRecap } from "@/components/TripRecapCard";
+import OffscreenIncidentChip from "@/components/OffscreenIncidentChip";
 import { useDeviceHeading } from "@/hooks/useDeviceHeading";
 import { useGpsSpeed } from "@/hooks/useGpsSpeed";
 import { decodeTripToken, type DecodedTripToken } from "@/lib/share-trip";
@@ -183,6 +184,17 @@ export default function Home() {
   const [droppedPin, setDroppedPin] = useState<{ lat: number; lng: number } | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const userHeading = useDeviceHeading(userLocation !== null);
+
+  // Off-screen incident alert — pops a chip whenever a fresh, high-severity
+  // incident lands outside the viewport so the user can fly to it. Tracked
+  // via a ref because we don't want a render every time we tag an ID as seen.
+  const seenIncidentIdsRef = useRef<Set<string>>(new Set());
+  const seenInitialisedRef = useRef(false);
+  const dismissedAlertIdsRef = useRef<Set<string>>(new Set());
+  const [offscreenAlert, setOffscreenAlert] = useState<{
+    incident: Incident;
+    bearingDeg: number;
+  } | null>(null);
   // "Follow-me" mode keeps the map centered on the user's GPS during an
   // active trip. Default ON when a trip starts; turned OFF when the user
   // drags the map; re-enabled by tapping the floating Re-center pill.
@@ -428,6 +440,55 @@ export default function Home() {
     }, WEIGHT_REFRESH_MS);
     return () => clearInterval(id);
   }, []);
+
+  // Off-screen incident detection. The first time we receive an incident
+  // batch we silently seed `seenIncidentIdsRef` so the user isn't bombed
+  // with chips for already-loaded data; after that, any newly-arrived
+  // high-severity incident outside the current viewport gets surfaced.
+  useEffect(() => {
+    if (incidents.length === 0) return;
+    if (!seenInitialisedRef.current) {
+      for (const inc of incidents) seenIncidentIdsRef.current.add(inc.id);
+      seenInitialisedRef.current = true;
+      return;
+    }
+    if (offscreenAlert) return; // one alert at a time
+
+    const bounds = mapRef.current?.getBounds();
+    const center = mapRef.current?.getCenter();
+    if (!bounds || !center) return;
+
+    // Find the highest-severity *new* incident we haven't dismissed.
+    let best: { inc: Incident; w: number } | null = null;
+    for (const inc of incidents) {
+      if (seenIncidentIdsRef.current.has(inc.id)) continue;
+      seenIncidentIdsRef.current.add(inc.id);
+      if (dismissedAlertIdsRef.current.has(inc.id)) continue;
+      if (inc.lat == null || inc.lng == null) continue;
+      const w = inc.w_eff ?? 0.5;
+      if (w < 0.55) continue; // only meaningful severity
+      const inView =
+        inc.lat <= bounds.north &&
+        inc.lat >= bounds.south &&
+        inc.lng <= bounds.east &&
+        inc.lng >= bounds.west;
+      if (inView) continue;
+      if (!best || w > best.w) best = { inc, w };
+    }
+    if (!best) return;
+
+    // Compass bearing from the current map center toward the incident.
+    const lat1 = (center.lat * Math.PI) / 180;
+    const lat2 = (best.inc.lat! * Math.PI) / 180;
+    const dLng = ((best.inc.lng! - center.lng) * Math.PI) / 180;
+    const y = Math.sin(dLng) * Math.cos(lat2);
+    const x =
+      Math.cos(lat1) * Math.sin(lat2) -
+      Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+    const bearingDeg = ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+
+    setOffscreenAlert({ incident: best.inc, bearingDeg });
+  }, [incidents, offscreenAlert]);
 
   useEffect(() => {
     if (!API_BASE) return;
@@ -786,6 +847,27 @@ export default function Home() {
       {/* Trip recap — shown briefly when the user ends a trip. */}
       {tripRecap && (
         <TripRecapCard recap={tripRecap} onClose={() => setTripRecap(null)} />
+      )}
+
+      {/* Off-screen incident chip — pops up for fresh, high-severity
+          incidents outside the current viewport. Tap to fly there. */}
+      {offscreenAlert && (
+        <OffscreenIncidentChip
+          incident={offscreenAlert.incident}
+          bearingDeg={offscreenAlert.bearingDeg}
+          onTap={() => {
+            const { incident } = offscreenAlert;
+            setOffscreenAlert(null);
+            if (incident.lat != null && incident.lng != null) {
+              mapRef.current?.flyTo(incident.lat, incident.lng, 16);
+            }
+            setSelectedId(incident.id);
+          }}
+          onDismiss={() => {
+            dismissedAlertIdsRef.current.add(offscreenAlert.incident.id);
+            setOffscreenAlert(null);
+          }}
+        />
       )}
 
       {/* Re-center pill — shown only during a trip when follow-me has been
