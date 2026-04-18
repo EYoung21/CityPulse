@@ -20,6 +20,8 @@ import SavedPlaces from "@/components/SavedPlaces";
 import DirectionsPanel from "@/components/DirectionsPanel";
 import TripHUD from "@/components/TripHUD";
 import IncidentFeed from "@/components/IncidentFeed";
+import MobileSheet from "@/components/MobileSheet";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { getCurrentCity } from "@/lib/pulse-cities";
 
 const ORS_API_KEY =
@@ -75,6 +77,9 @@ interface Props {
   categoryBreakdown?: CategoryBreakdownItem[];
   hourlyData?: number[];
   onToggleCat?: (cats: readonly string[]) => void;
+  /** Mobile-only: controls whether the bottom sheet is mounted/visible. */
+  mobileOpen?: boolean;
+  onMobileOpenChange?: (open: boolean) => void;
 }
 
 export default function SearchSidebar({
@@ -95,7 +100,10 @@ export default function SearchSidebar({
   categoryBreakdown = [],
   hourlyData = [],
   onToggleCat,
+  mobileOpen = true,
+  onMobileOpenChange,
 }: Props) {
+  const isMobile = useIsMobile();
   const [view, setView] = useState<View>("search");
   const [originQuery, setOriginQuery] = useState("");
   const [destQuery, setDestQuery] = useState("");
@@ -348,22 +356,9 @@ export default function SearchSidebar({
 
   const highCount = incidents.filter((i) => i.s_base >= 0.7).length;
 
-  return (
-    <div className="absolute top-0 left-0 bottom-0 z-[1000] flex pointer-events-none">
-      <div
-        className="w-[380px] h-full flex flex-col pointer-events-auto backdrop-blur-xl shadow-2xl
-                   max-md:fixed max-md:bottom-0 max-md:left-0 max-md:right-0 max-md:top-auto max-md:w-full max-md:h-[55vh] max-md:z-[2000] max-md:rounded-t-2xl"
-        style={{
-          background: "var(--panel-bg)",
-          borderRight: "1px solid var(--panel-border)",
-          boxShadow: "4px 0 24px var(--panel-shadow)",
-        }}
-      >
-        {/* Mobile drag handle */}
-        <div className="md:hidden flex justify-center pt-2 pb-1 shrink-0">
-          <div className="w-10 h-1 rounded-full" style={{ background: "var(--panel-text-muted)", opacity: 0.4 }} />
-        </div>
-        {view === "search" && (
+  const innerContent = (
+    <>
+      {view === "search" && (
           <>
             <SearchInput onFlyTo={onFlyTo} onDirections={openDirections} />
 
@@ -582,20 +577,46 @@ export default function SearchSidebar({
           </div>
         )}
 
-        {view === "trip" && routeInfo && (
-          <TripHUD
-            routeInfo={routeInfo}
-            originQuery={originQuery}
-            destQuery={destQuery}
-            stops={stops}
-            activeMode={activeMode}
-            tripProgress={tripProgress}
-            onResetTrip={resetTrip}
-            recentIncidents={incidents.slice(0, 12)}
-            onSelectIncident={(id) => onSelectIncident?.(id)}
-            onFlyTo={onFlyTo}
-          />
-        )}
+      {view === "trip" && routeInfo && (
+        <TripHUD
+          routeInfo={routeInfo}
+          originQuery={originQuery}
+          destQuery={destQuery}
+          stops={stops}
+          activeMode={activeMode}
+          tripProgress={tripProgress}
+          onResetTrip={resetTrip}
+          recentIncidents={incidents.slice(0, 12)}
+          onSelectIncident={(id) => onSelectIncident?.(id)}
+          onFlyTo={onFlyTo}
+        />
+      )}
+    </>
+  );
+
+  if (isMobile) {
+    return (
+      <MobileSheet
+        open={mobileOpen}
+        onOpenChange={(o) => onMobileOpenChange?.(o)}
+        expandKey={view}
+      >
+        {innerContent}
+      </MobileSheet>
+    );
+  }
+
+  return (
+    <div className="absolute top-0 left-0 bottom-0 z-[1000] flex pointer-events-none">
+      <div
+        className="w-[380px] h-full flex flex-col pointer-events-auto backdrop-blur-xl shadow-2xl"
+        style={{
+          background: "var(--panel-bg)",
+          borderRight: "1px solid var(--panel-border)",
+          boxShadow: "4px 0 24px var(--panel-shadow)",
+        }}
+      >
+        {innerContent}
       </div>
     </div>
   );

@@ -498,34 +498,34 @@ export default function Home() {
         {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
       </button>
 
-      {/* Sidebar */}
-      <div className={`max-md:${sidebarOpen ? "block" : "hidden"} md:block`}>
-        <SearchSidebar
-          incidents={filteredIncidents}
-          onFlyTo={(lat, lng) => mapRef.current?.flyTo(lat, lng)}
-          onRoutesChange={setRoutes}
-          onUserLocation={(lat, lng) => setUserLocation({ lat, lng })}
-          onTripActive={(active, geometry, m) => {
-            setTripGeometry(active && geometry ? geometry : null);
-            setTripMode(active && m ? m : null);
-          }}
-          onPreviewPins={(origin, dest) => {
-            setPreviewOrigin(origin);
-            setPreviewDest(dest);
-          }}
-          onPreviewWaypoints={setPreviewWaypoints}
-          onSelectIncident={setSelectedId}
-          selectedId={selectedId}
-          tripProgress={tripProgress}
-          onGpsStatusChange={setGpsStatus}
-          timeFilterLabel={activeTimeLabel}
-          trendPct={trendPct}
-          hotNeighborhoods={hotNeighborhoods}
-          categoryBreakdown={categoryBreakdown}
-          hourlyData={hourlyData}
-          onToggleCat={toggleCat}
-        />
-      </div>
+      {/* Sidebar (desktop: side panel; mobile: vaul snap-point bottom sheet) */}
+      <SearchSidebar
+        incidents={filteredIncidents}
+        onFlyTo={(lat, lng) => mapRef.current?.flyTo(lat, lng)}
+        onRoutesChange={setRoutes}
+        onUserLocation={(lat, lng) => setUserLocation({ lat, lng })}
+        onTripActive={(active, geometry, m) => {
+          setTripGeometry(active && geometry ? geometry : null);
+          setTripMode(active && m ? m : null);
+        }}
+        onPreviewPins={(origin, dest) => {
+          setPreviewOrigin(origin);
+          setPreviewDest(dest);
+        }}
+        onPreviewWaypoints={setPreviewWaypoints}
+        onSelectIncident={setSelectedId}
+        selectedId={selectedId}
+        tripProgress={tripProgress}
+        onGpsStatusChange={setGpsStatus}
+        timeFilterLabel={activeTimeLabel}
+        trendPct={trendPct}
+        hotNeighborhoods={hotNeighborhoods}
+        categoryBreakdown={categoryBreakdown}
+        hourlyData={hourlyData}
+        onToggleCat={toggleCat}
+        mobileOpen={sidebarOpen}
+        onMobileOpenChange={setSidebarOpen}
+      />
 
       {/* Top category pills */}
       <div className="absolute top-3 left-3 md:left-[396px] right-3 z-[999] pointer-events-none">
