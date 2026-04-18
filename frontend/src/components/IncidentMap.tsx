@@ -16,6 +16,7 @@ import type { Incident } from "@/lib/api";
 import type { RouteData } from "@/components/RoutePanel";
 import { NEIGHBORHOODS, type Neighborhood, incidentsInNeighborhood } from "@/lib/neighborhoods";
 import { getCurrentCity } from "@/lib/pulse-cities";
+import { spawnSnapPulse } from "@/lib/snap-pulse";
 
 /** One colour per *category*; sub-types within a category share the same hue. */
 type MonoColor = { fill: string; stroke: string; pulse: string };
@@ -281,6 +282,10 @@ interface Props {
   districtsEnabled?: boolean;
   onDistrictClick?: (neighborhood: Neighborhood, incidents: Incident[]) => void;
   onClusterClick?: (incidentIds: string[]) => void;
+  /** Long-press / right-click on the map drops a sticky pin. */
+  onLongPress?: (lat: number, lng: number) => void;
+  /** When set, renders a sticky red dropped-pin marker. Cleared on close. */
+  droppedPin?: { lat: number; lng: number } | null;
 }
 
 function distToSegmentKm(
@@ -705,6 +710,23 @@ function createTransportIcon(mode: string, radiate = false): L.DivIcon {
 
 const TRIP_PROXIMITY_KM = 1.0;
 
+/** Parse Google-Maps-style URL hash `#zoom/lat/lng` (e.g. `#15/39.952/-75.165`). */
+function parseHashView(): { zoom: number; lat: number; lng: number } | null {
+  if (typeof window === "undefined") return null;
+  const m = /^#(\d+(?:\.\d+)?)\/(-?\d+(?:\.\d+)?)\/(-?\d+(?:\.\d+)?)/.exec(window.location.hash);
+  if (!m) return null;
+  const zoom = parseFloat(m[1]);
+  const lat = parseFloat(m[2]);
+  const lng = parseFloat(m[3]);
+  if (!Number.isFinite(zoom) || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (zoom < 1 || zoom > 22 || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { zoom, lat, lng };
+}
+
+function formatHashView(zoom: number, lat: number, lng: number): string {
+  return `#${zoom.toFixed(zoom < 14 ? 0 : 1)}/${lat.toFixed(4)}/${lng.toFixed(4)}`;
+}
+
 const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 const LIGHT_TILES = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
 
@@ -738,6 +760,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     districtsEnabled = false,
     onDistrictClick,
     onClusterClick,
+    onLongPress,
+    droppedPin,
   },
   ref
 ) {
@@ -753,7 +777,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const trailLayerRef = useRef<L.LayerGroup | null>(null);
   const districtsLayerRef = useRef<L.LayerGroup | null>(null);
-  const sonarLayerRef = useRef<L.LayerGroup | null>(null);
+  const droppedPinMarkerRef = useRef<L.Marker | null>(null);
   const selectedHighlightRef = useRef<L.LayerGroup | null>(null);
   /** Avoid map.fitBounds on every live GPS tick when only the origin (A) moves. */
   const previewFitDestRef = useRef<{ lat: number; lng: number } | null>(null);
@@ -796,6 +820,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   onMapTapRef.current = onMapTap;
   const onClusterClickRef = useRef(onClusterClick);
   onClusterClickRef.current = onClusterClick;
+  const onLongPressRef = useRef(onLongPress);
+  onLongPressRef.current = onLongPress;
 
   useEffect(() => {
     if (mapRef.current) return;
@@ -809,9 +835,17 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     cityCenterRef.current = center;
     defaultZoomRef.current = zoom;
 
+    // Initial view: prefer the URL hash (`#zoom/lat/lng`, Google-Maps style)
+    // so a shared "look at where I'm looking" link works on first paint.
+    const hashView = parseHashView();
+    const initialCenter: [number, number] = hashView
+      ? [hashView.lat, hashView.lng]
+      : center;
+    const initialZoom = hashView ? hashView.zoom : zoom;
+
     const map = L.map("incident-map", {
       zoomControl: false,
-    }).setView(center, zoom);
+    }).setView(initialCenter, initialZoom);
 
     L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -867,7 +901,6 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     routeLayerRef.current = L.layerGroup().addTo(map);
     previewLayerRef.current = L.layerGroup().addTo(map);
     trailLayerRef.current = L.layerGroup().addTo(map);
-    sonarLayerRef.current = L.layerGroup().addTo(map);
     selectedHighlightRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
@@ -888,49 +921,125 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     map.on("zoom", syncIncidentZoom);
     map.on("zoomend", syncIncidentZoom);
 
-    const ringsTimeout: { id: ReturnType<typeof setTimeout> | null } = { id: null };
+    // Debounced URL-hash writeback so /, refresh, and "share my view" work.
+    let hashWriteTimer: ReturnType<typeof setTimeout> | null = null;
+    const writeHash = () => {
+      const z = map.getZoom();
+      const c = map.getCenter();
+      const next = formatHashView(z, c.lat, c.lng);
+      if (window.location.hash !== next) {
+        window.history.replaceState({}, "", window.location.pathname + window.location.search + next);
+      }
+    };
+    const scheduleHashWrite = () => {
+      if (hashWriteTimer) clearTimeout(hashWriteTimer);
+      hashWriteTimer = setTimeout(writeHash, 250);
+    };
+    map.on("moveend", scheduleHashWrite);
+    map.on("zoomend", scheduleHashWrite);
+
+    /**
+     * Tap-vs-long-press disambiguation:
+     *  - Long-press (>= 500ms with < 8px movement) drops a pin and is consumed.
+     *  - A normal click fires the SafetyScoreCard tap callback + Snap pulse.
+     *  - Right-click acts as long-press for desktop / trackpad.
+     * We attach raw pointer listeners on the Leaflet container so we get
+     * pageX/pageY for the screen-space pulse without re-projecting through
+     * Leaflet (which would otherwise drift during in-flight zoom).
+     */
+    const container = map.getContainer();
+    const LONG_PRESS_MS = 500;
+    const LONG_PRESS_TOLERANCE_PX = 8;
+    let pressTimer: ReturnType<typeof setTimeout> | null = null;
+    let pressOrigin: { x: number; y: number; clientX: number; clientY: number } | null = null;
+    let longPressFired = false;
+
+    function clearPressTimer() {
+      if (pressTimer) {
+        clearTimeout(pressTimer);
+        pressTimer = null;
+      }
+    }
+
+    function pointerDown(ev: PointerEvent) {
+      if (ev.button !== 0 && ev.pointerType === "mouse") return; // ignore right/middle-click here (handled by contextmenu)
+      pressOrigin = { x: ev.clientX, y: ev.clientY, clientX: ev.clientX, clientY: ev.clientY };
+      longPressFired = false;
+      clearPressTimer();
+      pressTimer = setTimeout(() => {
+        if (!pressOrigin) return;
+        const point = map.mouseEventToLatLng(
+          new MouseEvent("click", { clientX: pressOrigin.clientX, clientY: pressOrigin.clientY })
+        );
+        longPressFired = true;
+        if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+          try { navigator.vibrate?.(18); } catch { /* ignore */ }
+        }
+        spawnSnapPulse(container, pressOrigin.clientX, pressOrigin.clientY, {
+          color: "rgba(244, 63, 94, 0.85)",
+          glow: "rgba(244, 63, 94, 0.45)",
+        });
+        onLongPressRef.current?.(point.lat, point.lng);
+      }, LONG_PRESS_MS);
+    }
+
+    function pointerMove(ev: PointerEvent) {
+      if (!pressOrigin) return;
+      const dx = ev.clientX - pressOrigin.x;
+      const dy = ev.clientY - pressOrigin.y;
+      if (dx * dx + dy * dy > LONG_PRESS_TOLERANCE_PX * LONG_PRESS_TOLERANCE_PX) {
+        clearPressTimer();
+        pressOrigin = null;
+      }
+    }
+
+    function pointerUp() {
+      clearPressTimer();
+      pressOrigin = null;
+    }
+
+    container.addEventListener("pointerdown", pointerDown);
+    container.addEventListener("pointermove", pointerMove);
+    container.addEventListener("pointerup", pointerUp);
+    container.addEventListener("pointercancel", pointerUp);
+    container.addEventListener("pointerleave", pointerUp);
 
     map.on("click", (e: L.LeafletMouseEvent) => {
-      onMapTapRef.current?.(e.latlng.lat, e.latlng.lng);
-
-      const sonar = sonarLayerRef.current;
-      if (!sonar) return;
-      sonar.clearLayers();
-      if (ringsTimeout.id) clearTimeout(ringsTimeout.id);
-
-      const sizePx = 220;
-      const dotPx = 12;
-
-      const dotIcon = L.divIcon({
-        className: "",
-        iconSize: [dotPx, dotPx],
-        iconAnchor: [dotPx / 2, dotPx / 2],
-        html: `<div class="safety-sonar-dot" style="width:${dotPx}px;height:${dotPx}px;"></div>`,
-      });
-      const dotMarker = L.marker(e.latlng, { icon: dotIcon, interactive: false }).addTo(sonar);
-
-      const ringMarkers: L.Marker[] = [];
-      for (let i = 0; i < 3; i++) {
-        const ringIcon = L.divIcon({
-          className: "",
-          iconSize: [sizePx, sizePx],
-          iconAnchor: [sizePx / 2, sizePx / 2],
-          html: `<div class="safety-sonar-ring safety-sonar-ring--${i + 1}" style="width:${sizePx}px;height:${sizePx}px;"></div>`,
-        });
-        ringMarkers.push(L.marker(e.latlng, { icon: ringIcon, interactive: false }).addTo(sonar));
+      if (longPressFired) {
+        longPressFired = false;
+        return;
       }
+      onMapTapRef.current?.(e.latlng.lat, e.latlng.lng);
+      const oe = e.originalEvent as MouseEvent | undefined;
+      if (oe) {
+        spawnSnapPulse(container, oe.clientX, oe.clientY);
+      }
+    });
 
-      ringsTimeout.id = setTimeout(() => {
-        ringMarkers.forEach((m) => sonar.removeLayer(m));
-        ringsTimeout.id = null;
-      }, 2200);
-
-      void dotMarker;
+    map.on("contextmenu", (e: L.LeafletMouseEvent) => {
+      const oe = e.originalEvent as MouseEvent | undefined;
+      oe?.preventDefault();
+      if (oe) {
+        spawnSnapPulse(container, oe.clientX, oe.clientY, {
+          color: "rgba(244, 63, 94, 0.85)",
+          glow: "rgba(244, 63, 94, 0.45)",
+        });
+      }
+      onLongPressRef.current?.(e.latlng.lat, e.latlng.lng);
     });
 
     return () => {
+      container.removeEventListener("pointerdown", pointerDown);
+      container.removeEventListener("pointermove", pointerMove);
+      container.removeEventListener("pointerup", pointerUp);
+      container.removeEventListener("pointercancel", pointerUp);
+      container.removeEventListener("pointerleave", pointerUp);
+      clearPressTimer();
       map.off("zoom", syncIncidentZoom);
       map.off("zoomend", syncIncidentZoom);
+      map.off("moveend", scheduleHashWrite);
+      map.off("zoomend", scheduleHashWrite);
+      if (hashWriteTimer) clearTimeout(hashWriteTimer);
       cancelAnimationFrame(zoomRaf);
       map.remove();
       mapRef.current = null;
@@ -1094,10 +1203,55 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     return () => { highlight?.clearLayers(); };
   }, [selectedId, incidents, flyToOffset]);
 
+  // Sticky dropped-pin marker (long-press / right-click)
   useEffect(() => {
-    if (!mapTapActive && sonarLayerRef.current) {
-      sonarLayerRef.current.clearLayers();
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (!droppedPin) {
+      if (droppedPinMarkerRef.current) {
+        map.removeLayer(droppedPinMarkerRef.current);
+        droppedPinMarkerRef.current = null;
+      }
+      return;
     }
+
+    const pinIcon = L.divIcon({
+      className: "",
+      iconSize: [36, 46],
+      iconAnchor: [18, 44],
+      html: `<div class="dropped-pin-marker" aria-hidden="true">
+        <svg viewBox="0 0 36 46" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <radialGradient id="pp-drop-pin-grad" cx="50%" cy="35%" r="60%">
+              <stop offset="0" stop-color="#fecaca"/>
+              <stop offset="0.55" stop-color="#ef4444"/>
+              <stop offset="1" stop-color="#7f1d1d"/>
+            </radialGradient>
+          </defs>
+          <path d="M18 1 C8 1 2 8 2 16 C2 28 18 44 18 44 C18 44 34 28 34 16 C34 8 28 1 18 1 Z"
+            fill="url(#pp-drop-pin-grad)" stroke="#7f1d1d" stroke-width="1.4"/>
+          <circle cx="18" cy="16" r="5.5" fill="#fff" opacity="0.92"/>
+          <circle cx="18" cy="16" r="2.5" fill="#7f1d1d"/>
+        </svg>
+      </div>`,
+    });
+
+    if (droppedPinMarkerRef.current) {
+      droppedPinMarkerRef.current.setLatLng([droppedPin.lat, droppedPin.lng]);
+      droppedPinMarkerRef.current.setIcon(pinIcon);
+    } else {
+      droppedPinMarkerRef.current = L.marker([droppedPin.lat, droppedPin.lng], {
+        icon: pinIcon,
+        zIndexOffset: 5000,
+        interactive: false,
+      }).addTo(map);
+    }
+  }, [droppedPin]);
+
+  // Kept for back-compat with the old "tap mode" prop; currently a no-op.
+  useEffect(() => {
+    void mapTapActive;
   }, [mapTapActive]);
 
   // District overlay ref for click callbacks

@@ -2,11 +2,48 @@ import type { Incident } from "./api";
 import { getCurrentCity } from "./pulse-cities";
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+const NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
 
 export interface GeoResult {
   display_name: string;
   lat: number;
   lng: number;
+}
+
+/** Reverse geocode lat/lng → human-readable address via Nominatim. Returns
+ * a short label (street + neighborhood) or null on failure. Caller should
+ * fall back to "lat, lng" if null. */
+export async function reverseGeocode(
+  lat: number,
+  lng: number
+): Promise<string | null> {
+  try {
+    const params = new URLSearchParams({
+      lat: lat.toFixed(6),
+      lon: lng.toFixed(6),
+      format: "jsonv2",
+      zoom: "18",
+      addressdetails: "1",
+    });
+    const res = await fetch(`${NOMINATIM_REVERSE_URL}?${params}`, {
+      headers: { "User-Agent": "PHLPulse/0.1" },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      display_name?: string;
+      address?: Record<string, string | undefined>;
+    };
+    const a = data.address ?? {};
+    const street = [a.house_number, a.road].filter(Boolean).join(" ");
+    const area =
+      a.neighbourhood || a.suburb || a.city_district || a.town || a.city || "";
+    if (street && area) return `${street}, ${area}`;
+    if (street) return street;
+    if (area) return area;
+    return data.display_name?.split(",").slice(0, 2).join(",").trim() ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export interface SafetyResult {

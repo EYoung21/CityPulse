@@ -3,6 +3,7 @@
 import { Shield, MapPin, X, AlertTriangle, CheckCircle } from "lucide-react";
 import type { Incident } from "@/lib/api";
 import { assessSafety } from "@/lib/search";
+import PlaceActions from "@/components/PlaceActions";
 
 interface Props {
   lat: number;
@@ -44,8 +45,13 @@ export default function SafetyScoreCard({ lat, lng, incidents, onClose }: Props)
               {result.riskLevel} Risk Area
             </span>
           </div>
-          <button onClick={onClose} className="p-0.5" style={{ color: "var(--panel-text-muted)" }}>
-            <X className="w-3.5 h-3.5" />
+          <button
+            onClick={onClose}
+            className="p-1 -m-1"
+            style={{ color: "var(--panel-text-muted)" }}
+            aria-label="Close safety score"
+          >
+            <X className="w-4 h-4" />
           </button>
         </div>
       </div>
@@ -85,8 +91,12 @@ export default function SafetyScoreCard({ lat, lng, incidents, onClose }: Props)
           </div>
         )}
 
-        <p className="text-[9px] text-center pt-1" style={{ color: "var(--panel-text-muted)" }}>
-          Tap anywhere on the map to check safety
+        <div className="h-px" style={{ background: "var(--panel-border)" }} />
+
+        <PlaceActions lat={lat} lng={lng} />
+
+        <p className="text-[9px] text-center pt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+          Tap to score · long-press to drop a pin
         </p>
       </div>
     </div>
