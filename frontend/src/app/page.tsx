@@ -45,6 +45,10 @@ import SharedTripCard from "@/components/SharedTripCard";
 import SpeedChip from "@/components/SpeedChip";
 import TripRecapCard, { type TripRecap } from "@/components/TripRecapCard";
 import OffscreenIncidentChip from "@/components/OffscreenIncidentChip";
+import IncidentAheadChip from "@/components/IncidentAheadChip";
+import { distanceAlongRoute } from "@/lib/routing";
+import { notifyIfBackgrounded } from "@/lib/notifications";
+import { getSeverity } from "@/lib/severity";
 import { useDeviceHeading } from "@/hooks/useDeviceHeading";
 import { useGpsSpeed } from "@/hooks/useGpsSpeed";
 import { decodeTripToken, type DecodedTripToken } from "@/lib/share-trip";
@@ -488,7 +492,72 @@ export default function Home() {
     const bearingDeg = ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 
     setOffscreenAlert({ incident: best.inc, bearingDeg });
+
+    // If the page isn't visible (user has switched tabs / locked phone),
+    // also fire a Web Notification so they don't miss the alert. Same
+    // severity threshold (`w >= 0.55`) so chip + notification stay in
+    // sync. The notification is a no-op when the tab is foregrounded
+    // or the user has denied permission, so it's safe to call always.
+    void (async () => {
+      const inc = best.inc;
+      const sev = getSeverity(inc.severity_category);
+      await notifyIfBackgrounded({
+        title: `${sev.label} reported nearby`,
+        body: inc.location_text || "Tap to view on the map",
+        tag: `pp-incident-${inc.id}`,
+        onClick: () => {
+          if (inc.lat != null && inc.lng != null) {
+            mapRef.current?.flyTo(inc.lat, inc.lng, 16);
+          }
+          setSelectedId(inc.id);
+        },
+      });
+    })();
   }, [incidents, offscreenAlert]);
+
+  // Incident-ahead-on-route detection: while a trip is active, scan
+  // every incident for high-severity ones whose closest point on the
+  // trip polyline is (a) within ~75 m of the route, and (b) further
+  // along the route than where the user currently is. Pick the
+  // *nearest* such incident — same metric Maps uses for its "Crash
+  // ahead" callouts. Re-runs on either incident updates or user move
+  // (debounced via the dependency array). Dismissed IDs persist for
+  // the trip lifetime via `aheadDismissedRef`.
+  const aheadDismissedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!tripGeometry) {
+      aheadDismissedRef.current.clear();
+      setAheadAlert(null);
+    }
+  }, [tripGeometry]);
+  const [aheadAlert, setAheadAlert] = useState<{ incident: Incident; distanceM: number } | null>(null);
+  useEffect(() => {
+    if (!tripGeometry || !userLocation) {
+      if (aheadAlert) setAheadAlert(null);
+      return;
+    }
+    const userProj = distanceAlongRoute(
+      [userLocation.lat, userLocation.lng],
+      tripGeometry
+    );
+    if (!userProj) return;
+
+    let best: { inc: Incident; distM: number } | null = null;
+    for (const inc of incidents) {
+      if (inc.lat == null || inc.lng == null) continue;
+      if (aheadDismissedRef.current.has(inc.id)) continue;
+      const w = inc.w_eff ?? 0.5;
+      if (w < 0.55) continue; // mirror off-screen-chip threshold
+      const proj = distanceAlongRoute([inc.lat, inc.lng], tripGeometry);
+      if (!proj) continue;
+      if (proj.offsetM > 75) continue; // must be on/very-near route
+      const ahead = proj.alongM - userProj.alongM;
+      if (ahead < 30) continue;       // already passed (or under us)
+      if (ahead > 1500) continue;     // out of "soon" range
+      if (!best || ahead < best.distM) best = { inc, distM: ahead };
+    }
+    setAheadAlert(best ? { incident: best.inc, distanceM: best.distM } : null);
+  }, [tripGeometry, userLocation, incidents, aheadAlert]);
 
   useEffect(() => {
     if (!API_BASE) return;
@@ -743,6 +812,7 @@ export default function Home() {
         tripProgress={tripProgress}
         onGpsStatusChange={setGpsStatus}
         timeFilterLabel={activeTimeLabel}
+        timeFilterHours={timeFilter}
         trendPct={trendPct}
         hotNeighborhoods={hotNeighborhoods}
         categoryBreakdown={categoryBreakdown}
@@ -866,6 +936,27 @@ export default function Home() {
           onDismiss={() => {
             dismissedAlertIdsRef.current.add(offscreenAlert.incident.id);
             setOffscreenAlert(null);
+          }}
+        />
+      )}
+
+      {/* Incident-ahead chip — only shown during an active trip when
+          there's a high-severity incident on the route in front of
+          the user. Tap to fly to it; X to dismiss for the trip. */}
+      {aheadAlert && (
+        <IncidentAheadChip
+          incident={aheadAlert.incident}
+          distanceM={aheadAlert.distanceM}
+          onTap={() => {
+            const { incident } = aheadAlert;
+            if (incident.lat != null && incident.lng != null) {
+              mapRef.current?.flyTo(incident.lat, incident.lng, 17);
+            }
+            setSelectedId(incident.id);
+          }}
+          onDismiss={() => {
+            aheadDismissedRef.current.add(aheadAlert.incident.id);
+            setAheadAlert(null);
           }}
         />
       )}

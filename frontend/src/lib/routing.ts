@@ -92,27 +92,92 @@ export const AVOIDANCE_CATEGORIES = [
 
 export type AvoidCategoryId = typeof AVOIDANCE_CATEGORIES[number]["id"];
 
-export const DEFAULT_AVOID_CATS: Set<AvoidCategoryId> = new Set(["violent", "fire"]);
+/** Human-readable name for each raw `severity_category` value. Used by
+ *  the per-leaf checkbox UI inside each avoidance bucket. */
+export const LEAF_LABELS: Record<string, string> = {
+  violent_weapon:          "Armed violence",
+  violent_no_weapon:       "Unarmed violence",
+  shots_heard:             "Shots fired",
+  robbery:                 "Robbery",
+  burglary_in_progress:    "Burglary in progress",
+  fire_hazmat:             "Fire / hazmat",
+  medical_priority:        "Medical (priority)",
+  medical_other:           "Medical (other)",
+  traffic_crash_injury:    "Crash with injuries",
+  traffic_crash_no_injury: "Crash, no injuries",
+  disorder:                "Disorder",
+  admin_or_noise:          "Admin / noise",
+};
+
+/** Default leaf categories the user is opted into avoiding on first
+ *  visit — equivalent to the prior bucket-level default of
+ *  ["violent", "fire"]. */
+export const DEFAULT_AVOID_LEAVES: ReadonlySet<string> = new Set([
+  ...AVOIDANCE_CATEGORIES.find((b) => b.id === "violent")!.cats,
+  ...AVOIDANCE_CATEGORIES.find((b) => b.id === "fire")!.cats,
+]);
+
+/** Severity floor applied alongside the per-leaf set — only incidents
+ *  with `w_eff >= minSeverity` and a checked leaf cat make it into the
+ *  avoidance zones. The four constants line up with the four pill stops
+ *  rendered in the UI (Any / Low+ / Medium+ / High+). */
+export const SEVERITY_FLOORS = {
+  any: 0,
+  low: 0.25,
+  medium: 0.5,
+  high: 0.75,
+} as const;
+export type SeverityFloor = keyof typeof SEVERITY_FLOORS;
+
+export interface AvoidancePrefs {
+  /** Raw `severity_category` values the user wants routing to avoid. */
+  leaves: Set<string>;
+  /** Floor on `w_eff`. Defaults to `"low"` (0.25), which matches the
+   *  threshold the legacy `buildAvoidZones` baked in implicitly. */
+  minSeverity: SeverityFloor;
+}
+
+export function defaultAvoidancePrefs(): AvoidancePrefs {
+  return {
+    leaves: new Set(DEFAULT_AVOID_LEAVES),
+    minSeverity: "low",
+  };
+}
+
+/** Backwards-compat shim: any older call site still passing the
+ *  bucket-level `Set<AvoidCategoryId>` gets converted to the new shape
+ *  with the legacy 0.25 floor. Prefer passing `AvoidancePrefs` directly. */
+export function avoidCatsToPrefs(buckets: Set<AvoidCategoryId>): AvoidancePrefs {
+  const leaves = new Set<string>();
+  for (const ac of AVOIDANCE_CATEGORIES) {
+    if (buckets.has(ac.id)) {
+      for (const c of ac.cats) leaves.add(c);
+    }
+  }
+  return { leaves, minSeverity: "low" };
+}
 
 export function buildAvoidZones(
   incidents: Incident[],
-  avoidCats?: Set<AvoidCategoryId>
+  prefsOrCats?: AvoidancePrefs | Set<AvoidCategoryId>
 ): AvoidZone[] {
-  const cats = avoidCats ?? DEFAULT_AVOID_CATS;
-  const allowedSeverityCats = new Set<string>();
-  for (const ac of AVOIDANCE_CATEGORIES) {
-    if (cats.has(ac.id)) {
-      for (const c of ac.cats) allowedSeverityCats.add(c);
-    }
+  let prefs: AvoidancePrefs;
+  if (!prefsOrCats) {
+    prefs = defaultAvoidancePrefs();
+  } else if (prefsOrCats instanceof Set) {
+    prefs = avoidCatsToPrefs(prefsOrCats);
+  } else {
+    prefs = prefsOrCats;
   }
+  const floor = SEVERITY_FLOORS[prefs.minSeverity];
 
   return incidents
     .filter(
       (inc) =>
         inc.lat != null &&
         inc.lng != null &&
-        (inc.w_eff ?? 0) > 0.25 &&
-        (allowedSeverityCats.size === 0 || allowedSeverityCats.has(inc.severity_category))
+        (inc.w_eff ?? 0) >= floor &&
+        (prefs.leaves.size === 0 || prefs.leaves.has(inc.severity_category))
     )
     .map((inc) => ({
       center: [inc.lat!, inc.lng!] as [number, number],
@@ -120,11 +185,84 @@ export function buildAvoidZones(
     }));
 }
 
+/** Hard ceiling on how many `avoid_polygons` we'll send to ORS. The
+ *  service rejects oversized requests (and even when it accepts, perf
+ *  collapses past a few hundred shapes). When historical time windows
+ *  push us past this we drop the lowest-weight clusters. */
+export const MAX_AVOID_ZONES = 200;
+
+/** Greedy clustering pass over a list of avoid zones. Each cluster
+ *  swallows any zone whose center is inside (its radius + the new
+ *  zone's radius), recomputing a weighted centroid and an enlarged
+ *  radius that fully contains both inputs. Returns at most
+ *  `MAX_AVOID_ZONES` clusters; anything past the cap is dropped
+ *  starting from the lowest-weighted. */
+export function mergeAvoidZones(zones: AvoidZone[]): AvoidZone[] {
+  if (zones.length <= 1) return zones.slice();
+
+  // Local working copy with a weight scalar so the centroid math has
+  // somewhere to accumulate. We reuse `radiusM` directly as the weight
+  // so larger / more-confident incidents dominate the merge result.
+  interface Cluster {
+    center: [number, number];
+    radiusM: number;
+    weight: number;
+  }
+  const sorted = [...zones].sort((a, b) => b.radiusM - a.radiusM);
+  const clusters: Cluster[] = [];
+  for (const z of sorted) {
+    let merged = false;
+    for (const c of clusters) {
+      const d = haversineMeters(c.center, z.center);
+      if (d <= c.radiusM + z.radiusM) {
+        // Weighted centroid (lat/lng combined separately is fine at
+        // city scale).
+        const w1 = c.weight, w2 = z.radiusM;
+        const wTot = w1 + w2;
+        c.center = [
+          (c.center[0] * w1 + z.center[0] * w2) / wTot,
+          (c.center[1] * w1 + z.center[1] * w2) / wTot,
+        ];
+        c.radiusM = Math.max(c.radiusM, d + z.radiusM);
+        c.weight = wTot;
+        merged = true;
+        break;
+      }
+    }
+    if (!merged) {
+      clusters.push({ center: z.center, radiusM: z.radiusM, weight: z.radiusM });
+    }
+  }
+
+  // Cap to MAX_AVOID_ZONES, keeping the heaviest clusters.
+  clusters.sort((a, b) => b.weight - a.weight);
+  return clusters.slice(0, MAX_AVOID_ZONES).map((c) => ({
+    center: c.center,
+    radiusM: c.radiusM,
+  }));
+}
+
+/** Great-circle distance between two [lat, lng] pairs, in meters. */
+function haversineMeters(a: [number, number], b: [number, number]): number {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b[0] - a[0]);
+  const dLng = toRad(b[1] - a[1]);
+  const lat1 = toRad(a[0]);
+  const lat2 = toRad(b[0]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
 export function buildAvoidPolygons(
   zones: AvoidZone[]
 ): GeoJSON.MultiPolygon | null {
   if (zones.length === 0) return null;
-  const polygons = zones.map((z) =>
+  // Always run the merge pass: at typical (sub-day) windows it's a near
+  // no-op (few or no overlaps), but at month/3-month windows it keeps
+  // the request under the MAX_AVOID_ZONES ceiling so ORS will accept it.
+  const merged = mergeAvoidZones(zones);
+  const polygons = merged.map((z) =>
     [circleToPolygon(z.center[0], z.center[1], z.radiusM)]
   );
   return {
@@ -134,6 +272,71 @@ export function buildAvoidPolygons(
 }
 
 /** Check if a point is within `thresholdKm` of any segment of a route. */
+/** Returns the (approximate) distance in meters along `route` from the
+ *  point on the polyline closest to `point`. Used to decide whether
+ *  an incident is "ahead of" the user vs already passed: if the
+ *  incident's projected distance is greater than the user's, it's
+ *  ahead. Polyline is treated as a sequence of great-circle segments
+ *  but accumulated with simple haversine — accuracy is plenty at
+ *  city-block scale. */
+export function distanceAlongRoute(
+  point: [number, number],
+  route: [number, number][]
+): { alongM: number; offsetM: number } | null {
+  if (route.length < 2) return null;
+  let bestAlong = 0;
+  let bestOffset = Infinity;
+  let cumulative = 0;
+  for (let i = 0; i < route.length - 1; i++) {
+    const a = route[i];
+    const b = route[i + 1];
+    const segLen = haversineMetersAB(a, b);
+    // Project point onto segment in equirectangular space (cheap).
+    const proj = projectOntoSegment(point, a, b);
+    const dToProj = haversineMetersAB(point, proj.point);
+    if (dToProj < bestOffset) {
+      bestOffset = dToProj;
+      bestAlong = cumulative + proj.t * segLen;
+    }
+    cumulative += segLen;
+  }
+  return { alongM: bestAlong, offsetM: bestOffset };
+}
+
+function haversineMetersAB(a: [number, number], b: [number, number]): number {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b[0] - a[0]);
+  const dLng = toRad(b[1] - a[1]);
+  const lat1 = toRad(a[0]);
+  const lat2 = toRad(b[0]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function projectOntoSegment(
+  p: [number, number],
+  a: [number, number],
+  b: [number, number]
+): { point: [number, number]; t: number } {
+  // Tiny equirectangular projection centered on `a` so we can do plane
+  // dot products. At Philly latitudes the error vs spherical is well
+  // below the radii we care about (10s of meters).
+  const cosLat = Math.cos((a[0] * Math.PI) / 180);
+  const ax = 0, ay = 0;
+  const bx = (b[1] - a[1]) * cosLat, by = b[0] - a[0];
+  const px = (p[1] - a[1]) * cosLat, py = p[0] - a[0];
+  const dx = bx - ax, dy = by - ay;
+  const segLenSq = dx * dx + dy * dy;
+  if (segLenSq === 0) return { point: a, t: 0 };
+  let t = ((px - ax) * dx + (py - ay) * dy) / segLenSq;
+  t = Math.max(0, Math.min(1, t));
+  return {
+    point: [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])],
+    t,
+  };
+}
+
 export function isNearRoute(
   lat: number,
   lng: number,
