@@ -16,6 +16,7 @@ import {
   RotateCcw,
   Volume2,
 } from "lucide-react";
+import PlaceActions from "@/components/PlaceActions";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -411,6 +412,19 @@ export default function IncidentDetail({ incident, onClose }: Props) {
             </div>
           ))}
         </div>
+
+        {incident.lat != null && incident.lng != null && (
+          <div className="pt-1" style={{ borderTop: "1px solid var(--panel-border)" }}>
+            <div className="pt-2.5">
+              <PlaceActions
+                lat={incident.lat}
+                lng={incident.lng}
+                label={incident.location_text ?? undefined}
+                incidentId={incident.id}
+              />
+            </div>
+          </div>
+        )}
 
         {incident.inhibitor_status !== "passed" && (
           <div className="flex items-center gap-2 text-xs text-amber-500 bg-amber-500/10 rounded-lg px-3 py-2">

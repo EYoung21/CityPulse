@@ -206,6 +206,29 @@ export default function SearchSidebar({
     [originLoc, onPreviewPins]
   );
 
+  /** Listen for cross-component "plan a route to/from this place" events
+   *  dispatched by PlaceActions buttons inside cards. mode:"to" pre-fills
+   *  the destination; mode:"from" pre-fills the origin. */
+  useEffect(() => {
+    function handler(e: Event) {
+      const detail = (e as CustomEvent<{ mode: "to" | "from"; lat: number; lng: number; label: string }>).detail;
+      if (!detail) return;
+      const { mode, lat, lng, label } = detail;
+      if (mode === "to") {
+        setDestQuery(label);
+        setDestLoc({ display_name: label, lat, lng });
+        onPreviewPins?.(originLoc, { lat, lng });
+      } else {
+        setOriginQuery(label);
+        setOriginLoc({ display_name: label, lat, lng });
+        onPreviewPins?.({ lat, lng }, destLocRef.current ? { lat: destLocRef.current.lat, lng: destLocRef.current.lng } : null);
+      }
+      setView("directions");
+    }
+    window.addEventListener("pp:plan-route", handler);
+    return () => window.removeEventListener("pp:plan-route", handler);
+  }, [originLoc, onPreviewPins]);
+
   const startTrip = useCallback(async () => {
     if (!originLoc || !destLoc) return;
     const waypoints: [number, number][] = [

@@ -280,40 +280,121 @@
   animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
 }
 
-/* Safety-pulse sonar ripple (Snap Map style tap-to-discover) */
-@keyframes safety-sonar {
-  0% {
-    transform: scale(0);
-    opacity: 0.7;
-  }
-  70% {
-    opacity: 0.15;
-  }
-  100% {
-    transform: scale(1);
-    opacity: 0;
-  }
-}
-.safety-sonar-ring {
+/* === Snap-Map-style tap pulse (screen-space DOM overlay) ===
+ * Stack: map-plane perspective tilt -> sweep arm -> radial burst ->
+ * 3 staggered concentric rings -> sparkle particles -> bright core dot.
+ * Anchored at the tap point via top/left set inline. */
+.snap-pulse-stage {
   position: absolute;
+  pointer-events: none;
+  z-index: 600; /* above heatmap (200), below popups (700) */
+  width: 240px;
+  height: 240px;
+  transform: translate(-50%, -50%) perspective(620px) rotateX(58deg);
+  transform-style: preserve-3d;
+  --pp-pulse-color: rgba(59, 130, 246, 0.85);
+  --pp-pulse-glow:  rgba(59, 130, 246, 0.45);
+  will-change: transform, opacity;
+}
+.snap-pulse-stage > * {
+  position: absolute;
+  left: 50%;
+  top: 50%;
   border-radius: 50%;
   pointer-events: none;
-  border: 2px solid rgba(59, 130, 246, 0.6);
-  box-shadow: 0 0 20px rgba(59, 130, 246, 0.25), inset 0 0 20px rgba(59, 130, 246, 0.08);
-  animation: safety-sonar 1.6s cubic-bezier(0.16, 0.84, 0.44, 1) forwards;
 }
-.safety-sonar-ring--2 { animation-delay: 0.3s; }
-.safety-sonar-ring--3 { animation-delay: 0.6s; }
-.safety-sonar-dot {
+.snap-pulse-ring {
+  width: 0; height: 0;
+  border: 2px solid var(--pp-pulse-color);
+  box-shadow: 0 0 22px var(--pp-pulse-glow);
+  animation: snap-pulse-ring 1.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.snap-pulse-ring--2 { animation-delay: 0.16s; }
+.snap-pulse-ring--3 { animation-delay: 0.32s; }
+@keyframes snap-pulse-ring {
+  0%   { width: 0;     height: 0;     opacity: 0.9;  margin-left:   0;  margin-top:   0;  }
+  70%  { width: 220px; height: 220px; opacity: 0.25; margin-left: -110px; margin-top: -110px; }
+  100% { width: 240px; height: 240px; opacity: 0;    margin-left: -120px; margin-top: -120px; }
+}
+.snap-pulse-burst {
+  width: 200px; height: 200px;
+  margin: -100px 0 0 -100px;
+  background: radial-gradient(circle, var(--pp-pulse-glow) 0%, rgba(59,130,246,0) 70%);
+  mix-blend-mode: screen;
+  animation: snap-pulse-burst 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+@keyframes snap-pulse-burst {
+  0%   { transform: scale(0);   opacity: 0.7; }
+  100% { transform: scale(1.4); opacity: 0;   }
+}
+.snap-pulse-sweep {
+  width: 220px; height: 220px;
+  margin: -110px 0 0 -110px;
+  background: conic-gradient(from 0deg,
+    transparent 0deg,
+    var(--pp-pulse-color) 28deg,
+    rgba(59,130,246,0.15) 90deg,
+    transparent 130deg);
+  -webkit-mask: radial-gradient(circle, transparent 18px, #000 22px, #000 108px, transparent 110px);
+          mask: radial-gradient(circle, transparent 18px, #000 22px, #000 108px, transparent 110px);
+  mix-blend-mode: screen;
+  animation: snap-pulse-sweep 0.85s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes snap-pulse-sweep {
+  0%   { transform: rotate(0deg);   opacity: 0.85; }
+  90%  {                            opacity: 0.05; }
+  100% { transform: rotate(420deg); opacity: 0;    }
+}
+.snap-pulse-particles span {
   position: absolute;
+  left: 0; top: 0;
+  width: 4px; height: 4px;
   border-radius: 50%;
-  pointer-events: none;
-  background: radial-gradient(circle, rgba(59, 130, 246, 0.9) 0%, rgba(59, 130, 246, 0.3) 50%, transparent 70%);
-  animation: safety-dot-pulse 2.4s ease-in-out infinite;
+  background: #fff;
+  box-shadow: 0 0 6px var(--pp-pulse-color);
+  animation: snap-pulse-particle 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
-@keyframes safety-dot-pulse {
-  0%, 100% { transform: scale(0.8); opacity: 0.6; }
-  50% { transform: scale(1.2); opacity: 1; }
+@keyframes snap-pulse-particle {
+  0%   { transform: rotate(var(--a, 0deg)) translateX(0)         scale(1);   opacity: 1; }
+  100% { transform: rotate(var(--a, 0deg)) translateX(var(--d, 90px)) scale(0.4); opacity: 0; }
+}
+.snap-pulse-core {
+  width: 16px; height: 16px;
+  margin: -8px 0 0 -8px;
+  background: radial-gradient(circle, #fff 0%, var(--pp-pulse-color) 60%, transparent 100%);
+  box-shadow: 0 0 18px rgba(59,130,246,0.85), 0 0 6px #fff;
+  transform: scale(0);
+  animation: snap-pulse-core 1.2s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+@keyframes snap-pulse-core {
+  0%   { transform: scale(0);    opacity: 0;   }
+  18%  { transform: scale(1.35); opacity: 1;   }
+  35%  { transform: scale(1);    opacity: 1;   }
+  85%  {                         opacity: 0.85; }
+  100% { transform: scale(0.8);  opacity: 0;   }
+}
+@media (prefers-reduced-motion: reduce) {
+  .snap-pulse-stage * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
+  .snap-pulse-stage { transform: translate(-50%, -50%); }
+}
+
+/* === Dropped pin (long-press) — sticky red marker with subtle bob === */
+.dropped-pin-marker {
+  width: 36px;
+  height: 46px;
+  position: relative;
+  filter: drop-shadow(0 4px 6px rgba(0,0,0,0.45));
+  animation: dropped-pin-drop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  transform-origin: 50% 100%;
+}
+.dropped-pin-marker svg { display: block; width: 100%; height: 100%; }
+@keyframes dropped-pin-drop {
+  0%   { transform: translateY(-260px) scale(0.6); opacity: 0; }
+  60%  { transform: translateY(0)      scale(1.15); opacity: 1; }
+  100% { transform: translateY(0)      scale(1);   opacity: 1; }
 }
 .animate-glow-breathe {
   animation: glow-breathe 3s ease-in-out infinite;
@@ -373,6 +454,29 @@
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* === Safe-area helpers (iOS notch / home indicator) ===
+ * Use viewport-fit=cover in <meta name="viewport"> for these to apply. */
+.safe-pt { padding-top:    max(0.5rem, env(safe-area-inset-top, 0px)); }
+.safe-pb { padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px)); }
+.safe-pl { padding-left:   max(0.5rem, env(safe-area-inset-left, 0px)); }
+.safe-pr { padding-right:  max(0.5rem, env(safe-area-inset-right, 0px)); }
+
+/* Lift fixed bottom UI above the iOS home indicator without clipping content. */
+.safe-bottom-offset {
+  bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+}
+.safe-top-offset {
+  top: calc(0.75rem + env(safe-area-inset-top, 0px));
+}
+
+/* Mobile-only: lift bottom controls above iOS home indicator. */
+.pp-bottom-controls {
+  bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+}
+@media (min-width: 768px) {
+  .pp-bottom-controls { bottom: 4.5rem; }
 }
 
 /* Custom scrollbar for sidebar */

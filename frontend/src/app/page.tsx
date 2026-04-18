@@ -37,6 +37,7 @@ import IncidentDetail from "@/components/IncidentDetail";
 import ClusterListPanel from "@/components/ClusterListPanel";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
 import DistrictCard from "@/components/DistrictCard";
+import DroppedPinCard from "@/components/DroppedPinCard";
 import type { MapHandle, WaypointPin } from "@/components/IncidentMap";
 import {
   fetchIncidents,
@@ -153,6 +154,7 @@ export default function Home() {
   const [timeFilter, setTimeFilter] = useState(24);
   const [activeCats, setActiveCats] = useState<Set<string>>(new Set());
   const [mapTap, setMapTap] = useState<{ lat: number; lng: number } | null>(null);
+  const [droppedPin, setDroppedPin] = useState<{ lat: number; lng: number } | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [tripGeometry, setTripGeometry] = useState<[number, number][] | null>(null);
   const [tripMode, setTripMode] = useState<string | null>(null);
@@ -176,6 +178,69 @@ export default function Home() {
   const [showUpgrade, setShowUpgrade] = useState<string | null>(null);
   const [feedLabels, setFeedLabels] = useState<Record<string, string>>(DEFAULT_FEED_LABELS);
   const mapRef = useRef<MapHandle>(null);
+
+  // When PlaceActions in any card requests directions, ensure the sidebar
+  // is visible (mobile auto-collapses) and dismiss the lightweight overlays.
+  useEffect(() => {
+    function handler() {
+      setSidebarOpen(true);
+      setMapTap(null);
+      setDroppedPin(null);
+    }
+    window.addEventListener("pp:plan-route", handler);
+    return () => window.removeEventListener("pp:plan-route", handler);
+  }, []);
+
+  /** Deep-link bootstrap (read once on mount):
+   *   ?incident=<id>            → select that incident when it arrives in the feed
+   *   ?lat=&lng=&zoom=16        → drop a SafetyScoreCard at that point + fly to it
+   *   #zoom/lat/lng (handled by IncidentMap) → set initial map view
+   * After applying we strip the query string so a refresh doesn't re-trigger. */
+  const pendingDeepIncidentRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const incidentParam = params.get("incident");
+    const latParam = params.get("lat");
+    const lngParam = params.get("lng");
+    const zoomParam = params.get("zoom");
+
+    if (incidentParam) {
+      pendingDeepIncidentRef.current = incidentParam;
+    } else if (latParam && lngParam) {
+      const lat = parseFloat(latParam);
+      const lng = parseFloat(lngParam);
+      const zoom = zoomParam ? parseInt(zoomParam, 10) : 16;
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        setMapTap({ lat, lng });
+        // Defer flyTo until the map has mounted (next frame is enough).
+        requestAnimationFrame(() => {
+          mapRef.current?.flyTo(lat, lng, Number.isFinite(zoom) ? zoom : 16);
+        });
+      }
+    }
+
+    if (incidentParam || latParam || lngParam || zoomParam) {
+      const cleaned = new URL(window.location.href);
+      ["incident", "lat", "lng", "zoom"].forEach((k) => cleaned.searchParams.delete(k));
+      window.history.replaceState({}, "", cleaned.toString());
+    }
+  }, []);
+
+  // Apply ?incident=<id> once the feed has the matching record.
+  useEffect(() => {
+    const id = pendingDeepIncidentRef.current;
+    if (!id || incidents.length === 0) return;
+    const found = incidents.find((i) => i.id === id);
+    if (!found) return;
+    pendingDeepIncidentRef.current = null;
+    setSelectedId(id);
+    if (found.lat != null && found.lng != null) {
+      requestAnimationFrame(() => {
+        mapRef.current?.flyTo(found.lat!, found.lng!, 16);
+      });
+    }
+  }, [incidents]);
 
   useEffect(() => {
     const url = `${API_BASE}/api/admin/feeds`;
@@ -394,9 +459,11 @@ export default function Home() {
         ref={mapRef}
         incidents={filteredIncidents}
         selectedId={selectedId}
-        onSelectIncident={(id) => { setMapTap(null); setSelectedId(id); if (window.innerWidth < 768) setSidebarOpen(false); }}
+        onSelectIncident={(id) => { setMapTap(null); setDroppedPin(null); setSelectedId(id); if (window.innerWidth < 768) setSidebarOpen(false); }}
         routes={routes}
-        onMapTap={(lat, lng) => { setSelectedId(null); setMapTap({ lat, lng }); }}
+        onMapTap={(lat, lng) => { setSelectedId(null); setDroppedPin(null); setMapTap({ lat, lng }); }}
+        onLongPress={(lat, lng) => { setSelectedId(null); setMapTap(null); setDroppedPin({ lat, lng }); }}
+        droppedPin={droppedPin}
         mapTapActive={mapTap !== null}
         userLocation={userLocation}
         tripRouteGeometry={tripGeometry}
@@ -533,7 +600,7 @@ export default function Home() {
       </div>
 
       {/* Bottom-right controls (lifted so map markers under corner overlap UI less) */}
-      <div className="absolute bottom-[4.5rem] max-md:bottom-3 right-3 z-[1001] flex flex-col items-end gap-1.5 md:gap-2 pointer-events-auto">
+      <div className="absolute md:bottom-[4.5rem] pp-bottom-controls right-3 z-[1001] flex flex-col items-end gap-1.5 md:gap-2 pointer-events-auto">
         <button
           type="button"
           onClick={goToMyLocation}
@@ -816,7 +883,7 @@ export default function Home() {
 
       {/* Safety Score Card */}
       <AnimatePresence>
-        {mapTap && !selected && !showAnalytics && (
+        {mapTap && !selected && !droppedPin && !showAnalytics && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -828,6 +895,24 @@ export default function Home() {
               lng={mapTap.lng}
               incidents={filteredIncidents}
               onClose={() => setMapTap(null)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Dropped Pin Card (long-press / right-click) */}
+      <AnimatePresence>
+        {droppedPin && !selected && !showAnalytics && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[396px] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
+          >
+            <DroppedPinCard
+              lat={droppedPin.lat}
+              lng={droppedPin.lng}
+              onClose={() => setDroppedPin(null)}
             />
           </motion.div>
         )}
