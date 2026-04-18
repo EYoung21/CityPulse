@@ -33,6 +33,72 @@ import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
 import RouteOptionPicker from "@/components/RouteOptionPicker";
 import AvoidancePrefsPicker from "@/components/AvoidancePrefsPicker";
+import RideshareLinks from "@/components/RideshareLinks";
+import { Reorder, useDragControls } from "framer-motion";
+import { GripVertical } from "lucide-react";
+
+/** A single draggable stop row. Lives outside DirectionsPanel so each
+ *  row owns its own `useDragControls()` hook (calling hooks inside a
+ *  loop would violate the rules of hooks). The grip handle on the left
+ *  is the only thing that starts a drag — inputs/buttons stay normally
+ *  interactive. */
+function DraggableStopRow({
+  stop,
+  idx,
+  onChange,
+  onFocus,
+  onRemove,
+}: {
+  stop: { id: string; query: string; loc: { display_name: string; lat: number; lng: number } | null };
+  idx: number;
+  onChange: (q: string) => void;
+  onFocus: () => void;
+  onRemove: () => void;
+}) {
+  const controls = useDragControls();
+  return (
+    <Reorder.Item
+      value={stop}
+      as="div"
+      className="relative flex gap-1 items-stretch"
+      whileDrag={{ scale: 1.02, zIndex: 10 }}
+      dragListener={false}
+      dragControls={controls}
+    >
+      <button
+        type="button"
+        aria-label={`Reorder stop ${String.fromCharCode(66 + idx)}`}
+        className="px-1.5 self-stretch flex items-center justify-center rounded-lg cursor-grab active:cursor-grabbing touch-none"
+        style={{ color: "var(--panel-text-muted)" }}
+        onPointerDown={(e) => controls.start(e)}
+      >
+        <GripVertical className="w-3.5 h-3.5" />
+      </button>
+      <input
+        type="text"
+        value={stop.query}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={onFocus}
+        placeholder={`${String.fromCharCode(66 + idx)} · Stop`}
+        className="flex-1 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors focus:ring-2 focus:ring-blue-500/30"
+        style={{
+          background: "var(--panel-input-bg)",
+          border: "1px solid var(--panel-input-border)",
+          color: "var(--panel-text)",
+        }}
+      />
+      <button
+        onClick={onRemove}
+        className="p-1.5 rounded-lg self-center"
+        style={{ color: "var(--panel-text-muted)" }}
+        title="Remove stop"
+        aria-label="Remove stop"
+      >
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </Reorder.Item>
+  );
+}
 import { loadRecent, type RecentSearch } from "@/lib/recent-searches";
 import { Clock as ClockIcon } from "lucide-react";
 
@@ -63,8 +129,8 @@ interface Props {
   setDestLoc: (loc: StopLoc | null) => void;
   destQuery: string;
   setDestQuery: (q: string) => void;
-  stops: { query: string; loc: StopLoc | null }[];
-  setStops: (s: { query: string; loc: StopLoc | null }[]) => void;
+  stops: { id: string; query: string; loc: StopLoc | null }[];
+  setStops: (s: { id: string; query: string; loc: StopLoc | null }[]) => void;
   activeMode: TransportMode;
   setActiveMode: (m: TransportMode) => void;
   userPos: { lat: number; lng: number } | null;
@@ -528,45 +594,44 @@ export default function DirectionsPanel({
               )}
             </div>
 
-            {stops.map((stop, idx) => (
-              <div key={idx} className="relative flex gap-1">
-                <input
-                  type="text"
-                  value={stop.query}
-                  onChange={(e) => {
+            {/* Drag-to-reorder list of stops. Each item carries its
+                own `useDragControls`; the grip handle is the only
+                surface that initiates a drag so inputs and the X
+                button still receive their normal taps. Reorder
+                triggers a fresh route preview through the existing
+                `stops`-watching useEffect. */}
+            <Reorder.Group
+              axis="y"
+              values={stops}
+              onReorder={setStops}
+              className="flex flex-col gap-2"
+              as="div"
+            >
+              {stops.map((stop, idx) => (
+                <DraggableStopRow
+                  key={stop.id}
+                  stop={stop}
+                  idx={idx}
+                  onChange={(query) => {
                     const next = [...stops];
-                    next[idx] = { ...next[idx], query: e.target.value, loc: null };
+                    next[idx] = { ...next[idx], query, loc: null };
                     setStops(next);
                     setActiveStopIdx(idx);
                     setActiveDropdown(null);
-                    geocode(e.target.value, setStopSuggestions, setStopLoading);
+                    geocode(query, setStopSuggestions, setStopLoading);
                   }}
                   onFocus={() => {
                     setActiveStopIdx(idx);
                     if (stop.query.length >= 2 && !stop.loc)
                       geocode(stop.query, setStopSuggestions, setStopLoading);
                   }}
-                  placeholder={`${String.fromCharCode(66 + idx)} · Stop`}
-                  className="flex-1 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors focus:ring-2 focus:ring-blue-500/30"
-                  style={{
-                    background: "var(--panel-input-bg)",
-                    border: "1px solid var(--panel-input-border)",
-                    color: "var(--panel-text)",
-                  }}
-                />
-                <button
-                  onClick={() => {
-                    setStops(stops.filter((_, i) => i !== idx));
+                  onRemove={() => {
+                    setStops(stops.filter((s) => s.id !== stop.id));
                     onRoutesChange(null);
                   }}
-                  className="p-1.5 rounded-lg self-center"
-                  style={{ color: "var(--panel-text-muted)" }}
-                  title="Remove stop"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
+                />
+              ))}
+            </Reorder.Group>
 
             <div className="relative">
               <input
@@ -662,7 +727,18 @@ export default function DirectionsPanel({
 
         {stops.length < 5 && (
           <button
-            onClick={() => setStops([...stops, { query: "", loc: null }])}
+            onClick={() =>
+              setStops([
+                ...stops,
+                {
+                  id: typeof crypto !== "undefined" && "randomUUID" in crypto
+                    ? crypto.randomUUID()
+                    : `stop-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                  query: "",
+                  loc: null,
+                },
+              ])
+            }
             className="mt-2 flex items-center gap-2 px-3 py-1.5 text-xs font-medium transition-colors rounded-lg"
             style={{ color: "var(--panel-text-secondary)" }}
             onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
@@ -813,6 +889,21 @@ export default function DirectionsPanel({
             </button>
           )}
         </div>
+
+        {/* Rideshare bail-out — surfaced once a destination is set, so
+            users can hand the trip off to Uber/Lyft if they're not
+            actually about to walk/bike/drive themselves. Driving mode
+            is the only one where calling a car instead is plausible,
+            so we hide it for foot/cycling. */}
+        {destLoc && activeMode === "driving-car" && (
+          <RideshareLinks
+            destLat={destLoc.lat}
+            destLng={destLoc.lng}
+            destName={destLoc.display_name}
+            originLat={originLoc?.lat}
+            originLng={originLoc?.lng}
+          />
+        )}
       </div>
 
       {activeDropdown === "origin" &&
@@ -908,7 +999,7 @@ export default function DirectionsPanel({
             {stopSuggestions.map((s, i) =>
               renderSuggestion(s, i, () => {
                 const next = [...stops];
-                next[activeStopIdx] = { query: s.display_name.split(",")[0], loc: s };
+                next[activeStopIdx] = { ...next[activeStopIdx], query: s.display_name.split(",")[0], loc: s };
                 setStops(next);
                 setStopSuggestions([]);
                 setActiveStopIdx(null);
