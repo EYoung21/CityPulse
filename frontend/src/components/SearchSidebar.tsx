@@ -72,7 +72,8 @@ interface Props {
     active: boolean,
     routeGeometry?: [number, number][],
     mode?: TransportMode,
-    steps?: ManeuverStep[]
+    steps?: ManeuverStep[],
+    meta?: { distanceKm: number; durationMin: number; nearbyCount: number; isSafe: boolean }
   ) => void;
   onPreviewPins?: (origin: { lat: number; lng: number } | null, dest: { lat: number; lng: number } | null) => void;
   onPreviewWaypoints?: (waypoints: WaypointPin[] | null) => void;
@@ -294,7 +295,12 @@ export default function SearchSidebar({
     const geom = best?.geometry;
     activeRouteRef.current = geom ?? null;
     knownIncIdsRef.current = new Set(incidents.map((i) => i.id));
-    onTripActive?.(true, geom, activeMode, best?.steps);
+    onTripActive?.(true, geom, activeMode, best?.steps, {
+      distanceKm: meta.distanceKm,
+      durationMin: meta.durationMin,
+      nearbyCount: meta.nearbyCount,
+      isSafe: meta.isSafe,
+    });
   }, [originLoc, destLoc, stops, activeMode, onRoutesChange, onTripActive, incidents]);
 
   // Auto-reroute: watch for new incidents near the active route geometry
@@ -348,7 +354,12 @@ export default function SearchSidebar({
         });
         const geom = best.geometry;
         activeRouteRef.current = geom;
-        onTripActive?.(true, geom, activeMode, best.steps);
+        onTripActive?.(true, geom, activeMode, best.steps, {
+          distanceKm: best.distanceKm,
+          durationMin: best.durationMin,
+          nearbyCount: zones.length,
+          isSafe: !!safeRoute,
+        });
         setRerouteAlert(`Route updated — avoiding ${newNearby.length} new incident${newNearby.length > 1 ? "s" : ""}`);
         setTimeout(() => setRerouteAlert(null), 5000);
       } catch {
