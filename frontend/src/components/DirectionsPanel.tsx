@@ -15,8 +15,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Play,
-  Route,
-  Clock,
   Star,
   Plus,
   Shield,
@@ -24,16 +22,18 @@ import {
 import { geocodePhilly } from "@/lib/search";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
 import {
-  getMultiStopRoute,
+  getRouteOptions,
   buildAvoidZones,
   buildAvoidPolygons,
   AVOIDANCE_CATEGORIES,
   type TransportMode,
   type AvoidCategoryId,
+  type RouteOption,
 } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
 import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
+import RouteOptionPicker from "@/components/RouteOptionPicker";
 
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
@@ -121,6 +121,8 @@ export default function DirectionsPanel({
     nearbyCount: number;
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [routeOptions, setRouteOptions] = useState<RouteOption[]>([]);
+  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [startNavBusy, setStartNavBusy] = useState(false);
 
@@ -219,46 +221,57 @@ export default function DirectionsPanel({
     const incSnap = incidentsRef.current;
     (async () => {
       try {
-        const directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
+        const zones = buildAvoidZones(incSnap, avoidCats);
+        const avoidPolygons = zones.length > 0 ? buildAvoidPolygons(zones) : null;
+
+        const opts = await getRouteOptions({
+          apiKey: ORS_API_KEY,
+          mode: activeMode,
+          waypoints,
+          avoidPolygons,
+          includeRoadFeatureVariants: true,
+        });
         if (controller.signal.aborted) return;
 
-        if (!directRoute) {
+        if (opts.length === 0) {
           onRoutesChange(null);
+          setRouteOptions([]);
+          setSelectedOptionId(null);
           setPreviewRoute(null);
           setRouteError("Could not load a street route. Check your network or try another mode.");
           return;
         }
 
-        const zones = buildAvoidZones(incSnap, avoidCats);
-        if (zones.length === 0) {
-          onRoutesChange({ normal: directRoute, safe: null, avoidZones: [] });
-          setPreviewRoute({
-            distanceKm: directRoute.distanceKm,
-            durationMin: directRoute.durationMin,
-            isSafe: false,
-            nearbyCount: 0,
-          });
-        } else {
-          const safeRoute = await getMultiStopRoute(
-            ORS_API_KEY,
-            activeMode,
-            waypoints,
-            buildAvoidPolygons(zones)
-          );
-          if (controller.signal.aborted) return;
-          const best = safeRoute || directRoute;
-          onRoutesChange({ normal: directRoute, safe: safeRoute, avoidZones: zones });
-          setPreviewRoute({
-            distanceKm: best.distanceKm,
-            durationMin: best.durationMin,
-            isSafe: !!safeRoute,
-            nearbyCount: zones.length,
-          });
-        }
+        // Default selection: keep prior choice if still present, otherwise
+        // pick whatever sorted to the top (safer, then fastest).
+        const keepPrior =
+          selectedOptionId && opts.find((o) => o.id === selectedOptionId);
+        const chosen = keepPrior || opts[0];
+        setRouteOptions(opts);
+        setSelectedOptionId(chosen.id);
+
+        const directRoute = opts.find((o) => !o.isSafer && o.avoidedFeatures.length === 0)?.route ?? opts[0].route;
+        const saferRoute = opts.find((o) => o.isSafer)?.route ?? null;
+
+        onRoutesChange({
+          normal: directRoute,
+          safe: saferRoute,
+          avoidZones: zones,
+          chosen: chosen.route,
+          chosenLabel: chosen.label,
+        });
+        setPreviewRoute({
+          distanceKm: chosen.route.distanceKm,
+          durationMin: chosen.route.durationMin,
+          isSafe: chosen.isSafer,
+          nearbyCount: zones.length,
+        });
         setRouteError(null);
       } catch {
         if (!controller.signal.aborted) {
           setPreviewRoute(null);
+          setRouteOptions([]);
+          setSelectedOptionId(null);
           onRoutesChange(null);
           setRouteError("Routing request failed.");
         }
@@ -288,6 +301,35 @@ export default function DirectionsPanel({
       setStartNavBusy(false);
     }
   };
+
+  /** Update which alternative is highlighted on the map and which one
+   *  becomes the trip when GO is pressed. */
+  const handleSelectRouteOption = useCallback(
+    (id: string) => {
+      const opt = routeOptions.find((o) => o.id === id);
+      if (!opt) return;
+      setSelectedOptionId(id);
+      const direct =
+        routeOptions.find((o) => !o.isSafer && o.avoidedFeatures.length === 0)?.route ??
+        routeOptions[0].route;
+      const safer = routeOptions.find((o) => o.isSafer)?.route ?? null;
+      const zones = buildAvoidZones(incidentsRef.current, avoidCats);
+      onRoutesChange({
+        normal: direct,
+        safe: safer,
+        avoidZones: zones,
+        chosen: opt.route,
+        chosenLabel: opt.label,
+      });
+      setPreviewRoute({
+        distanceKm: opt.route.distanceKm,
+        durationMin: opt.route.durationMin,
+        isSafe: opt.isSafer,
+        nearbyCount: zones.length,
+      });
+    },
+    [routeOptions, avoidCats, onRoutesChange]
+  );
 
   const renderSuggestion = (
     s: StopLoc,
@@ -598,29 +640,21 @@ export default function DirectionsPanel({
           </div>
         )}
 
+        {!previewLoading && routeOptions.length > 0 && (
+          <div className="mt-3">
+            <RouteOptionPicker
+              options={routeOptions}
+              selectedId={selectedOptionId}
+              onSelect={handleSelectRouteOption}
+            />
+          </div>
+        )}
+
         {previewRoute && !previewLoading && (
           <div
-            className="mt-3 rounded-lg overflow-hidden"
+            className="mt-2 rounded-lg overflow-hidden"
             style={{ border: "1px solid var(--panel-border)" }}
           >
-            <div className="flex items-center gap-3 px-3 py-2.5 bg-blue-500/10">
-              <Route className="w-4 h-4 text-blue-500 shrink-0" />
-              <div className="flex items-center gap-3 flex-1">
-                <span className="text-sm font-bold text-blue-500">
-                  {Math.ceil(previewRoute.durationMin)} min
-                </span>
-                <span className="text-xs" style={{ color: "var(--panel-text-secondary)" }}>
-                  {previewRoute.distanceKm.toFixed(1)} km
-                </span>
-              </div>
-              <div
-                className="flex items-center gap-1 text-xs"
-                style={{ color: "var(--panel-text-muted)" }}
-              >
-                <Clock className="w-3 h-3" />
-                {MODES.find((m) => m.id === activeMode)?.label}
-              </div>
-            </div>
             {previewRoute.nearbyCount > 0 && previewRoute.isSafe && (
               <div className="flex items-center gap-2 px-3 py-2 text-xs text-green-600 dark:text-green-400/80 bg-green-500/5">
                 <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
@@ -632,7 +666,7 @@ export default function DirectionsPanel({
               <div className="flex items-center gap-2 px-3 py-2 text-xs text-amber-600 dark:text-amber-400/80 bg-amber-500/5">
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                 {previewRoute.nearbyCount} incident
-                {previewRoute.nearbyCount > 1 ? "s" : ""} near route
+                {previewRoute.nearbyCount > 1 ? "s" : ""} near route — pick "Safer" to route around
               </div>
             )}
             {previewRoute.nearbyCount === 0 && (
