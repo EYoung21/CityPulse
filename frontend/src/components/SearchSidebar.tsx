@@ -19,6 +19,7 @@ import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
 import SearchInput from "@/components/SearchInput";
 import SavedPlaces from "@/components/SavedPlaces";
+import TripHistory from "@/components/TripHistory";
 import DirectionsPanel from "@/components/DirectionsPanel";
 import TripHUD from "@/components/TripHUD";
 import IncidentFeed from "@/components/IncidentFeed";
@@ -75,7 +76,14 @@ interface Props {
     routeGeometry?: [number, number][],
     mode?: TransportMode,
     steps?: ManeuverStep[],
-    meta?: { distanceKm: number; durationMin: number; nearbyCount: number; isSafe: boolean }
+    meta?: {
+      distanceKm: number;
+      durationMin: number;
+      nearbyCount: number;
+      isSafe: boolean;
+      origin?: { display_name: string; lat: number; lng: number };
+      dest?: { display_name: string; lat: number; lng: number };
+    }
   ) => void;
   onPreviewPins?: (origin: { lat: number; lng: number } | null, dest: { lat: number; lng: number } | null) => void;
   onPreviewWaypoints?: (waypoints: WaypointPin[] | null) => void;
@@ -414,6 +422,8 @@ export default function SearchSidebar({
       durationMin: meta.durationMin,
       nearbyCount: meta.nearbyCount,
       isSafe: meta.isSafe,
+      origin: { display_name: originLoc.display_name, lat: originLoc.lat, lng: originLoc.lng },
+      dest: { display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng },
     });
 
     // Persist trip inputs so a refresh / accidental tab close can offer
@@ -495,6 +505,11 @@ export default function SearchSidebar({
           durationMin: best.durationMin,
           nearbyCount: zones.length,
           isSafe: !!safeRoute,
+          // Origin/dest still resolved from the original trip — pass
+          // through unchanged so the recap & history entry don't lose
+          // the labels after a mid-trip reroute.
+          origin: originLoc ? { display_name: originLoc.display_name, lat: originLoc.lat, lng: originLoc.lng } : undefined,
+          dest: destLoc ? { display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng } : undefined,
         });
         setRerouteAlert(`Route updated — avoiding ${newNearby.length} new incident${newNearby.length > 1 ? "s" : ""}`);
         setTimeout(() => setRerouteAlert(null), 5000);
@@ -550,6 +565,24 @@ export default function SearchSidebar({
             </button>
 
             <SavedPlaces onFlyTo={onFlyTo} onDirections={openDirections} />
+
+            <TripHistory
+              onReplay={(entry) => {
+                if (!entry.origin || !entry.dest) return;
+                // Reuse the existing pp:resume-trip codepath so the
+                // replay flow is identical to "resume previous trip".
+                window.dispatchEvent(
+                  new CustomEvent("pp:resume-trip", {
+                    detail: {
+                      origin: entry.origin,
+                      dest: entry.dest,
+                      stops: [],
+                      mode: entry.mode,
+                    },
+                  })
+                );
+              }}
+            />
 
             {/* Stats strip */}
             <div
