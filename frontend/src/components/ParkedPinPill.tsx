@@ -7,10 +7,12 @@ import {
   clearParkedPin,
   distanceToParkedM,
   getParkedPin,
+  setParkedPin,
   subscribeParkedPin,
   updateParkedNote,
   type ParkedPin,
 } from "@/lib/parked-pin";
+import { requestUndoableAction } from "@/lib/undo-toast";
 
 interface Props {
   /** Current device location, used to surface a live "X away" hint
@@ -178,7 +180,21 @@ export default function ParkedPinPill({ userLocation, onLocate }: Props) {
             <button
               type="button"
               onClick={() => {
-                if (window.confirm("Clear parked location?")) clearParkedPin();
+                // Snapshot the current pin so the undo path can restore
+                // the *exact* value (note + label included), not just
+                // a re-derived approximation. We clear immediately so
+                // the UI feels responsive; the snapshot lives in the
+                // closure for the toast's lifetime.
+                const snap = pin;
+                clearParkedPin();
+                requestUndoableAction({
+                  label: "Parked pin cleared",
+                  detail: snap.label || `${snap.lat.toFixed(4)}, ${snap.lng.toFixed(4)}`,
+                  onConfirm: () => { /* nothing — already cleared */ },
+                  onUndo: () => {
+                    setParkedPin({ lat: snap.lat, lng: snap.lng, label: snap.label, note: snap.note });
+                  },
+                });
               }}
               className="shrink-0 p-1.5 rounded-md transition-colors"
               style={{ color: "var(--panel-text-muted)" }}

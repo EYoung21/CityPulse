@@ -28,6 +28,7 @@ import {
 } from "@/hooks/useSavedDestinations";
 import { useAuth } from "@/contexts/AuthContext";
 import { buildListShareUrl } from "@/lib/share-list";
+import { requestUndoableAction } from "@/lib/undo-toast";
 
 interface Props {
   onFlyTo: (lat: number, lng: number) => void;
@@ -503,10 +504,35 @@ export default function SavedPlaces({ onFlyTo, onDirections }: Props) {
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        const msg = items.length === 0
-                          ? `Delete list "${list.name}"?`
-                          : `Delete list "${list.name}"? Its ${items.length} place${items.length === 1 ? "" : "s"} will be moved back to Uncategorized.`;
-                        if (window.confirm(msg)) void deleteList(list.id);
+                        // Soft-delete via the undo-toast pattern. We
+                        // snapshot the list metadata + the member
+                        // destination IDs *before* the cascading
+                        // deleteList call so that on undo we can
+                        // recreate the list and re-link the same
+                        // members. The recreated list gets a fresh
+                        // Firestore ID — invisible to the user since
+                        // name + color round-trip identically.
+                        const snapMembers = items.map((d) => d.id);
+                        const snapList = { name: list.name, color: list.color || listColor(list) };
+                        void deleteList(list.id);
+                        requestUndoableAction({
+                          label: "List deleted",
+                          detail: snapMembers.length > 0
+                            ? `${snapList.name} · ${snapMembers.length} place${snapMembers.length === 1 ? "" : "s"} moved to Other Saved`
+                            : snapList.name,
+                          onConfirm: () => { /* already deleted */ },
+                          onUndo: async () => {
+                            const newId = await createList(snapList.name, snapList.color);
+                            if (!newId) return;
+                            // Re-link members to the recreated list.
+                            // setDestinationList also auto-promotes to
+                            // "custom" — exactly what we want since
+                            // they were custom before deletion.
+                            for (const destId of snapMembers) {
+                              await setDestinationList(destId, newId);
+                            }
+                          },
+                        });
                       }}
                       className="p-0.5 opacity-0 hover:opacity-100 hover:text-red-500 transition-opacity"
                       style={{ color: "var(--panel-text-muted)" }}

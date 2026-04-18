@@ -29,6 +29,7 @@ import { getCurrentCity } from "@/lib/pulse-cities";
 import { buildTripShareUrl } from "@/lib/share-trip";
 import { saveTripSnapshot, clearTripSnapshot, updateTripProgress } from "@/lib/trip-resume";
 import { share as nativeShare } from "@/lib/native";
+import { setPref } from "@/lib/prefs-sync";
 import { useAuth } from "@/contexts/AuthContext";
 
 const ORS_API_KEY =
@@ -176,7 +177,9 @@ export default function SearchSidebar({
     setAvoidPrefsState(next);
     if (typeof window !== "undefined") {
       try {
-        window.localStorage.setItem(
+        // Route through prefs-sync so the avoidance config follows
+        // the user across devices when signed in.
+        setPref(
           "pp:avoid-prefs-v2",
           JSON.stringify({ leaves: Array.from(next.leaves), minSeverity: next.minSeverity })
         );
@@ -314,6 +317,34 @@ export default function SearchSidebar({
     window.addEventListener("pp:plan-route", handler);
     return () => window.removeEventListener("pp:plan-route", handler);
   }, [originLoc, onPreviewPins]);
+
+  /** Listen for "add this POI as an intermediate stop" events fired by
+   *  AlongRoutePanel. We append a new fully-resolved stop to the
+   *  existing list so the route recomputation in DirectionsPanel can
+   *  pick it up on its next debounced rerun. */
+  useEffect(() => {
+    function handler(e: Event) {
+      const detail = (e as CustomEvent<{ name: string; lat: number; lng: number }>).detail;
+      if (!detail) return;
+      const id =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `stop-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setStops((prev) => [
+        ...prev,
+        {
+          id,
+          query: detail.name,
+          loc: { display_name: detail.name, lat: detail.lat, lng: detail.lng },
+        },
+      ]);
+      // Make sure the directions view is open so the user actually
+      // sees their stop appear and can rearrange/remove it.
+      setView("directions");
+    }
+    window.addEventListener("pp:add-stop", handler);
+    return () => window.removeEventListener("pp:add-stop", handler);
+  }, []);
 
   /** Resume-trip wiring. The pill in page.tsx fires this event after
    *  user confirmation; we hydrate origin/dest/stops/mode from the

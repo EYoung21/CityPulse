@@ -17,9 +17,11 @@ import {
 import {
   deleteTrip,
   getTripHistory,
+  restoreTrip,
   subscribeTripHistory,
   type TripHistoryEntry,
 } from "@/lib/trip-history";
+import { requestUndoableAction } from "@/lib/undo-toast";
 import { preferredSpeedUnit } from "@/hooks/useGpsSpeed";
 
 const MODE_ICON: Record<string, LucideIcon> = {
@@ -168,9 +170,19 @@ export default function TripHistory({ onReplay }: Props) {
                 <button
                   onClick={(ev) => {
                     ev.stopPropagation();
-                    if (window.confirm(`Delete trip to ${destLabel}?`)) {
-                      deleteTrip(e.id);
-                    }
+                    // Soft-delete: snapshot the entry and remove it
+                    // immediately, then offer ~5s to undo via the
+                    // global toast. Avoids modal confirms which feel
+                    // jarring on touch and force the user into a
+                    // synchronous decision.
+                    const snap = e;
+                    deleteTrip(e.id);
+                    requestUndoableAction({
+                      label: "Trip deleted",
+                      detail: `to ${destLabel}`,
+                      onConfirm: () => { /* already deleted */ },
+                      onUndo: () => restoreTrip(snap),
+                    });
                   }}
                   className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-red-500/60 hover:text-red-500"
                   aria-label={`Delete trip to ${destLabel}`}
