@@ -289,6 +289,11 @@ interface Props {
   /** Debounced (~250ms) callback fired after pan/zoom with the current map
    *  center + zoom. Used by the "Score this area" pill in `page.tsx`. */
   onMapMove?: (lat: number, lng: number, zoom: number) => void;
+  /** Compass heading in degrees (0=N, clockwise). Renders a directional
+   *  cone behind the user marker. Null/undefined → no cone. */
+  userHeading?: number | null;
+  /** Basemap tile style. Defaults to "auto" (follows the active theme). */
+  basemapStyle?: BasemapStyle;
 }
 
 function distToSegmentKm(
@@ -535,12 +540,32 @@ function userLocationHuman3dSvg(): string {
 </svg>`;
 }
 
-function createUserIcon(radiate = false): L.DivIcon {
+/** SVG cone rendered behind the user marker showing the device's facing
+ *  direction (0=N, clockwise). The cone is wedge-shaped with a soft fade —
+ *  same affordance as Google Maps' blue-dot arc. */
+function userHeadingConeSvg(headingDeg: number): string {
+  return `<div class="pp-user-heading-cone" style="position:absolute;left:50%;top:50%;width:120px;height:120px;margin:-60px 0 0 -60px;transform:rotate(${headingDeg}deg);transform-origin:50% 50%;pointer-events:none;z-index:1;transition:transform 180ms cubic-bezier(.2,.7,.2,1);">
+    <svg viewBox="-60 -60 120 120" width="120" height="120" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <radialGradient id="pp-cone-grad" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="rgba(74,222,128,0.95)" />
+          <stop offset="55%" stop-color="rgba(34,197,94,0.45)" />
+          <stop offset="100%" stop-color="rgba(34,197,94,0)" />
+        </radialGradient>
+      </defs>
+      <path d="M0,0 L-22,-58 Q0,-66 22,-58 Z" fill="url(#pp-cone-grad)" />
+    </svg>
+  </div>`;
+}
+
+function createUserIcon(radiate = false, heading: number | null = null): L.DivIcon {
   const human = userLocationHuman3dSvg();
-  const halo = `<div style="position:absolute;left:50%;top:56%;transform:translate(-50%,-50%);width:50px;height:50px;border-radius:50%;background:radial-gradient(circle,rgba(34,197,94,0.4) 0%,transparent 68%);pointer-events:none;"></div>`;
+  const halo = `<div style="position:absolute;left:50%;top:56%;transform:translate(-50%,-50%);width:50px;height:50px;border-radius:50%;background:radial-gradient(circle,rgba(34,197,94,0.4) 0%,transparent 68%);pointer-events:none;z-index:2;"></div>`;
+  const cone = heading != null ? userHeadingConeSvg(heading) : "";
   const core = `<div style="position:relative;width:56px;height:56px;display:flex;align-items:center;justify-content:center;">
+      ${cone}
       ${halo}
-      <div style="position:relative;z-index:2;transform:translateY(-3px);filter:drop-shadow(0 5px 10px rgba(22,101,52,0.45));">${human}</div>
+      <div style="position:relative;z-index:3;transform:translateY(-3px);filter:drop-shadow(0 5px 10px rgba(22,101,52,0.45));">${human}</div>
     </div>`;
   const demoGlow = `<div style="position:absolute;left:50%;top:50%;width:60px;height:60px;margin:-30px 0 0 -30px;border-radius:50%;background:radial-gradient(circle,rgba(74,222,128,0.45) 0%,rgba(34,197,94,0.14) 50%,transparent 72%);pointer-events:none;"></div>`;
 
@@ -732,6 +757,28 @@ function formatHashView(zoom: number, lat: number, lng: number): string {
 
 const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 const LIGHT_TILES = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+const POSITRON_TILES = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
+const STREETS_TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+
+export type BasemapStyle = "auto" | "dark" | "voyager" | "positron" | "streets";
+
+function basemapUrl(style: BasemapStyle, isDark: boolean): string {
+  switch (style) {
+    case "dark":     return DARK_TILES;
+    case "voyager":  return LIGHT_TILES;
+    case "positron": return POSITRON_TILES;
+    case "streets":  return STREETS_TILES;
+    case "auto":
+    default:         return isDark ? DARK_TILES : LIGHT_TILES;
+  }
+}
+
+function basemapAttribution(style: BasemapStyle): string {
+  if (style === "streets") {
+    return '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+  }
+  return '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>';
+}
 
 type TripLiveLayers = {
   marker: L.Marker;
@@ -766,6 +813,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     onLongPress,
     droppedPin,
     onMapMove,
+    userHeading,
+    basemapStyle = "auto",
   },
   ref
 ) {
@@ -855,9 +904,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
     L.control.zoom({ position: "topright" }).addTo(map);
 
-    tileLayerRef.current = L.tileLayer(isDark ? DARK_TILES : LIGHT_TILES, {
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    tileLayerRef.current = L.tileLayer(basemapUrl(basemapStyle, isDark), {
+      attribution: basemapAttribution(basemapStyle),
       maxZoom: 19,
     }).addTo(map);
 
@@ -1069,12 +1117,25 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Switch tiles when theme changes
+  // Switch tiles when theme or explicit basemap style changes.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !tileLayerRef.current) return;
-    tileLayerRef.current.setUrl(isDark ? DARK_TILES : LIGHT_TILES);
-  }, [isDark]);
+    tileLayerRef.current.setUrl(basemapUrl(basemapStyle, isDark));
+    // Attribution can change too (e.g. CARTO ↔ OSM Standard).
+    const attrControl = map.attributionControl;
+    if (attrControl) {
+      try {
+        // Leaflet's attribution control doesn't expose a "replace" API, so we
+        // re-add by removing the previous string and inserting the new one.
+        attrControl.removeAttribution(basemapAttribution("voyager"));
+        attrControl.removeAttribution(basemapAttribution("streets"));
+        attrControl.addAttribution(basemapAttribution(basemapStyle));
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [isDark, basemapStyle]);
 
   const stableOnSelect = useCallback(onSelectIncident, [onSelectIncident]);
 
@@ -1535,7 +1596,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       return;
     }
 
-    const icon = createUserIcon(heatmapDemoBoost);
+    const icon = createUserIcon(heatmapDemoBoost, userHeading ?? null);
     if (userMarkerRef.current) {
       userMarkerRef.current.setLatLng([userLocation.lat, userLocation.lng]);
       userMarkerRef.current.setIcon(icon);
@@ -1546,7 +1607,21 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         interactive: false,
       }).addTo(map);
     }
-  }, [userLocation, routes, previewOrigin, heatmapDemoBoost]);
+    // We only rebuild the full DivIcon when the marker is first added; for
+    // subsequent heading updates, we mutate the cone's transform in place to
+    // avoid re-rendering the SVG every ~100ms.
+  }, [userLocation, routes, previewOrigin, heatmapDemoBoost, userHeading]);
+
+  // Lightweight heading-only update: rotate the existing cone instead of
+  // reconstructing the icon. Keeps GPU work to a CSS rotation per ~100ms.
+  useEffect(() => {
+    const marker = userMarkerRef.current;
+    if (!marker || userHeading == null) return;
+    const el = marker.getElement();
+    if (!el) return;
+    const cone = el.querySelector<HTMLElement>(".pp-user-heading-cone");
+    if (cone) cone.style.transform = `rotate(${userHeading}deg)`;
+  }, [userHeading]);
 
   // Trip: live GPS (snap to route) or simulated playback
   useEffect(() => {
