@@ -286,6 +286,9 @@ interface Props {
   onLongPress?: (lat: number, lng: number) => void;
   /** When set, renders a sticky red dropped-pin marker. Cleared on close. */
   droppedPin?: { lat: number; lng: number } | null;
+  /** Debounced (~250ms) callback fired after pan/zoom with the current map
+   *  center + zoom. Used by the "Score this area" pill in `page.tsx`. */
+  onMapMove?: (lat: number, lng: number, zoom: number) => void;
 }
 
 function distToSegmentKm(
@@ -762,6 +765,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     onClusterClick,
     onLongPress,
     droppedPin,
+    onMapMove,
   },
   ref
 ) {
@@ -822,6 +826,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   onClusterClickRef.current = onClusterClick;
   const onLongPressRef = useRef(onLongPress);
   onLongPressRef.current = onLongPress;
+  const onMapMoveRef = useRef(onMapMove);
+  onMapMoveRef.current = onMapMove;
 
   useEffect(() => {
     if (mapRef.current) return;
@@ -938,6 +944,19 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     map.on("moveend", scheduleHashWrite);
     map.on("zoomend", scheduleHashWrite);
 
+    // Same debounce window for the "Score this area" pill in page.tsx — we
+    // dispatch the new center so the parent can compare against its anchor.
+    let movePillTimer: ReturnType<typeof setTimeout> | null = null;
+    const dispatchMove = () => {
+      if (movePillTimer) clearTimeout(movePillTimer);
+      movePillTimer = setTimeout(() => {
+        const c = map.getCenter();
+        onMapMoveRef.current?.(c.lat, c.lng, map.getZoom());
+      }, 250);
+    };
+    map.on("moveend", dispatchMove);
+    map.on("zoomend", dispatchMove);
+
     /**
      * Tap-vs-long-press disambiguation:
      *  - Long-press (>= 500ms with < 8px movement) drops a pin and is consumed.
@@ -1039,7 +1058,10 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       map.off("zoomend", syncIncidentZoom);
       map.off("moveend", scheduleHashWrite);
       map.off("zoomend", scheduleHashWrite);
+      map.off("moveend", dispatchMove);
+      map.off("zoomend", dispatchMove);
       if (hashWriteTimer) clearTimeout(hashWriteTimer);
+      if (movePillTimer) clearTimeout(movePillTimer);
       cancelAnimationFrame(zoomRaf);
       map.remove();
       mapRef.current = null;

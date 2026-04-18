@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/lib/theme";
 import Providers from "@/components/Providers";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
+import NativeBoot from "@/components/NativeBoot";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -96,6 +97,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         <Providers><ThemeProvider>{children}</ThemeProvider></Providers>
         <ServiceWorkerRegister />
+        <NativeBoot />
       </body>
     </html>
   );

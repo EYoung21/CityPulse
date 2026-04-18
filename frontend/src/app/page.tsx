@@ -39,6 +39,7 @@ import AnalyticsPanel from "@/components/AnalyticsPanel";
 import DistrictCard from "@/components/DistrictCard";
 import DroppedPinCard from "@/components/DroppedPinCard";
 import ManeuverChip from "@/components/ManeuverChip";
+import SearchAreaPill from "@/components/SearchAreaPill";
 import type { ManeuverStep } from "@/lib/routing";
 import type { MapHandle, WaypointPin } from "@/components/IncidentMap";
 import {
@@ -132,6 +133,17 @@ const THEME_OPTIONS = [
   { id: "dark" as const, icon: Moon, label: "Dark" },
 ];
 
+function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const x =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
 export default function Home() {
   const { mode, resolved, setMode } = useTheme();
   const isDark = resolved === "dark";
@@ -156,6 +168,11 @@ export default function Home() {
   const [timeFilter, setTimeFilter] = useState(24);
   const [activeCats, setActiveCats] = useState<Set<string>>(new Set());
   const [mapTap, setMapTap] = useState<{ lat: number; lng: number } | null>(null);
+  /** "Score this area" pill anchor: the lat/lng we last opened a card on (or
+   *  the city-default center). The pill appears once the user pans further
+   *  than ~600m from this point and no overlay card is currently open. */
+  const [scoreAnchor, setScoreAnchor] = useState<{ lat: number; lng: number } | null>(null);
+  const [pillTarget, setPillTarget] = useState<{ lat: number; lng: number } | null>(null);
   const [droppedPin, setDroppedPin] = useState<{ lat: number; lng: number } | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [tripGeometry, setTripGeometry] = useState<[number, number][] | null>(null);
@@ -193,6 +210,24 @@ export default function Home() {
     window.addEventListener("pp:plan-route", handler);
     return () => window.removeEventListener("pp:plan-route", handler);
   }, []);
+
+  // Native (Android) hardware back-button: pop the topmost overlay before
+  // letting Capacitor exit the app. Calling preventDefault() consumes the
+  // event so the host shell stays alive. No-op on web.
+  useEffect(() => {
+    function onBack(ev: Event) {
+      if (selectedId)             { setSelectedId(null);         ev.preventDefault(); return; }
+      if (clusterIncidentIds)     { setClusterIncidentIds(null); ev.preventDefault(); return; }
+      if (selectedDistrict)       { setSelectedDistrict(null);   ev.preventDefault(); return; }
+      if (mapTap)                 { setMapTap(null);             ev.preventDefault(); return; }
+      if (droppedPin)             { setDroppedPin(null);         ev.preventDefault(); return; }
+      if (showLayers)             { setShowLayers(false);        ev.preventDefault(); return; }
+      if (showAbout)              { setShowAbout(false);         ev.preventDefault(); return; }
+      if (showTheme)              { setShowTheme(false);         ev.preventDefault(); return; }
+    }
+    window.addEventListener("pp:native-back", onBack);
+    return () => window.removeEventListener("pp:native-back", onBack);
+  }, [selectedId, clusterIncidentIds, selectedDistrict, mapTap, droppedPin, showLayers, showAbout, showTheme]);
 
   /** Deep-link bootstrap (read once on mount):
    *   ?incident=<id>            → select that incident when it arrives in the feed
@@ -462,11 +497,27 @@ export default function Home() {
         ref={mapRef}
         incidents={filteredIncidents}
         selectedId={selectedId}
-        onSelectIncident={(id) => { setMapTap(null); setDroppedPin(null); setSelectedId(id); if (window.innerWidth < 768) setSidebarOpen(false); }}
+        onSelectIncident={(id) => { setMapTap(null); setDroppedPin(null); setSelectedId(id); setPillTarget(null); if (window.innerWidth < 768) setSidebarOpen(false); }}
         routes={routes}
-        onMapTap={(lat, lng) => { setSelectedId(null); setDroppedPin(null); setMapTap({ lat, lng }); }}
-        onLongPress={(lat, lng) => { setSelectedId(null); setMapTap(null); setDroppedPin({ lat, lng }); }}
+        onMapTap={(lat, lng) => { setSelectedId(null); setDroppedPin(null); setMapTap({ lat, lng }); setScoreAnchor({ lat, lng }); setPillTarget(null); }}
+        onLongPress={(lat, lng) => { setSelectedId(null); setMapTap(null); setDroppedPin({ lat, lng }); setScoreAnchor({ lat, lng }); setPillTarget(null); }}
         droppedPin={droppedPin}
+        onMapMove={(lat, lng) => {
+          // Pill suppressed while any overlay card is up — they obscure
+          // most of the map and the action would feel duplicative.
+          if (mapTap || droppedPin || selectedId || tripGeometry) {
+            setPillTarget(null);
+            return;
+          }
+          const anchor = scoreAnchor;
+          if (!anchor) {
+            setPillTarget({ lat, lng });
+            return;
+          }
+          const km = haversineKm(anchor.lat, anchor.lng, lat, lng);
+          if (km > 0.6) setPillTarget({ lat, lng });
+          else setPillTarget(null);
+        }}
         mapTapActive={mapTap !== null}
         userLocation={userLocation}
         tripRouteGeometry={tripGeometry}
@@ -602,6 +653,18 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      {/* "Score this area" pill — appears once the user pans far from the
+          last anchor and no overlay card is open. */}
+      {pillTarget && !mapTap && !droppedPin && !selectedId && !tripGeometry && (
+        <SearchAreaPill
+          onClick={() => {
+            setMapTap(pillTarget);
+            setScoreAnchor(pillTarget);
+            setPillTarget(null);
+          }}
+        />
+      )}
 
       {/* Maneuver chip — floating turn-by-turn pill (active trip + ORS steps only) */}
       {tripGeometry && tripSteps && tripSteps.length > 0 && (

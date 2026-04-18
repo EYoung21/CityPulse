@@ -17,6 +17,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { plusCode } from "@/lib/plus-code";
+import { share as nativeShare, haptic as nativeHaptic } from "@/lib/native";
 import {
   CATEGORY_LABELS,
   useSavedDestinations,
@@ -71,9 +72,7 @@ export default function PlaceActions({
   }, []);
 
   const haptic = useCallback(() => {
-    if (typeof navigator !== "undefined" && "vibrate" in navigator) {
-      try { navigator.vibrate?.(6); } catch { /* ignore */ }
-    }
+    void nativeHaptic("light");
   }, []);
 
   const coordStr = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
@@ -125,17 +124,18 @@ export default function PlaceActions({
     const shareText = incidentId
       ? `Incident near ${displayLabel}`
       : displayLabel;
-    const shareData = { title: displayLabel, text: shareText, url };
-    if (typeof navigator !== "undefined" && "share" in navigator) {
-      try {
-        await navigator.share(shareData);
-        return;
-      } catch { /* user cancelled — fall through to clipboard */ }
-    }
-    try {
-      await navigator.clipboard.writeText(url);
+    const hasNativeOrWebShare =
+      typeof navigator !== "undefined" && "share" in navigator;
+    // Native sheet on iOS/Android; navigator.share on web; clipboard fallback.
+    await nativeShare({
+      title: displayLabel,
+      text: shareText,
+      url,
+      dialogTitle: "Share via",
+    });
+    if (!hasNativeOrWebShare) {
       flashToast("copied-coords");
-    } catch { /* ignore */ }
+    }
   }, [lat, lng, displayLabel, incidentId, incidentCategory, incidentTime, label, flashToast, haptic]);
 
   const onOpenInMaps = useCallback(() => {
