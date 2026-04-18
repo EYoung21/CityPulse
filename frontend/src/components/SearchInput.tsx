@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Search, MapPin, Loader2, X, Navigation, Mic, Clock, Trash2, Home, Briefcase } from "lucide-react";
+import { Search, MapPin, Loader2, X, Navigation, Mic, Clock, Trash2, Home, Briefcase, Star } from "lucide-react";
 import { geocodePhilly } from "@/lib/search";
 import { isVoiceSearchSupported, startVoiceSearch } from "@/lib/voice";
-import { clearRecent, loadRecent, pushRecent, type RecentSearch } from "@/lib/recent-searches";
+import { clearRecent, loadRecent, pushRecent, removeRecent, subscribeRecent, type RecentSearch } from "@/lib/recent-searches";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
 
 interface GeoResult {
@@ -28,10 +28,31 @@ export default function SearchInput({ onFlyTo, onDirections }: Props) {
   const [voiceSupported, setVoiceSupported] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const voiceRef = useRef<{ stop: () => void } | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setVoiceSupported(isVoiceSearchSupported());
     setRecents(loadRecent());
+    // Subscribe so the dropdown updates live when prefs-sync hydrates
+    // recents from another device, or when the user removes/clears
+    // entries from this same component.
+    return subscribeRecent(setRecents);
+  }, []);
+
+  // Global "focus the search box" hook — fired by the keyboard
+  // shortcut handler (`/` or `Cmd/Ctrl+K`). Centralised here rather
+  // than reaching into the input from page-level state so consumers
+  // don't need a ref forwarded through SearchSidebar.
+  useEffect(() => {
+    const onFocusSearch = () => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      el.select();
+      setOpen(true);
+    };
+    window.addEventListener("pp:focus-search", onFocusSearch);
+    return () => window.removeEventListener("pp:focus-search", onFocusSearch);
   }, []);
 
   const geocode = useCallback((q: string) => {
@@ -109,8 +130,38 @@ export default function SearchInput({ onFlyTo, onDirections }: Props) {
   const workPlace = destinations.find((d) => d.category === "work") || null;
   const hasShortcuts = open && query.trim().length < 2 && (homePlace || workPlace);
 
+  // When typing (≥2 chars), surface matching saved places + recents
+  // *above* the geocoded suggestions. Saves a network round-trip for
+  // the common case ("home", "work", a favorite shop) and feels much
+  // faster than waiting on Nominatim for places the user already has.
+  const trimmedQuery = query.trim().toLowerCase();
+  const localMatches = (() => {
+    if (trimmedQuery.length < 2) return { saved: [], recent: [] as RecentSearch[] };
+    const seenKey = new Set<string>();
+    const matchSaved = destinations
+      .filter((d) =>
+        d.name.toLowerCase().includes(trimmedQuery) ||
+        // Display label often contains street/neighborhood, useful for
+        // "13th st" type partial queries.
+        (d.category === "custom" && d.name.toLowerCase().split(",").some((p) => p.trim().startsWith(trimmedQuery)))
+      )
+      .slice(0, 4)
+      .map((d) => {
+        const key = `${d.lat.toFixed(4)},${d.lng.toFixed(4)}`;
+        seenKey.add(key);
+        return d;
+      });
+    const matchRecent = recents
+      .filter((r) => r.display_name.toLowerCase().includes(trimmedQuery))
+      // Don't list a recent that's identical to a matched saved place.
+      .filter((r) => !seenKey.has(`${r.lat.toFixed(4)},${r.lng.toFixed(4)}`))
+      .slice(0, 4);
+    return { saved: matchSaved, recent: matchRecent };
+  })();
+
   const showRecents = open && query.trim().length < 2 && recents.length > 0;
   const showSuggestions = open && (suggestions.length > 0 || loading) && query.trim().length >= 2;
+  const showLocalMatches = open && trimmedQuery.length >= 2 && (localMatches.saved.length > 0 || localMatches.recent.length > 0);
 
   return (
     <div className="p-4 pb-2">
@@ -124,6 +175,7 @@ export default function SearchInput({ onFlyTo, onDirections }: Props) {
       >
         <Search className="w-5 h-5 text-blue-500 shrink-0" />
         <input
+          ref={inputRef}
           type="text"
           value={query}
           onChange={(e) => {
@@ -273,6 +325,104 @@ export default function SearchInput({ onFlyTo, onDirections }: Props) {
                 >
                   <Navigation className="w-4 h-4" />
                 </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setRecents(removeRecent(r.lat, r.lng));
+                  }}
+                  className="text-slate-500 hover:text-rose-400 shrink-0 mt-1 opacity-50 hover:opacity-100 transition-opacity"
+                  title="Forget this destination"
+                  aria-label={`Remove ${primary} from recents`}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Local matches (saved places + recent searches that match the
+          current query). Surfaces above geocoded suggestions because
+          the user has already proven these are interesting to them. */}
+      {showLocalMatches && (
+        <div
+          className="mt-2 rounded-xl overflow-hidden shadow-lg"
+          style={{
+            background: "var(--panel-bg-secondary)",
+            border: "1px solid var(--panel-border)",
+          }}
+        >
+          <div
+            className="px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: "var(--panel-text-muted)", background: "var(--panel-input-bg)" }}
+          >
+            From your places
+          </div>
+          {localMatches.saved.map((d) => (
+            <div
+              key={`saved-${d.id}`}
+              onClick={() => handleSelect({ display_name: d.name, lat: d.lat, lng: d.lng })}
+              className="w-full text-left px-4 py-2.5 flex items-start gap-3 last:border-0 transition-colors cursor-pointer"
+              style={{ borderBottom: "1px solid var(--panel-border)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            >
+              <div
+                className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+                style={{ background: "var(--panel-input-bg)" }}
+              >
+                {d.category === "home"     ? <Home      className="w-3.5 h-3.5 text-emerald-500" /> :
+                 d.category === "work"     ? <Briefcase className="w-3.5 h-3.5 text-blue-500" /> :
+                 d.category === "favorite" ? <Star      className="w-3.5 h-3.5 text-amber-500" /> :
+                                             <MapPin    className="w-3.5 h-3.5 text-slate-500" />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm truncate" style={{ color: "var(--panel-text)" }}>{d.name}</p>
+                <p className="text-[11px] mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                  Saved · {d.category}
+                </p>
+              </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDirections(d.name, { lat: d.lat, lng: d.lng });
+                }}
+                className="ml-auto text-blue-500/60 hover:text-blue-500 shrink-0 mt-1"
+                title="Get directions"
+                aria-label={`Get directions to ${d.name}`}
+              >
+                <Navigation className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+          {localMatches.recent.map((r) => {
+            const parts = r.display_name.split(",");
+            const primary = parts[0].trim();
+            const secondary = parts.slice(1, 3).map((p) => p.trim()).join(", ");
+            return (
+              <div
+                key={`r-${r.lat},${r.lng}`}
+                onClick={() => handleSelect(r)}
+                className="w-full text-left px-4 py-2.5 flex items-start gap-3 last:border-0 transition-colors cursor-pointer"
+                style={{ borderBottom: "1px solid var(--panel-border)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                <div
+                  className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+                  style={{ background: "var(--panel-input-bg)" }}
+                >
+                  <Clock className="w-3.5 h-3.5" style={{ color: "var(--panel-text-muted)" }} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm truncate" style={{ color: "var(--panel-text)" }}>{primary}</p>
+                  {secondary && (
+                    <p className="text-[11px] mt-0.5 truncate" style={{ color: "var(--panel-text-muted)" }}>
+                      Recent · {secondary}
+                    </p>
+                  )}
+                </div>
               </div>
             );
           })}
