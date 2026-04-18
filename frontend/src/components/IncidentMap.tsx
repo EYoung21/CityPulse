@@ -301,6 +301,10 @@ interface Props {
   onLongPress?: (lat: number, lng: number) => void;
   /** When set, renders a sticky red dropped-pin marker. Cleared on close. */
   droppedPin?: { lat: number; lng: number } | null;
+  /** Sticky purple "Parked here" pin from the parked-pin store. Persists
+   *  across reloads (24h TTL) and gets its own visual language to stand
+   *  apart from the red exploratory dropped-pin. */
+  parkedPin?: { lat: number; lng: number } | null;
   /** Debounced (~250ms) callback fired after pan/zoom with the current map
    *  center + zoom. Used by the "Score this area" pill in `page.tsx`. */
   onMapMove?: (lat: number, lng: number, zoom: number) => void;
@@ -331,6 +335,21 @@ interface Props {
     lat: number;
     lng: number;
   }> | null;
+  /** Optional render of the user's saved places (Home/Work/Favorite/Custom)
+   *  as map markers. Off by default at the parent level — opt-in via the
+   *  Layers menu. Click fires `onSavedPlaceClick` with the underlying
+   *  destination for parent-driven actions (fly-to, directions, etc.). */
+  savedPlaces?: Array<{
+    id: string;
+    name: string;
+    lat: number;
+    lng: number;
+    category: "home" | "work" | "favorite" | "custom";
+    /** Hex accent for custom-list-bound entries. Falls back to the
+     *  built-in category color when unset. */
+    accentColor?: string;
+  }> | null;
+  onSavedPlaceClick?: (id: string, lat: number, lng: number, name: string) => void;
 }
 
 function distToSegmentKm(
@@ -850,6 +869,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     onClusterClick,
     onLongPress,
     droppedPin,
+    parkedPin = null,
     onMapMove,
     userHeading,
     basemapStyle = "auto",
@@ -857,6 +877,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     sharedTripDestination,
     onUserDrag,
     safetyPois = null,
+    savedPlaces = null,
+    onSavedPlaceClick,
   },
   ref
 ) {
@@ -866,6 +888,12 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const heatPulseRafRef = useRef<number | null>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
   const safetyPoiLayerRef = useRef<L.LayerGroup | null>(null);
+  const savedPlacesLayerRef = useRef<L.LayerGroup | null>(null);
+  // Latest click handler — kept in a ref so the layer effect can stay
+  // dependent only on `savedPlaces` and not re-create markers every
+  // time the parent rebinds its callback.
+  const onSavedPlaceClickRef = useRef(onSavedPlaceClick);
+  onSavedPlaceClickRef.current = onSavedPlaceClick;
   const userMarkerRef = useRef<L.Marker | null>(null);
   const previewLayerRef = useRef<L.LayerGroup | null>(null);
   const transportMarkerRef = useRef<L.Marker | null>(null);
@@ -874,6 +902,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const trailLayerRef = useRef<L.LayerGroup | null>(null);
   const districtsLayerRef = useRef<L.LayerGroup | null>(null);
   const droppedPinMarkerRef = useRef<L.Marker | null>(null);
+  const parkedPinMarkerRef = useRef<L.Marker | null>(null);
   const selectedHighlightRef = useRef<L.LayerGroup | null>(null);
   /** Avoid map.fitBounds on every live GPS tick when only the origin (A) moves. */
   const previewFitDestRef = useRef<{ lat: number; lng: number } | null>(null);
@@ -1034,6 +1063,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     trailLayerRef.current = L.layerGroup().addTo(map);
     selectedHighlightRef.current = L.layerGroup().addTo(map);
     safetyPoiLayerRef.current = L.layerGroup().addTo(map);
+    savedPlacesLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
     const setZoomCSSVar = (z: number) => {
@@ -1409,6 +1439,66 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }
   }, [safetyPois]);
 
+  // Saved-places overlay — Home/Work/Favorite/Custom pins on the map.
+  // Sit above incident clusters (so the user can spot their stuff at
+  // a glance) but use a deliberately distinct visual language: a teardrop
+  // outline with a category glyph inside, so they don't get confused
+  // with severity-coloured incident pins.
+  useEffect(() => {
+    const layer = savedPlacesLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (!savedPlaces || savedPlaces.length === 0) return;
+
+    const palette: Record<string, { color: string; glyph: string; label: string }> = {
+      home:     { color: "#22c55e", glyph: "&#x1F3E0;", label: "Home" },
+      work:     { color: "#3b82f6", glyph: "&#x1F4BC;", label: "Work" },
+      favorite: { color: "#f59e0b", glyph: "&#x2605;",  label: "Favorite" },
+      custom:   { color: "#94a3b8", glyph: "&#x1F4CD;", label: "Saved" },
+    };
+
+    for (const pl of savedPlaces) {
+      const p = palette[pl.category];
+      if (!p) continue;
+      const accent = pl.accentColor ?? p.color;
+      const safeName = pl.name.replace(/"/g, "&quot;");
+      const icon = L.divIcon({
+        className: "pp-saved-place-marker",
+        // Teardrop is 24 wide, 32 tall; anchor at the tip (bottom center)
+        // so the pin "sticks" to the precise lat/lng instead of floating.
+        iconSize: [24, 32],
+        iconAnchor: [12, 30],
+        popupAnchor: [0, -28],
+        html:
+          `<div title="${safeName}" style="position:relative;width:24px;height:32px;">` +
+          `<div style="position:absolute;top:0;left:0;width:24px;height:24px;border-radius:50% 50% 50% 0;background:${accent};` +
+          `transform:rotate(-45deg);box-shadow:0 2px 6px rgba(0,0,0,0.4),0 0 0 2px rgba(255,255,255,0.85);"></div>` +
+          `<div style="position:absolute;top:3px;left:0;width:24px;height:24px;display:flex;align-items:center;justify-content:center;` +
+          `color:#fff;font-size:11px;font-weight:700;font-family:system-ui,-apple-system,sans-serif;">${p.glyph}</div>` +
+          `</div>`,
+      });
+      const m = L.marker([pl.lat, pl.lng], {
+        icon,
+        // Sit above incident clusters but below the user dot.
+        zIndexOffset: 600,
+        keyboard: false,
+        interactive: true,
+      });
+      m.bindTooltip(`${p.label}: ${pl.name}`, {
+        direction: "top",
+        offset: [0, -28],
+        className: "pp-saved-place-tooltip",
+      });
+      m.on("click", (e) => {
+        // Block the underlying map-tap handler (SafetyScoreCard) — the
+        // user's intent here is to interact with their saved spot.
+        L.DomEvent.stop(e.originalEvent);
+        onSavedPlaceClickRef.current?.(pl.id, pl.lat, pl.lng, pl.name);
+      });
+      layer.addLayer(m);
+    }
+  }, [savedPlaces]);
+
   useEffect(() => {
     const highlight = selectedHighlightRef.current;
     if (highlight) highlight.clearLayers();
@@ -1490,6 +1580,60 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       }).addTo(map);
     }
   }, [droppedPin]);
+
+  // "Parked here" sticky marker — distinct purple car badge so it
+  // doesn't get confused with the red dropped-pin or the user's
+  // location dot. Sits at a slightly lower z than the dropped-pin
+  // since the latter is the user's *current* exploratory action,
+  // while the parked pin is passive context.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (!parkedPin) {
+      if (parkedPinMarkerRef.current) {
+        map.removeLayer(parkedPinMarkerRef.current);
+        parkedPinMarkerRef.current = null;
+      }
+      return;
+    }
+
+    const icon = L.divIcon({
+      className: "",
+      iconSize: [38, 48],
+      iconAnchor: [19, 46],
+      html: `<div class="parked-pin-marker" aria-hidden="true" style="filter:drop-shadow(0 4px 6px rgba(0,0,0,0.4));">
+        <svg viewBox="0 0 38 48" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="pp-parked-pin-grad" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0" stop-color="#c084fc"/>
+              <stop offset="0.6" stop-color="#a855f7"/>
+              <stop offset="1" stop-color="#6b21a8"/>
+            </linearGradient>
+          </defs>
+          <path d="M19 1 C9 1 2 8 2 17 C2 30 19 46 19 46 C19 46 36 30 36 17 C36 8 29 1 19 1 Z"
+            fill="url(#pp-parked-pin-grad)" stroke="#4c1d95" stroke-width="1.4"/>
+          <circle cx="19" cy="17" r="9" fill="#fff" opacity="0.95"/>
+          <text x="19" y="21.5" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="800" fill="#6b21a8">P</text>
+        </svg>
+      </div>`,
+    });
+
+    if (parkedPinMarkerRef.current) {
+      parkedPinMarkerRef.current.setLatLng([parkedPin.lat, parkedPin.lng]);
+      parkedPinMarkerRef.current.setIcon(icon);
+    } else {
+      parkedPinMarkerRef.current = L.marker([parkedPin.lat, parkedPin.lng], {
+        icon,
+        zIndexOffset: 4500,
+        interactive: false,
+      }).addTo(map);
+      parkedPinMarkerRef.current.bindTooltip("Parked here", {
+        direction: "top",
+        offset: [0, -42],
+      });
+    }
+  }, [parkedPin]);
 
   // Kept for back-compat with the old "tap mode" prop; currently a no-op.
   useEffect(() => {

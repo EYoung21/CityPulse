@@ -51,7 +51,10 @@ import IncidentAheadChip from "@/components/IncidentAheadChip";
 import AlertsInbox from "@/components/AlertsInbox";
 import { recordAlert, subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
 import { recordTrip, updateTrip, type TripHistoryEntry } from "@/lib/trip-history";
+import { getParkedPin, subscribeParkedPin, type ParkedPin } from "@/lib/parked-pin";
+import ParkedPinPill from "@/components/ParkedPinPill";
 import { fetchPoisInBounds, SAFETY_POI_CATEGORIES, type SafetyPoiCategory } from "@/lib/overpass";
+import { useSavedDestinations } from "@/hooks/useSavedDestinations";
 import ResumeTripPill from "@/components/ResumeTripPill";
 import { loadTripSnapshot, clearTripSnapshot, type TripResumeSnapshot } from "@/lib/trip-resume";
 import { distanceAlongRoute } from "@/lib/routing";
@@ -166,6 +169,7 @@ function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): nu
 
 export default function Home() {
   const { mode, resolved, setMode, colorBlindSafe, setColorBlindSafe } = useTheme();
+  const { destinations: savedDestinations, lists: savedLists } = useSavedDestinations();
   const isDark = resolved === "dark";
   const [firestoreAvailable, setFirestoreAvailable] = useState(() => isFirebaseConfigured());
   const useFirestoreData = firestoreAvailable;
@@ -268,6 +272,26 @@ export default function Home() {
   // categories and handed to IncidentMap as a single flat list. We
   // gate the fetch on min zoom (≥ 12) since denser zooms would pull
   // hundreds of POIs and obscure incident markers.
+  // Render the user's saved places (Home/Work/Favorite/Custom) as
+  // map pins. Persisted across reloads so the map state always
+  // matches what the user expects from session to session.
+  // Live mirror of the parked-pin store so map marker + bottom pill
+  // stay in sync with PlaceActions / external sets.
+  const [parkedPin, setParkedPinState] = useState<ParkedPin | null>(null);
+  useEffect(() => {
+    setParkedPinState(getParkedPin());
+    return subscribeParkedPin(setParkedPinState);
+  }, []);
+
+  const [savedPlacesOverlay, setSavedPlacesOverlay] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem("pp:saved-places-overlay") !== "0";
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("pp:saved-places-overlay", savedPlacesOverlay ? "1" : "0");
+  }, [savedPlacesOverlay]);
+
   const [safetyPoiCats, setSafetyPoiCats] = useState<Set<SafetyPoiCategory>>(() => new Set());
   const [safetyPois, setSafetyPois] = useState<
     Array<{ id: string; name: string; category: SafetyPoiCategory; lat: number; lng: number }>
@@ -908,6 +932,41 @@ export default function Home() {
         heatmapEnabled={heatmapEnabled}
         todHourFocus={todHourFocus}
         safetyPois={safetyPois}
+        parkedPin={parkedPin ? { lat: parkedPin.lat, lng: parkedPin.lng } : null}
+        savedPlaces={savedPlacesOverlay && savedDestinations.length > 0
+          ? savedDestinations.map((d) => {
+              // Mirror the SavedPlaces palette logic for list-bound
+              // entries so the on-map dot matches its sidebar row.
+              let accent: string | undefined;
+              if (d.category === "custom" && d.listId) {
+                const list = savedLists.find((l) => l.id === d.listId);
+                if (list) {
+                  accent = list.color || (() => {
+                    const palette = ["#a78bfa", "#f472b6", "#34d399", "#fbbf24", "#60a5fa", "#fb7185", "#5eead4"];
+                    let hash = 0;
+                    for (let i = 0; i < list.id.length; i++) hash = (hash * 31 + list.id.charCodeAt(i)) & 0xfffffff;
+                    return palette[hash % palette.length];
+                  })();
+                }
+              }
+              return {
+                id: d.id,
+                name: d.name,
+                lat: d.lat,
+                lng: d.lng,
+                category: d.category,
+                accentColor: accent,
+              };
+            })
+          : null}
+        onSavedPlaceClick={(_id, lat, lng, name) => {
+          // Mirror the existing place-actions flow: clicking a saved
+          // pin opens directions *to* it. For Home/Work specifically
+          // this matches the quick-route chip behavior.
+          window.dispatchEvent(
+            new CustomEvent("pp:plan-route", { detail: { mode: "to", lat, lng, label: name } })
+          );
+        }}
         isDark={isDark}
         onTripProgress={setTripProgress}
         liveTripGps={gpsStatus === "found"}
@@ -1111,6 +1170,16 @@ export default function Home() {
           recap={tripRecap}
           historyId={tripRecapHistoryId}
           onClose={() => { setTripRecap(null); setTripRecapHistoryId(null); }}
+        />
+      )}
+
+      {/* Parked-here pill — appears whenever a parked-pin is active.
+          Auto-dismisses on TTL expiry; user can also clear via the X.
+          Hidden during an in-trip recap to avoid stacking modals. */}
+      {!tripRecap && (
+        <ParkedPinPill
+          userLocation={userLocation}
+          onLocate={(lat, lng) => mapRef.current?.flyTo(lat, lng, 18)}
         />
       )}
 
@@ -1458,6 +1527,33 @@ export default function Home() {
                     <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${todOverlayEnabled ? "left-4" : "left-0.5"}`} />
                   </div>
                 </button>
+
+                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
+                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Saved places</p>
+                <button
+                  onClick={() => setSavedPlacesOverlay((v) => !v)}
+                  className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
+                  style={{ color: "var(--panel-text-secondary)" }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                  aria-pressed={savedPlacesOverlay}
+                >
+                  <span className="flex items-center gap-2">
+                    <span aria-hidden="true">📍</span>
+                    <span>Pin saved places{savedDestinations.length > 0 ? ` (${savedDestinations.length})` : ""}</span>
+                  </span>
+                  <div
+                    className={`w-8 h-4 rounded-full transition-colors relative ${savedPlacesOverlay ? "bg-amber-500" : ""}`}
+                    style={!savedPlacesOverlay ? { background: "var(--panel-input-bg)" } : {}}
+                  >
+                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${savedPlacesOverlay ? "left-4" : "left-0.5"}`} />
+                  </div>
+                </button>
+                {savedPlacesOverlay && savedDestinations.length === 0 && (
+                  <p className="text-[9px] px-2 pb-1 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
+                    Save a place from the sidebar to see it pinned here.
+                  </p>
+                )}
 
                 <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
                 <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Safety POIs</p>
