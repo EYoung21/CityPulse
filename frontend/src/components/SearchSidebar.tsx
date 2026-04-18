@@ -24,6 +24,9 @@ import IncidentFeed from "@/components/IncidentFeed";
 import MobileSheet from "@/components/MobileSheet";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { getCurrentCity } from "@/lib/pulse-cities";
+import { buildTripShareUrl } from "@/lib/share-trip";
+import { share as nativeShare } from "@/lib/native";
+import { useAuth } from "@/contexts/AuthContext";
 
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
@@ -110,6 +113,15 @@ export default function SearchSidebar({
   onMobileOpenChange,
 }: Props) {
   const isMobile = useIsMobile();
+  const { user } = useAuth();
+  // Display name (if signed in) is included on share-ETA links so the
+  // recipient sees "Eli is driving" rather than "Someone is driving".
+  // Held in a ref so the share callback always sees the current value
+  // without re-creating itself.
+  const senderDisplayName = useRef<string>("");
+  useEffect(() => {
+    senderDisplayName.current = user?.displayName?.trim() || "";
+  }, [user?.displayName]);
   const [view, setView] = useState<View>("search");
   const [originQuery, setOriginQuery] = useState("");
   const [destQuery, setDestQuery] = useState("");
@@ -596,6 +608,27 @@ export default function SearchSidebar({
           recentIncidents={incidents.slice(0, 12)}
           onSelectIncident={(id) => onSelectIncident?.(id)}
           onFlyTo={onFlyTo}
+          onShareEta={async () => {
+            const dest = destLocRef.current;
+            const geom = activeRouteRef.current;
+            if (!dest || !geom || geom.length < 2 || !routeInfo) return false;
+            const remainingMin = Math.max(1, Math.ceil(routeInfo.durationMin * (1 - tripProgress)));
+            const url = buildTripShareUrl({
+              name: senderDisplayName.current || undefined,
+              destination: [dest.lat, dest.lng],
+              mode: activeMode,
+              etaEpochMs: Date.now() + remainingMin * 60_000,
+              sentAtEpochMs: Date.now(),
+              geometry: geom,
+            });
+            const ok = await nativeShare({
+              title: "Live ETA",
+              text: `On my way — ETA ${remainingMin} min`,
+              url,
+              dialogTitle: "Share live ETA",
+            });
+            return ok;
+          }}
         />
       )}
     </>

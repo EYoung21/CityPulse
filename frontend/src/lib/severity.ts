@@ -104,3 +104,59 @@ export function getSeverity(category: string): SeverityConfig {
     }
   );
 }
+
+/* ----------------------------------------------------------------------
+ *  Bucketed severity classification, used by the heatmap intensity
+ *  weighting (so violent incidents dominate the hotspots over chatter)
+ *  and any future per-bucket styling. The keys cover all values produced
+ *  by the backend's classifier (`philly_pulse/server.py`).
+ * ---------------------------------------------------------------------- */
+
+export type SeverityBucket = "violent" | "fire" | "medical" | "property" | "traffic" | "other";
+
+const BUCKETS: Record<string, SeverityBucket> = {
+  violent_weapon:        "violent",
+  violent_no_weapon:     "violent",
+  shots_heard:           "violent",
+  robbery:               "violent",
+  burglary_in_progress:  "violent",
+
+  fire_hazmat:           "fire",
+
+  medical_priority:      "medical",
+  medical_other:         "medical",
+
+  burglary:              "property",
+  theft:                 "property",
+  vandalism:             "property",
+  disorder:              "property",
+
+  traffic_crash_injury:    "traffic",
+  traffic_crash_no_injury: "traffic",
+  traffic_accident:        "traffic",
+  traffic_hazard:          "traffic",
+};
+
+export function severityBucket(category: string | null | undefined): SeverityBucket {
+  if (!category) return "other";
+  return BUCKETS[category] ?? "other";
+}
+
+/** Multiplier applied to the per-incident heatmap weight so that serious
+ *  events dominate the visual hotspots over chatter. Tuned so that a
+ *  baseline `w_eff` of ~0.5 stays in the warm-band (yellow/orange) while
+ *  a violent incident of the same age pushes into the red band. */
+export const SEVERITY_HEAT_MULTIPLIER: Record<SeverityBucket, number> = {
+  violent:  1.5,
+  fire:     1.25,
+  medical:  1.1,
+  property: 0.9,
+  traffic:  0.75,
+  other:    0.65,
+};
+
+/** Convenience: pre-clamped per-incident heatmap intensity. */
+export function heatmapWeight(category: string | null | undefined, baseWeight: number): number {
+  const m = SEVERITY_HEAT_MULTIPLIER[severityBucket(category)];
+  return Math.min(1, Math.max(0.18, baseWeight * m));
+}

@@ -40,7 +40,9 @@ import DistrictCard from "@/components/DistrictCard";
 import DroppedPinCard from "@/components/DroppedPinCard";
 import ManeuverChip from "@/components/ManeuverChip";
 import SearchAreaPill from "@/components/SearchAreaPill";
+import SharedTripCard from "@/components/SharedTripCard";
 import { useDeviceHeading } from "@/hooks/useDeviceHeading";
+import { decodeTripToken, type DecodedTripToken } from "@/lib/share-trip";
 import type { ManeuverStep } from "@/lib/routing";
 import type { MapHandle, WaypointPin, BasemapStyle } from "@/components/IncidentMap";
 import {
@@ -248,6 +250,7 @@ export default function Home() {
    *   #zoom/lat/lng (handled by IncidentMap) → set initial map view
    * After applying we strip the query string so a refresh doesn't re-trigger. */
   const pendingDeepIncidentRef = useRef<string | null>(null);
+  const [sharedTrip, setSharedTrip] = useState<DecodedTripToken | null>(null);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -255,6 +258,14 @@ export default function Home() {
     const latParam = params.get("lat");
     const lngParam = params.get("lng");
     const zoomParam = params.get("zoom");
+    const tripParam = params.get("trip");
+
+    if (tripParam) {
+      // ?trip=<token> → recipient view of a "Share my live ETA" link. The
+      // token is fully self-contained — no backend roundtrip needed.
+      const decoded = decodeTripToken(tripParam);
+      if (decoded) setSharedTrip(decoded);
+    }
 
     if (incidentParam) {
       pendingDeepIncidentRef.current = incidentParam;
@@ -271,9 +282,9 @@ export default function Home() {
       }
     }
 
-    if (incidentParam || latParam || lngParam || zoomParam) {
+    if (incidentParam || latParam || lngParam || zoomParam || tripParam) {
       const cleaned = new URL(window.location.href);
-      ["incident", "lat", "lng", "zoom"].forEach((k) => cleaned.searchParams.delete(k));
+      ["incident", "lat", "lng", "zoom", "trip"].forEach((k) => cleaned.searchParams.delete(k));
       window.history.replaceState({}, "", cleaned.toString());
     }
   }, []);
@@ -535,6 +546,8 @@ export default function Home() {
         userLocation={userLocation}
         userHeading={userHeading}
         basemapStyle={basemapStyle}
+        sharedTripGeometry={sharedTrip?.geometry || null}
+        sharedTripDestination={sharedTrip?.destination || null}
         tripRouteGeometry={tripGeometry}
         previewOrigin={previewOrigin}
         previewDest={previewDest}
@@ -679,6 +692,11 @@ export default function Home() {
             setPillTarget(null);
           }}
         />
+      )}
+
+      {/* Recipient view of a "Share my live ETA" link (?trip=<token>). */}
+      {sharedTrip && (
+        <SharedTripCard trip={sharedTrip} onClose={() => setSharedTrip(null)} />
       )}
 
       {/* Maneuver chip — floating turn-by-turn pill (active trip + ORS steps only) */}

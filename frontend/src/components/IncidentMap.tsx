@@ -13,6 +13,7 @@ import "leaflet.markercluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import type { Incident } from "@/lib/api";
+import { heatmapWeight } from "@/lib/severity";
 import type { RouteData } from "@/components/RoutePanel";
 import { NEIGHBORHOODS, type Neighborhood, incidentsInNeighborhood } from "@/lib/neighborhoods";
 import { getCurrentCity } from "@/lib/pulse-cities";
@@ -294,6 +295,13 @@ interface Props {
   userHeading?: number | null;
   /** Basemap tile style. Defaults to "auto" (follows the active theme). */
   basemapStyle?: BasemapStyle;
+  /** Read-only polyline rendered when the user opens a shared-trip link
+   *  (`?trip=<token>`). Visually distinct from `tripRouteGeometry` to
+   *  signal that it's someone *else's* route, not the viewer's. */
+  sharedTripGeometry?: [number, number][] | null;
+  /** Optional destination marker for the shared trip. Rendered with the
+   *  standard red end-pin so it visually matches a normal `endPin`. */
+  sharedTripDestination?: [number, number] | null;
 }
 
 function distToSegmentKm(
@@ -815,6 +823,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     onMapMove,
     userHeading,
     basemapStyle = "auto",
+    sharedTripGeometry,
+    sharedTripDestination,
   },
   ref
 ) {
@@ -1168,7 +1178,13 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       const heatData: [number, number, number][] = [];
       for (const inc of incidents) {
         if (inc.lat == null || inc.lng == null) continue;
-        const weight = useDensity ? 0.6 : Math.max(inc.w_eff, 0.2);
+        // Severity-weighted intensity so the hotspots reflect *what* is
+        // happening, not just *that* something is happening. The "density"
+        // mode (week+ window) keeps a flatter weight so the map shows raw
+        // incident density rather than collapsing toward a few violent
+        // pinpoints.
+        const base = useDensity ? 0.6 : Math.max(inc.w_eff, 0.2);
+        const weight = useDensity ? base : heatmapWeight(inc.severity_category, base);
         if (isTripMode && tripRouteGeometry) {
           const dist = minDistToRouteKm([inc.lat, inc.lng], tripRouteGeometry);
           if (dist <= TRIP_PROXIMITY_KM) heatData.push([inc.lat, inc.lng, weight]);
@@ -1512,6 +1528,47 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       map.fitBounds(bounds, { padding: [100, 100], maxZoom: 15 });
     }
   }, [routes, previewWaypoints]);
+
+  // Shared-trip overlay (recipient view of a "Share ETA" link).
+  // Visually distinct from the user's own active trip — dashed cyan stroke
+  // so it's obvious this is someone else's route, not navigation guidance.
+  const sharedTripLayerRef = useRef<L.LayerGroup | null>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!sharedTripLayerRef.current) {
+      sharedTripLayerRef.current = L.layerGroup().addTo(map);
+    }
+    const layer = sharedTripLayerRef.current;
+    layer.clearLayers();
+
+    if (!sharedTripGeometry || sharedTripGeometry.length < 2) return;
+
+    L.polyline(sharedTripGeometry, {
+      color: "#0891b2",
+      weight: 12,
+      opacity: 0.16,
+    }).addTo(layer);
+    L.polyline(sharedTripGeometry, {
+      color: "#06b6d4",
+      weight: 5,
+      opacity: 0.95,
+      dashArray: "1,10",
+      lineCap: "round",
+      lineJoin: "round",
+    }).addTo(layer);
+
+    if (sharedTripDestination) {
+      L.marker(sharedTripDestination, {
+        icon: createEndpointDotIcon("✦", "#06b6d4", "rgba(6,182,212,0.5)"),
+        zIndexOffset: 2000,
+        interactive: false,
+      }).addTo(layer);
+    }
+
+    const bounds = L.latLngBounds(sharedTripGeometry.map((p) => L.latLng(p[0], p[1])));
+    map.fitBounds(bounds, { padding: [100, 100], maxZoom: 15 });
+  }, [sharedTripGeometry, sharedTripDestination]);
 
   // Preview waypoint pins (before GO is pressed)
   useEffect(() => {

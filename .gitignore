@@ -47,3 +47,6 @@ frontend/out/
 .DS_Store
 Thumbs.db
 .vercel
+
+# Local agent transcript exports
+conversation_export.txt
