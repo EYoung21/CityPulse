@@ -16,17 +16,35 @@ export type PoiCategory =
   | "atm"
   | "coffee"
   | "police"
-  | "fire_station";
+  | "fire_station"
+  | "charging_station"
+  | "toilets";
 
 /** Persistent map-overlay categories (subset of PoiCategory). These are
  *  the always-on "safety POIs" surfaced as a togglable layer alongside
  *  the heatmap, distinct from the click-driven NearbyPois chips. */
 export type SafetyPoiCategory = "hospital" | "police" | "fire_station";
 
+/** Convenience POI overlays — separate from safety POIs both visually
+ *  (lighter color palette) and intent-wise (driver/walker errands vs
+ *  emergency reference points). Same fetch infrastructure, different
+ *  toggle group in the Layers menu. */
+export type NearbyPoiCategory = "fuel" | "food" | "coffee" | "atm" | "parking" | "charging_station" | "toilets";
+
 export const SAFETY_POI_CATEGORIES: { id: SafetyPoiCategory; label: string; emoji: string; color: string }[] = [
   { id: "hospital",     label: "Hospital",  emoji: "🏥", color: "#22c55e" },
   { id: "police",       label: "Police",    emoji: "🚓", color: "#3b82f6" },
   { id: "fire_station", label: "Fire",      emoji: "🚒", color: "#ef4444" },
+];
+
+export const NEARBY_POI_CATEGORIES: { id: NearbyPoiCategory; label: string; emoji: string; color: string; glyph: string }[] = [
+  { id: "fuel",             label: "Gas",       emoji: "⛽", color: "#f97316", glyph: "G" },
+  { id: "charging_station", label: "EV charge", emoji: "🔌", color: "#10b981", glyph: "E" },
+  { id: "food",             label: "Food",      emoji: "🍽️", color: "#ef4444", glyph: "F" },
+  { id: "coffee",           label: "Coffee",    emoji: "☕", color: "#a855f7", glyph: "C" },
+  { id: "parking",          label: "Parking",   emoji: "🅿️", color: "#3b82f6", glyph: "P" },
+  { id: "atm",              label: "ATM",       emoji: "🏧", color: "#0ea5e9", glyph: "$" },
+  { id: "toilets",          label: "Restroom",  emoji: "🚻", color: "#64748b", glyph: "R" },
 ];
 
 export interface Poi {
@@ -59,15 +77,21 @@ const OVERPASS_ENDPOINTS = [
 /** OSM filter expression per category. We OR amenity, shop, and (rare)
  *  tourism keys to capture the way most contributors tag each POI type. */
 const FILTERS: Record<PoiCategory, string> = {
-  food:         '["amenity"~"restaurant|fast_food|food_court|cafe"]',
-  coffee:       '["amenity"="cafe"]',
-  fuel:         '["amenity"="fuel"]',
-  hospital:     '["amenity"~"hospital|clinic|doctors"]',
-  pharmacy:     '["amenity"="pharmacy"]',
-  parking:      '["amenity"~"parking|parking_space"]',
-  atm:          '["amenity"="atm"]',
-  police:       '["amenity"="police"]',
-  fire_station: '["amenity"="fire_station"]',
+  food:             '["amenity"~"restaurant|fast_food|food_court|cafe"]',
+  coffee:           '["amenity"="cafe"]',
+  fuel:             '["amenity"="fuel"]',
+  hospital:         '["amenity"~"hospital|clinic|doctors"]',
+  pharmacy:         '["amenity"="pharmacy"]',
+  parking:          '["amenity"~"parking|parking_space"]',
+  atm:              '["amenity"="atm"]',
+  police:           '["amenity"="police"]',
+  fire_station:     '["amenity"="fire_station"]',
+  charging_station: '["amenity"="charging_station"]',
+  // Restrooms are tagged a few different ways; "toilets" is the most
+  // common, but restaurants/parks also expose `["toilets"="yes"]`. We
+  // restrict to the dedicated amenity tag to avoid mapping every
+  // McDonald's just because it has a bathroom.
+  toilets:          '["amenity"="toilets"]',
 };
 
 const memCache = new Map<string, { at: number; data: Poi[] }>();
@@ -249,10 +273,18 @@ out center ${limit * 2};`;
           const tags = el.tags ?? {};
           const name =
             tags.name || tags.brand || tags.operator ||
-            // Police/fire often unnamed; fall back to type label so they
-            // still get a marker.
-            (category === "police" ? "Police station" :
-             category === "fire_station" ? "Fire station" : null);
+            // Many overlay categories are commonly tagged without a
+            // `name` (parking lots, ATMs in bank ATMs, public restrooms).
+            // Fall back to a category label so they still get a marker
+            // — discoverability matters more than a precise vendor name.
+            (category === "police"          ? "Police station" :
+             category === "fire_station"    ? "Fire station"   :
+             category === "parking"         ? "Parking"        :
+             category === "atm"             ? "ATM"            :
+             category === "toilets"         ? "Restroom"       :
+             category === "charging_station" ? "EV charger"    :
+             category === "fuel"            ? "Gas station"    :
+             null);
           if (!name) return null;
           return {
             id: `${el.type}/${el.id}`,

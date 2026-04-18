@@ -335,6 +335,17 @@ interface Props {
     lat: number;
     lng: number;
   }> | null;
+  /** Convenience-POI overlay (gas, food, EV charging, ATM, etc).
+   *  Rendered via a parallel layer group so its toggle is independent
+   *  from the safety-POI layer and so the visual language can stay
+   *  deliberately distinct. */
+  nearbyPois?: Array<{
+    id: string;
+    name: string;
+    category: "fuel" | "food" | "coffee" | "atm" | "parking" | "charging_station" | "toilets";
+    lat: number;
+    lng: number;
+  }> | null;
   /** Optional render of the user's saved places (Home/Work/Favorite/Custom)
    *  as map markers. Off by default at the parent level — opt-in via the
    *  Layers menu. Click fires `onSavedPlaceClick` with the underlying
@@ -877,6 +888,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     sharedTripDestination,
     onUserDrag,
     safetyPois = null,
+    nearbyPois = null,
     savedPlaces = null,
     onSavedPlaceClick,
   },
@@ -888,6 +900,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const heatPulseRafRef = useRef<number | null>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
   const safetyPoiLayerRef = useRef<L.LayerGroup | null>(null);
+  const nearbyPoiLayerRef = useRef<L.LayerGroup | null>(null);
   const savedPlacesLayerRef = useRef<L.LayerGroup | null>(null);
   // Latest click handler — kept in a ref so the layer effect can stay
   // dependent only on `savedPlaces` and not re-create markers every
@@ -1063,6 +1076,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     trailLayerRef.current = L.layerGroup().addTo(map);
     selectedHighlightRef.current = L.layerGroup().addTo(map);
     safetyPoiLayerRef.current = L.layerGroup().addTo(map);
+    nearbyPoiLayerRef.current = L.layerGroup().addTo(map);
     savedPlacesLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
@@ -1438,6 +1452,59 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       layer.addLayer(m);
     }
   }, [safetyPois]);
+
+  // Convenience POI overlay (gas, food, EV, ATM, etc). Pill-shaped
+  // markers with a colored background and a single-character glyph
+  // — visually heavier than safety POIs (which are circles) so a
+  // glance can distinguish "where can I get coffee" vs "where's the
+  // nearest hospital" without reading labels.
+  useEffect(() => {
+    const layer = nearbyPoiLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (!nearbyPois || nearbyPois.length === 0) return;
+
+    const palette: Record<string, { bg: string; glyph: string; label: string }> = {
+      fuel:             { bg: "#f97316", glyph: "G", label: "Gas" },
+      charging_station: { bg: "#10b981", glyph: "E", label: "EV" },
+      food:             { bg: "#ef4444", glyph: "F", label: "Food" },
+      coffee:           { bg: "#a855f7", glyph: "C", label: "Coffee" },
+      parking:          { bg: "#3b82f6", glyph: "P", label: "Parking" },
+      atm:              { bg: "#0ea5e9", glyph: "$", label: "ATM" },
+      toilets:          { bg: "#64748b", glyph: "R", label: "Restroom" },
+    };
+
+    for (const poi of nearbyPois) {
+      const p = palette[poi.category];
+      if (!p) continue;
+      const safeName = poi.name.replace(/"/g, "&quot;");
+      const icon = L.divIcon({
+        className: "pp-nearby-poi-marker",
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+        html:
+          `<div title="${safeName}" style="width:22px;height:22px;border-radius:6px;background:${p.bg};` +
+          `display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;` +
+          `box-shadow:0 2px 6px rgba(0,0,0,0.35),0 0 0 2px rgba(255,255,255,0.85);` +
+          `font-family:system-ui,-apple-system,sans-serif;letter-spacing:-0.02em;opacity:0.94;">${p.glyph}</div>`,
+      });
+      const m = L.marker([poi.lat, poi.lng], {
+        icon,
+        // Below incident markers but above safety POIs so they don't
+        // hide hospitals/police but do compete a bit with the cluster
+        // (where they overlap, the user can still see them).
+        zIndexOffset: -100,
+        keyboard: false,
+        interactive: true,
+      });
+      m.bindTooltip(`${p.label}: ${poi.name}`, {
+        direction: "top",
+        offset: [0, -12],
+        className: "pp-nearby-poi-tooltip",
+      });
+      layer.addLayer(m);
+    }
+  }, [nearbyPois]);
 
   // Saved-places overlay — Home/Work/Favorite/Custom pins on the map.
   // Sit above incident clusters (so the user can spot their stuff at
