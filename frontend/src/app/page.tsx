@@ -53,7 +53,13 @@ import { recordAlert, subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
 import { recordTrip, updateTrip, type TripHistoryEntry } from "@/lib/trip-history";
 import { getParkedPin, subscribeParkedPin, type ParkedPin } from "@/lib/parked-pin";
 import ParkedPinPill from "@/components/ParkedPinPill";
-import { fetchPoisInBounds, SAFETY_POI_CATEGORIES, type SafetyPoiCategory } from "@/lib/overpass";
+import {
+  fetchPoisInBounds,
+  SAFETY_POI_CATEGORIES,
+  NEARBY_POI_CATEGORIES,
+  type SafetyPoiCategory,
+  type NearbyPoiCategory,
+} from "@/lib/overpass";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
 import ResumeTripPill from "@/components/ResumeTripPill";
 import { loadTripSnapshot, clearTripSnapshot, type TripResumeSnapshot } from "@/lib/trip-resume";
@@ -308,6 +314,40 @@ export default function Home() {
     });
   }, []);
 
+  // Same pattern as safetyPois, but for the convenience overlays
+  // (gas, EV, food, ATM, parking, restroom). Persisted across reloads
+  // since these are user preference, not session-scoped exploration.
+  const [nearbyPoiCats, setNearbyPoiCats] = useState<Set<NearbyPoiCategory>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const raw = window.localStorage.getItem("pp:nearby-poi-cats");
+      if (!raw) return new Set();
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return new Set();
+      const valid = new Set(NEARBY_POI_CATEGORIES.map((c) => c.id));
+      return new Set(arr.filter((id) => valid.has(id)) as NearbyPoiCategory[]);
+    } catch { return new Set(); }
+  });
+  const [nearbyPois, setNearbyPois] = useState<
+    Array<{ id: string; name: string; category: NearbyPoiCategory; lat: number; lng: number }>
+  >([]);
+  const nearbyFetchSeqRef = useRef(0);
+  const lastNearbyBboxRef = useRef<string>("");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("pp:nearby-poi-cats", JSON.stringify([...nearbyPoiCats]));
+  }, [nearbyPoiCats]);
+
+  const toggleNearbyCat = useCallback((id: NearbyPoiCategory) => {
+    setNearbyPoiCats((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
   // Kick off an initial fetch whenever the set of enabled categories
   // changes — otherwise the user has to pan the map before anything
   // appears, which makes the toggle feel broken.
@@ -338,6 +378,37 @@ export default function Home() {
       );
     })();
   }, [safetyPoiCats]);
+
+  // Mirror of the safety-POI initial fetch for convenience POIs.
+  useEffect(() => {
+    if (nearbyPoiCats.size === 0) {
+      setNearbyPois([]);
+      lastNearbyBboxRef.current = "";
+      return;
+    }
+    const bounds = mapRef.current?.getBounds();
+    if (!bounds) return;
+    const seq = ++nearbyFetchSeqRef.current;
+    lastNearbyBboxRef.current = "";
+    void (async () => {
+      const enabled = [...nearbyPoiCats];
+      const results = await Promise.all(
+        // Slightly higher limit per category — gas/food/coffee tend to
+        // be denser than hospitals.
+        enabled.map((cat) => fetchPoisInBounds(cat, bounds, 80))
+      );
+      if (seq !== nearbyFetchSeqRef.current) return;
+      setNearbyPois(
+        results.flat().map((p) => ({
+          id: p.id,
+          name: p.name,
+          category: p.category as NearbyPoiCategory,
+          lat: p.lat,
+          lng: p.lng,
+        }))
+      );
+    })();
+  }, [nearbyPoiCats]);
   useEffect(() => {
     if (!todOverlayEnabled) {
       setTodHourFocus(null);
@@ -914,6 +985,37 @@ export default function Home() {
             setSafetyPois([]);
             lastSafetyBboxRef.current = "";
           }
+
+          // Same gating logic for the convenience POI overlay. Slightly
+          // stricter zoom floor (≥13) since these categories tend to be
+          // much denser — pulling all of Philly's restaurants at z12
+          // would be both slow and visually overwhelming.
+          if (nearbyPoiCats.size > 0 && zoom >= 13) {
+            const bounds = mapRef.current?.getBounds();
+            if (!bounds) return;
+            const bboxKey = `${bounds.south.toFixed(2)},${bounds.west.toFixed(2)},${bounds.north.toFixed(2)},${bounds.east.toFixed(2)}:${[...nearbyPoiCats].sort().join(",")}`;
+            if (bboxKey === lastNearbyBboxRef.current) return;
+            lastNearbyBboxRef.current = bboxKey;
+            const seq = ++nearbyFetchSeqRef.current;
+            void (async () => {
+              const enabled = [...nearbyPoiCats];
+              const results = await Promise.all(
+                enabled.map((cat) => fetchPoisInBounds(cat, bounds, 80))
+              );
+              if (seq !== nearbyFetchSeqRef.current) return;
+              const flat = results.flat().map((p) => ({
+                id: p.id,
+                name: p.name,
+                category: p.category as NearbyPoiCategory,
+                lat: p.lat,
+                lng: p.lng,
+              }));
+              setNearbyPois(flat);
+            })();
+          } else if (nearbyPoiCats.size === 0 && nearbyPois.length > 0) {
+            setNearbyPois([]);
+            lastNearbyBboxRef.current = "";
+          }
         }}
         mapTapActive={mapTap !== null}
         userLocation={userLocation}
@@ -932,6 +1034,7 @@ export default function Home() {
         heatmapEnabled={heatmapEnabled}
         todHourFocus={todHourFocus}
         safetyPois={safetyPois}
+        nearbyPois={nearbyPois}
         parkedPin={parkedPin ? { lat: parkedPin.lat, lng: parkedPin.lng } : null}
         savedPlaces={savedPlacesOverlay && savedDestinations.length > 0
           ? savedDestinations.map((d) => {
@@ -1162,7 +1265,7 @@ export default function Home() {
       )}
 
       {/* Live GPS speed readout for driving / cycling trips. */}
-      {speedTracked && <SpeedChip mps={tripSpeedMps} />}
+      {speedTracked && <SpeedChip mps={tripSpeedMps} loc={userLocation} />}
 
       {/* Trip recap — shown briefly when the user ends a trip. */}
       {tripRecap && (
@@ -1584,6 +1687,38 @@ export default function Home() {
                 {safetyPoiCats.size > 0 && (
                   <p className="text-[9px] px-2 pb-1 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
                     Zoom in to street level for full coverage. Loaded: {safetyPois.length}.
+                  </p>
+                )}
+
+                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
+                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Nearby</p>
+                {NEARBY_POI_CATEGORIES.map((c) => {
+                  const on = nearbyPoiCats.has(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => toggleNearbyCat(c.id)}
+                      className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
+                      style={{ color: "var(--panel-text-secondary)" }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
+                      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span aria-hidden="true">{c.emoji}</span>
+                        <span>{c.label}</span>
+                      </span>
+                      <div
+                        className="w-8 h-4 rounded-full transition-colors relative"
+                        style={on ? { background: c.color } : { background: "var(--panel-input-bg)" }}
+                      >
+                        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${on ? "left-4" : "left-0.5"}`} />
+                      </div>
+                    </button>
+                  );
+                })}
+                {nearbyPoiCats.size > 0 && (
+                  <p className="text-[9px] px-2 pb-1 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
+                    Zoom in past street level — these are denser than safety POIs. Loaded: {nearbyPois.length}.
                   </p>
                 )}
 

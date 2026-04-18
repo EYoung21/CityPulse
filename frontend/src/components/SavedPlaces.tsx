@@ -16,6 +16,7 @@ import {
   Pencil,
   Check,
   X,
+  Share2,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -25,6 +26,8 @@ import {
   type SavedDestination,
   type SavedList,
 } from "@/hooks/useSavedDestinations";
+import { useAuth } from "@/contexts/AuthContext";
+import { buildListShareUrl } from "@/lib/share-list";
 
 interface Props {
   onFlyTo: (lat: number, lng: number) => void;
@@ -70,12 +73,59 @@ export default function SavedPlaces({ onFlyTo, onDirections }: Props) {
     deleteList,
   } = useSavedDestinations();
 
+  const { user } = useAuth();
+
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [collapsedLists, setCollapsedLists] = useState<Set<string>>(new Set());
   const [renamingListId, setRenamingListId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [showCreateList, setShowCreateList] = useState(false);
   const [createDraft, setCreateDraft] = useState("");
+  /** Transient toast keyed by listId so multiple lists can briefly
+   *  flash "Link copied" without overwriting each other. */
+  const [shareToast, setShareToast] = useState<{ id: string; msg: string } | null>(null);
+
+  const handleShareList = async (list: SavedList, items: SavedDestination[]) => {
+    if (items.length === 0) {
+      setShareToast({ id: list.id, msg: "Empty list — nothing to share" });
+      window.setTimeout(() => setShareToast((s) => (s?.id === list.id ? null : s)), 2000);
+      return;
+    }
+    const url = buildListShareUrl({
+      senderName: user?.displayName || undefined,
+      listName: list.name,
+      color: listColor(list),
+      items: items.map((d) => ({ name: d.name, lat: d.lat, lng: d.lng })),
+    });
+    // Prefer Web Share API on mobile (gives a proper native sheet);
+    // fall back to clipboard everywhere else. Both surface the same
+    // confirmation toast since the user shouldn't have to guess
+    // whether the share succeeded.
+    try {
+      const navAny = navigator as Navigator & { share?: (data: ShareData) => Promise<void> };
+      if (typeof navAny.share === "function") {
+        await navAny.share({
+          title: `${list.name} — PhillyPulse`,
+          text: `${items.length} saved ${items.length === 1 ? "place" : "places"} on PhillyPulse`,
+          url,
+        });
+        setShareToast({ id: list.id, msg: "Shared" });
+      } else {
+        await navigator.clipboard.writeText(url);
+        setShareToast({ id: list.id, msg: "Link copied" });
+      }
+    } catch (err) {
+      // AbortError just means the user dismissed the share sheet — no toast.
+      if ((err as { name?: string })?.name === "AbortError") return;
+      try {
+        await navigator.clipboard.writeText(url);
+        setShareToast({ id: list.id, msg: "Link copied" });
+      } catch {
+        setShareToast({ id: list.id, msg: "Couldn't share link" });
+      }
+    }
+    window.setTimeout(() => setShareToast((s) => (s?.id === list.id ? null : s)), 2000);
+  };
 
   // Bucket destinations: pinned categories (home/work/favorite) stay
   // flat; custom destinations split between user-defined lists and
@@ -410,6 +460,31 @@ export default function SavedPlaces({ onFlyTo, onDirections }: Props) {
                 <div className="flex-1" />
                 {!isRenaming && (
                   <>
+                    {shareToast?.id === list.id && (
+                      <span
+                        className="text-[9px] mr-1 px-1.5 py-0.5 rounded-full"
+                        style={{
+                          background: "rgba(34,197,94,0.15)",
+                          color: "#22c55e",
+                          border: "1px solid rgba(34,197,94,0.3)",
+                        }}
+                      >
+                        {shareToast.msg}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleShareList(list, items);
+                      }}
+                      className="p-0.5 opacity-60 hover:opacity-100 transition-opacity"
+                      style={{ color: "var(--panel-text-muted)" }}
+                      title="Share list"
+                      aria-label={`Share list ${list.name}`}
+                    >
+                      <Share2 className="w-3 h-3" />
+                    </button>
                     <button
                       type="button"
                       onClick={(e) => {

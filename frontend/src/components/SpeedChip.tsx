@@ -2,35 +2,80 @@
 
 import { Gauge } from "lucide-react";
 import { formatSpeed, preferredSpeedUnit } from "@/hooks/useGpsSpeed";
+import { formatSpeedLimit, useSpeedLimit } from "@/hooks/useSpeedLimit";
 
 interface Props {
   mps: number | null;
+  /** Optional current location used to look up the road's posted speed
+   *  limit via Overpass. When provided, a small shield appears next to
+   *  the speed readout, turning red when the user is meaningfully over
+   *  the limit. */
+  loc?: { lat: number; lng: number } | null;
 }
 
 /** Small floating speed readout for active driving / cycling trips.
  *  Sits at the bottom-left, mirroring Maps' speed pill placement. Hides
- *  itself entirely while we have no reading. */
-export default function SpeedChip({ mps }: Props) {
-  if (mps === null) return null;
+ *  itself entirely while we have no reading. When `loc` is supplied,
+ *  pairs with a US-style speed-limit shield snapped to the road. */
+export default function SpeedChip({ mps, loc = null }: Props) {
   const unit = preferredSpeedUnit();
+  const { limitKmh } = useSpeedLimit(loc ?? null, mps !== null);
+
+  if (mps === null) return null;
+
   const value = formatSpeed(mps, unit);
   const label = unit === "mph" ? "mph" : "km/h";
+  const limit = formatSpeedLimit(limitKmh, unit);
+
+  // "Meaningfully over" = >5 mph / >8 km/h. Below that is rounding +
+  // GPS noise. Above it the shield turns red so the user can react
+  // without doing the conversion in their head.
+  const speedingThreshold = unit === "mph" ? 5 : 8;
+  const isSpeeding =
+    limit != null && Number(value) - Number(limit) >= speedingThreshold;
+
   return (
     <div
-      className="pointer-events-none absolute z-[1001] left-3 flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-xl shadow-2xl"
-      style={{
-        bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)",
-        background: "rgba(15,23,42,0.85)",
-        border: "1px solid rgba(255,255,255,0.12)",
-        color: "#fff",
-        fontVariantNumeric: "tabular-nums",
-      }}
-      role="status"
-      aria-label={`Current speed ${value} ${label}`}
+      className="pointer-events-none absolute z-[1001] left-3 flex items-center gap-2"
+      style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }}
     >
-      <Gauge className="w-3.5 h-3.5 opacity-80" />
-      <span className="text-base font-semibold leading-none">{value}</span>
-      <span className="text-[10px] uppercase tracking-wider opacity-70">{label}</span>
+      <div
+        className="flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-xl shadow-2xl"
+        style={{
+          background: isSpeeding ? "rgba(127,29,29,0.92)" : "rgba(15,23,42,0.85)",
+          border: `1px solid ${isSpeeding ? "rgba(239,68,68,0.6)" : "rgba(255,255,255,0.12)"}`,
+          color: "#fff",
+          fontVariantNumeric: "tabular-nums",
+        }}
+        role="status"
+        aria-label={`Current speed ${value} ${label}${limit ? `, limit ${limit} ${label}` : ""}`}
+      >
+        <Gauge className="w-3.5 h-3.5 opacity-80" />
+        <span className="text-base font-semibold leading-none">{value}</span>
+        <span className="text-[10px] uppercase tracking-wider opacity-70">{label}</span>
+      </div>
+
+      {/* US-style speed-limit shield. Hidden when no posted limit is
+          known for the snapped segment so we don't lie to the user. */}
+      {limit && (
+        <div
+          className="flex flex-col items-center justify-center rounded-md px-2 py-0.5 shadow-2xl"
+          style={{
+            background: "#fff",
+            color: "#000",
+            border: "2px solid #000",
+            minWidth: "2.25rem",
+            fontVariantNumeric: "tabular-nums",
+          }}
+          aria-label={`Speed limit ${limit} ${label}`}
+          title={`Posted limit ${limit} ${label}`}
+        >
+          <span className="text-[7px] font-bold uppercase tracking-wider leading-none mt-0.5">
+            Limit
+          </span>
+          <span className="text-base font-extrabold leading-tight">{limit}</span>
+        </div>
+      )}
     </div>
   );
 }
