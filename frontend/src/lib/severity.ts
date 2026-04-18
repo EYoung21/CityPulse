@@ -93,9 +93,131 @@ export const SEVERITY_MAP: Record<string, SeverityConfig> = {
   },
 };
 
+/* ----------------------------------------------------------------------
+ *  Color-blind-safe palette (IBM-derived: blue/orange/yellow/purple/grey
+ *  pairs that are distinguishable across protan/deutan/tritanopia). The
+ *  shape mirrors SEVERITY_MAP exactly, so consumers don't need to special
+ *  case anything — they read whatever `getSeverity()` returns. The toggle
+ *  is a runtime flag set from the Theme menu and persisted to localStorage.
+ * ---------------------------------------------------------------------- */
+const CB_SEVERITY_MAP: Record<string, SeverityConfig> = {
+  violent_weapon: {
+    label: "Violent (Weapon)",
+    color: "#dc267f",
+    bgClass: "bg-pink-500/20",
+    textClass: "text-pink-300",
+    markerColor: "#b8175f",
+  },
+  violent_no_weapon: {
+    label: "Violent",
+    color: "#dc267f",
+    bgClass: "bg-pink-500/20",
+    textClass: "text-pink-300",
+    markerColor: "#b8175f",
+  },
+  shots_heard: {
+    label: "Shots Fired",
+    color: "#dc267f",
+    bgClass: "bg-pink-500/20",
+    textClass: "text-pink-300",
+    markerColor: "#b8175f",
+  },
+  robbery: {
+    label: "Robbery",
+    color: "#fe6100",
+    bgClass: "bg-orange-500/20",
+    textClass: "text-orange-300",
+    markerColor: "#cc4f00",
+  },
+  burglary_in_progress: {
+    label: "Burglary",
+    color: "#fe6100",
+    bgClass: "bg-orange-500/20",
+    textClass: "text-orange-300",
+    markerColor: "#cc4f00",
+  },
+  medical_priority: {
+    label: "Medical (Priority)",
+    color: "#648fff",
+    bgClass: "bg-blue-500/20",
+    textClass: "text-blue-300",
+    markerColor: "#4571d4",
+  },
+  medical_other: {
+    label: "Medical",
+    color: "#85a5ff",
+    bgClass: "bg-blue-400/20",
+    textClass: "text-blue-300",
+    markerColor: "#648fff",
+  },
+  fire_hazmat: {
+    label: "Fire / Hazmat",
+    color: "#ffb000",
+    bgClass: "bg-amber-500/20",
+    textClass: "text-amber-300",
+    markerColor: "#cc8a00",
+  },
+  traffic_crash_injury: {
+    label: "Crash (Injuries)",
+    color: "#ffb000",
+    bgClass: "bg-amber-500/20",
+    textClass: "text-amber-300",
+    markerColor: "#cc8a00",
+  },
+  traffic_crash_no_injury: {
+    label: "Crash",
+    color: "#a3a3a3",
+    bgClass: "bg-neutral-500/20",
+    textClass: "text-neutral-400",
+    markerColor: "#737373",
+  },
+  disorder: {
+    label: "Disorder",
+    color: "#785ef0",
+    bgClass: "bg-violet-400/20",
+    textClass: "text-violet-300",
+    markerColor: "#5c44c4",
+  },
+  admin_or_noise: {
+    label: "Admin",
+    color: "#525252",
+    bgClass: "bg-neutral-600/20",
+    textClass: "text-neutral-500",
+    markerColor: "#525252",
+  },
+};
+
+let _colorBlindMode = false;
+
+/** Re-export to consumers who want to read the flag without subscribing
+ *  (e.g. server-rendered surfaces that always use the default palette). */
+export function getColorBlindMode(): boolean {
+  return _colorBlindMode;
+}
+
+const cbListeners = new Set<() => void>();
+
+/** Flip the global palette and notify all subscribed consumers so they
+ *  re-render. Call from the Theme menu / settings UI. */
+export function setColorBlindMode(on: boolean): void {
+  if (_colorBlindMode === on) return;
+  _colorBlindMode = on;
+  for (const fn of cbListeners) {
+    try { fn(); } catch { /* a single bad subscriber shouldn't kill the rest */ }
+  }
+}
+
+/** Subscribe to palette changes — used by the React hook below to force
+ *  a re-render whenever someone toggles the setting. Returns an unsub. */
+export function subscribeColorBlindMode(fn: () => void): () => void {
+  cbListeners.add(fn);
+  return () => { cbListeners.delete(fn); };
+}
+
 export function getSeverity(category: string): SeverityConfig {
+  const map = _colorBlindMode ? CB_SEVERITY_MAP : SEVERITY_MAP;
   return (
-    SEVERITY_MAP[category] || {
+    map[category] || {
       label: category.replace(/_/g, " "),
       color: "#6b7280",
       bgClass: "bg-neutral-500/20",

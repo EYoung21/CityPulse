@@ -14,7 +14,20 @@ export type PoiCategory =
   | "pharmacy"
   | "parking"
   | "atm"
-  | "coffee";
+  | "coffee"
+  | "police"
+  | "fire_station";
+
+/** Persistent map-overlay categories (subset of PoiCategory). These are
+ *  the always-on "safety POIs" surfaced as a togglable layer alongside
+ *  the heatmap, distinct from the click-driven NearbyPois chips. */
+export type SafetyPoiCategory = "hospital" | "police" | "fire_station";
+
+export const SAFETY_POI_CATEGORIES: { id: SafetyPoiCategory; label: string; emoji: string; color: string }[] = [
+  { id: "hospital",     label: "Hospital",  emoji: "🏥", color: "#22c55e" },
+  { id: "police",       label: "Police",    emoji: "🚓", color: "#3b82f6" },
+  { id: "fire_station", label: "Fire",      emoji: "🚒", color: "#ef4444" },
+];
 
 export interface Poi {
   id: string;
@@ -46,13 +59,15 @@ const OVERPASS_ENDPOINTS = [
 /** OSM filter expression per category. We OR amenity, shop, and (rare)
  *  tourism keys to capture the way most contributors tag each POI type. */
 const FILTERS: Record<PoiCategory, string> = {
-  food:     '["amenity"~"restaurant|fast_food|food_court|cafe"]',
-  coffee:   '["amenity"="cafe"]',
-  fuel:     '["amenity"="fuel"]',
-  hospital: '["amenity"~"hospital|clinic|doctors"]',
-  pharmacy: '["amenity"="pharmacy"]',
-  parking:  '["amenity"~"parking|parking_space"]',
-  atm:      '["amenity"="atm"]',
+  food:         '["amenity"~"restaurant|fast_food|food_court|cafe"]',
+  coffee:       '["amenity"="cafe"]',
+  fuel:         '["amenity"="fuel"]',
+  hospital:     '["amenity"~"hospital|clinic|doctors"]',
+  pharmacy:     '["amenity"="pharmacy"]',
+  parking:      '["amenity"~"parking|parking_space"]',
+  atm:          '["amenity"="atm"]',
+  police:       '["amenity"="police"]',
+  fire_station: '["amenity"="fire_station"]',
 };
 
 const memCache = new Map<string, { at: number; data: Poi[] }>();
@@ -176,5 +191,89 @@ out center ${limit * 2};`;
     }
   }
   console.warn("[pp] overpass failed", lastErr);
+  return [];
+}
+
+/** Bounding-box variant of fetchNearbyPois. Used by the persistent
+ *  Safety-POI overlay so the markers fill the visible viewport rather
+ *  than a fixed radius. Cached & deduped the same way. */
+export async function fetchPoisInBounds(
+  category: PoiCategory,
+  bounds: { south: number; west: number; north: number; east: number },
+  limit = 80
+): Promise<Poi[]> {
+  // Snap to ~3 decimal places (~110m at the equator) so small map jitter
+  // doesn't bypass the cache. Wider categories like food would still hit
+  // the network often, but safety POIs are sparse and stable enough to
+  // benefit a lot.
+  const k = (n: number) => n.toFixed(3);
+  const cKey = `bbox:${category}:${k(bounds.south)},${k(bounds.west)},${k(bounds.north)},${k(bounds.east)}`;
+
+  const mem = memCache.get(cKey);
+  if (mem && Date.now() - mem.at < CACHE_TTL_MS) return mem.data.slice(0, limit);
+  const sess = loadSessionCache(cKey);
+  if (sess) {
+    memCache.set(cKey, { at: Date.now(), data: sess });
+    return sess.slice(0, limit);
+  }
+
+  const filter = FILTERS[category];
+  const bbox = `${bounds.south},${bounds.west},${bounds.north},${bounds.east}`;
+  const query = `[out:json][timeout:15];
+(
+  node${filter}(${bbox});
+  way${filter}(${bbox});
+);
+out center ${limit * 2};`;
+
+  // Approx viewport center for the optional "distance" sort; not strictly
+  // meaningful for bbox queries but consumers expect the field.
+  const cLat = (bounds.south + bounds.north) / 2;
+  const cLng = (bounds.west + bounds.east) / 2;
+
+  let lastErr: unknown;
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `data=${encodeURIComponent(query)}`,
+      });
+      if (!res.ok) { lastErr = new Error(`Overpass ${res.status}`); continue; }
+      const data = (await res.json()) as { elements?: OverpassElement[] };
+      const pois = (data.elements ?? [])
+        .map((el): Poi | null => {
+          const elLat = el.lat ?? el.center?.lat;
+          const elLng = el.lon ?? el.center?.lon;
+          if (elLat == null || elLng == null) return null;
+          const tags = el.tags ?? {};
+          const name =
+            tags.name || tags.brand || tags.operator ||
+            // Police/fire often unnamed; fall back to type label so they
+            // still get a marker.
+            (category === "police" ? "Police station" :
+             category === "fire_station" ? "Fire station" : null);
+          if (!name) return null;
+          return {
+            id: `${el.type}/${el.id}`,
+            name,
+            category,
+            lat: elLat,
+            lng: elLng,
+            distance: haversineM(cLat, cLng, elLat, elLng),
+            hint: tags["addr:street"] || tags.operator || tags.brand || undefined,
+          };
+        })
+        .filter((p): p is Poi => p !== null)
+        .slice(0, limit);
+
+      memCache.set(cKey, { at: Date.now(), data: pois });
+      saveSessionCache(cKey, pois);
+      return pois;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  console.warn("[pp] overpass bbox failed", lastErr);
   return [];
 }
