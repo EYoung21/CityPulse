@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { setColorBlindMode } from "./severity";
+import { setPref } from "./prefs-sync";
 
 type ThemeMode = "auto" | "light" | "dark";
 type ResolvedTheme = "light" | "dark";
@@ -74,13 +75,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   const setMode = useCallback((m: ThemeMode) => {
     setModeState(m);
-    localStorage.setItem(STORAGE_KEY, m);
+    // Route through prefs-sync so this preference round-trips to
+    // Firestore for signed-in users.
+    setPref("phlpulse-theme", m);
   }, []);
 
   const setColorBlindSafe = useCallback((on: boolean) => {
     setColorBlindSafeState(on);
     setColorBlindMode(on);
-    try { localStorage.setItem(CB_STORAGE_KEY, on ? "1" : "0"); }
+    try { setPref("phlpulse-cb-palette", on ? "1" : "0"); }
     catch { /* storage blocked — non-fatal */ }
   }, []);
 

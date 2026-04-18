@@ -90,6 +90,19 @@ export function deleteTrip(id: string): void {
   write(read().filter((e) => e.id !== id));
 }
 
+/** Restore a previously-deleted trip back into history. Used by the
+ *  undo-toast flow: callers snapshot the entry before deletion, then
+ *  pass it to this function if the user taps Undo. Slots the entry
+ *  back in chronological order rather than at the top, since that
+ *  matches where the user expects to see it. */
+export function restoreTrip(entry: TripHistoryEntry): void {
+  const existing = read();
+  // Skip if the same id is somehow already present (double-undo race).
+  if (existing.some((e) => e.id === entry.id)) return;
+  const next = [...existing, entry].sort((a, b) => b.startedAt - a.startedAt);
+  write(next);
+}
+
 export function clearTripHistory(): void {
   write([]);
 }

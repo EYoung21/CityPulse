@@ -28,6 +28,7 @@ import {
   Radio,
   Lock,
   Bell,
+  Search,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import SearchSidebar from "@/components/SearchSidebar";
@@ -43,6 +44,8 @@ import ManeuverChip from "@/components/ManeuverChip";
 import TurnList from "@/components/TurnList";
 import SearchAreaPill from "@/components/SearchAreaPill";
 import RecenterPill from "@/components/RecenterPill";
+import AlongRoutePanel from "@/components/AlongRoutePanel";
+import UndoToastHost from "@/components/UndoToastHost";
 import SharedTripCard from "@/components/SharedTripCard";
 import SpeedChip from "@/components/SpeedChip";
 import TripRecapCard, { type TripRecap } from "@/components/TripRecapCard";
@@ -52,6 +55,7 @@ import AlertsInbox from "@/components/AlertsInbox";
 import { recordAlert, subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
 import { recordTrip, updateTrip, type TripHistoryEntry } from "@/lib/trip-history";
 import { getParkedPin, subscribeParkedPin, type ParkedPin } from "@/lib/parked-pin";
+import { setPref } from "@/lib/prefs-sync";
 import ParkedPinPill from "@/components/ParkedPinPill";
 import {
   fetchPoisInBounds,
@@ -250,6 +254,10 @@ export default function Home() {
     mapRef.current?.panTo?.(userLocation.lat, userLocation.lng);
   }, [followMe, userLocation]);
   const [tripGeometry, setTripGeometry] = useState<[number, number][] | null>(null);
+  /** Whether the "Search along route" overlay panel is open. Only
+   *  meaningful when a trip is active — toggling closes the panel
+   *  when the trip ends so it doesn't persist into a stale state. */
+  const [alongRouteOpen, setAlongRouteOpen] = useState(false);
   const [tripMode, setTripMode] = useState<string | null>(null);
   const [tripSteps, setTripSteps] = useState<ManeuverStep[] | null>(null);
   // Toggles the full step-by-step list overlay. Auto-cleared when the
@@ -257,7 +265,8 @@ export default function Home() {
   const [showTurnList, setShowTurnList] = useState(false);
   useEffect(() => {
     if (!tripGeometry && showTurnList) setShowTurnList(false);
-  }, [tripGeometry, showTurnList]);
+    if (!tripGeometry && alongRouteOpen) setAlongRouteOpen(false);
+  }, [tripGeometry, showTurnList, alongRouteOpen]);
   const [previewOrigin, setPreviewOrigin] = useState<{ lat: number; lng: number } | null>(null);
   const [previewDest, setPreviewDest] = useState<{ lat: number; lng: number } | null>(null);
   const [previewWaypoints, setPreviewWaypoints] = useState<WaypointPin[] | null>(null);
@@ -295,7 +304,7 @@ export default function Home() {
   });
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem("pp:saved-places-overlay", savedPlacesOverlay ? "1" : "0");
+    setPref("pp:saved-places-overlay", savedPlacesOverlay ? "1" : "0");
   }, [savedPlacesOverlay]);
 
   const [safetyPoiCats, setSafetyPoiCats] = useState<Set<SafetyPoiCategory>>(() => new Set());
@@ -336,7 +345,7 @@ export default function Home() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem("pp:nearby-poi-cats", JSON.stringify([...nearbyPoiCats]));
+    setPref("pp:nearby-poi-cats", JSON.stringify([...nearbyPoiCats]));
   }, [nearbyPoiCats]);
 
   const toggleNearbyCat = useCallback((id: NearbyPoiCategory) => {
@@ -429,7 +438,7 @@ export default function Home() {
     return "auto";
   });
   useEffect(() => {
-    if (typeof window !== "undefined") localStorage.setItem("pp:basemap", basemapStyle);
+    if (typeof window !== "undefined") setPref("pp:basemap", basemapStyle);
   }, [basemapStyle]);
   const [showTheme, setShowTheme] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
@@ -1286,6 +1295,11 @@ export default function Home() {
         />
       )}
 
+      {/* Global undo toast host — destructive actions across the app
+          (trip-history delete, parked-pin clear, list delete) route
+          through `requestUndoableAction` and surface here. */}
+      <UndoToastHost />
+
       {/* Resume-trip pill — surfaces a recent in-progress trip after a
           page refresh / accidental tab close. Hides once the user
           chooses (resume re-fires startTrip via pp:resume-trip; dismiss
@@ -1359,6 +1373,17 @@ export default function Home() {
         />
       )}
 
+      {/* Search-along-route drawer — bottom-anchored, only visible
+          during an active trip. Issues a single Overpass bbox query
+          per category and ranks POIs by detour distance. */}
+      {tripGeometry && alongRouteOpen && (
+        <AlongRoutePanel
+          geometry={tripGeometry}
+          userLocation={userLocation}
+          onClose={() => setAlongRouteOpen(false)}
+        />
+      )}
+
       {/* Maneuver chip — floating turn-by-turn pill (active trip + ORS steps only) */}
       {tripGeometry && tripSteps && tripSteps.length > 0 && (
         <div
@@ -1389,6 +1414,26 @@ export default function Home() {
 
       {/* Bottom-right controls (lifted so map markers under corner overlap UI less) */}
       <div className="absolute md:bottom-[4.5rem] pp-bottom-controls right-3 z-[1001] flex flex-col items-end gap-1.5 md:gap-2 pointer-events-auto">
+        {/* "Search along route" — only meaningful while a trip is
+            active; hidden the rest of the time so the button column
+            doesn't grow unnecessarily. Toggles a bottom-anchored
+            panel similar to Maps' search-along-route drawer. */}
+        {tripGeometry && tripGeometry.length > 1 && (
+          <button
+            type="button"
+            onClick={() => setAlongRouteOpen((v) => !v)}
+            title="Search along route"
+            aria-label="Search along route"
+            className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors active:scale-95"
+            style={{
+              background: alongRouteOpen ? "rgba(59,130,246,0.15)" : "var(--pill-bg)",
+              border: `1px solid ${alongRouteOpen ? "rgba(59,130,246,0.3)" : "var(--pill-border)"}`,
+              color: alongRouteOpen ? "#3b82f6" : "var(--pill-text)",
+            }}
+          >
+            <Search className="w-4 h-4" />
+          </button>
+        )}
         <button
           type="button"
           onClick={goToMyLocation}
