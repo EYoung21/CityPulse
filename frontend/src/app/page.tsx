@@ -40,8 +40,9 @@ import DistrictCard from "@/components/DistrictCard";
 import DroppedPinCard from "@/components/DroppedPinCard";
 import ManeuverChip from "@/components/ManeuverChip";
 import SearchAreaPill from "@/components/SearchAreaPill";
+import { useDeviceHeading } from "@/hooks/useDeviceHeading";
 import type { ManeuverStep } from "@/lib/routing";
-import type { MapHandle, WaypointPin } from "@/components/IncidentMap";
+import type { MapHandle, WaypointPin, BasemapStyle } from "@/components/IncidentMap";
 import {
   fetchIncidents,
   fetchSummary,
@@ -175,6 +176,7 @@ export default function Home() {
   const [pillTarget, setPillTarget] = useState<{ lat: number; lng: number } | null>(null);
   const [droppedPin, setDroppedPin] = useState<{ lat: number; lng: number } | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const userHeading = useDeviceHeading(userLocation !== null);
   const [tripGeometry, setTripGeometry] = useState<[number, number][] | null>(null);
   const [tripMode, setTripMode] = useState<string | null>(null);
   const [tripSteps, setTripSteps] = useState<ManeuverStep[] | null>(null);
@@ -185,6 +187,17 @@ export default function Home() {
   const [showLayers, setShowLayers] = useState(false);
   const [heatmapEnabled, setHeatmapEnabled] = useState(true);
   const [districtsEnabled, setDistrictsEnabled] = useState(false);
+  const [basemapStyle, setBasemapStyle] = useState<BasemapStyle>(() => {
+    if (typeof window === "undefined") return "auto";
+    const saved = localStorage.getItem("pp:basemap");
+    if (saved === "auto" || saved === "dark" || saved === "voyager" || saved === "positron" || saved === "streets") {
+      return saved;
+    }
+    return "auto";
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") localStorage.setItem("pp:basemap", basemapStyle);
+  }, [basemapStyle]);
   const [showTheme, setShowTheme] = useState(false);
   const [tripProgress, setTripProgress] = useState(0);
   const [gpsStatus, setGpsStatus] = useState<"idle" | "loading" | "found" | "denied">("idle");
@@ -520,6 +533,8 @@ export default function Home() {
         }}
         mapTapActive={mapTap !== null}
         userLocation={userLocation}
+        userHeading={userHeading}
+        basemapStyle={basemapStyle}
         tripRouteGeometry={tripGeometry}
         previewOrigin={previewOrigin}
         previewDest={previewDest}
@@ -843,6 +858,33 @@ export default function Home() {
                     <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${districtsEnabled ? "left-4" : "left-0.5"}`} />
                   </div>
                 </button>
+
+                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
+                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Basemap</p>
+                {(
+                  [
+                    { id: "auto",     label: "Auto",     hint: "Theme" },
+                    { id: "voyager",  label: "Voyager",  hint: "Color" },
+                    { id: "positron", label: "Positron", hint: "Light" },
+                    { id: "dark",     label: "Dark",     hint: "Dark"  },
+                    { id: "streets",  label: "Streets",  hint: "OSM"   },
+                  ] as { id: BasemapStyle; label: string; hint: string }[]
+                ).map((opt) => {
+                  const active = basemapStyle === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      onClick={() => setBasemapStyle(opt.id)}
+                      className={`w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs ${active ? "bg-blue-500/10 text-blue-500" : ""}`}
+                      style={!active ? { color: "var(--panel-text-secondary)" } : {}}
+                      onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "var(--panel-hover)"; }}
+                      onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
+                    >
+                      <span>{opt.label}</span>
+                      <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>{opt.hint}</span>
+                    </button>
+                  );
+                })}
               </motion.div>
             )}
           </AnimatePresence>

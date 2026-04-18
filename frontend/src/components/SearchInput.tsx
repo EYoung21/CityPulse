@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Search, MapPin, Loader2, X, Navigation, Mic, Clock, Trash2 } from "lucide-react";
+import { Search, MapPin, Loader2, X, Navigation, Mic, Clock, Trash2, Home, Briefcase } from "lucide-react";
 import { geocodePhilly } from "@/lib/search";
 import { isVoiceSearchSupported, startVoiceSearch } from "@/lib/voice";
 import { clearRecent, loadRecent, pushRecent, type RecentSearch } from "@/lib/recent-searches";
+import { useSavedDestinations } from "@/hooks/useSavedDestinations";
 
 interface GeoResult {
   display_name: string;
@@ -99,6 +100,15 @@ export default function SearchInput({ onFlyTo, onDirections }: Props) {
 
   useEffect(() => () => stopVoice(), [stopVoice]);
 
+  // Pinned Home/Work shortcuts: shown as one-tap-route chips when the
+  // search input is focused and empty. Drawn from the user's saved
+  // destinations, with `category === "home" | "work"` (set by the Save-as
+  // picker in PlaceActions).
+  const { destinations } = useSavedDestinations();
+  const homePlace = destinations.find((d) => d.category === "home") || null;
+  const workPlace = destinations.find((d) => d.category === "work") || null;
+  const hasShortcuts = open && query.trim().length < 2 && (homePlace || workPlace);
+
   const showRecents = open && query.trim().length < 2 && recents.length > 0;
   const showSuggestions = open && (suggestions.length > 0 || loading) && query.trim().length >= 2;
 
@@ -155,6 +165,43 @@ export default function SearchInput({ onFlyTo, onDirections }: Props) {
           </button>
         )}
       </div>
+
+      {hasShortcuts && (
+        <div className="mt-2 flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1 pb-1">
+          {homePlace && (
+            <button
+              type="button"
+              onClick={() => onDirections(homePlace.name, { lat: homePlace.lat, lng: homePlace.lng })}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors active:scale-95"
+              style={{
+                background: "rgba(34,197,94,0.12)",
+                color: "#22c55e",
+                border: "1px solid rgba(34,197,94,0.35)",
+              }}
+              title={`Directions to ${homePlace.name}`}
+              aria-label={`Get directions to home: ${homePlace.name}`}
+            >
+              <Home className="w-3.5 h-3.5" /> Home
+            </button>
+          )}
+          {workPlace && (
+            <button
+              type="button"
+              onClick={() => onDirections(workPlace.name, { lat: workPlace.lat, lng: workPlace.lng })}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors active:scale-95"
+              style={{
+                background: "rgba(59,130,246,0.12)",
+                color: "#3b82f6",
+                border: "1px solid rgba(59,130,246,0.35)",
+              }}
+              title={`Directions to ${workPlace.name}`}
+              aria-label={`Get directions to work: ${workPlace.name}`}
+            >
+              <Briefcase className="w-3.5 h-3.5" /> Work
+            </button>
+          )}
+        </div>
+      )}
 
       {showRecents && (
         <div
