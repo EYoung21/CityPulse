@@ -10,9 +10,18 @@ import {
   Hash,
   Bookmark,
   Check,
+  Home,
+  Briefcase,
+  Star,
+  MapPin,
+  type LucideIcon,
 } from "lucide-react";
 import { plusCode } from "@/lib/plus-code";
-import { useSavedDestinations } from "@/hooks/useSavedDestinations";
+import {
+  CATEGORY_LABELS,
+  useSavedDestinations,
+  type SavedCategory,
+} from "@/hooks/useSavedDestinations";
 
 interface Props {
   lat: number;
@@ -32,8 +41,16 @@ type ToastKind = "copied-coords" | "copied-pluscode" | "saved" | null;
  *  DroppedPinCard. Buttons: Directions to / from, Share, Open in Maps,
  *  Copy coordinates, Copy Plus Code, Save. Each is a 32px hit-target with
  *  ARIA labels and short-lived toasts for copy / save confirmations. */
+const SAVE_OPTIONS: { id: SavedCategory; Icon: LucideIcon; color: string }[] = [
+  { id: "home",     Icon: Home,      color: "#22c55e" },
+  { id: "work",     Icon: Briefcase, color: "#3b82f6" },
+  { id: "favorite", Icon: Star,      color: "#f59e0b" },
+  { id: "custom",   Icon: MapPin,    color: "#94a3b8" },
+];
+
 export default function PlaceActions({ lat, lng, label, hideDirections = false, incidentId }: Props) {
   const [toast, setToast] = useState<ToastKind>(null);
+  const [savePickerOpen, setSavePickerOpen] = useState(false);
   const { canSave, addDestination, destinations } = useSavedDestinations();
 
   const flashToast = useCallback((kind: ToastKind) => {
@@ -110,12 +127,13 @@ export default function PlaceActions({ lat, lng, label, hideDirections = false, 
     window.open(url, "_blank", "noopener,noreferrer");
   }, [lat, lng, displayLabel, haptic]);
 
-  const onSave = useCallback(async () => {
+  const onSaveAs = useCallback(async (cat: SavedCategory) => {
     haptic();
-    if (!canSave || isSaved) return;
-    await addDestination(displayLabel, lat, lng);
+    if (!canSave) return;
+    await addDestination(displayLabel, lat, lng, cat);
+    setSavePickerOpen(false);
     flashToast("saved");
-  }, [canSave, isSaved, addDestination, displayLabel, lat, lng, flashToast, haptic]);
+  }, [canSave, addDestination, displayLabel, lat, lng, flashToast, haptic]);
 
   const onDirectionsTo = useCallback(() => {
     haptic();
@@ -218,23 +236,58 @@ export default function PlaceActions({ lat, lng, label, hideDirections = false, 
           <Hash className="w-4 h-4" />
         </button>
         {canSave && (
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={isSaved}
-            title={isSaved ? "Saved" : "Save place"}
-            aria-label={isSaved ? "Already saved" : "Save this place"}
-            className={btn}
-            style={{
-              ...btnStyle,
-              color: isSaved ? "#3b82f6" : btnStyle.color,
-              background: isSaved ? "rgba(59,130,246,0.12)" : btnStyle.background,
-              borderColor: isSaved ? "rgba(59,130,246,0.35)" : btnStyle.border as string,
-              opacity: isSaved ? 0.85 : 1,
-            }}
-          >
-            {isSaved ? <Check className="w-4 h-4" /> : <Bookmark className="w-4 h-4" />}
-          </button>
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setSavePickerOpen((v) => !v)}
+              title={isSaved ? "Saved · choose category" : "Save place"}
+              aria-label={isSaved ? "Already saved (change category)" : "Save this place"}
+              aria-haspopup="menu"
+              aria-expanded={savePickerOpen}
+              className={btn}
+              style={{
+                ...btnStyle,
+                color: isSaved ? "#3b82f6" : btnStyle.color,
+                background: isSaved ? "rgba(59,130,246,0.12)" : btnStyle.background,
+                borderColor: isSaved ? "rgba(59,130,246,0.35)" : (btnStyle.border as string),
+              }}
+            >
+              {isSaved ? <Check className="w-4 h-4" /> : <Bookmark className="w-4 h-4" />}
+            </button>
+            {savePickerOpen && (
+              <div
+                role="menu"
+                className="absolute bottom-full mb-2 right-0 z-10 rounded-lg shadow-2xl py-1 min-w-[140px]"
+                style={{
+                  background: "var(--panel-bg-secondary)",
+                  border: "1px solid var(--panel-border)",
+                }}
+                onMouseLeave={() => setSavePickerOpen(false)}
+              >
+                <p
+                  className="text-[9px] uppercase tracking-wider px-3 py-1"
+                  style={{ color: "var(--panel-text-muted)" }}
+                >
+                  Save as
+                </p>
+                {SAVE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    role="menuitem"
+                    type="button"
+                    onClick={() => void onSaveAs(opt.id)}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-xs"
+                    style={{ color: "var(--panel-text-secondary)" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <opt.Icon className="w-3.5 h-3.5" />
+                    {CATEGORY_LABELS[opt.id]}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
       </div>
 

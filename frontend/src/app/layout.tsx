@@ -1,7 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/lib/theme";
 import Providers from "@/components/Providers";
+import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -21,6 +22,13 @@ export const metadata: Metadata = {
   title: `CityPulse — ${siteName} · ${cityName}`,
   description:
     `CityPulse: Real-time AI-powered community safety for ${cityName}. Live police scanner transcription, incident mapping, and safe routing.`,
+  manifest: "/manifest.json",
+  applicationName: "PhillyPulse",
+  appleWebApp: {
+    capable: true,
+    title: "PhillyPulse",
+    statusBarStyle: "black-translucent",
+  },
   icons: {
     icon: [
       { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
@@ -28,6 +36,17 @@ export const metadata: Metadata = {
     ],
     apple: "/apple-touch-icon.png",
   },
+  formatDetection: { telephone: false },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a14" },
+  ],
 };
 
 export default function RootLayout({
@@ -42,10 +61,6 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
-        <meta
-          name="viewport"
-          content="width=device-width, initial-scale=1, viewport-fit=cover"
-        />
         <link
           rel="stylesheet"
           href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -54,6 +69,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col">
         <Providers><ThemeProvider>{children}</ThemeProvider></Providers>
+        <ServiceWorkerRegister />
       </body>
     </html>
   );
