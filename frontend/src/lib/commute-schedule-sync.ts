@@ -28,7 +28,16 @@
  *  each other; the OS notification `tag` matches in both paths so
  *  the second one replaces rather than stacks). */
 
-import { deleteDoc, doc, getFirestore, setDoc } from "firebase/firestore";
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  getFirestore,
+  query,
+  setDoc,
+  where,
+} from "firebase/firestore";
 import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
 import type { CommutePrediction } from "@/lib/commute-patterns";
 
@@ -105,4 +114,70 @@ export async function deleteCommuteSchedule(
   if (!isFirebaseConfigured()) return;
   const db = getFirestore(getFirebaseApp());
   await deleteDoc(doc(db, COLLECTION, scheduleId(uid, bucketKey)));
+}
+
+/** Snapshot of one synced schedule, returned by `listCommuteSchedules`
+ *  for the settings UI. We expose only the fields useful for a
+ *  human-readable list — the full Firestore doc has more bookkeeping
+ *  the user doesn't need to see. */
+export interface CommuteScheduleSummary {
+  /** Firestore doc id; pass to `deleteCommuteScheduleById`. */
+  id: string;
+  bucketKey: string;
+  destLabel: string;
+  matchedCategory: "home" | "work" | null;
+  /** 0..1439 in the schedule's stored timezone. */
+  typicalDepartureMinute: number;
+  typicalDurationMin: number;
+  isWeekend: boolean;
+  confidence: number;
+  tz: string;
+  updatedAt: number;
+  /** Server-stamped after a successful push fan-out. May be empty. */
+  lastFiredYmd?: string;
+}
+
+export async function listCommuteSchedules(uid: string): Promise<CommuteScheduleSummary[]> {
+  if (!isFirebaseConfigured()) return [];
+  const db = getFirestore(getFirebaseApp());
+  // Firestore rules already restrict reads to docs whose `uid`
+  // matches the caller, but we filter explicitly so the query is
+  // also indexed and we don't accidentally pull every doc client-
+  // side if a future rules tweak loosens the read scope.
+  const q = query(collection(db, COLLECTION), where("uid", "==", uid));
+  const snap = await getDocs(q);
+  const out: CommuteScheduleSummary[] = [];
+  snap.forEach((d) => {
+    const v = d.data() as Record<string, unknown>;
+    out.push({
+      id: d.id,
+      bucketKey: String(v.bucketKey ?? ""),
+      destLabel: String(v.destLabel ?? "your destination"),
+      matchedCategory: (v.matchedCategory as "home" | "work" | null) ?? null,
+      typicalDepartureMinute: Number(v.typicalDepartureMinute ?? 0),
+      typicalDurationMin: Number(v.typicalDurationMin ?? 0),
+      isWeekend: Boolean(v.isWeekend),
+      confidence: Number(v.confidence ?? 0),
+      tz: String(v.tz ?? ""),
+      updatedAt: Number(v.updatedAt ?? 0),
+      lastFiredYmd: typeof v.lastFiredYmd === "string" ? v.lastFiredYmd : undefined,
+    });
+  });
+  // Sort by typical departure minute so weekday-morning routines
+  // group together and the list reads top-to-bottom across the day.
+  out.sort((a, b) => a.typicalDepartureMinute - b.typicalDepartureMinute);
+  return out;
+}
+
+export async function deleteCommuteScheduleById(scheduleId: string): Promise<void> {
+  if (!isFirebaseConfigured()) return;
+  const db = getFirestore(getFirebaseApp());
+  await deleteDoc(doc(db, COLLECTION, scheduleId));
+}
+
+/** Format a minute-of-day as a 12-hour locale string. */
+export function formatScheduleTime(minute: number): string {
+  const d = new Date();
+  d.setHours(Math.floor(minute / 60), minute % 60, 0, 0);
+  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
