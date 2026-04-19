@@ -57,6 +57,7 @@ import KeyboardShortcutsHelp from "@/components/KeyboardShortcutsHelp";
 import InstallPrompt from "@/components/InstallPrompt";
 import MapGesturesTour from "@/components/MapGesturesTour";
 import FeedbackForm from "@/components/FeedbackForm";
+import CommuteNotifier from "@/components/CommuteNotifier";
 import LiveSharePill from "@/components/LiveSharePill";
 import SharedTripCard from "@/components/SharedTripCard";
 import SpeedChip from "@/components/SpeedChip";
@@ -100,7 +101,9 @@ import AuthBar from "@/components/AuthBar";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { subscribeIncidents } from "@/lib/firestore";
 import {
+  isUserReportIncidentId,
   subscribeUserReports,
+  userReportIdFromIncidentId,
   userReportToIncident,
   type UserReport,
 } from "@/lib/user-reports";
@@ -1620,6 +1623,12 @@ export default function Home() {
       <ReminderRunner />
       <ReminderBanner />
 
+      {/* Predictive "leaving for work" Web Notification. Headless;
+          all gating (opt-in flag, browser permission, quiet hours,
+          fired-today) lives in lib/commute-notify. Mounted at root
+          so it keeps polling regardless of which panel is open. */}
+      <CommuteNotifier />
+
       {/* First-run map gestures tutorial. Auto-opens once on first
           visit; thereafter only on demand via a `pp:show-gestures-
           tour` window event (fired from the keyboard help sheet). */}
@@ -2503,6 +2512,13 @@ export default function Home() {
             <IncidentDetail
               incident={selected}
               onClose={() => setSelectedId(null)}
+              userReport={
+                isUserReportIncidentId(selected.id)
+                  ? userReports.find(
+                      (r) => r.id === userReportIdFromIncidentId(selected.id)
+                    ) ?? null
+                  : null
+              }
             />
           </motion.div>
         )}

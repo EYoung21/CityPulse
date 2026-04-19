@@ -5,6 +5,7 @@ import type { Incident } from "@/lib/api";
 import { assessSafety } from "@/lib/search";
 import PlaceActions from "@/components/PlaceActions";
 import NearbyPois from "@/components/NearbyPois";
+import HourOfDayCurve from "@/components/HourOfDayCurve";
 
 interface Props {
   lat: number;
@@ -91,6 +92,16 @@ export default function SafetyScoreCard({ lat, lng, incidents, onClose }: Props)
             ))}
           </div>
         )}
+
+        {/* 24-hour pattern. Renders nothing when the radius doesn't
+            contain enough history to draw a meaningful curve, so the
+            card stays tight in low-data spots. */}
+        <HourOfDayCurve
+          lat={lat}
+          lng={lng}
+          incidents={incidents}
+          accentColor={result.riskColor}
+        />
 
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 
