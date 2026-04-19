@@ -13,16 +13,17 @@ import re
 import subprocess
 from datetime import datetime, date, timezone
 from pathlib import Path
+from typing import Optional
 
 import httpx
 import numpy as np
 import yaml
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import admin_events, geocode, inhibitor, llm, persistence as store, weights
+from . import admin_events, geocode, inhibitor, llm, persistence as store, push as push_mod, weights
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1208,6 +1209,138 @@ async def admin_stream(feed_id: str):
             proc.wait()
 
     return StreamingResponse(stream_audio(), media_type="audio/mpeg")
+
+
+# ── Web Push (VAPID) ────────────────────────────────────────────────
+#
+# All push endpoints require a Firebase ID token in the Authorization
+# header (`Bearer …`) so a subscription is always tied to a real user
+# UID. We deliberately don't rely on a session cookie here: the client
+# already speaks Firebase Auth for everything else, and ID tokens are
+# the same trust signal Firestore enforces for `userReports` writes.
+
+def _verify_firebase_token(authorization: Optional[str]) -> dict:
+    """Returns the decoded token dict on success, raises 401 otherwise."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        from firebase_admin import auth as fb_auth
+        # `check_revoked=False` keeps the round-trip cheap; if a user
+        # revokes a session we'll still expire them at the next token
+        # refresh (1h max), which is fine for push subscription scope.
+        decoded = fb_auth.verify_id_token(token, check_revoked=False)
+    except Exception as e:
+        logger.info("Firebase token verification failed: %s", e)
+        raise HTTPException(status_code=401, detail="Invalid Firebase ID token") from e
+    if not decoded.get("uid"):
+        raise HTTPException(status_code=401, detail="Token missing uid")
+    # Anonymous users can read but not subscribe — push is per-account
+    # by design (otherwise we'd send to whatever device the next anon
+    # session lands on and that's a fast way to spook a stranger).
+    if decoded.get("firebase", {}).get("sign_in_provider") == "anonymous":
+        raise HTTPException(
+            status_code=403, detail="Push requires a non-anonymous account"
+        )
+    return decoded
+
+
+class PushSubscribeRequest(BaseModel):
+    """Mirrors `PushSubscription.toJSON()` plus a tiny client context."""
+    endpoint: str
+    p256dh: str
+    auth: str
+    userAgent: str | None = None
+    city: str | None = None
+
+
+@app.get("/api/push/public-key")
+async def push_public_key():
+    """Public-readable VAPID key for the browser's `pushManager.subscribe`."""
+    key = push_mod.public_key_b64url()
+    return {
+        "publicKey": key,
+        "configured": bool(key) and push_mod.push_available(),
+    }
+
+
+@app.post("/api/push/subscribe")
+async def push_subscribe(
+    body: PushSubscribeRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Idempotent — same endpoint URL upserts the existing row so a
+    user who toggles the setting off+on doesn't accumulate ghost
+    rows in Firestore."""
+    decoded = _verify_firebase_token(authorization)
+    uid = decoded["uid"]
+    if not push_mod.push_available():
+        # We accept the subscription anyway so a deploy that turns
+        # push on later can immediately push to existing subscribers
+        # without round-tripping the user. The frontend surfaces the
+        # "configured: false" state to set expectations.
+        logger.info("Accepting push subscription while server-side push is not configured")
+
+    try:
+        sub = push_mod.PushSubscription(
+            endpoint=body.endpoint,
+            p256dh=body.p256dh,
+            auth=body.auth,
+            uid=uid,
+            user_agent=(body.userAgent or "")[:200],  # bound it; some UA strings are huge
+            city=(body.city or "")[:64],
+        )
+        doc_id = push_mod.upsert_subscription(sub)
+    except Exception as e:
+        logger.warning("push subscription upsert failed: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to store subscription") from e
+    return {"status": "ok", "id": doc_id}
+
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str
+
+
+@app.post("/api/push/unsubscribe")
+async def push_unsubscribe(
+    body: PushUnsubscribeRequest,
+    authorization: Optional[str] = Header(None),
+):
+    decoded = _verify_firebase_token(authorization)
+    uid = decoded["uid"]
+    try:
+        ok = push_mod.delete_subscription(body.endpoint, expected_uid=uid)
+    except Exception as e:
+        logger.warning("push subscription delete failed: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to remove subscription") from e
+    return {"status": "ok" if ok else "not_found"}
+
+
+@app.post("/api/push/test")
+async def push_test(authorization: Optional[str] = Header(None)):
+    """Send a verification ping to every device the calling user has
+    subscribed. The response includes per-device counts so the UI can
+    surface "we tried 2 devices, 1 succeeded" rather than a blunt
+    pass/fail."""
+    decoded = _verify_firebase_token(authorization)
+    uid = decoded["uid"]
+    if not push_mod.push_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Server-side push is not configured (missing VAPID env vars).",
+        )
+    payload = {
+        "kind": "test",
+        "title": f"{CITY_NAME} Pulse push is working",
+        "body": "You'll get alerts here when something nearby happens.",
+        "tag": "pp:push-test",
+    }
+    result = push_mod.send_to_uid(uid, payload, ttl_seconds=120)
+    if result["sent"] == 0 and result["failed"] == 0 and result["gone"] == 0:
+        # Don't 404 — just tell the truth so the UI can prompt
+        # "looks like you haven't subscribed any devices yet."
+        return {"status": "no_devices", **result}
+    return {"status": "ok", **result}
 
 
 @app.get("/api/audio/{clip_id}")

@@ -117,6 +117,29 @@ npm run dev
 
 The frontend will be available at `http://localhost:3000`.
 
+### Web Push (optional)
+
+Closed-tab notifications use VAPID Web Push. The backend signs every
+push with a keypair you generate once per deployment.
+
+```bash
+# 1. Generate a VAPID keypair (writes three KEY=value lines to stdout)
+python scripts/generate_vapid_keys.py
+
+# 2. Paste them into your env file and edit the SUBJECT email
+# 3. Restart the backend
+```
+
+When the env vars are missing the `/api/push/*` endpoints stay live
+but report `configured: false`, and the in-app push toggle surfaces a
+"server isn't configured yet" hint instead of crashing. Browsers can
+still subscribe in that state — they just won't receive anything
+until the server side comes online.
+
+The frontend service worker only registers in production builds, so
+local push testing requires `npm run build && npm start` rather than
+`npm run dev`.
+
 ### Production
 
 - **Frontend** is deployed on Vercel at [phlpulse.com](https://phlpulse.com)

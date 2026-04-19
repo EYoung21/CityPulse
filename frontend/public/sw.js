@@ -214,3 +214,94 @@ self.addEventListener("message", async (event) => {
     return;
   }
 });
+
+/* ── Web Push (VAPID) ─────────────────────────────────────────────
+ *
+ * We accept a JSON payload with at minimum {title, body}. Anything
+ * else is optional. `url` controls where a click takes the user;
+ * `tag` collapses repeated notifications with the same key so we
+ * don't stack five "still happening?" pings while the phone was
+ * locked.
+ *
+ * Defensive parsing: a malformed payload should still surface
+ * *something* (a generic "PhillyPulse" title) instead of dropping
+ * silently — getting nothing on a confirmed-delivered push is
+ * harder to debug than getting a vague title. */
+self.addEventListener("push", (event) => {
+  let payload = {};
+  if (event.data) {
+    try { payload = event.data.json(); }
+    catch {
+      try { payload = { title: "PhillyPulse", body: event.data.text() }; }
+      catch { payload = {}; }
+    }
+  }
+  const title = String(payload.title || "PhillyPulse alert");
+  const body  = String(payload.body  || "");
+  const tag   = payload.tag ? String(payload.tag) : undefined;
+  const url   = typeof payload.url === "string" ? payload.url : "/";
+  // `requireInteraction` keeps high-severity alerts on screen until
+  // the user dismisses them. We default to false (auto-dismiss) and
+  // let the sender opt in for serious ones.
+  const requireInteraction = payload.requireInteraction === true;
+
+  const opts = {
+    body,
+    tag,
+    icon: "/icon-192.png",
+    badge: "/icon-192.png",
+    requireInteraction,
+    /* Stash the click target on the notification itself so the
+       click handler doesn't need to re-parse the payload. */
+    data: { url },
+  };
+
+  event.waitUntil(self.registration.showNotification(title, opts));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || "/";
+  const absolute = new URL(target, self.location.origin).href;
+
+  /* Reuse an existing PhillyPulse tab if there is one (so a click
+     doesn't spawn a fresh tab on top of the user's current map
+     state). Falls back to opening a new window if none of the
+     existing clients live on our origin. */
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({
+      type: "window", includeUncontrolled: true,
+    });
+    for (const c of all) {
+      try {
+        const u = new URL(c.url);
+        if (u.origin === self.location.origin) {
+          await c.focus();
+          // Navigate the focused tab to the deep-link only if it
+          // isn't already pointed at it — avoids needless reloads.
+          if (c.url !== absolute && "navigate" in c) {
+            try { await c.navigate(absolute); } catch { /* navigate not allowed */ }
+          }
+          return;
+        }
+      } catch { /* malformed client url — skip */ }
+    }
+    if (self.clients.openWindow) {
+      await self.clients.openWindow(absolute);
+    }
+  })());
+});
+
+/* If the browser invalidates a subscription (key rotation, user
+ * cleared site data, etc.) it fires `pushsubscriptionchange`. We
+ * don't have credentials to re-subscribe in the SW, so we just
+ * forward a hint to any open clients; the page-side code re-runs
+ * the subscribe flow, which is auth-aware. */
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const c of all) {
+      try { c.postMessage({ type: "PUSH_SUBSCRIPTION_CHANGED" }); } catch { /* dead client */ }
+    }
+  })());
+});

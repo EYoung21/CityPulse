@@ -25,6 +25,7 @@ import {
   toggleCategoryMute,
   subscribeMutedCategories,
 } from "@/lib/alert-mutes";
+import PushSettings from "@/components/PushSettings";
 import {
   enableCommuteNotifications,
   isCommuteNotificationsEnabled,
@@ -336,6 +337,10 @@ export default function AlertsInbox({ open, onClose, onJump }: Props) {
                   </p>
                 )}
               </div>
+
+              <div className="h-px" style={{ background: "var(--panel-border)" }} />
+
+              <PushSettings />
 
               <div className="h-px" style={{ background: "var(--panel-border)" }} />
 
