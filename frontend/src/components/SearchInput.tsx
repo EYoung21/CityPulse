@@ -6,6 +6,9 @@ import { geocodePhilly } from "@/lib/search";
 import { isVoiceSearchSupported, startVoiceSearch } from "@/lib/voice";
 import { clearRecent, loadRecent, pushRecent, removeRecent, subscribeRecent, type RecentSearch } from "@/lib/recent-searches";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
+import CommutePredictionPill from "@/components/CommutePredictionPill";
+import { predictNextCommute } from "@/lib/commute-patterns";
+import { subscribeTripHistory } from "@/lib/trip-history";
 
 interface GeoResult {
   display_name: string;
@@ -128,7 +131,21 @@ export default function SearchInput({ onFlyTo, onDirections }: Props) {
   const { destinations } = useSavedDestinations();
   const homePlace = destinations.find((d) => d.category === "home") || null;
   const workPlace = destinations.find((d) => d.category === "work") || null;
-  const hasShortcuts = open && query.trim().length < 2 && (homePlace || workPlace);
+  // Peek at the commute prediction so we don't render an empty
+  // shortcuts strip when neither Home/Work nor a pattern match is
+  // available. Recomputes on a 1-min interval and on history change.
+  const [hasPrediction, setHasPrediction] = useState(false);
+  useEffect(() => {
+    const recompute = () => setHasPrediction(predictNextCommute(destinations) !== null);
+    recompute();
+    const unsub = subscribeTripHistory(recompute);
+    const id = window.setInterval(recompute, 60_000);
+    return () => { unsub(); window.clearInterval(id); };
+  }, [destinations]);
+
+  // We render the shortcuts row whenever the search is focused with
+  // an empty query AND there's at least one chip to show.
+  const hasShortcuts = open && query.trim().length < 2 && (homePlace || workPlace || hasPrediction);
 
   // When typing (≥2 chars), surface matching saved places + recents
   // *above* the geocoded suggestions. Saves a network round-trip for
@@ -252,6 +269,7 @@ export default function SearchInput({ onFlyTo, onDirections }: Props) {
               <Briefcase className="w-3.5 h-3.5" /> Work
             </button>
           )}
+          <CommutePredictionPill onPlan={(label, dest) => onDirections(label, dest)} />
         </div>
       )}
 

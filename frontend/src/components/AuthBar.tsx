@@ -3,7 +3,19 @@
 import { useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { isFirebaseConfigured } from "@/lib/firebase";
-import { LogOut, UserCircle, ChevronDown, Download, Upload, Loader2, Check, AlertCircle } from "lucide-react";
+import {
+  LogOut,
+  UserCircle,
+  ChevronDown,
+  Download,
+  Upload,
+  Loader2,
+  Check,
+  AlertCircle,
+  Pencil,
+  Trash2,
+  X as XIcon,
+} from "lucide-react";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
 import {
   applyAccountImport,
@@ -19,12 +31,25 @@ type ImportStatus =
   | { kind: "done"; result: ImportResult }
   | { kind: "error"; message: string };
 
+type DeleteStatus =
+  | { kind: "idle" }
+  | { kind: "confirm" }
+  | { kind: "running" }
+  | { kind: "error"; message: string };
+
 export default function AuthBar() {
-  const { user, loading, signOutUser } = useAuth();
+  const { user, loading, signOutUser, updateDisplayName, deleteAccount } = useAuth();
   const { destinations, lists, addDestination, createList } = useSavedDestinations();
   const [open, setOpen] = useState(false);
   const [importStatus, setImportStatus] = useState<ImportStatus>({ kind: "idle" });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Inline display-name editor state. We keep the draft separate from
+  // the auth profile so cancelling discards changes without surprising
+  // the user with mid-edit re-renders if the auth value updates.
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [nameSaving, setNameSaving] = useState(false);
+  const [deleteStatus, setDeleteStatus] = useState<DeleteStatus>({ kind: "idle" });
 
   if (!isFirebaseConfigured() || loading || !user) {
     return null;
@@ -49,6 +74,53 @@ export default function AuthBar() {
 
   const handleImportClick = () => {
     fileInputRef.current?.click();
+  };
+
+  const startNameEdit = () => {
+    setNameDraft(user?.displayName ?? "");
+    setEditingName(true);
+  };
+
+  const saveName = async () => {
+    if (nameSaving) return;
+    setNameSaving(true);
+    try {
+      await updateDisplayName(nameDraft);
+      setEditingName(false);
+    } finally {
+      setNameSaving(false);
+    }
+  };
+
+  const handleDeleteClick = async () => {
+    if (deleteStatus.kind === "running") return;
+    if (deleteStatus.kind !== "confirm") {
+      setDeleteStatus({ kind: "confirm" });
+      return;
+    }
+    setDeleteStatus({ kind: "running" });
+    try {
+      const outcome = await deleteAccount();
+      if (outcome === "deleted") {
+        setOpen(false);
+        // Auth state listener will re-render with user=null and the
+        // bar will hide itself; no further work needed here.
+        return;
+      }
+      if (outcome === "requires-reauth") {
+        setDeleteStatus({
+          kind: "error",
+          message: "For your safety, please sign out and sign back in, then try again.",
+        });
+        return;
+      }
+      setDeleteStatus({ kind: "idle" });
+    } catch (e) {
+      setDeleteStatus({
+        kind: "error",
+        message: e instanceof Error ? e.message : "Couldn't delete account",
+      });
+    }
   };
 
   const handleImportFile = async (file: File) => {
@@ -128,13 +200,75 @@ export default function AuthBar() {
         <>
           <div className="fixed inset-0 z-[998]" onClick={() => setOpen(false)} />
           <div
-            className="absolute bottom-full right-0 mb-2 w-48 rounded-xl shadow-2xl overflow-hidden backdrop-blur-md z-[999]"
+            className="absolute bottom-full right-0 mb-2 w-60 rounded-xl shadow-2xl overflow-hidden backdrop-blur-md z-[999]"
             style={{ background: "var(--panel-bg)", border: "1px solid var(--panel-border)" }}
           >
             <div className="px-3 py-2.5" style={{ borderBottom: "1px solid var(--panel-border)" }}>
-              <p className="text-xs font-medium truncate" style={{ color: "var(--panel-text)" }}>
-                {label}
-              </p>
+              {editingName && !user.isAnonymous ? (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    autoFocus
+                    type="text"
+                    value={nameDraft}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void saveName();
+                      else if (e.key === "Escape") setEditingName(false);
+                    }}
+                    placeholder="Display name"
+                    maxLength={60}
+                    disabled={nameSaving}
+                    className="flex-1 min-w-0 px-2 py-1 rounded-md text-xs focus:outline-none focus:ring-1"
+                    style={{
+                      background: "var(--panel-input-bg)",
+                      color: "var(--panel-text)",
+                      border: "1px solid var(--panel-border)",
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void saveName()}
+                    disabled={nameSaving || !nameDraft.trim()}
+                    className="p-1 rounded-md disabled:opacity-50"
+                    style={{ color: "#22c55e" }}
+                    aria-label="Save display name"
+                    title="Save"
+                  >
+                    {nameSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingName(false)}
+                    disabled={nameSaving}
+                    className="p-1 rounded-md disabled:opacity-50"
+                    style={{ color: "var(--panel-text-muted)" }}
+                    aria-label="Cancel"
+                    title="Cancel"
+                  >
+                    <XIcon className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-2 min-w-0">
+                  <p className="text-xs font-medium truncate min-w-0" style={{ color: "var(--panel-text)" }}>
+                    {label}
+                  </p>
+                  {!user.isAnonymous && (
+                    <button
+                      type="button"
+                      onClick={startNameEdit}
+                      className="shrink-0 p-1 rounded-md transition-colors"
+                      style={{ color: "var(--panel-text-muted)" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                      aria-label="Edit display name"
+                      title="Edit display name"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              )}
               {user.email && !user.isAnonymous && (
                 <p className="text-[10px] truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
                   {user.email}
@@ -186,6 +320,51 @@ export default function AuthBar() {
                 <AlertCircle className="w-3 h-3 shrink-0 mt-px" />
                 <span>{importStatus.message}</span>
               </div>
+            )}
+            {/* Delete-account section. Only shown for non-anonymous
+                users — anonymous "guest" sessions are wiped just by
+                signing out, so a separate destroy action would be
+                noise. Confirmation is inline (two taps) rather than a
+                native confirm() dialog because confirm() text isn't
+                customizable on iOS and the consequences of an
+                accidental tap warrant a visible second step. */}
+            {!user.isAnonymous && (
+              <>
+                {deleteStatus.kind === "error" && (
+                  <div
+                    className="px-3 py-2 text-[10px] flex items-start gap-1.5"
+                    style={{ color: "#ef4444", background: "rgba(239,68,68,0.08)" }}
+                  >
+                    <AlertCircle className="w-3 h-3 shrink-0 mt-px" />
+                    <span>{deleteStatus.message}</span>
+                  </div>
+                )}
+                {deleteStatus.kind === "confirm" && (
+                  <div
+                    className="px-3 py-2 text-[10px] leading-snug"
+                    style={{ color: "#fbbf24", background: "rgba(251,191,36,0.10)" }}
+                  >
+                    This permanently wipes your saved places, lists, trip history, and preferences. Tap again to confirm.
+                  </div>
+                )}
+                <button
+                  onClick={() => void handleDeleteClick()}
+                  disabled={deleteStatus.kind === "running"}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium transition-colors text-red-400 hover:bg-red-500/10 disabled:opacity-50"
+                  style={{ borderTop: "1px solid var(--panel-border)" }}
+                >
+                  {deleteStatus.kind === "running" ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-4 h-4" />
+                  )}
+                  {deleteStatus.kind === "confirm"
+                    ? "Tap again to permanently delete"
+                    : deleteStatus.kind === "running"
+                      ? "Deleting…"
+                      : "Delete my account"}
+                </button>
+              </>
             )}
             <button
               onClick={() => { setOpen(false); void signOutUser(); }}
