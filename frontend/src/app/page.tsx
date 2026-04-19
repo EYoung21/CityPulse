@@ -56,6 +56,7 @@ import UndoToastHost from "@/components/UndoToastHost";
 import KeyboardShortcutsHelp from "@/components/KeyboardShortcutsHelp";
 import InstallPrompt from "@/components/InstallPrompt";
 import MapGesturesTour from "@/components/MapGesturesTour";
+import FeedbackForm from "@/components/FeedbackForm";
 import LiveSharePill from "@/components/LiveSharePill";
 import SharedTripCard from "@/components/SharedTripCard";
 import SpeedChip from "@/components/SpeedChip";
@@ -98,6 +99,11 @@ import { useTheme } from "@/lib/theme";
 import AuthBar from "@/components/AuthBar";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { subscribeIncidents } from "@/lib/firestore";
+import {
+  subscribeUserReports,
+  userReportToIncident,
+  type UserReport,
+} from "@/lib/user-reports";
 import { enrichIncidents } from "@/lib/incident-weights";
 import { buildLocalSummary } from "@/lib/local-summary";
 import { getNeighborhood, incidentsInNeighborhood, NEIGHBORHOODS, type Neighborhood } from "@/lib/neighborhoods";
@@ -207,6 +213,10 @@ export default function Home() {
   }, []);
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  // Crowdsourced user reports — merged into the incidents stream
+  // below so the rest of the app (markers, alerts inbox, off-screen
+  // chips, area scoring) sees them without any per-consumer changes.
+  const [userReports, setUserReports] = useState<UserReport[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [summary, setSummary] = useState<string>("");
   const [stats, setStats] = useState<StatsResponse | null>(null);
@@ -842,6 +852,17 @@ export default function Home() {
     return () => clearInterval(id);
   }, []);
 
+  // Live subscription to crowdsourced user reports. Always Firestore-
+  // backed (independent of `useFirestoreData`, which only gates the
+  // scanner-derived incidents stream). The subscriber filters out
+  // expired reports client-side, so we don't need a separate poll.
+  useEffect(() => {
+    const unsub = subscribeUserReports(setUserReports, (e) =>
+      console.warn("User reports subscribe failed:", e)
+    );
+    return unsub;
+  }, []);
+
   // Off-screen incident detection. The first time we receive an incident
   // batch we silently seed `seenIncidentIdsRef` so the user isn't bombed
   // with chips for already-loaded data; after that, any newly-arrived
@@ -1039,7 +1060,18 @@ export default function Home() {
     });
   }, []);
 
-  const filteredIncidents = incidents.filter((inc) => {
+  // Combine scanner-derived incidents with crowdsourced user reports.
+  // We mint Incident-shaped rows from the reports so every existing
+  // consumer (map markers, alerts inbox, off-screen chips, area
+  // scoring) gets them for free. enrichIncidents recomputes w_eff
+  // for the merged set so heatmap weighting stays consistent.
+  const mergedIncidents = useMemo(() => {
+    if (userReports.length === 0) return incidents;
+    const reported = userReports.map(userReportToIncident);
+    return enrichIncidents([...incidents, ...reported]);
+  }, [incidents, userReports]);
+
+  const filteredIncidents = mergedIncidents.filter((inc) => {
     if (inc.hidden) return false;
     const cutoff = Date.now() - timeFilter * 60 * 60 * 1000;
     if (new Date(inc.reported_at).getTime() < cutoff) return false;
@@ -1592,6 +1624,12 @@ export default function Home() {
           visit; thereafter only on demand via a `pp:show-gestures-
           tour` window event (fired from the keyboard help sheet). */}
       <MapGesturesTour />
+
+      {/* In-app feedback / bug-report modal. Mounted at root and
+          listens for `pp:open-feedback` window events so any surface
+          (about panel, error banners) can summon it without prop
+          drilling. */}
+      <FeedbackForm />
 
       {/* Resume-trip pill — surfaces a recent in-progress trip after a
           page refresh / accidental tab close. Hides once the user
@@ -2327,6 +2365,26 @@ export default function Home() {
                 real-time 911 data. Do not rely on this for safety-critical decisions.
               </p>
             </div>
+
+            {/* Feedback shortcut. Lives at the bottom of the About
+                panel because anyone reading the disclaimer is
+                already in "let's talk" mode. The form itself is a
+                global modal mounted at the page root. */}
+            <button
+              type="button"
+              onClick={() => {
+                setShowAbout(false);
+                window.dispatchEvent(new CustomEvent("pp:open-feedback"));
+              }}
+              className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors"
+              style={{
+                background: "rgba(59,130,246,0.10)",
+                color: "#3b82f6",
+                border: "1px solid rgba(59,130,246,0.30)",
+              }}
+            >
+              Send feedback or report a bug
+            </button>
           </motion.div>
         )}
       </AnimatePresence>

@@ -35,5 +35,61 @@ service cloud.firestore {
       allow update, delete: if request.auth != null
         && request.auth.uid == resource.data.ownerUid;
     }
+
+    // Crowdsourced safety reports. Public-read so any visitor sees
+    // the markers; create-write requires a non-anonymous account so
+    // we always have a uid to attribute (and to ban, if needed).
+    // Updates aren't allowed — reports are immutable; the owner can
+    // delete and re-submit. Schema is validated to keep the payload
+    // bounded (no 1MB notes) and to prevent spoofed ownerUids.
+    // Set a TTL policy on `expiresAt` in the Firebase console so
+    // stale reports auto-purge after 4h even if no client cleans
+    // them up.
+    // In-app feedback / bug reports. Anyone (including anonymous and
+    // signed-out visitors) may create a record so users can report
+    // issues even if sign-in itself is what's broken. Reads are
+    // restricted to the admin allow-list, kept in sync with the
+    // ADMIN_EMAILS list in AuthContext.tsx. No updates/deletes
+    // allowed from the client — admins manage triage from the
+    // Firebase console.
+    match /feedback/{id} {
+      allow read: if request.auth != null
+        && request.auth.token.email in [
+            'eliyoung4now@gmail.com',
+            'kethansany@gmail.com',
+            'rickywhy@gmail.com'
+          ];
+      allow create: if request.resource.data.message is string
+        && request.resource.data.message.size() > 0
+        && request.resource.data.message.size() <= 1000
+        && request.resource.data.kind in ['bug', 'feature', 'praise', 'other']
+        && (!('contactEmail' in request.resource.data)
+            || request.resource.data.contactEmail == null
+            || (request.resource.data.contactEmail is string
+                && request.resource.data.contactEmail.size() <= 254));
+      allow update, delete: if false;
+    }
+
+    match /userReports/{reportId} {
+      allow read: if true;
+      allow create: if request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.lat is number
+        && request.resource.data.lng is number
+        && request.resource.data.lat >= -90 && request.resource.data.lat <= 90
+        && request.resource.data.lng >= -180 && request.resource.data.lng <= 180
+        && request.resource.data.category in [
+            'user_hazard', 'user_crash', 'user_police', 'user_disorder', 'user_other'
+          ]
+        && (!('note' in request.resource.data) || request.resource.data.note is string)
+        && (!('note' in request.resource.data) || request.resource.data.note.size() <= 140)
+        && request.resource.data.ownerName is string
+        && request.resource.data.ownerName.size() <= 60
+        && request.resource.data.expiresAt is number;
+      allow update: if false;
+      allow delete: if request.auth != null
+        && request.auth.uid == resource.data.ownerUid;
+    }
   }
 }

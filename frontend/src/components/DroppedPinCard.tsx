@@ -5,6 +5,7 @@ import { MapPin, X, Hash, Ban, Check } from "lucide-react";
 import PlaceActions from "@/components/PlaceActions";
 import NearbyPois from "@/components/NearbyPois";
 import QuickSavePlace from "@/components/QuickSavePlace";
+import ReportPinForm from "@/components/ReportPinForm";
 import { reverseGeocode } from "@/lib/search";
 import { plusCode } from "@/lib/plus-code";
 import { addAvoidArea } from "@/lib/avoid-areas";
@@ -129,6 +130,12 @@ export default function DroppedPinCard({ lat, lng, onClose }: Props) {
           {avoidAdded ? <Check className="w-4 h-4" /> : <Ban className="w-4 h-4" />}
           {avoidAdded ? "Added — routing will avoid this area" : "Avoid this area in routing"}
         </button>
+
+        {/* Crowdsourced report. Renders as a single "Report what you
+            see" button that expands into a category picker + note
+            field. Only signed-in (non-anonymous) users can post; the
+            form handles the gating + error surface itself. */}
+        <ReportPinForm lat={lat} lng={lng} />
 
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 
