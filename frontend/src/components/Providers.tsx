@@ -7,6 +7,7 @@ import { usePrefsSync } from "@/lib/prefs-sync";
 import LoginScreen from "@/components/LoginScreen";
 import AdminLauncher from "@/components/AdminLauncher";
 import AdminPanel from "@/app/admin/AdminPanel";
+import ModerationPanel from "@/app/admin/ModerationPanel";
 import type { ReactNode } from "react";
 
 function AuthGate({ children }: { children: ReactNode }) {
@@ -15,7 +16,7 @@ function AuthGate({ children }: { children: ReactNode }) {
   // basemap, POI overlays, avoidance prefs, etc.) to/from Firestore so
   // they roam across the user's devices.
   usePrefsSync();
-  const [adminMode, setAdminMode] = useState<"launcher" | "dashboard" | "admin" | null>(null);
+  const [adminMode, setAdminMode] = useState<"launcher" | "dashboard" | "admin" | "moderation" | null>(null);
 
   if (!isFirebaseConfigured()) {
     return <>{children}</>;
@@ -43,6 +44,9 @@ function AuthGate({ children }: { children: ReactNode }) {
     }
     if (adminMode === "admin") {
       return <AdminPanel onBack={() => setAdminMode("launcher")} />;
+    }
+    if (adminMode === "moderation") {
+      return <ModerationPanel onBack={() => setAdminMode("launcher")} />;
     }
   }
 

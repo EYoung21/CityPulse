@@ -58,6 +58,8 @@ export const SYNCED_PREF_KEYS = [
   "pp:muted-categories",
   "pp:scheduled-reminders",
   "pp:commute-notify-enabled",
+  "pp:show-user-reports",
+  "pp:user-reports-verified-only",
 ] as const;
 
 export type SyncedPrefKey = typeof SYNCED_PREF_KEYS[number];

@@ -14,7 +14,21 @@
  *  the auth uid + email when available so the team can follow up.
  */
 
-import { addDoc, collection, getFirestore, serverTimestamp } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getFirestore,
+  limit as limitFn,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+  type QueryConstraint,
+} from "firebase/firestore";
 import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
 import { getCurrentCity } from "@/lib/pulse-cities";
 
@@ -123,4 +137,125 @@ export async function submitFeedback(
   } catch { /* ignore */ }
 
   return ref.id;
+}
+
+// ---- Admin-side helpers --------------------------------------------------
+// These all assume the caller is an admin; Firestore rules enforce
+// the actual read/write checks. We don't pre-validate here so a
+// stale UI flag never blocks the rule from being the source of
+// truth.
+
+/** Triage status set on the parent doc by admins. `new` is the
+ *  default value written at submission time. */
+export type FeedbackStatus = "new" | "triaged" | "resolved" | "wontfix";
+
+export const FEEDBACK_STATUSES: { value: FeedbackStatus; label: string; color: string }[] = [
+  { value: "new",      label: "New",      color: "#3b82f6" },
+  { value: "triaged",  label: "Triaged",  color: "#a855f7" },
+  { value: "resolved", label: "Resolved", color: "#22c55e" },
+  { value: "wontfix",  label: "Won't fix", color: "#64748b" },
+];
+
+export interface FeedbackEntry {
+  id: string;
+  kind: FeedbackKind;
+  message: string;
+  contactEmail: string | null;
+  ownerUid: string | null;
+  ownerEmail: string | null;
+  ownerDisplayName: string | null;
+  ownerIsAnonymous: boolean;
+  appVersion: string;
+  context: Record<string, unknown>;
+  createdAtMs: number;
+  status: FeedbackStatus;
+}
+
+function mapFeedback(id: string, d: Record<string, unknown>): FeedbackEntry | null {
+  if (typeof d.message !== "string" || typeof d.kind !== "string") return null;
+  const allowedKinds = new Set<FeedbackKind>(["bug", "feature", "praise", "other"]);
+  if (!allowedKinds.has(d.kind as FeedbackKind)) return null;
+  // Firestore Timestamps expose toMillis(); legacy or pending writes
+  // may carry a number directly. Fall back to Date.now() so the row
+  // still renders and can be triaged.
+  const createdAtRaw = d.createdAt as { toMillis?: () => number } | number | undefined;
+  const createdAtMs =
+    typeof createdAtRaw === "number"
+      ? createdAtRaw
+      : typeof createdAtRaw?.toMillis === "function"
+        ? createdAtRaw.toMillis()
+        : Date.now();
+  const status = (d.status as FeedbackStatus) || "new";
+  return {
+    id,
+    kind: d.kind as FeedbackKind,
+    message: String(d.message ?? "").slice(0, MESSAGE_MAX),
+    contactEmail: typeof d.contactEmail === "string" ? d.contactEmail : null,
+    ownerUid: typeof d.ownerUid === "string" ? d.ownerUid : null,
+    ownerEmail: typeof d.ownerEmail === "string" ? d.ownerEmail : null,
+    ownerDisplayName: typeof d.ownerDisplayName === "string" ? d.ownerDisplayName : null,
+    ownerIsAnonymous: !!d.ownerIsAnonymous,
+    appVersion: typeof d.appVersion === "string" ? d.appVersion : "?",
+    context: (d.context as Record<string, unknown>) || {},
+    createdAtMs,
+    status,
+  };
+}
+
+interface SubscribeFeedbackOpts {
+  /** When set, server-side filters to just rows in that status.
+   *  Combined with `orderBy(createdAt, desc)` so admins always see
+   *  the freshest items first within a column. */
+  status?: FeedbackStatus;
+  /** Hard cap on rows returned. Defaults to 200 — enough for a busy
+   *  triage day without pulling unbounded reads if the backlog
+   *  explodes. */
+  limit?: number;
+}
+
+/** Live admin feed of feedback rows. Returns an unsubscribe. */
+export function subscribeFeedback(
+  opts: SubscribeFeedbackOpts,
+  onData: (rows: FeedbackEntry[]) => void,
+  onError?: (err: Error) => void
+): () => void {
+  if (!isFirebaseConfigured()) { onData([]); return () => {}; }
+  const db = getFirestore(getFirebaseApp());
+  const constraints: QueryConstraint[] = [orderBy("createdAt", "desc")];
+  if (opts.status) constraints.unshift(where("status", "==", opts.status));
+  constraints.push(limitFn(opts.limit ?? 200));
+  const q = query(collection(db, COLLECTION), ...constraints);
+  return onSnapshot(
+    q,
+    (snap) => {
+      const rows: FeedbackEntry[] = [];
+      snap.forEach((d) => {
+        const row = mapFeedback(d.id, d.data());
+        if (row) rows.push(row);
+      });
+      onData(rows);
+    },
+    (err) => onError?.(err instanceof Error ? err : new Error(String(err)))
+  );
+}
+
+/** Mark a row's triage status. Rules restrict the diff to just the
+ *  status field plus a triagedAt timestamp. */
+export async function setFeedbackStatus(
+  id: string,
+  next: FeedbackStatus
+): Promise<void> {
+  if (!isFirebaseConfigured()) throw new Error("Offline.");
+  const db = getFirestore(getFirebaseApp());
+  await updateDoc(doc(db, COLLECTION, id), {
+    status: next,
+    triagedAt: serverTimestamp(),
+  });
+}
+
+/** Hard-delete a feedback row. Admin-only (Firestore rule). */
+export async function adminDeleteFeedback(id: string): Promise<void> {
+  if (!isFirebaseConfigured()) throw new Error("Offline.");
+  const db = getFirestore(getFirebaseApp());
+  await deleteDoc(doc(db, COLLECTION, id));
 }

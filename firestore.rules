@@ -1,6 +1,18 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Admin allow-list. Keep in sync with ADMIN_EMAILS in
+    // frontend/src/contexts/AuthContext.tsx — both the moderation
+    // UI and these rules consult the same canonical list.
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email in [
+            'eliyoung4now@gmail.com',
+            'kethansany@gmail.com',
+            'rickywhy@gmail.com'
+          ];
+    }
+
     match /incidents/{incidentId} {
       allow read: if true;
       allow write: if false;
@@ -53,12 +65,7 @@ service cloud.firestore {
     // allowed from the client — admins manage triage from the
     // Firebase console.
     match /feedback/{id} {
-      allow read: if request.auth != null
-        && request.auth.token.email in [
-            'eliyoung4now@gmail.com',
-            'kethansany@gmail.com',
-            'rickywhy@gmail.com'
-          ];
+      allow read: if isAdmin();
       allow create: if request.resource.data.message is string
         && request.resource.data.message.size() > 0
         && request.resource.data.message.size() <= 1000
@@ -67,7 +74,15 @@ service cloud.firestore {
             || request.resource.data.contactEmail == null
             || (request.resource.data.contactEmail is string
                 && request.resource.data.contactEmail.size() <= 254));
-      allow update, delete: if false;
+      // Admins may move a row through its triage states. We restrict
+      // the diff so they can't accidentally rewrite the original
+      // message or owner attribution — the moderation surface is for
+      // managing state, not editing the user's words.
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'triagedAt'])
+        && request.resource.data.status in ['new', 'triaged', 'resolved', 'wontfix'];
+      allow delete: if isAdmin();
     }
 
     match /userReports/{reportId} {
@@ -103,8 +118,9 @@ service cloud.firestore {
         && request.resource.data.disputeCount is number
         && request.resource.data.confirmCount >= 0
         && request.resource.data.disputeCount >= 0;
-      allow delete: if request.auth != null
-        && request.auth.uid == resource.data.ownerUid;
+      allow delete: if (request.auth != null
+          && request.auth.uid == resource.data.ownerUid)
+        || isAdmin();
 
       // Per-voter records under each report. Anyone signed-in (and
       // not anonymous) may add their own vote document; the doc id

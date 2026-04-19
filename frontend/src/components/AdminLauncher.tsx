@@ -1,11 +1,11 @@
 "use client";
 
-import { Map, Settings, ChevronRight } from "lucide-react";
+import { Map, Settings, ChevronRight, Users } from "lucide-react";
 
 const siteName = process.env.NEXT_PUBLIC_SITE_NAME || "PHLPulse";
 
 interface Props {
-  onChoose: (mode: "dashboard" | "admin") => void;
+  onChoose: (mode: "dashboard" | "admin" | "moderation") => void;
 }
 
 export default function AdminLauncher({ onChoose }: Props) {
@@ -32,7 +32,7 @@ export default function AdminLauncher({ onChoose }: Props) {
         Choose your view
       </p>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-xl">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-3xl">
         <button
           onClick={() => onChoose("dashboard")}
           className="group flex flex-col items-start gap-4 p-6 rounded-2xl transition-all hover:scale-[1.02] active:scale-[0.98]"
@@ -87,6 +87,37 @@ export default function AdminLauncher({ onChoose }: Props) {
               style={{ color: "var(--panel-text-muted, #6b7280)" }}
             >
               Live audio, transcripts, LLM pipeline
+            </p>
+          </div>
+          <ChevronRight
+            className="w-4 h-4 self-end opacity-30 group-hover:opacity-70 transition-opacity"
+            style={{ color: "var(--panel-text-muted)" }}
+          />
+        </button>
+
+        <button
+          onClick={() => onChoose("moderation")}
+          className="group flex flex-col items-start gap-4 p-6 rounded-2xl transition-all hover:scale-[1.02] active:scale-[0.98]"
+          style={{
+            background: "var(--panel-bg, rgba(15,15,25,0.9))",
+            border: "1px solid rgba(168,85,247,0.2)",
+          }}
+        >
+          <div className="w-12 h-12 rounded-xl bg-purple-500/15 flex items-center justify-center">
+            <Users className="w-6 h-6 text-purple-400" />
+          </div>
+          <div className="text-left">
+            <h2
+              className="text-base font-semibold"
+              style={{ color: "var(--panel-text, #e5e7eb)" }}
+            >
+              Moderation
+            </h2>
+            <p
+              className="text-xs mt-1"
+              style={{ color: "var(--panel-text-muted, #6b7280)" }}
+            >
+              User reports + in-app feedback triage
             </p>
           </div>
           <ChevronRight

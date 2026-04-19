@@ -439,6 +439,56 @@ export async function dismissOwnReport(reportId: string): Promise<void> {
   await deleteUserReport(reportId);
 }
 
+/** Admin-only feed: includes hidden / disputed / expired rows so the
+ *  moderation surface can show *everything* in the current city,
+ *  not just what end-users see on the map. Differs from
+ *  `subscribeUserReports` in three ways:
+ *    - no client-side `expiresAt` filter (admins should see what
+ *      auto-cleanup did or didn't catch)
+ *    - no HIDE_THRESHOLD pruning (the whole point of moderation is
+ *      to look at things the community already pushed down)
+ *    - higher row cap so a busy day doesn't get truncated
+ *
+ *  Firestore rules still apply — non-admin users that subscribe to
+ *  this will simply get an error from `onError`. */
+export function subscribeAllUserReportsForAdmin(
+  onData: (reports: UserReport[]) => void,
+  onError?: (e: Error) => void,
+  max = 500
+): () => void {
+  if (!isFirebaseConfigured()) {
+    onData([]);
+    return () => {};
+  }
+  const db = getFirestore(getFirebaseApp());
+  const q = query(
+    collection(db, COLLECTION),
+    where("city", "==", getCurrentCity().slug),
+    orderBy("createdAt", "desc"),
+    limitFn(max)
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: UserReport[] = [];
+      snap.forEach((d) => {
+        const r = mapDoc(d.id, d.data());
+        if (r) list.push(r);
+      });
+      onData(list);
+    },
+    (err) => onError?.(err instanceof Error ? err : new Error(String(err)))
+  );
+}
+
+/** Hard-delete a report regardless of ownership. Admin-gated by
+ *  Firestore rules — calling this as a non-admin will reject. */
+export async function adminDeleteUserReport(reportId: string): Promise<void> {
+  if (!isFirebaseConfigured()) throw new Error("Offline.");
+  const db = getFirestore(getFirebaseApp());
+  await deleteDoc(doc(db, COLLECTION, reportId));
+}
+
 // Silence an unused-import warning when setDoc isn't referenced
 // elsewhere (re-exported for any future test that needs to seed
 // votes directly).
