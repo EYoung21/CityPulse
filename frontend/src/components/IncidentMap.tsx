@@ -902,6 +902,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const safetyPoiLayerRef = useRef<L.LayerGroup | null>(null);
   const nearbyPoiLayerRef = useRef<L.LayerGroup | null>(null);
   const savedPlacesLayerRef = useRef<L.LayerGroup | null>(null);
+  const userAvoidLayerRef = useRef<L.LayerGroup | null>(null);
   // Latest click handler — kept in a ref so the layer effect can stay
   // dependent only on `savedPlaces` and not re-create markers every
   // time the parent rebinds its callback.
@@ -1078,6 +1079,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     safetyPoiLayerRef.current = L.layerGroup().addTo(map);
     nearbyPoiLayerRef.current = L.layerGroup().addTo(map);
     savedPlacesLayerRef.current = L.layerGroup().addTo(map);
+    userAvoidLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
     const setZoomCSSVar = (z: number) => {
@@ -1565,6 +1567,50 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       layer.addLayer(m);
     }
   }, [savedPlaces]);
+
+  // Personal "Avoid this area" overlay. Always on; subscribes directly
+  // to the avoid-areas pubsub so newly-added zones appear immediately.
+  // Visual: dashed red ring, slightly less saturated than the
+  // route-avoid zones so the user can distinguish "what I told the app
+  // to avoid" from "what the app derived from incident clusters".
+  useEffect(() => {
+    const layer = userAvoidLayerRef.current;
+    if (!layer) return;
+
+    const render = () => {
+      layer.clearLayers();
+      // Lazy import to keep the initial chunk lean — this overlay is
+      // only relevant once the user has started using the feature.
+      void import("@/lib/avoid-areas").then(({ loadAvoidAreas }) => {
+        if (layer !== userAvoidLayerRef.current) return; // unmounted
+        for (const a of loadAvoidAreas()) {
+          const c = L.circle([a.lat, a.lng], {
+            radius: a.radiusM,
+            color: "#dc2626",
+            fillColor: "#dc2626",
+            fillOpacity: 0.08,
+            weight: 1.5,
+            dashArray: "4 5",
+            interactive: true,
+          });
+          c.bindTooltip(
+            a.label
+              ? `Avoiding: ${a.label}`
+              : `Personal avoid area (${Math.round(a.radiusM)} m)`,
+            { direction: "top" }
+          );
+          layer.addLayer(c);
+        }
+      });
+    };
+
+    render();
+    let unsub = () => {};
+    void import("@/lib/avoid-areas").then(({ subscribeAvoidAreas }) => {
+      unsub = subscribeAvoidAreas(render);
+    });
+    return () => { unsub(); };
+  }, []);
 
   useEffect(() => {
     const highlight = selectedHighlightRef.current;

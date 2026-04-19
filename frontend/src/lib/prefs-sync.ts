@@ -51,6 +51,8 @@ export const SYNCED_PREF_KEYS = [
   "pp:avoid-prefs-v2",
   "pp:tod-overlay",
   "pp:recent-searches",
+  "pp:voice-nav-enabled",
+  "pp:avoid-areas",
 ] as const;
 
 export type SyncedPrefKey = typeof SYNCED_PREF_KEYS[number];
