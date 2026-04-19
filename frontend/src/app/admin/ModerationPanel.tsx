@@ -30,7 +30,9 @@ import {
   Loader2,
   MapPin,
   MessageSquare,
+  Megaphone,
   RefreshCw,
+  Send,
   Trash2,
   Users,
 } from "lucide-react";
@@ -50,18 +52,24 @@ import {
 import {
   auditDeleteFeedback,
   auditDeleteUserReport,
+  auditPushBroadcast,
   auditSetFeedbackStatus,
   describeAuditAction,
   subscribeModerationAudit,
   type ModerationAuditEntry,
 } from "@/lib/moderation-audit";
+import {
+  previewBroadcastRecipients,
+  sendBroadcast,
+} from "@/lib/push-subscriptions";
+import { getCurrentCity, PULSE_CITIES } from "@/lib/pulse-cities";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface Props {
   onBack: () => void;
 }
 
-type Tab = "reports" | "feedback" | "audit";
+type Tab = "reports" | "feedback" | "audit" | "broadcast";
 
 function fmtAgo(ms: number): string {
   const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
@@ -147,6 +155,19 @@ export default function ModerationPanel({ onBack }: Props) {
               Audit log
             </span>
           </button>
+          <button
+            type="button"
+            onClick={() => setTab("broadcast")}
+            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+              tab === "broadcast" ? "bg-purple-500 text-white" : ""
+            }`}
+            style={tab === "broadcast" ? {} : { color: "var(--panel-text-secondary)" }}
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <Megaphone className="w-3 h-3" />
+              Broadcast
+            </span>
+          </button>
         </div>
       </div>
 
@@ -155,6 +176,8 @@ export default function ModerationPanel({ onBack }: Props) {
           <ReportsTab />
         ) : tab === "feedback" ? (
           <FeedbackTab />
+        ) : tab === "broadcast" ? (
+          <BroadcastTab />
         ) : (
           <AuditTab />
         )}
@@ -884,6 +907,379 @@ function AuditTab() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ── Broadcast tab ────────────────────────────────────────────────────
+
+/** Title/body lengths matching the backend caps so the user can't
+ *  compose something that gets silently truncated by the API. */
+const BROADCAST_TITLE_MAX = 80;
+const BROADCAST_BODY_MAX = 240;
+
+/** Two-step composer: edit → confirm with recipient count. The
+ *  confirmation step is non-negotiable for a city-wide push since
+ *  the audience can't be recalled — once webpush hands the payload
+ *  to the push service we can't yank it back. */
+function BroadcastTab() {
+  const { user } = useAuth();
+  const currentCity = useMemo(() => getCurrentCity(), []);
+
+  const [city, setCity] = useState<string | "all">(currentCity.slug);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [url, setUrl] = useState("");
+  const [requireInteraction, setRequireInteraction] = useState(false);
+
+  const [recipients, setRecipients] = useState<number | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastResult, setLastResult] = useState<{
+    sent: number;
+    matched: number;
+    failed: number;
+    skipped: number;
+  } | null>(null);
+
+  // Live preview the recipient count whenever the city selector
+  // changes; debounced lightly so flipping the dropdown doesn't
+  // hammer the backend on every keystroke / arrow-key press.
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingPreview(true);
+    setRecipients(null);
+    const t = window.setTimeout(async () => {
+      const targetCity = city === "all" ? null : city;
+      try {
+        const n = await previewBroadcastRecipients(targetCity);
+        if (!cancelled) setRecipients(n);
+      } finally {
+        if (!cancelled) setLoadingPreview(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [city]);
+
+  const titleTrim = title.trim();
+  const bodyTrim = body.trim();
+  const canCompose = titleTrim.length > 0 && bodyTrim.length > 0;
+
+  const onSend = async () => {
+    if (!user || !canCompose) return;
+    setSending(true);
+    setError(null);
+    setLastResult(null);
+    const targetCity = city === "all" ? null : city;
+    try {
+      const result = await sendBroadcast({
+        city: targetCity,
+        title: titleTrim,
+        body: bodyTrim,
+        url: url.trim() || null,
+        requireInteraction,
+      });
+      setLastResult({
+        sent: result.sent,
+        matched: result.matched,
+        failed: result.failed,
+        skipped: result.skipped,
+      });
+      try {
+        await auditPushBroadcast(
+          {
+            city: targetCity,
+            title: titleTrim,
+            body: bodyTrim,
+            url: url.trim() || null,
+            requireInteraction,
+            matched: result.matched,
+            sent: result.sent,
+            failed: result.failed,
+            skipped: result.skipped,
+            serverTag: result.tag ?? null,
+          },
+          {
+            uid: user.uid,
+            email: user.email ?? null,
+            displayName: user.displayName ?? null,
+          }
+        );
+      } catch (auditErr) {
+        // Broadcast went out, audit failed — surface the error so
+        // the admin can investigate without us silently losing the
+        // record. The recipient count UI still updates.
+        setError(auditErr instanceof Error ? auditErr.message : String(auditErr));
+      }
+      setConfirming(false);
+      // Clear the composer on success so the next broadcast starts
+      // from a blank slate; the toast-style result panel below stays
+      // visible until the next compose action.
+      setTitle("");
+      setBody("");
+      setUrl("");
+      setRequireInteraction(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="h-full overflow-y-auto p-4 space-y-3 max-w-xl mx-auto">
+      <div
+        className="p-3 rounded-lg border"
+        style={{
+          background: "rgba(168,85,247,0.08)",
+          borderColor: "rgba(168,85,247,0.30)",
+        }}
+      >
+        <div className="flex items-center gap-2 mb-1.5">
+          <Megaphone className="w-4 h-4 text-purple-400" />
+          <span className="text-sm font-semibold" style={{ color: "var(--panel-text)" }}>
+            Send a city-wide push
+          </span>
+        </div>
+        <p className="text-[11px]" style={{ color: "var(--panel-text-secondary)" }}>
+          This goes out to every Web Push subscriber in the selected
+          city. Use it for genuine emergencies (shelter-in-place,
+          severe weather, area-wide hazard) or critical product
+          announcements — not for marketing or weekly digests. Every
+          broadcast is recorded in the audit log with delivery counts.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <div>
+          <label
+            className="block text-[11px] font-medium mb-1"
+            style={{ color: "var(--panel-text-secondary)" }}
+          >
+            City
+          </label>
+          <select
+            value={city}
+            onChange={(e) => setCity(e.target.value as string | "all")}
+            className="w-full px-2 py-1.5 rounded-md text-xs"
+            style={{
+              background: "var(--panel-input-bg)",
+              color: "var(--panel-text)",
+              border: "1px solid var(--panel-border)",
+            }}
+          >
+            {PULSE_CITIES.map((c) => (
+              <option key={c.slug} value={c.slug}>
+                {c.name} ({c.slug})
+              </option>
+            ))}
+            <option value="all">All cities (use sparingly)</option>
+          </select>
+          <p className="mt-1 text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+            {loadingPreview ? (
+              <span className="inline-flex items-center gap-1">
+                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                Counting subscribers…
+              </span>
+            ) : recipients === null ? (
+              "—"
+            ) : (
+              <>{recipients.toLocaleString()} subscribed device{recipients === 1 ? "" : "s"} match this city.</>
+            )}
+          </p>
+        </div>
+
+        <div>
+          <label
+            className="block text-[11px] font-medium mb-1"
+            style={{ color: "var(--panel-text-secondary)" }}
+          >
+            Title <span style={{ color: "var(--panel-text-muted)" }}>({title.length}/{BROADCAST_TITLE_MAX})</span>
+          </label>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value.slice(0, BROADCAST_TITLE_MAX))}
+            placeholder="e.g. Severe weather warning"
+            className="w-full px-2 py-1.5 rounded-md text-xs"
+            style={{
+              background: "var(--panel-input-bg)",
+              color: "var(--panel-text)",
+              border: "1px solid var(--panel-border)",
+            }}
+          />
+        </div>
+
+        <div>
+          <label
+            className="block text-[11px] font-medium mb-1"
+            style={{ color: "var(--panel-text-secondary)" }}
+          >
+            Body <span style={{ color: "var(--panel-text-muted)" }}>({body.length}/{BROADCAST_BODY_MAX})</span>
+          </label>
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value.slice(0, BROADCAST_BODY_MAX))}
+            rows={4}
+            placeholder="What's happening, and what should the user do?"
+            className="w-full px-2 py-1.5 rounded-md text-xs resize-none"
+            style={{
+              background: "var(--panel-input-bg)",
+              color: "var(--panel-text)",
+              border: "1px solid var(--panel-border)",
+            }}
+          />
+        </div>
+
+        <div>
+          <label
+            className="block text-[11px] font-medium mb-1"
+            style={{ color: "var(--panel-text-secondary)" }}
+          >
+            Tap-to-open URL <span style={{ color: "var(--panel-text-muted)" }}>(optional)</span>
+          </label>
+          <input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="/transparency  ·  /?incident=…  ·  https://example.org/info"
+            className="w-full px-2 py-1.5 rounded-md text-xs"
+            style={{
+              background: "var(--panel-input-bg)",
+              color: "var(--panel-text)",
+              border: "1px solid var(--panel-border)",
+            }}
+          />
+          <p className="mt-1 text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+            Defaults to the map. Same-origin links open in the existing
+            tab if one's open.
+          </p>
+        </div>
+
+        <label className="flex items-center gap-2 text-[11px]" style={{ color: "var(--panel-text-secondary)" }}>
+          <input
+            type="checkbox"
+            checked={requireInteraction}
+            onChange={(e) => setRequireInteraction(e.target.checked)}
+          />
+          Require interaction (notification stays visible until tapped)
+        </label>
+      </div>
+
+      {error && (
+        <div
+          className="p-2 rounded text-[11px] flex items-start gap-1.5"
+          style={{
+            background: "rgba(239,68,68,0.10)",
+            color: "#fca5a5",
+            border: "1px solid rgba(239,68,68,0.30)",
+          }}
+        >
+          <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {lastResult && !confirming && (
+        <div
+          className="p-2 rounded text-[11px]"
+          style={{
+            background: "rgba(34,197,94,0.10)",
+            color: "#86efac",
+            border: "1px solid rgba(34,197,94,0.30)",
+          }}
+        >
+          Broadcast delivered to {lastResult.sent.toLocaleString()} of{" "}
+          {lastResult.matched.toLocaleString()} devices
+          {lastResult.failed > 0 && <> · {lastResult.failed} failed</>}
+          {lastResult.skipped > 0 && <> · {lastResult.skipped} respected user prefs (snooze / quiet hours)</>}.
+        </div>
+      )}
+
+      {!confirming ? (
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            setLastResult(null);
+            setConfirming(true);
+          }}
+          disabled={!canCompose}
+          className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-medium disabled:opacity-50"
+          style={{
+            background: canCompose ? "rgba(168,85,247,0.20)" : "var(--panel-input-bg)",
+            color: canCompose ? "#c084fc" : "var(--panel-text-muted)",
+            border: `1px solid ${canCompose ? "rgba(168,85,247,0.40)" : "var(--panel-border)"}`,
+          }}
+        >
+          <Send className="w-3 h-3" />
+          Review broadcast
+        </button>
+      ) : (
+        <div
+          className="p-3 rounded-lg space-y-2"
+          style={{
+            background: "rgba(239,68,68,0.08)",
+            border: "1px solid rgba(239,68,68,0.30)",
+          }}
+        >
+          <p className="text-[11px] font-medium" style={{ color: "#fca5a5" }}>
+            About to push to {(recipients ?? 0).toLocaleString()} device
+            {recipients === 1 ? "" : "s"} ({city === "all" ? "all cities" : city}). Confirm to send.
+          </p>
+          <div
+            className="p-2 rounded"
+            style={{
+              background: "var(--panel-bg)",
+              border: "1px solid var(--panel-border)",
+            }}
+          >
+            <p className="text-xs font-semibold" style={{ color: "var(--panel-text)" }}>{titleTrim}</p>
+            <p className="text-[11px] mt-0.5" style={{ color: "var(--panel-text-secondary)" }}>{bodyTrim}</p>
+            {url.trim() && (
+              <p className="text-[10px] mt-1 font-mono" style={{ color: "var(--panel-text-muted)" }}>
+                → {url.trim()}
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              disabled={sending}
+              className="flex-1 px-3 py-1.5 rounded-md text-xs disabled:opacity-50"
+              style={{
+                background: "var(--panel-input-bg)",
+                color: "var(--panel-text-secondary)",
+                border: "1px solid var(--panel-border)",
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onSend}
+              disabled={sending || !canCompose}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50"
+              style={{
+                background: "rgba(239,68,68,0.20)",
+                color: "#f87171",
+                border: "1px solid rgba(239,68,68,0.40)",
+              }}
+            >
+              {sending ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Send className="w-3 h-3" />
+              )}
+              {sending ? "Sending…" : "Send broadcast"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -495,6 +495,80 @@ async function sha256Hex(s: string): Promise<string> {
   return out;
 }
 
+export interface PushBroadcastInput {
+  city: string | null;
+  title: string;
+  body: string;
+  url?: string | null;
+  requireInteraction?: boolean;
+}
+
+export interface PushBroadcastResult {
+  status: "ok";
+  sent: number;
+  failed: number;
+  matched: number;
+  skipped: number;
+  snoozed?: number;
+  quiet?: number;
+  /** Server-issued tag — opaque string the SW used as the
+   *  notification tag. Captured into the audit log so a user
+   *  reporting "what was that ping?" can be matched back. */
+  tag?: string;
+}
+
+export async function previewBroadcastRecipients(
+  city: string | null
+): Promise<number> {
+  const idToken = await getIdToken();
+  if (!idToken) return 0;
+  try {
+    const res = await fetch(`${API_BASE}/api/push/broadcast-preview`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({ city }),
+    });
+    if (!res.ok) return 0;
+    const data = (await res.json()) as { recipients?: number };
+    return Number(data.recipients ?? 0);
+  } catch {
+    return 0;
+  }
+}
+
+export async function sendBroadcast(
+  input: PushBroadcastInput
+): Promise<PushBroadcastResult> {
+  const idToken = await getIdToken();
+  if (!idToken) throw new Error("Sign in to broadcast.");
+  const res = await fetch(`${API_BASE}/api/push/broadcast`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({
+      city: input.city,
+      title: input.title,
+      body: input.body,
+      url: input.url ?? null,
+      requireInteraction: !!input.requireInteraction,
+    }),
+  });
+  if (!res.ok) {
+    let detail = `Broadcast failed (${res.status})`;
+    try {
+      const err = (await res.json()) as { detail?: string };
+      if (err.detail) detail = err.detail;
+    } catch { /* keep default */ }
+    throw new Error(detail);
+  }
+  return (await res.json()) as PushBroadcastResult;
+}
+
 export interface PushTestResult {
   ok: boolean;
   /** "no_devices" when the user is signed in but hasn't subscribed
