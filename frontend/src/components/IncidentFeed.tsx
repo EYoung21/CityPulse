@@ -67,7 +67,18 @@ function groupByTimeBlocks(incidents: Incident[]): TimeBlock[] {
   }
 
   for (const block of blocks) {
-    block.incidents.sort((a, b) => b.s_base - a.s_base);
+    // Within each time block: push community-resolved incidents to
+    // the bottom (so they're still discoverable but don't crowd
+    // active rows), then sort the rest by severity. We treat
+    // unverified and "still active" as the same priority — being
+    // confirmed-active is already enough; we don't want a single
+    // confirmation to push a high-severity unverified rampage down.
+    block.incidents.sort((a, b) => {
+      const aResolved = a.lifecycle_status === "resolved" ? 1 : 0;
+      const bResolved = b.lifecycle_status === "resolved" ? 1 : 0;
+      if (aResolved !== bResolved) return aResolved - bResolved;
+      return b.s_base - a.s_base;
+    });
   }
 
   return blocks.filter((b) => b.incidents.length > 0);
@@ -125,12 +136,21 @@ function IncidentCard({
       ? `${sev.label} reported at ${inc.location_text}`
       : null;
 
+  // Community lifecycle drives a soft visual de-emphasis of resolved
+  // rows (so they don't disappear, but they fall behind active ones)
+  // and a small inline pill that tells the user where the verdict
+  // came from.
+  const isResolved = inc.lifecycle_status === "resolved";
+  const isStillActive = inc.lifecycle_status === "still";
+  const baseOpacity = confidencePct < 40 ? 0.6 : 1;
+  const rowOpacity = isResolved ? Math.min(0.5, baseOpacity) : baseOpacity;
+
   return (
     <div
       onClick={onSelect}
       className={`group relative flex items-start gap-2.5 px-3 py-2.5 rounded-lg text-left transition-all duration-200 cursor-pointer
         ${isSelected ? "bg-white/10 ring-1 ring-white/10" : "hover:bg-white/5"}`}
-      style={{ opacity: confidencePct < 40 ? 0.6 : 1 }}
+      style={{ opacity: rowOpacity }}
     >
       <div
         className="absolute left-0 top-2 bottom-2 w-[2px] rounded-full transition-opacity"
@@ -152,7 +172,27 @@ function IncidentCard({
           >
             {sev.label}
           </span>
-          {isHighSev && <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />}
+          {isHighSev && !isResolved && (
+            <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+          )}
+          {isStillActive && (
+            <span
+              className="text-[8px] font-bold uppercase tracking-wider px-1 py-px rounded"
+              style={{ background: "rgba(245,158,11,0.18)", color: "#f59e0b" }}
+              title="Community-confirmed active"
+            >
+              Still
+            </span>
+          )}
+          {isResolved && (
+            <span
+              className="text-[8px] font-bold uppercase tracking-wider px-1 py-px rounded"
+              style={{ background: "rgba(34,197,94,0.18)", color: "#22c55e" }}
+              title="Community-marked resolved"
+            >
+              Resolved
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-1 text-xs truncate" style={{ color: "var(--panel-text, rgba(255,255,255,0.7))" }}>

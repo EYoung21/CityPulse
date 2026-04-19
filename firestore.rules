@@ -140,6 +140,28 @@ service cloud.firestore {
       }
     }
 
+    // Append-only audit log of admin moderation actions. Admins can
+    // create entries (and read them all back); nobody can update or
+    // delete. The moderation surface writes one row per destructive
+    // action so we have a tamper-evident trail of "who did what,
+    // when" — necessary for both internal accountability and any
+    // future "I didn't post that" appeals from users.
+    //
+    // Hard purges (e.g. legal-hold scrubs) must be done from the
+    // Firebase console with explicit intent; deny-from-client is the
+    // safer default.
+    match /moderationAudit/{entryId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.kind in [
+            'userReport.delete', 'feedback.delete', 'feedback.status'
+          ]
+        && request.resource.data.targetId is string
+        && request.resource.data.targetId.size() <= 200;
+      allow update, delete: if false;
+    }
+
     // Lifecycle aggregates for scanner incidents — "is this still
     // happening?" votes. The parent doc id matches the incident id
     // exactly so a one-shot getDoc resolves the status. The doc is

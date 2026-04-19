@@ -33,13 +33,16 @@
  *  via a transaction. */
 
 import {
+  collection,
   doc,
   getDoc,
   getFirestore,
   increment,
   onSnapshot,
+  query,
   runTransaction,
   serverTimestamp,
+  where,
 } from "firebase/firestore";
 import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
 
@@ -255,6 +258,57 @@ export async function getMyIncidentVote(
   } catch {
     return null;
   }
+}
+
+/** Subscribe to *all* recently-voted-on lifecycle aggregates so the
+ *  page-level layer can enrich incidents in bulk. Only docs whose
+ *  most recent vote is younger than `windowHours` are returned;
+ *  beyond that the community signal is too stale to act on (e.g. a
+ *  3-day-old "still happening" should fall back to scanner-only
+ *  visualization).
+ *
+ *  Returns an unsubscribe. The callback is fired once per snapshot
+ *  with a fresh `Map<incidentId, IncidentLifecycleAggregate>`. We
+ *  intentionally don't apply `deriveLifecycleStatus` here — callers
+ *  do that at the point of use so the same map can drive both the
+ *  marker fade (resolved → low alpha) and the heatmap weight (still
+ *  → 1.2x; resolved → 0.15x). */
+export function subscribeAllIncidentStatuses(
+  onData: (statuses: Map<string, IncidentLifecycleAggregate>) => void,
+  opts?: { windowHours?: number; onError?: (e: Error) => void }
+): () => void {
+  if (!isFirebaseConfigured()) {
+    onData(new Map());
+    return () => {};
+  }
+  const windowHours = opts?.windowHours ?? 48;
+  const cutoff = Date.now() - windowHours * 3600_000;
+  const db = getFirestore(getFirebaseApp());
+  // The `lastVoteAtMs` filter keeps the listener cheap as the
+  // collection grows: incidents that haven't been voted on in days
+  // don't influence the visualization. The query is intentionally
+  // small / read-only so the cost stays predictable.
+  const q = query(
+    collection(db, COLLECTION),
+    where("lastVoteAtMs", ">=", cutoff)
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const next = new Map<string, IncidentLifecycleAggregate>();
+      snap.forEach((d) => {
+        const data = d.data() as Record<string, unknown>;
+        next.set(d.id, {
+          incidentId: d.id,
+          stillCount: Number(data.stillCount ?? 0),
+          resolvedCount: Number(data.resolvedCount ?? 0),
+          lastVoteAtMs: Number(data.lastVoteAtMs ?? 0),
+        });
+      });
+      onData(next);
+    },
+    (err) => opts?.onError?.(err instanceof Error ? err : new Error(String(err)))
+  );
 }
 
 /** Format a "X min ago" string from epoch ms — used by the
