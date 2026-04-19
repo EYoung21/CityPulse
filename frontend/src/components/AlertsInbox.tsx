@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, Bell, Check, MapPin, Trash2, X } from "lucide-react";
+import { AlertTriangle, Bell, Check, MapPin, Moon, Trash2, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   clearAlerts,
@@ -12,6 +12,14 @@ import {
   type InboxAlert,
 } from "@/lib/alerts-inbox";
 import { getSeverity } from "@/lib/severity";
+import {
+  formatQuietWindow,
+  isQuietNow,
+  loadQuietHours,
+  saveQuietHours,
+  subscribeQuietHours,
+  type QuietHoursConfig,
+} from "@/lib/quiet-hours";
 
 interface Props {
   open: boolean;
@@ -41,11 +49,32 @@ const KIND_LABEL: Record<InboxAlert["kind"], string> = {
  *  with single-tap "fly to" + an unread bulk-clear. */
 export default function AlertsInbox({ open, onClose, onJump }: Props) {
   const [alerts, setAlerts] = useState<InboxAlert[]>([]);
+  const [quiet, setQuiet] = useState<QuietHoursConfig>(() => loadQuietHours());
+  const [showSettings, setShowSettings] = useState(false);
+  const [quietActive, setQuietActive] = useState<boolean>(() => isQuietNow());
 
   useEffect(() => {
     setAlerts(getAlerts());
     const unsub = subscribeAlerts(setAlerts);
     return unsub;
+  }, []);
+
+  useEffect(() => {
+    setQuiet(loadQuietHours());
+    return subscribeQuietHours((next) => {
+      setQuiet(next);
+      setQuietActive(isQuietNow(new Date(), next));
+    });
+  }, []);
+
+  // Recompute "is quiet right now?" once a minute so the indicator
+  // flips automatically when the user passes the start/end boundary
+  // without anyone needing to refresh the panel.
+  useEffect(() => {
+    const tick = () => setQuietActive(isQuietNow());
+    tick();
+    const id = window.setInterval(tick, 60_000);
+    return () => window.clearInterval(id);
   }, []);
 
   // Mark everything as read when the panel opens — the user has seen
@@ -74,10 +103,45 @@ export default function AlertsInbox({ open, onClose, onJump }: Props) {
             className="flex items-center justify-between px-3 py-2.5 shrink-0"
             style={{ borderBottom: "1px solid var(--panel-border)" }}
           >
-            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--panel-text-muted)" }}>
-              Alerts ({alerts.length})
-            </p>
+            <div className="flex items-center gap-2 min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--panel-text-muted)" }}>
+                Alerts ({alerts.length})
+              </p>
+              {/* Status pill — only renders when quiet hours are
+                  actively suppressing notifications, so users see at a
+                  glance why their phone has been silent. */}
+              {quiet.enabled && quietActive && (
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium"
+                  style={{
+                    background: "rgba(99,102,241,0.15)",
+                    color: "#818cf8",
+                    border: "1px solid rgba(99,102,241,0.30)",
+                  }}
+                  title={`Quiet hours active: ${formatQuietWindow(quiet)}`}
+                >
+                  <Moon className="w-2.5 h-2.5" />
+                  Quiet
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setShowSettings((v) => !v)}
+                className="p-1.5 rounded-md transition-colors"
+                style={{
+                  color: showSettings ? "#818cf8" : "var(--panel-text-muted)",
+                  background: showSettings ? "rgba(99,102,241,0.12)" : "transparent",
+                }}
+                onMouseEnter={(e) => { if (!showSettings) (e.currentTarget.style.background = "var(--panel-hover)"); }}
+                onMouseLeave={(e) => { if (!showSettings) (e.currentTarget.style.background = "transparent"); }}
+                aria-pressed={showSettings}
+                aria-label="Quiet-hours settings"
+                title="Quiet-hours settings"
+              >
+                <Moon className="w-3.5 h-3.5" />
+              </button>
               {alerts.length > 0 && (
                 <button
                   type="button"
@@ -105,6 +169,98 @@ export default function AlertsInbox({ open, onClose, onJump }: Props) {
               </button>
             </div>
           </div>
+
+          {showSettings && (
+            <div
+              className="px-3 py-3 space-y-2 shrink-0"
+              style={{ borderBottom: "1px solid var(--panel-border)", background: "var(--panel-input-bg)" }}
+            >
+              <div className="flex items-center justify-between">
+                <div className="min-w-0 pr-2">
+                  <p className="text-xs font-semibold" style={{ color: "var(--panel-text)" }}>
+                    Quiet hours
+                  </p>
+                  <p className="text-[10px] leading-snug mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                    Mute push + ambient voice cues. Turn-by-turn directions still speak.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => saveQuietHours({ enabled: !quiet.enabled })}
+                  className="shrink-0"
+                  aria-pressed={quiet.enabled}
+                  aria-label={quiet.enabled ? "Disable quiet hours" : "Enable quiet hours"}
+                >
+                  <span
+                    className="block w-10 h-5 rounded-full relative transition-colors"
+                    style={{
+                      background: quiet.enabled ? "#818cf8" : "var(--panel-border)",
+                    }}
+                  >
+                    <span
+                      className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-md transition-transform"
+                      style={{ left: quiet.enabled ? "1.375rem" : "0.125rem" }}
+                    />
+                  </span>
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="flex-1">
+                  <span
+                    className="block text-[10px] uppercase tracking-wider"
+                    style={{ color: "var(--panel-text-muted)" }}
+                  >
+                    From
+                  </span>
+                  <input
+                    type="time"
+                    step={900}
+                    disabled={!quiet.enabled}
+                    value={`${String(quiet.startHour).padStart(2, "0")}:${String(quiet.startMinute).padStart(2, "0")}`}
+                    onChange={(e) => {
+                      const [h, m] = e.target.value.split(":").map((n) => parseInt(n, 10));
+                      saveQuietHours({ startHour: h, startMinute: m });
+                    }}
+                    className="w-full mt-1 px-2 py-1 rounded-md text-xs disabled:opacity-50"
+                    style={{
+                      background: "var(--panel-bg)",
+                      color: "var(--panel-text)",
+                      border: "1px solid var(--panel-border)",
+                    }}
+                  />
+                </label>
+                <label className="flex-1">
+                  <span
+                    className="block text-[10px] uppercase tracking-wider"
+                    style={{ color: "var(--panel-text-muted)" }}
+                  >
+                    Until
+                  </span>
+                  <input
+                    type="time"
+                    step={900}
+                    disabled={!quiet.enabled}
+                    value={`${String(quiet.endHour).padStart(2, "0")}:${String(quiet.endMinute).padStart(2, "0")}`}
+                    onChange={(e) => {
+                      const [h, m] = e.target.value.split(":").map((n) => parseInt(n, 10));
+                      saveQuietHours({ endHour: h, endMinute: m });
+                    }}
+                    className="w-full mt-1 px-2 py-1 rounded-md text-xs disabled:opacity-50"
+                    style={{
+                      background: "var(--panel-bg)",
+                      color: "var(--panel-text)",
+                      border: "1px solid var(--panel-border)",
+                    }}
+                  />
+                </label>
+              </div>
+              {quiet.enabled && (
+                <p className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+                  Active window: {formatQuietWindow(quiet)}{quietActive ? " · suppressing now" : ""}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="flex-1 overflow-y-auto">
             {alerts.length === 0 ? (

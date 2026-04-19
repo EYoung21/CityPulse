@@ -60,6 +60,13 @@ export async function notifyIfBackgrounded(opts: NotifyOptions): Promise<boolean
   if (typeof document !== "undefined" && document.visibilityState === "visible") {
     return false;
   }
+  // Quiet-hours gate: silently swallow OS notifications during the
+  // configured window. The inbox still records the alert so the user
+  // can review what they missed once the window ends.
+  try {
+    const { isQuietNow } = await import("@/lib/quiet-hours");
+    if (isQuietNow()) return false;
+  } catch { /* quiet-hours module unavailable — fail open */ }
   const granted = await ensureNotificationPermission();
   if (!granted) return false;
   try {
