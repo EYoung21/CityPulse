@@ -40,6 +40,8 @@ import ClusterListPanel from "@/components/ClusterListPanel";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
 import DistrictCard from "@/components/DistrictCard";
 import DroppedPinCard from "@/components/DroppedPinCard";
+import AvoidAreasManager from "@/components/AvoidAreasManager";
+import OfflineTilesPanel from "@/components/OfflineTilesPanel";
 import ManeuverChip from "@/components/ManeuverChip";
 import TurnList from "@/components/TurnList";
 import SearchAreaPill from "@/components/SearchAreaPill";
@@ -972,6 +974,19 @@ export default function Home() {
         lat: best.inc.lat,
         lng: best.inc.lng,
       });
+      // Spoken cue. Dedupe on the incident ID so a slow re-render
+      // loop doesn't repeatedly announce the same one. The voice-nav
+      // queue handles the global mute pref + priority pre-emption.
+      void import("@/lib/voice-nav").then(({ speakNav, speakableDistance }) => {
+        speakNav(
+          `Caution. ${sev.label} reported ${speakableDistance(best!.distM)} ahead.`,
+          {
+            priority: "alert",
+            dedupeKey: `ahead-${best!.inc.id}`,
+            dedupeMs: 2 * 60_000,
+          }
+        );
+      });
     }
   }, [tripGeometry, userLocation, incidents, aheadAlert]);
 
@@ -1299,8 +1314,40 @@ export default function Home() {
                   origin: meta.origin,
                   dest: meta.dest,
                 };
+                // Spoken departure summary — once at trip start. We
+                // delay slightly so the manuever chip's first
+                // "in 200m, turn left" doesn't get cut off; "info"
+                // priority queues behind any pending turn cues.
+                const destName = meta.dest?.display_name?.split(",")[0] || "your destination";
+                const km = meta.distanceKm;
+                const distPhrase = km >= 1
+                  ? `${km.toFixed(1)} kilometer trip`
+                  : `${Math.round(km * 1000)} meter trip`;
+                void import("@/lib/voice-nav").then(({ speakNav }) => {
+                  speakNav(
+                    `Starting ${distPhrase} to ${destName}.`,
+                    { priority: "info", dedupeKey: "trip-start", dedupeMs: 5000 }
+                  );
+                });
               }
             } else if (tripStatsRef.current) {
+              // Spoken arrival / end summary. Treat 95%+ progress as a
+              // proper arrival ("You have arrived"), anything less as a
+              // manual end ("Trip ended"). We fire this *before*
+              // building the recap so the announcement matches what
+              // the user sees on screen.
+              const progress = lastTripProgressRef.current;
+              const arrived = progress >= 0.95;
+              void import("@/lib/voice-nav").then(({ speakNav }) => {
+                speakNav(
+                  arrived
+                    ? `You have arrived at your destination.`
+                    : `Trip ended.`,
+                  { priority: "info", dedupeKey: "trip-end", dedupeMs: 10_000 }
+                );
+              });
+            }
+            if (!active && tripStatsRef.current) {
               // Trip ended — emit a recap. We treat 95%+ progress as a
               // completed arrival, anything less as a manual end.
               const stats = tripStatsRef.current;
@@ -1906,6 +1953,37 @@ export default function Home() {
                     Save a place from the sidebar to see it pinned here.
                   </p>
                 )}
+
+                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
+                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Avoid in routing</p>
+                <AvoidAreasManager
+                  onJump={(a) => {
+                    setShowLayers(false);
+                    mapRef.current?.flyTo(a.lat, a.lng, 16);
+                  }}
+                />
+
+                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
+                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Offline tiles</p>
+                <OfflineTilesPanel
+                  getBounds={() => mapRef.current?.getBounds() ?? null}
+                  tileTemplate={(() => {
+                    // Mirror IncidentMap.basemapUrl(): cache the same
+                    // template the Leaflet tile layer is currently
+                    // requesting, so cache hits line up exactly.
+                    const dark = (typeof document !== "undefined") && document.documentElement.classList.contains("dark");
+                    switch (basemapStyle) {
+                      case "dark":     return "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+                      case "voyager":  return "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+                      case "positron": return "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
+                      case "streets":  return "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+                      case "auto":
+                      default:         return dark
+                        ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                        : "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+                    }
+                  })()}
+                />
 
                 <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
                 <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Safety POIs</p>

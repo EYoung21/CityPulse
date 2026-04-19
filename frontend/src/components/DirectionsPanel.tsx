@@ -32,6 +32,7 @@ import {
   type RouteOption,
 } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
+import { userAvoidZones } from "@/lib/avoid-areas";
 import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
 import RouteOptionPicker from "@/components/RouteOptionPicker";
@@ -329,7 +330,10 @@ export default function DirectionsPanel({
     const incSnap = incidentsRef.current;
     (async () => {
       try {
-        const zones = buildAvoidZones(incSnap, avoidPrefs);
+        const zones = [
+          ...buildAvoidZones(incSnap, avoidPrefs),
+          ...userAvoidZones(),
+        ];
         const avoidPolygons = zones.length > 0 ? buildAvoidPolygons(zones) : null;
 
         const opts = await getRouteOptions({
@@ -421,7 +425,10 @@ export default function DirectionsPanel({
         routeOptions.find((o) => !o.isSafer && o.avoidedFeatures.length === 0)?.route ??
         routeOptions[0].route;
       const safer = routeOptions.find((o) => o.isSafer)?.route ?? null;
-      const zones = buildAvoidZones(incidentsRef.current, avoidPrefs);
+      const zones = [
+        ...buildAvoidZones(incidentsRef.current, avoidPrefs),
+        ...userAvoidZones(),
+      ];
       onRoutesChange({
         normal: direct,
         safe: safer,

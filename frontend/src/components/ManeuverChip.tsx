@@ -14,6 +14,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { ManeuverStep } from "@/lib/routing";
+import { setPref } from "@/lib/prefs-sync";
+import { cancelVoiceNav, speakNav, speakableDistance } from "@/lib/voice-nav";
 
 interface Props {
   steps: ManeuverStep[];
@@ -95,11 +97,13 @@ export default function ManeuverChip({ steps, geometry, tripProgress, onShowStep
   }, [steps, geometry, currentIdx]);
 
   useEffect(() => {
-    localStorage.setItem(VOICE_PREF_KEY, muted ? "off" : "on");
+    // Routed through prefs-sync so the mute toggle roams across
+    // devices alongside the rest of the user's preferences.
+    setPref(VOICE_PREF_KEY, muted ? "off" : "on");
   }, [muted]);
 
   useEffect(() => {
-    if (muted || !step || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    if (muted || !step) return;
     let level: 0 | 1 | 2 = 0;
     if (distanceToManeuver < 60) level = 2;
     else if (distanceToManeuver < 320) level = 1;
@@ -112,15 +116,17 @@ export default function ManeuverChip({ steps, geometry, tripProgress, onShowStep
     const phrase =
       level === 2
         ? `Now, ${step.instruction}`
-        : `In ${fmtMeters(distanceToManeuver)}, ${step.instruction}`;
-    speak(phrase);
+        : `In ${speakableDistance(distanceToManeuver)}, ${step.instruction}`;
+    // priority "turn" — pre-empts queued info-level utterances so a
+    // departure summary can't drown out the next maneuver.
+    speakNav(phrase, { priority: "turn" });
   }, [step, stepIdx, distanceToManeuver, muted]);
 
   useEffect(() => {
     return () => {
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
-        try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
-      }
+      // Cancel any in-flight TTS on unmount so a queued "in 200
+      // meters, turn left" doesn't speak after the trip has ended.
+      cancelVoiceNav();
     };
   }, []);
 
@@ -200,16 +206,3 @@ function haversine(aLat: number, aLng: number, bLat: number, bLng: number): numb
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 }
 
-function speak(text: string) {
-  try {
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = 1;
-    u.pitch = 1;
-    u.volume = 1;
-    u.lang = "en-US";
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(u);
-  } catch {
-    /* speech denied or unsupported */
-  }
-}

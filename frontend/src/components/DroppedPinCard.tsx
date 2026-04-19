@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MapPin, X, Hash } from "lucide-react";
+import { MapPin, X, Hash, Ban, Check } from "lucide-react";
 import PlaceActions from "@/components/PlaceActions";
 import NearbyPois from "@/components/NearbyPois";
 import { reverseGeocode } from "@/lib/search";
 import { plusCode } from "@/lib/plus-code";
+import { addAvoidArea } from "@/lib/avoid-areas";
 
 interface Props {
   lat: number;
@@ -19,6 +20,9 @@ interface Props {
 export default function DroppedPinCard({ lat, lng, onClose }: Props) {
   const [address, setAddress] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Local "added" feedback state — shows a Check icon for ~2s after
+  // the user adds this pin to their avoid-areas blocklist.
+  const [avoidAdded, setAvoidAdded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -96,6 +100,27 @@ export default function DroppedPinCard({ lat, lng, onClose }: Props) {
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 
         <PlaceActions lat={lat} lng={lng} label={address ?? undefined} />
+
+        <button
+          type="button"
+          onClick={() => {
+            // Use a default radius of 200m — covers a typical city
+            // block. Users can fine-tune it from the Manage panel.
+            addAvoidArea({ lat, lng, radiusM: 200, label: address ?? undefined });
+            setAvoidAdded(true);
+            setTimeout(() => setAvoidAdded(false), 2200);
+          }}
+          className="w-full inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors"
+          style={{
+            background: avoidAdded ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.10)",
+            color: avoidAdded ? "#22c55e" : "#ef4444",
+            border: `1px solid ${avoidAdded ? "rgba(34,197,94,0.35)" : "rgba(239,68,68,0.30)"}`,
+          }}
+          aria-pressed={avoidAdded}
+        >
+          {avoidAdded ? <Check className="w-4 h-4" /> : <Ban className="w-4 h-4" />}
+          {avoidAdded ? "Added — routing will avoid this area" : "Avoid this area in routing"}
+        </button>
 
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 

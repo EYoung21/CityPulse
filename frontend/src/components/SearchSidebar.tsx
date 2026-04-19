@@ -15,6 +15,7 @@ import {
   type ManeuverStep,
 } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
+import { userAvoidZones } from "@/lib/avoid-areas";
 import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
 import SearchInput from "@/components/SearchInput";
@@ -415,7 +416,11 @@ export default function SearchSidebar({
       const directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
       if (!directRoute) return;
 
-      const zones = buildAvoidZones(incSnap, avoidPrefsRef.current);
+      const incidentZones = buildAvoidZones(incSnap, avoidPrefsRef.current);
+      // Personal "avoid this area" pins from the user's blocklist —
+      // routed identically to incident-driven zones.
+      const userZones = userAvoidZones();
+      const zones = [...incidentZones, ...userZones];
       if (zones.length === 0) {
         routeData = { normal: directRoute, safe: null, avoidZones: [], chosen: directRoute, chosenLabel: "Fastest" };
         meta = { distanceKm: directRoute.distanceKm, durationMin: directRoute.durationMin, isSafe: false, nearbyCount: 0 };
@@ -508,7 +513,10 @@ export default function SearchSidebar({
 
     (async () => {
       try {
-        const zones = buildAvoidZones(incidents, avoidPrefsRef.current);
+        const zones = [
+          ...buildAvoidZones(incidents, avoidPrefsRef.current),
+          ...userAvoidZones(),
+        ];
         const directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
         if (!directRoute) return;
         const safeRoute = zones.length > 0

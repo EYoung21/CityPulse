@@ -22,6 +22,7 @@ import {
   type RouteResult,
   type AvoidZone,
 } from "@/lib/routing";
+import { userAvoidZones } from "@/lib/avoid-areas";
 import { geocodePhilly } from "@/lib/search";
 import type { Incident } from "@/lib/api";
 
@@ -90,7 +91,7 @@ export default function RoutePanel({ incidents, onRoutesChange }: Props) {
       ];
       const end: [number, number] = [destResults[0].lat, destResults[0].lng];
 
-      const zones = buildAvoidZones(incidents);
+      const zones = [...buildAvoidZones(incidents), ...userAvoidZones()];
       const avoidPolygons = buildAvoidPolygons(zones);
 
       const [normalRoute, safeRoute] = await Promise.all([

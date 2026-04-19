@@ -36,6 +36,7 @@ import {
   buildAvoidPolygons,
   type TransportMode,
 } from "@/lib/routing";
+import { userAvoidZones } from "@/lib/avoid-areas";
 import type { Incident } from "@/lib/api";
 import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
@@ -405,7 +406,7 @@ export default function SearchBar({
           onRoutesChange({ normal: directRoute, safe: null, avoidZones: [] });
           setPreviewRoute({ distanceKm: directRoute.distanceKm, durationMin: directRoute.durationMin, isSafe: false, nearbyCount: 0 });
         } else {
-          const zones = buildAvoidZones(incSnap);
+          const zones = [...buildAvoidZones(incSnap), ...userAvoidZones()];
           const safeRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints, buildAvoidPolygons(zones));
           if (controller.signal.aborted) return;
           const best = safeRoute || directRoute;
@@ -482,7 +483,7 @@ export default function SearchBar({
           nearbyCount: 0,
         };
       } else {
-        const zones = buildAvoidZones(incSnap);
+        const zones = [...buildAvoidZones(incSnap), ...userAvoidZones()];
         const safeRoute = await getMultiStopRoute(
           ORS_API_KEY,
           activeMode,
