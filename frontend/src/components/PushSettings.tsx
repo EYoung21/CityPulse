@@ -21,15 +21,35 @@
  */
 
 import { useEffect, useState } from "react";
-import { Bell, BellOff, Loader2, Send, AlertTriangle } from "lucide-react";
+import {
+  Bell,
+  BellOff,
+  Loader2,
+  Send,
+  AlertTriangle,
+  Crosshair,
+  MapPin,
+} from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   getPushStatus,
+  loadAlertArea,
   sendTestPush,
   subscribePush,
   unsubscribePush,
+  updateAlertArea,
+  type AlertArea,
   type PushStatus,
 } from "@/lib/push-subscriptions";
+
+const DEFAULT_RADIUS_LABEL = "3";
+
+function geoErrorMessage(e: GeolocationPositionError): string {
+  if (e.code === 1) return "Location permission denied. Enable it in your browser settings.";
+  if (e.code === 2) return "Couldn't determine your location.";
+  if (e.code === 3) return "Location request timed out. Try again.";
+  return "Couldn't read your location.";
+}
 
 export default function PushSettings() {
   const { user } = useAuth();
@@ -37,6 +57,8 @@ export default function PushSettings() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [area, setArea] = useState<AlertArea | null>(null);
+  const [areaBusy, setAreaBusy] = useState(false);
 
   const refresh = async () => {
     setStatus(await getPushStatus());
@@ -44,6 +66,7 @@ export default function PushSettings() {
 
   useEffect(() => {
     void refresh();
+    setArea(loadAlertArea());
     // Re-check when the auth state changes — flipping from
     // anonymous → signed in unlocks the subscribe affordance.
   }, [user?.uid, user?.isAnonymous]);
@@ -90,12 +113,79 @@ export default function PushSettings() {
     setError(null);
     setInfo(null);
     try {
-      const result = await subscribePush();
+      // Pass `undefined` so the lib falls back to the persisted area.
+      // First-time subscribers will have nothing in storage, which is
+      // fine — they can pin an area afterwards via the controls
+      // below, and the next push test still works regardless.
+      const result = await subscribePush(undefined);
       setStatus(result.status);
       if (!result.ok) setError(result.reason);
       else setInfo("Subscribed. We'll buzz this device for high-priority alerts.");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const onUseCurrentLocation = async () => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setError("Your browser doesn't support geolocation.");
+      return;
+    }
+    setAreaBusy(true);
+    setError(null);
+    setInfo(null);
+    try {
+      // Single-shot, low-accuracy is fine — we only need the user's
+      // rough neighborhood for proximity matching, not a turn-by-turn
+      // GPS lock. enableHighAccuracy=false saves battery and is
+      // typically faster.
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: false,
+          maximumAge: 5 * 60 * 1000,
+          timeout: 8000,
+        });
+      });
+      const next: AlertArea = {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        radiusKm: area?.radiusKm ?? 3,
+      };
+      setArea(next);
+      const ok = await updateAlertArea(next);
+      if (ok) setInfo(`Alert area pinned to your current location (${next.radiusKm} km).`);
+      else setError("Saved locally, but couldn't sync to the server. Try again later.");
+    } catch (e) {
+      const msg = e instanceof GeolocationPositionError ? geoErrorMessage(e) : "Couldn't read your location.";
+      setError(msg);
+    } finally {
+      setAreaBusy(false);
+    }
+  };
+
+  const onChangeRadius = async (radiusKm: number) => {
+    if (!area) return;
+    const next = { ...area, radiusKm };
+    setArea(next);
+    setAreaBusy(true);
+    try {
+      const ok = await updateAlertArea(next);
+      if (!ok) setError("Couldn't sync radius to the server.");
+    } finally {
+      setAreaBusy(false);
+    }
+  };
+
+  const onClearArea = async () => {
+    setAreaBusy(true);
+    setError(null);
+    setInfo(null);
+    try {
+      setArea(null);
+      const ok = await updateAlertArea(null);
+      if (ok) setInfo("Cleared alert area. You'll only receive direct messages now.");
+    } finally {
+      setAreaBusy(false);
     }
   };
 
@@ -201,20 +291,118 @@ export default function PushSettings() {
         </button>
       </div>
       {subscribed && (
-        <button
-          type="button"
-          onClick={onTest}
-          disabled={busy}
-          className="mt-1.5 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] disabled:opacity-50"
-          style={{
-            background: "var(--panel-input-bg)",
-            color: "var(--panel-text-secondary)",
-            border: "1px solid var(--panel-border)",
-          }}
-        >
-          <Send className="w-2.5 h-2.5" />
-          Send test push
-        </button>
+        <>
+          {/* Alert-area picker. Optional: a subscription with no
+              area still receives test pushes + future direct
+              messages, but won't get neighborhood incident pings.
+              We let the user pin once via Geolocation rather than
+              picking on the map (the map UI is busy enough). */}
+          <div
+            className="mt-2 p-2 rounded-md"
+            style={{
+              background: "var(--panel-input-bg)",
+              border: "1px solid var(--panel-border)",
+            }}
+          >
+            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider"
+              style={{ color: "var(--panel-text-muted)" }}>
+              <MapPin className="w-3 h-3" />
+              Nearby-incident area
+            </div>
+            {area ? (
+              <>
+                <p className="mt-1 text-[10px] font-mono" style={{ color: "var(--panel-text-secondary)" }}>
+                  {area.lat.toFixed(4)}, {area.lng.toFixed(4)} · {area.radiusKm} km radius
+                </p>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={10}
+                    step={0.5}
+                    value={area.radiusKm}
+                    onChange={(e) => void onChangeRadius(Number(e.target.value))}
+                    disabled={areaBusy}
+                    className="flex-1"
+                    aria-label="Alert radius in kilometers"
+                  />
+                  <span
+                    className="text-[10px] font-mono w-10 text-right"
+                    style={{ color: "var(--panel-text-secondary)" }}
+                  >
+                    {area.radiusKm} km
+                  </span>
+                </div>
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={onUseCurrentLocation}
+                    disabled={areaBusy}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] disabled:opacity-50"
+                    style={{
+                      background: "var(--panel-bg)",
+                      color: "var(--panel-text-secondary)",
+                      border: "1px solid var(--panel-border)",
+                    }}
+                  >
+                    <Crosshair className="w-2.5 h-2.5" />
+                    Re-pin to current location
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClearArea}
+                    disabled={areaBusy}
+                    className="inline-flex items-center px-2 py-1 rounded-md text-[10px] disabled:opacity-50"
+                    style={{
+                      background: "var(--panel-bg)",
+                      color: "var(--panel-text-muted)",
+                      border: "1px solid var(--panel-border)",
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="mt-1 text-[10px] leading-snug" style={{ color: "var(--panel-text-muted)" }}>
+                  Pin a location to receive a buzz when high-severity incidents
+                  are reported within {DEFAULT_RADIUS_LABEL} km. Without it, you&rsquo;ll
+                  only get direct messages and test pings.
+                </p>
+                <button
+                  type="button"
+                  onClick={onUseCurrentLocation}
+                  disabled={areaBusy}
+                  className="mt-1.5 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] disabled:opacity-50"
+                  style={{
+                    background: "var(--panel-bg)",
+                    color: "var(--panel-text-secondary)",
+                    border: "1px solid var(--panel-border)",
+                  }}
+                >
+                  <Crosshair className="w-2.5 h-2.5" />
+                  Use my current location
+                </button>
+              </>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={onTest}
+            disabled={busy}
+            className="mt-1.5 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] disabled:opacity-50"
+            style={{
+              background: "var(--panel-input-bg)",
+              color: "var(--panel-text-secondary)",
+              border: "1px solid var(--panel-border)",
+            }}
+          >
+            <Send className="w-2.5 h-2.5" />
+            Send test push
+          </button>
+        </>
       )}
       {error && (
         <div className="mt-1.5 flex items-start gap-1 text-[10px]" style={{ color: "#ef4444" }}>

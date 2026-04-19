@@ -184,17 +184,70 @@ function encodeKey(buf: ArrayBuffer | null): string {
   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+/** Optional alert area persisted alongside the subscription. When
+ *  omitted the user only receives direct messages (test pings,
+ *  future direct alerts); when present, the backend uses it to
+ *  decide whether a new high-severity scanner incident is "nearby"
+ *  enough to push. Stored in localStorage so toggling push off+on
+ *  doesn't lose the user's previous setting. */
+export interface AlertArea {
+  lat: number;
+  lng: number;
+  radiusKm: number;
+}
+
+const ALERT_AREA_STORAGE_KEY = "pp:push-alert-area";
+const DEFAULT_ALERT_RADIUS_KM = 3;
+
+export function loadAlertArea(): AlertArea | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(ALERT_AREA_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed?.lat === "number" &&
+      typeof parsed?.lng === "number" &&
+      Number.isFinite(parsed.lat) &&
+      Number.isFinite(parsed.lng) &&
+      typeof parsed?.radiusKm === "number" &&
+      parsed.radiusKm > 0
+    ) {
+      return { lat: parsed.lat, lng: parsed.lng, radiusKm: parsed.radiusKm };
+    }
+  } catch {
+    /* corrupt storage; treat as no area */
+  }
+  return null;
+}
+
+export function saveAlertArea(area: AlertArea | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (area === null) window.localStorage.removeItem(ALERT_AREA_STORAGE_KEY);
+    else window.localStorage.setItem(ALERT_AREA_STORAGE_KEY, JSON.stringify(area));
+  } catch {
+    /* storage full / blocked — non-fatal */
+  }
+}
+
 async function postSubscriptionToServer(
   sub: PushSubscription,
-  idToken: string
+  idToken: string,
+  area: AlertArea | null
 ): Promise<boolean> {
-  const body = {
+  const body: Record<string, unknown> = {
     endpoint: sub.endpoint,
     p256dh: encodeKey(sub.getKey("p256dh")),
     auth: encodeKey(sub.getKey("auth")),
     userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
     city: getCurrentCity().slug,
   };
+  if (area) {
+    body.notifyLat = area.lat;
+    body.notifyLng = area.lng;
+    body.notifyRadiusKm = area.radiusKm;
+  }
   try {
     const res = await fetch(`${API_BASE}/api/push/subscribe`, {
       method: "POST",
@@ -228,7 +281,7 @@ async function deleteSubscriptionOnServer(endpoint: string, idToken: string): Pr
   }
 }
 
-export async function subscribePush(): Promise<SubscribeResult> {
+export async function subscribePush(area?: AlertArea | null): Promise<SubscribeResult> {
   let status = await getPushStatus();
   if (!status.supported) {
     return { ok: false, reason: "Web Push isn't supported on this browser.", status };
@@ -303,7 +356,14 @@ export async function subscribePush(): Promise<SubscribeResult> {
     };
   }
 
-  const ok = await postSubscriptionToServer(sub, idToken);
+  // Persist + send the alert area. If the caller didn't pass one
+  // explicitly we fall back to whatever's already in localStorage so
+  // re-subscribing (after a token expiry, key rotation, etc.) keeps
+  // the user's previous choice instead of silently demoting them to
+  // direct-only.
+  const effectiveArea = area === undefined ? loadAlertArea() : area;
+  if (area !== undefined) saveAlertArea(area);
+  const ok = await postSubscriptionToServer(sub, idToken, effectiveArea);
   if (!ok) {
     // Roll back the browser subscription so the next attempt
     // re-runs the full handshake. Otherwise we'd be stuck in a
@@ -319,6 +379,20 @@ export async function subscribePush(): Promise<SubscribeResult> {
 
   status = await getPushStatus();
   return { ok: true, status };
+}
+
+/** Update just the alert area on an existing subscription. Cheaper
+ *  than the full re-subscribe round-trip when the user is only
+ *  changing the location/radius slider. Persists to localStorage
+ *  and re-POSTs the existing browser subscription to the backend
+ *  so server state lines up. */
+export async function updateAlertArea(area: AlertArea | null): Promise<boolean> {
+  saveAlertArea(area);
+  const sub = await getCurrentSubscription();
+  if (!sub) return true; // nothing to sync yet — saved locally for next subscribe
+  const idToken = await getIdToken();
+  if (!idToken) return false;
+  return postSubscriptionToServer(sub, idToken, area);
 }
 
 export async function unsubscribePush(): Promise<PushStatus> {
