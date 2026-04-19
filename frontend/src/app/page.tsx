@@ -55,6 +55,7 @@ import AlongRoutePanel from "@/components/AlongRoutePanel";
 import UndoToastHost from "@/components/UndoToastHost";
 import KeyboardShortcutsHelp from "@/components/KeyboardShortcutsHelp";
 import InstallPrompt from "@/components/InstallPrompt";
+import MapGesturesTour from "@/components/MapGesturesTour";
 import LiveSharePill from "@/components/LiveSharePill";
 import SharedTripCard from "@/components/SharedTripCard";
 import SpeedChip from "@/components/SpeedChip";
@@ -1586,6 +1587,11 @@ export default function Home() {
           panel/sidebar the user is currently looking at. */}
       <ReminderRunner />
       <ReminderBanner />
+
+      {/* First-run map gestures tutorial. Auto-opens once on first
+          visit; thereafter only on demand via a `pp:show-gestures-
+          tour` window event (fired from the keyboard help sheet). */}
+      <MapGesturesTour />
 
       {/* Resume-trip pill — surfaces a recent in-progress trip after a
           page refresh / accidental tab close. Hides once the user

@@ -159,6 +159,30 @@ export default function KeyboardShortcutsHelp() {
             </div>
           ))}
         </div>
+        {/* Re-open the first-run map gestures tour. We expose this
+            from the keyboard help sheet because the help dialog is
+            already the "I forgot how something works" surface and
+            the tour speaks to the same audience. */}
+        <div
+          className="px-5 py-3"
+          style={{ borderTop: "1px solid var(--panel-border)" }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              window.dispatchEvent(new CustomEvent("pp:show-gestures-tour"));
+            }}
+            className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+            style={{
+              background: "var(--panel-input-bg)",
+              color: "var(--panel-text)",
+              border: "1px solid var(--panel-input-border)",
+            }}
+          >
+            Replay map gestures tour
+          </button>
+        </div>
         <div
           className="px-5 py-2.5 text-[10px] text-center"
           style={{
