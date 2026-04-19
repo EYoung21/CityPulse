@@ -47,6 +47,8 @@ import RecenterPill from "@/components/RecenterPill";
 import AlongRoutePanel from "@/components/AlongRoutePanel";
 import UndoToastHost from "@/components/UndoToastHost";
 import KeyboardShortcutsHelp from "@/components/KeyboardShortcutsHelp";
+import InstallPrompt from "@/components/InstallPrompt";
+import LiveSharePill from "@/components/LiveSharePill";
 import SharedTripCard from "@/components/SharedTripCard";
 import SpeedChip from "@/components/SpeedChip";
 import TripRecapCard, { type TripRecap } from "@/components/TripRecapCard";
@@ -536,6 +538,35 @@ export default function Home() {
     const lngParam = params.get("lng");
     const zoomParam = params.get("zoom");
     const tripParam = params.get("trip");
+    const sourceParam = params.get("source");
+
+    // PWA app-shortcut entries land here as ?source=shortcut-* . Each
+    // dispatches a UI intent the corresponding component listens for,
+    // mirroring the in-app pattern (`pp:focus-search`, etc.) so we
+    // don't need direct setter access.
+    if (sourceParam?.startsWith("shortcut-")) {
+      const intent = sourceParam.replace("shortcut-", "");
+      // Defer one frame so subscribers have time to mount.
+      requestAnimationFrame(() => {
+        switch (intent) {
+          case "safety":
+            window.dispatchEvent(new CustomEvent("pp:locate-and-score"));
+            break;
+          case "directions":
+            window.dispatchEvent(new CustomEvent("pp:focus-search"));
+            break;
+          case "saved":
+            window.dispatchEvent(new CustomEvent("pp:open-saved-places"));
+            break;
+          case "inbox":
+            window.dispatchEvent(new CustomEvent("pp:open-inbox"));
+            break;
+          case "parked":
+            window.dispatchEvent(new CustomEvent("pp:goto-parked"));
+            break;
+        }
+      });
+    }
 
     if (tripParam) {
       // ?trip=<token> → recipient view of a "Share my live ETA" link. The
@@ -559,9 +590,9 @@ export default function Home() {
       }
     }
 
-    if (incidentParam || latParam || lngParam || zoomParam || tripParam) {
+    if (incidentParam || latParam || lngParam || zoomParam || tripParam || sourceParam) {
       const cleaned = new URL(window.location.href);
-      ["incident", "lat", "lng", "zoom", "trip"].forEach((k) => cleaned.searchParams.delete(k));
+      ["incident", "lat", "lng", "zoom", "trip", "source"].forEach((k) => cleaned.searchParams.delete(k));
       window.history.replaceState({}, "", cleaned.toString());
     }
   }, []);
@@ -619,6 +650,74 @@ export default function Home() {
   const recenterCity = useCallback(() => {
     mapRef.current?.resetView();
   }, []);
+
+  // PWA app-shortcut intents — fired once on mount from the deep-link
+  // bootstrap above when the user enters via a launcher shortcut. Each
+  // listener just translates the intent into the same in-app action a
+  // tap would have produced.
+  useEffect(() => {
+    const onLocateAndScore = () => {
+      // If we already have a fix, drop a SafetyScoreCard at the user's
+      // location. Otherwise, ask the browser for a one-shot fix and
+      // wait — same UX as tapping "My location" then long-pressing.
+      const apply = (lat: number, lng: number) => {
+        setMapTap({ lat, lng });
+        setScoreAnchor({ lat, lng });
+        requestAnimationFrame(() => mapRef.current?.flyTo(lat, lng, 16));
+      };
+      if (userLocation) {
+        apply(userLocation.lat, userLocation.lng);
+        return;
+      }
+      if (typeof navigator === "undefined" || !navigator.geolocation) return;
+      navigator.geolocation.getCurrentPosition(
+        (pos) => apply(pos.coords.latitude, pos.coords.longitude),
+        () => { /* user denied; nothing else to do */ },
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+      );
+    };
+    const onOpenInbox = () => setShowInbox(true);
+    const onOpenSavedPlaces = () => {
+      // SavedPlaces lives inside the search sidebar. Focusing the
+      // search box is the cheapest way to ensure the sidebar is
+      // visible and scrolled to where SavedPlaces will mount.
+      window.dispatchEvent(new CustomEvent("pp:focus-search"));
+    };
+    const onGotoParked = () => {
+      // Re-import lazily so the page bundle doesn't get bloated by
+      // pulling parked-pin storage into the initial chunk just for
+      // an app-shortcut path most users won't take.
+      void import("@/lib/parked-pin").then(({ getParkedPin }) => {
+        const pin = getParkedPin();
+        if (!pin) return;
+        // Fire the same plan-route event the ParkedPinPill uses for
+        // its "Walk back" button — keeps a single code path for "find
+        // my parked car".
+        window.dispatchEvent(
+          new CustomEvent("pp:plan-route", {
+            detail: {
+              mode: "to",
+              lat: pin.lat,
+              lng: pin.lng,
+              label: pin.label || "Parked here",
+              transport: "foot-walking",
+            },
+          })
+        );
+        requestAnimationFrame(() => mapRef.current?.flyTo(pin.lat, pin.lng, 17));
+      });
+    };
+    window.addEventListener("pp:locate-and-score", onLocateAndScore);
+    window.addEventListener("pp:open-inbox", onOpenInbox);
+    window.addEventListener("pp:open-saved-places", onOpenSavedPlaces);
+    window.addEventListener("pp:goto-parked", onGotoParked);
+    return () => {
+      window.removeEventListener("pp:locate-and-score", onLocateAndScore);
+      window.removeEventListener("pp:open-inbox", onOpenInbox);
+      window.removeEventListener("pp:open-saved-places", onOpenSavedPlaces);
+      window.removeEventListener("pp:goto-parked", onGotoParked);
+    };
+  }, [userLocation]);
 
   // Global keyboard shortcuts. The `?` key (handled inside
   // KeyboardShortcutsHelp) opens the cheat sheet — every other binding
@@ -1375,6 +1474,12 @@ export default function Home() {
           the key directly — page only mounts it. */}
       <KeyboardShortcutsHelp />
 
+      {/* PWA install prompt. Self-managed: shows itself only after a
+          minute of engagement, only on browsers that support
+          beforeinstallprompt (or iOS Safari with a custom hint), and
+          only if the user hasn't already dismissed. */}
+      <InstallPrompt />
+
       {/* Resume-trip pill — surfaces a recent in-progress trip after a
           page refresh / accidental tab close. Hides once the user
           chooses (resume re-fires startTrip via pp:resume-trip; dismiss
@@ -1489,6 +1594,30 @@ export default function Home() {
 
       {/* Bottom-right controls (lifted so map markers under corner overlap UI less) */}
       <div className="absolute md:bottom-[4.5rem] pp-bottom-controls right-3 z-[1001] flex flex-col items-end gap-1.5 md:gap-2 pointer-events-auto">
+        {/* Live ETA share — Firestore-backed, only visible while a
+            trip is active. Owns its own state; we just hand it the
+            trip metadata. Tucked into the bottom-right column so it
+            sits next to the other trip-only controls. */}
+        {tripGeometry && tripGeometry.length > 1 && (
+          <LiveSharePill
+            active={Boolean(tripGeometry)}
+            userLocation={userLocation}
+            userHeading={userHeading}
+            progressPct={tripProgress}
+            speedMps={tripSpeedMps}
+            totalDistanceKm={tripStatsRef.current?.totalDistanceKm ?? 0}
+            dest={
+              tripStatsRef.current?.dest
+                ? {
+                    lat: tripStatsRef.current.dest.lat,
+                    lng: tripStatsRef.current.dest.lng,
+                    name: tripStatsRef.current.dest.display_name.split(",")[0] || "destination",
+                  }
+                : null
+            }
+            mode={tripMode}
+          />
+        )}
         {/* "Search along route" — only meaningful while a trip is
             active; hidden the rest of the time so the button column
             doesn't grow unnecessarily. Toggles a bottom-anchored

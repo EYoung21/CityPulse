@@ -393,6 +393,18 @@
   .voice-mic-pulse { animation: none; }
 }
 
+/* === Live ETA share — slow red pulse on the broadcast icon === */
+.live-share-pulse {
+  animation: live-share-pulse 1.6s ease-in-out infinite;
+}
+@keyframes live-share-pulse {
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(1.15); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-share-pulse { animation: none; }
+}
+
 /* === Dropped pin (long-press) — sticky red marker with subtle bob === */
 .dropped-pin-marker {
   width: 36px;
