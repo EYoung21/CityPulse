@@ -176,10 +176,31 @@ export function subscribeModerationAudit(
 // surface the error but the underlying action stays applied — better
 // than rolling back a moderation decision over a tail-write failure.
 
+/** Optional pre-delete snapshot of the report. When supplied we
+ *  capture lat/lng, vote totals, owner, and age so the audit row
+ *  is enough to reconstruct what was removed even after the
+ *  source doc is gone. We intentionally avoid storing the full note
+ *  body in the payload — `targetSnippet` already carries a 140-char
+ *  excerpt, and putting the entire body in two places would just
+ *  bloat the audit collection. */
+interface UserReportAuditSnapshot {
+  category: string;
+  ownerUid: string;
+  ownerName: string | null;
+  lat: number;
+  lng: number;
+  confirmCount: number;
+  disputeCount: number;
+  /** Epoch ms the report was created, so a follow-up "how old was
+   *  this when it got deleted" question is one subtraction away. */
+  createdAtMs: number;
+}
+
 export async function auditDeleteUserReport(
   reportId: string,
   snippet: string,
-  actor: ActorSnapshot
+  actor: ActorSnapshot,
+  snapshot?: UserReportAuditSnapshot
 ): Promise<void> {
   await adminDeleteUserReport(reportId);
   try {
@@ -188,6 +209,23 @@ export async function auditDeleteUserReport(
         kind: "userReport.delete",
         targetId: reportId,
         targetSnippet: snippet,
+        // Pass the snapshot in `payload` rather than `targetSnippet`
+        // so the structured fields are queryable (e.g. "find every
+        // delete in Fishtown last week") without a string parser.
+        payload: snapshot
+          ? {
+              category: snapshot.category,
+              ownerUid: snapshot.ownerUid,
+              ownerName: snapshot.ownerName,
+              lat: snapshot.lat,
+              lng: snapshot.lng,
+              confirmCount: snapshot.confirmCount,
+              disputeCount: snapshot.disputeCount,
+              netVotes: snapshot.confirmCount - snapshot.disputeCount,
+              createdAtMs: snapshot.createdAtMs,
+              ageAtDeleteMs: Date.now() - snapshot.createdAtMs,
+            }
+          : {},
       },
       actor
     );

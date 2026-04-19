@@ -206,11 +206,25 @@ function ReportsTab() {
       // log entry remains useful after the source row is gone.
       const meta = categoryMeta(r.category);
       const snippet = `${meta?.label ?? r.category}${r.note ? ` — ${r.note}` : ""}`;
-      await auditDeleteUserReport(r.id, snippet, {
-        uid: user.uid,
-        email: user.email ?? null,
-        displayName: user.displayName ?? null,
-      });
+      await auditDeleteUserReport(
+        r.id,
+        snippet,
+        {
+          uid: user.uid,
+          email: user.email ?? null,
+          displayName: user.displayName ?? null,
+        },
+        {
+          category: r.category,
+          ownerUid: r.ownerUid,
+          ownerName: r.ownerName ?? null,
+          lat: r.lat,
+          lng: r.lng,
+          confirmCount: r.confirmCount,
+          disputeCount: r.disputeCount,
+          createdAtMs: r.createdAtMs,
+        }
+      );
     } catch (e) {
       alert(e instanceof Error ? e.message : "Delete failed.");
     } finally {
@@ -801,6 +815,64 @@ function AuditTab() {
               >
                 &ldquo;{entry.targetSnippet}&rdquo;
               </p>
+            )}
+            {/* Structured snapshot for report deletes — gives "what
+                exactly was removed" at a glance, even after the
+                source row is gone. We render it as a compact pill
+                row instead of a full table so the audit feed stays
+                scannable. */}
+            {entry.kind === "userReport.delete" && entry.payload && (
+              <div
+                className="mt-1.5 flex items-center gap-2 flex-wrap text-[10px]"
+                style={{ color: "var(--panel-text-muted)" }}
+              >
+                {typeof entry.payload.category === "string" && (
+                  <span className="px-1.5 py-0.5 rounded" style={{ background: "var(--panel-input-bg)" }}>
+                    {String(entry.payload.category)}
+                  </span>
+                )}
+                {typeof entry.payload.netVotes === "number" && (
+                  <span
+                    className="px-1.5 py-0.5 rounded font-mono"
+                    style={{
+                      background:
+                        (entry.payload.netVotes as number) > 0
+                          ? "rgba(34,197,94,0.10)"
+                          : (entry.payload.netVotes as number) < 0
+                            ? "rgba(239,68,68,0.10)"
+                            : "var(--panel-input-bg)",
+                      color:
+                        (entry.payload.netVotes as number) > 0
+                          ? "#22c55e"
+                          : (entry.payload.netVotes as number) < 0
+                            ? "#ef4444"
+                            : undefined,
+                    }}
+                  >
+                    {(entry.payload.netVotes as number) > 0 ? "+" : ""}
+                    {entry.payload.netVotes as number}
+                    {" "}({entry.payload.confirmCount as number}/{entry.payload.disputeCount as number})
+                  </span>
+                )}
+                {typeof entry.payload.lat === "number" && typeof entry.payload.lng === "number" && (
+                  <a
+                    href={`https://www.google.com/maps?q=${entry.payload.lat},${entry.payload.lng}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-mono hover:underline"
+                  >
+                    {(entry.payload.lat as number).toFixed(4)}, {(entry.payload.lng as number).toFixed(4)}
+                  </a>
+                )}
+                {typeof entry.payload.ageAtDeleteMs === "number" && (
+                  <span className="font-mono">
+                    age: {fmtAgo(Date.now() - (entry.payload.ageAtDeleteMs as number))}
+                  </span>
+                )}
+                {typeof entry.payload.ownerName === "string" && (
+                  <span>by {entry.payload.ownerName as string}</span>
+                )}
+              </div>
             )}
             <div
               className="mt-1 flex items-center gap-3 text-[10px] font-mono flex-wrap"
