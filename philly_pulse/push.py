@@ -41,6 +41,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -623,6 +624,183 @@ def notify_nearby_user_report(
         "matched": len(matches),
         "cooldown": cooldown,
         "self_skipped": self_skipped,
+    }
+
+
+# ── Commute schedule fan-out ────────────────────────────────────────
+
+# Lead-time / cooldown matches the client-side `commute-notify.ts`
+# constants so a user gets the same nudge whether the tab is open
+# or fully closed: fire ~10 min before the typical departure, with
+# a 12-minute window to absorb cron jitter, and never twice on the
+# same calendar day per schedule.
+_COMMUTE_LEAD_MIN = 10
+_COMMUTE_FIRE_WINDOW_MIN = 12
+_COMMUTE_MIN_CONFIDENCE = 0.5
+_COMMUTE_MAX_AGE_DAYS = 60  # garbage-collect stale schedules
+
+
+def _today_ymd_local(tz_name: Optional[str]) -> str:
+    """Return today's YYYY-MM-DD in the schedule's local timezone, so
+    `lastFiredYmd` rolls over at the user's midnight rather than UTC.
+    Falls back to UTC if the timezone string is missing or invalid."""
+    try:
+        if tz_name:
+            from zoneinfo import ZoneInfo
+            return datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    return datetime.utcnow().strftime("%Y-%m-%d")
+
+
+def _now_minute_in_tz(tz_name: Optional[str]) -> tuple[int, bool]:
+    """Returns (minute_of_day, is_weekend) in the given timezone."""
+    try:
+        if tz_name:
+            from zoneinfo import ZoneInfo
+            now = datetime.now(ZoneInfo(tz_name))
+        else:
+            now = datetime.utcnow()
+    except Exception:
+        now = datetime.utcnow()
+    minute = now.hour * 60 + now.minute
+    weekday = now.weekday()  # Mon=0 … Sun=6
+    is_weekend = weekday >= 5
+    return minute, is_weekend
+
+
+def _commute_in_fire_window(typical_min: int, now_min: int) -> bool:
+    """Fire if "now" is between (typical − LEAD) and (typical − LEAD +
+    FIRE_WINDOW). Wraps around midnight for late-night patterns."""
+    minutes_until = typical_min - now_min
+    if minutes_until > 720:
+        minutes_until -= 1440
+    elif minutes_until < -720:
+        minutes_until += 1440
+    return (
+        _COMMUTE_LEAD_MIN - _COMMUTE_FIRE_WINDOW_MIN
+        <= minutes_until
+        <= _COMMUTE_LEAD_MIN
+    )
+
+
+def notify_due_commutes() -> dict[str, int]:
+    """Scan `commuteSchedules` and push for every schedule whose
+    typical departure window contains "now" (in the schedule's own
+    timezone) and that hasn't already been pushed today.
+
+    Designed to be called every 1-2 minutes by an external cron;
+    the FIRE_WINDOW + lastFiredYmd combination tolerates cron
+    drift up to ~10 min without double-firing or missing entries."""
+    if not push_available():
+        return {"scanned": 0, "fired": 0, "skipped": 0, "errors": 0}
+
+    try:
+        snap = _db().collection("commuteSchedules").stream()
+        schedules = [{"id": d.id, **(d.to_dict() or {})} for d in snap]
+    except Exception as e:
+        logger.warning("notify_due_commutes: scan failed: %s", e)
+        return {"scanned": 0, "fired": 0, "skipped": 0, "errors": 1}
+
+    fired = skipped = errors = 0
+    now_ms = int(time.time() * 1000)
+    cutoff_ms = now_ms - _COMMUTE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000
+
+    for sch in schedules:
+        try:
+            if int(sch.get("updatedAt") or 0) < cutoff_ms:
+                # Stale schedule — user probably stopped commuting
+                # along this pattern weeks ago. Garbage-collect so the
+                # collection doesn't grow unbounded.
+                try:
+                    _db().collection("commuteSchedules").document(sch["id"]).delete()
+                except Exception:
+                    pass
+                skipped += 1
+                continue
+
+            confidence = float(sch.get("confidence") or 0)
+            if confidence < _COMMUTE_MIN_CONFIDENCE:
+                skipped += 1
+                continue
+
+            tz_name = sch.get("tz") or None
+            now_min, is_weekend_now = _now_minute_in_tz(tz_name)
+            sched_is_weekend = bool(sch.get("isWeekend"))
+            if sched_is_weekend != is_weekend_now:
+                # A weekday schedule shouldn't fire on Saturday — and
+                # vice versa. Skip silently; this is the common case
+                # for a single user with both kinds of patterns.
+                skipped += 1
+                continue
+
+            typical_min = int(sch.get("typicalDepartureMinute") or -1)
+            if typical_min < 0 or typical_min >= 1440:
+                skipped += 1
+                continue
+            if not _commute_in_fire_window(typical_min, now_min):
+                skipped += 1
+                continue
+
+            today = _today_ymd_local(tz_name)
+            if (sch.get("lastFiredYmd") or "") == today:
+                skipped += 1
+                continue
+
+            uid = str(sch.get("uid") or "")
+            if not uid:
+                skipped += 1
+                continue
+
+            label = str(sch.get("destLabel") or "your destination")
+            matched = sch.get("matchedCategory")
+            title = (
+                "Heading home soon?" if matched == "home"
+                else "Heading to work soon?" if matched == "work"
+                else f"Heading to {label} soon?"
+            )
+            duration = int(sch.get("typicalDurationMin") or 0)
+            duration_text = f" · ~{duration}m" if duration > 0 else ""
+            dep_hh = typical_min // 60
+            dep_mm = typical_min % 60
+            dep_text = f"{((dep_hh - 1) % 12) + 1}:{dep_mm:02d}"
+            ampm = "AM" if dep_hh < 12 else "PM"
+
+            payload = {
+                "kind": "commute_predict",
+                "scheduleId": sch["id"],
+                "title": title,
+                "body": f"You usually leave around {dep_text} {ampm}{duration_text}. Tap to plan a safe route.",
+                "tag": f"pp:commute:{sch['id']}",
+                "url": f"/?dest={sch.get('destLat')},{sch.get('destLng')}&plan=1",
+                "requireInteraction": False,
+            }
+
+            result = send_to_uid(uid, payload, ttl_seconds=15 * 60)
+            if result.get("sent", 0) > 0:
+                fired += 1
+                # Mark fired *only* if at least one device actually
+                # received it; otherwise the next tick can retry.
+                try:
+                    _db().collection("commuteSchedules").document(sch["id"]).update(
+                        {"lastFiredYmd": today, "lastFiredAtMs": now_ms}
+                    )
+                except Exception:
+                    pass
+            else:
+                # No subscribed devices for this uid (or all 410'd).
+                # Don't burn the daily slot — a device that signs in
+                # later in the same window should still get pinged.
+                skipped += 1
+        except Exception as e:
+            logger.warning("commute schedule %s failed: %s", sch.get("id"), e)
+            errors += 1
+
+    return {
+        "scanned": len(schedules),
+        "fired": fired,
+        "skipped": skipped,
+        "errors": errors,
     }
 
 

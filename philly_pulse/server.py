@@ -1461,6 +1461,33 @@ async def push_revoke_device(
     return {"status": result}
 
 
+_COMMUTE_TICK_SECRET = os.getenv("PHILLY_PULSE_COMMUTE_TICK_SECRET")
+
+
+@app.post("/api/push/tick-commutes")
+async def push_tick_commutes(authorization: Optional[str] = Header(None)):
+    """Cron-driven scan that fires commute prediction pushes for any
+    schedules whose typical departure window contains "now".
+
+    Auth model: a shared secret (`PHILLY_PULSE_COMMUTE_TICK_SECRET`)
+    passed as a Bearer token. Using a static secret rather than a
+    Firebase token means the cron job (GitHub Actions, Cloud
+    Scheduler, etc.) doesn't need to mint user credentials. If the
+    secret isn't configured, the endpoint refuses every request to
+    avoid an accidentally-public commute scan in development."""
+    if not _COMMUTE_TICK_SECRET:
+        raise HTTPException(status_code=503, detail="Commute tick not configured")
+    expected = f"Bearer {_COMMUTE_TICK_SECRET}"
+    if not authorization or authorization != expected:
+        raise HTTPException(status_code=401, detail="Bad tick credentials")
+    try:
+        result = push_mod.notify_due_commutes()
+    except Exception as e:
+        logger.warning("commute tick failed: %s", e)
+        raise HTTPException(status_code=500, detail="Commute tick failed") from e
+    return {"status": "ok", **result}
+
+
 @app.post("/api/push/test")
 async def push_test(authorization: Optional[str] = Header(None)):
     """Send a verification ping to every device the calling user has
