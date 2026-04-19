@@ -461,7 +461,7 @@ def notify_nearby_incident(
         return {"sent": 0, "matched": 0, "cooldown": 0}
 
     now_ms = int(time.time() * 1000)
-    sent = failed = cooldown = 0
+    sent = failed = cooldown = quiet = snoozed = muted = 0
     label = severity_category.replace("_", " ").title()
     where = location_text or f"{lat:.4f}, {lng:.4f}"
     payload = {
@@ -478,11 +478,39 @@ def notify_nearby_incident(
         "severity_category": severity_category,
     }
 
+    # Memoize per-uid pref lookups within this fan-out so two devices
+    # owned by the same user only cost one Firestore read.
+    seen_uids: dict[str, dict[str, bool]] = {}
+
     for sub in matches:
         last_ms = int(sub.get("lastNearbyPushMs") or 0)
         if now_ms - last_ms < _NEARBY_COOLDOWN_MS:
             cooldown += 1
             continue
+
+        # Server-side respect for the prefs the user already set in
+        # the app. Anonymous subscriptions (no uid) skip the lookups
+        # — they have no synced prefs to honor.
+        uid = str(sub.get("uid") or "")
+        if uid:
+            cached = seen_uids.get(uid)
+            if cached is None:
+                cached = {
+                    "snoozed": _is_snoozed_for_uid(uid),
+                    "quiet": _is_quiet_now_for_uid(uid, None),
+                    "muted": _is_category_muted_for_uid(uid, severity_category),
+                }
+                seen_uids[uid] = cached
+            if cached["snoozed"]:
+                snoozed += 1
+                continue
+            if cached["quiet"]:
+                quiet += 1
+                continue
+            if cached["muted"]:
+                muted += 1
+                continue
+
         ok, _status = send_to_subscription(sub, payload, ttl_seconds=15 * 60)
         if ok:
             sent += 1
@@ -503,7 +531,139 @@ def notify_nearby_incident(
         "failed": failed,
         "matched": len(matches),
         "cooldown": cooldown,
+        "quiet": quiet,
+        "snoozed": snoozed,
+        "muted": muted,
     }
+
+
+# ── User preference gating (server-side respect for client prefs) ───
+
+# All synced prefs live under users/{uid}/userPrefs/v1, mirrored
+# from localStorage by frontend/src/lib/prefs-sync.ts. The values
+# are JSON-encoded strings (e.g. quietHours stored as the JSON
+# representation of a {enabled,startHour,...} object) — same shape
+# the client reads. We treat the client format as authoritative and
+# only need to *interpret* it here, never write it.
+
+_PREFS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+# 60s cache so a burst of nearby alerts doesn't hammer Firestore
+# with prefs lookups for the same uid. The cost of being slightly
+# stale (a user toggles snooze on and the next push 30s later
+# still goes through) is far smaller than the cost of fetching
+# the same doc 50× in a fan-out window.
+_PREFS_CACHE_TTL_S = 60
+
+
+def _load_user_prefs(uid: str) -> dict[str, Any]:
+    """Read the synced prefs doc for `uid`, with a tiny TTL cache.
+
+    Returns the raw `values` map (key → JSON-encoded string) or an
+    empty dict on any failure — the gating callers all interpret
+    "no prefs known" as "no opt-out", which matches the default
+    state for a user who hasn't customized anything."""
+    now = time.time()
+    cached = _PREFS_CACHE.get(uid)
+    if cached and now - cached[0] < _PREFS_CACHE_TTL_S:
+        return cached[1]
+    values: dict[str, Any] = {}
+    try:
+        snap = (
+            _db()
+            .collection("users")
+            .document(uid)
+            .collection("userPrefs")
+            .document("v1")
+            .get()
+        )
+        if snap.exists:
+            data = snap.to_dict() or {}
+            v = data.get("values")
+            if isinstance(v, dict):
+                values = v
+    except Exception as e:
+        logger.debug("prefs lookup failed for %s: %s", uid, e)
+    _PREFS_CACHE[uid] = (now, values)
+    return values
+
+
+def _parse_json_pref(raw: Any) -> Any:
+    """Synced prefs are stored as JSON-encoded strings. Returns the
+    parsed value, or None if it's missing/malformed — every caller
+    treats None as "use default"."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        import json as _json
+        return _json.loads(raw)
+    except Exception:
+        return None
+
+
+def _is_quiet_now_for_uid(uid: str, tz_name: Optional[str]) -> bool:
+    """Mirror of frontend `isQuietNow`. Wraps midnight cleanly so a
+    22:00→07:00 window catches both 23:30 and 02:30."""
+    prefs = _load_user_prefs(uid)
+    cfg = _parse_json_pref(prefs.get("pp:quiet-hours"))
+    if not isinstance(cfg, dict) or not cfg.get("enabled"):
+        return False
+    try:
+        if tz_name:
+            from zoneinfo import ZoneInfo
+            now = datetime.now(ZoneInfo(tz_name))
+        else:
+            now = datetime.now()
+    except Exception:
+        now = datetime.now()
+    cur = now.hour * 60 + now.minute
+    sh = int(cfg.get("startHour") or 0)
+    sm = int(cfg.get("startMinute") or 0)
+    eh = int(cfg.get("endHour") or 0)
+    em = int(cfg.get("endMinute") or 0)
+    start = sh * 60 + sm
+    end = eh * 60 + em
+    if start == end:
+        return False
+    if start < end:
+        return start <= cur < end
+    return cur >= start or cur < end
+
+
+def _is_snoozed_for_uid(uid: str) -> bool:
+    """Push snooze is a single epoch-ms 'until' timestamp; we treat
+    any value strictly greater than now as an active snooze. The
+    pref itself is owned by the user (set/cleared from PushSettings)
+    and rides through prefs-sync just like quiet hours."""
+    prefs = _load_user_prefs(uid)
+    raw = prefs.get("pp:push-snooze-until")
+    if not isinstance(raw, str) or not raw:
+        return False
+    try:
+        until_ms = int(raw)
+    except Exception:
+        return False
+    return until_ms > int(time.time() * 1000)
+
+
+def _is_category_muted_for_uid(uid: str, category: str) -> bool:
+    """Mirrors `lib/alert-mutes.ts`: the muted set is stored as a
+    JSON array of category strings. Push-side we apply this only
+    to nearby-incident pushes — commute pushes are user-scoped
+    and don't have a category in the same sense."""
+    if not category:
+        return False
+    prefs = _load_user_prefs(uid)
+    raw = _parse_json_pref(prefs.get("pp:muted-categories"))
+    if not isinstance(raw, list):
+        return False
+    return category in raw
+
+
+def invalidate_prefs_cache(uid: str) -> None:
+    """Drop the cached prefs entry for a uid. Call after any server-
+    side write that should be visible to the next push fan-out
+    (currently unused — kept available for future prefs APIs)."""
+    _PREFS_CACHE.pop(uid, None)
 
 
 # ── User-report fan-out ─────────────────────────────────────────────
@@ -572,7 +732,8 @@ def notify_nearby_user_report(
         return {"sent": 0, "matched": 0, "cooldown": 0}
 
     now_ms = int(time.time() * 1000)
-    sent = failed = cooldown = self_skipped = 0
+    sent = failed = cooldown = self_skipped = quiet = snoozed = muted = 0
+    seen_uids: dict[str, dict[str, bool]] = {}
     note = str(data.get("note") or "").strip()
     label = category.replace("user_", "").replace("_", " ").title()
     body = (
@@ -607,6 +768,27 @@ def notify_nearby_user_report(
         if now_ms - last_ms < _NEARBY_COOLDOWN_MS:
             cooldown += 1
             continue
+
+        uid = str(sub.get("uid") or "")
+        if uid:
+            cached = seen_uids.get(uid)
+            if cached is None:
+                cached = {
+                    "snoozed": _is_snoozed_for_uid(uid),
+                    "quiet": _is_quiet_now_for_uid(uid, None),
+                    "muted": _is_category_muted_for_uid(uid, category),
+                }
+                seen_uids[uid] = cached
+            if cached["snoozed"]:
+                snoozed += 1
+                continue
+            if cached["quiet"]:
+                quiet += 1
+                continue
+            if cached["muted"]:
+                muted += 1
+                continue
+
         ok, _status = send_to_subscription(sub, payload, ttl_seconds=15 * 60)
         if ok:
             sent += 1
@@ -624,6 +806,9 @@ def notify_nearby_user_report(
         "matched": len(matches),
         "cooldown": cooldown,
         "self_skipped": self_skipped,
+        "quiet": quiet,
+        "snoozed": snoozed,
+        "muted": muted,
     }
 
 
@@ -749,6 +934,16 @@ def notify_due_commutes() -> dict[str, int]:
 
             uid = str(sch.get("uid") or "")
             if not uid:
+                skipped += 1
+                continue
+
+            # Server-side prefs respect: snooze and quiet hours both
+            # silence the commute push. Quiet hours uses the schedule
+            # tz so a 10pm→7am quiet window correctly suppresses a
+            # 6:45am wake-up commute prediction. We deliberately do
+            # *not* mark these as `lastFiredYmd` — if the user wakes
+            # up before the snooze ends, the next tick can re-fire.
+            if _is_snoozed_for_uid(uid) or _is_quiet_now_for_uid(uid, tz_name):
                 skipped += 1
                 continue
 

@@ -32,6 +32,10 @@ import {
   Trash2,
   Smartphone,
   Monitor,
+  Moon,
+  Briefcase,
+  Home as HomeIcon,
+  Calendar,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -47,6 +51,20 @@ import {
   type PushDevice,
   type PushStatus,
 } from "@/lib/push-subscriptions";
+import {
+  clearPushSnooze,
+  formatSnoozeRemaining,
+  loadPushSnooze,
+  snoozeFor,
+  snoozeUntilTomorrowMorning,
+  type PushSnoozeState,
+} from "@/lib/push-snooze";
+import {
+  deleteCommuteScheduleById,
+  formatScheduleTime,
+  listCommuteSchedules,
+  type CommuteScheduleSummary,
+} from "@/lib/commute-schedule-sync";
 
 const DEFAULT_RADIUS_LABEL = "3";
 
@@ -102,6 +120,10 @@ export default function PushSettings() {
   const [devices, setDevices] = useState<PushDevice[] | null>(null);
   const [showDevices, setShowDevices] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [snooze, setSnooze] = useState<PushSnoozeState>({ active: false, untilMs: 0 });
+  const [schedules, setSchedules] = useState<CommuteScheduleSummary[] | null>(null);
+  const [showSchedules, setShowSchedules] = useState(false);
+  const [revokingSchedule, setRevokingSchedule] = useState<string | null>(null);
 
   const refresh = async () => {
     setStatus(await getPushStatus());
@@ -111,9 +133,22 @@ export default function PushSettings() {
     setDevices(await listPushDevices());
   };
 
+  const refreshSchedules = async () => {
+    if (!user || user.isAnonymous) {
+      setSchedules([]);
+      return;
+    }
+    try {
+      setSchedules(await listCommuteSchedules(user.uid));
+    } catch {
+      setSchedules([]);
+    }
+  };
+
   useEffect(() => {
     void refresh();
     setArea(loadAlertArea());
+    setSnooze(loadPushSnooze());
     // Re-check when the auth state changes — flipping from
     // anonymous → signed in unlocks the subscribe affordance.
   }, [user?.uid, user?.isAnonymous]);
@@ -121,6 +156,21 @@ export default function PushSettings() {
   useEffect(() => {
     if (showDevices) void refreshDevices();
   }, [showDevices, status?.subscribed]);
+
+  useEffect(() => {
+    if (showSchedules) void refreshSchedules();
+  }, [showSchedules, user?.uid]);
+
+  // Recompute the snooze countdown every minute so the "47 min left"
+  // pill stays honest without forcing the user to refresh.
+  useEffect(() => {
+    if (!snooze.active) return;
+    const id = window.setInterval(() => {
+      const next = loadPushSnooze();
+      setSnooze(next);
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, [snooze.active, snooze.untilMs]);
 
   // Listen for the SW telling us a subscription was invalidated
   // (browser key rotation, site-data clear). Just refresh; the user
@@ -467,6 +517,113 @@ export default function PushSettings() {
             >
               {showDevices ? "Hide my devices" : "Show my devices"}
             </button>
+            <button
+              type="button"
+              onClick={() => setShowSchedules((v) => !v)}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px]"
+              style={{
+                background: "var(--panel-input-bg)",
+                color: "var(--panel-text-secondary)",
+                border: "1px solid var(--panel-border)",
+              }}
+              aria-expanded={showSchedules}
+            >
+              <Calendar className="w-2.5 h-2.5" />
+              {showSchedules ? "Hide commute schedules" : "My commute schedules"}
+            </button>
+          </div>
+
+          {/* Push snooze. Surfaced inline (no toggle) because the
+              cost of an "extra" pill is much smaller than the cost
+              of someone asking "why didn't I get pushes this
+              afternoon?" — visibility is the whole point. */}
+          <div
+            className="mt-1.5 p-2 rounded-md"
+            style={{
+              background: snooze.active ? "rgba(251,191,36,0.10)" : "var(--panel-input-bg)",
+              border: `1px solid ${snooze.active ? "rgba(251,191,36,0.40)" : "var(--panel-border)"}`,
+            }}
+          >
+            <div className="flex items-center gap-1.5 mb-1">
+              <Moon className="w-3 h-3" style={{ color: snooze.active ? "#fbbf24" : "var(--panel-text-muted)" }} />
+              <span className="text-[11px] font-medium" style={{ color: "var(--panel-text)" }}>
+                Push snooze
+              </span>
+              {snooze.active && (
+                <span
+                  className="px-1 py-px rounded text-[9px]"
+                  style={{
+                    background: "rgba(251,191,36,0.15)",
+                    color: "#fbbf24",
+                    border: "1px solid rgba(251,191,36,0.40)",
+                  }}
+                >
+                  {formatSnoozeRemaining(snooze.untilMs)}
+                </span>
+              )}
+            </div>
+            <p className="text-[10px] mb-1.5" style={{ color: "var(--panel-text-muted)" }}>
+              Pause closed-tab pushes (nearby + commute). The Alerts
+              Inbox keeps recording everything in the background.
+            </p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {!snooze.active ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setSnooze(snoozeFor(60 * 60_000))}
+                    className="px-2 py-1 rounded-md text-[10px]"
+                    style={{
+                      background: "var(--panel-bg)",
+                      color: "var(--panel-text-secondary)",
+                      border: "1px solid var(--panel-border)",
+                    }}
+                  >
+                    1 hour
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSnooze(snoozeFor(8 * 60 * 60_000))}
+                    className="px-2 py-1 rounded-md text-[10px]"
+                    style={{
+                      background: "var(--panel-bg)",
+                      color: "var(--panel-text-secondary)",
+                      border: "1px solid var(--panel-border)",
+                    }}
+                  >
+                    8 hours
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSnooze(snoozeUntilTomorrowMorning())}
+                    className="px-2 py-1 rounded-md text-[10px]"
+                    style={{
+                      background: "var(--panel-bg)",
+                      color: "var(--panel-text-secondary)",
+                      border: "1px solid var(--panel-border)",
+                    }}
+                  >
+                    Until tomorrow 7am
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearPushSnooze();
+                    setSnooze({ active: false, untilMs: 0 });
+                  }}
+                  className="px-2 py-1 rounded-md text-[10px]"
+                  style={{
+                    background: "rgba(251,191,36,0.20)",
+                    color: "#fbbf24",
+                    border: "1px solid rgba(251,191,36,0.40)",
+                  }}
+                >
+                  End snooze now
+                </button>
+              )}
+            </div>
           </div>
 
           {showDevices && (
@@ -550,6 +707,110 @@ export default function PushSettings() {
                         style={{ color: "#ef4444" }}
                       >
                         {revoking === d.id ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3 h-3" />
+                        )}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+
+          {showSchedules && (
+            <div
+              className="mt-1.5 p-2 rounded-md space-y-1.5"
+              style={{
+                background: "var(--panel-input-bg)",
+                border: "1px solid var(--panel-border)",
+              }}
+            >
+              <p className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+                Schedules sync from your trip history when you opt in
+                to commute alerts. Removing one stops closed-tab pushes
+                for that pattern; the in-app pill keeps showing live
+                predictions.
+              </p>
+              {schedules === null ? (
+                <div className="flex items-center gap-1.5 text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Loading commute schedules…
+                </div>
+              ) : schedules.length === 0 ? (
+                <p className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+                  No synced schedules yet. Enable commute alerts and
+                  travel a recurring route a few times to build one.
+                </p>
+              ) : (
+                schedules.map((s) => {
+                  const Icon = s.matchedCategory === "home"
+                    ? HomeIcon
+                    : s.matchedCategory === "work"
+                    ? Briefcase
+                    : Calendar;
+                  const dayLabel = s.isWeekend ? "Weekends" : "Weekdays";
+                  const firedToday = s.lastFiredYmd
+                    ? new Date().toISOString().slice(0, 10) === s.lastFiredYmd
+                    : false;
+                  return (
+                    <div
+                      key={s.id}
+                      className="flex items-start gap-2 p-1.5 rounded"
+                      style={{
+                        background: "var(--panel-bg)",
+                        border: "1px solid var(--panel-border)",
+                      }}
+                    >
+                      <Icon className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[11px] font-medium truncate" style={{ color: "var(--panel-text)" }}>
+                            {s.matchedCategory === "home"
+                              ? "Heading home"
+                              : s.matchedCategory === "work"
+                              ? "Heading to work"
+                              : `Heading to ${s.destLabel}`}
+                          </span>
+                          {firedToday && (
+                            <span
+                              className="px-1 py-px rounded text-[9px]"
+                              style={{
+                                background: "rgba(34,197,94,0.15)",
+                                color: "#22c55e",
+                                border: "1px solid rgba(34,197,94,0.40)",
+                              }}
+                            >
+                              fired today
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                          {dayLabel} · usually around {formatScheduleTime(s.typicalDepartureMinute)}
+                          {s.typicalDurationMin > 0 ? ` · ~${Math.round(s.typicalDurationMin)}m` : ""}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setRevokingSchedule(s.id);
+                          try {
+                            await deleteCommuteScheduleById(s.id);
+                            await refreshSchedules();
+                            setInfo("Removed commute schedule.");
+                          } catch {
+                            setError("Couldn't remove that schedule.");
+                          } finally {
+                            setRevokingSchedule(null);
+                          }
+                        }}
+                        disabled={revokingSchedule === s.id}
+                        aria-label="Remove schedule"
+                        className="shrink-0 p-1 rounded transition-colors disabled:opacity-50 hover:bg-white/5"
+                        style={{ color: "#ef4444" }}
+                      >
+                        {revokingSchedule === s.id ? (
                           <Loader2 className="w-3 h-3 animate-spin" />
                         ) : (
                           <Trash2 className="w-3 h-3" />

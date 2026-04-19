@@ -61,6 +61,7 @@ export const SYNCED_PREF_KEYS = [
   "pp:show-user-reports",
   "pp:user-reports-verified-only",
   "pp:hide-resolved-incidents",
+  "pp:push-snooze-until",
 ] as const;
 
 export type SyncedPrefKey = typeof SYNCED_PREF_KEYS[number];
