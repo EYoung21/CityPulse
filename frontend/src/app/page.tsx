@@ -337,6 +337,29 @@ export default function Home() {
     setPref("pp:saved-places-overlay", savedPlacesOverlay ? "1" : "0");
   }, [savedPlacesOverlay]);
 
+  // Crowdsourced-report visibility. Two related toggles: a hard
+  // on/off (defaults to on so trust-curious users see the
+  // crowdsourced layer) and a "verified only" filter that requires
+  // at least one net confirm vote — useful for users who want to
+  // dampen the noise floor without losing reports entirely. Both
+  // are persisted via the standard prefs sync allow-list.
+  const [showUserReports, setShowUserReports] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem("pp:show-user-reports") !== "0";
+  });
+  const [verifiedReportsOnly, setVerifiedReportsOnly] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("pp:user-reports-verified-only") === "1";
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setPref("pp:show-user-reports", showUserReports ? "1" : "0");
+  }, [showUserReports]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setPref("pp:user-reports-verified-only", verifiedReportsOnly ? "1" : "0");
+  }, [verifiedReportsOnly]);
+
   const [safetyPoiCats, setSafetyPoiCats] = useState<Set<SafetyPoiCategory>>(() => new Set());
   const [safetyPois, setSafetyPois] = useState<
     Array<{ id: string; name: string; category: SafetyPoiCategory; lat: number; lng: number }>
@@ -1068,11 +1091,22 @@ export default function Home() {
   // consumer (map markers, alerts inbox, off-screen chips, area
   // scoring) gets them for free. enrichIncidents recomputes w_eff
   // for the merged set so heatmap weighting stays consistent.
+  //
+  // Two user-toggleable filters apply here so the noisy-vs-trusted
+  // tradeoff stays in the user's hands without forking the whole
+  // incident pipeline:
+  //   - `showUserReports = false` → reports are skipped entirely.
+  //   - `verifiedReportsOnly = true` → only reports whose net vote
+  //     score is ≥ 1 (more confirms than disputes) are merged.
   const mergedIncidents = useMemo(() => {
-    if (userReports.length === 0) return incidents;
-    const reported = userReports.map(userReportToIncident);
+    if (!showUserReports || userReports.length === 0) return incidents;
+    const filtered = verifiedReportsOnly
+      ? userReports.filter((r) => r.confirmCount - r.disputeCount >= 1)
+      : userReports;
+    if (filtered.length === 0) return incidents;
+    const reported = filtered.map(userReportToIncident);
     return enrichIncidents([...incidents, ...reported]);
-  }, [incidents, userReports]);
+  }, [incidents, userReports, showUserReports, verifiedReportsOnly]);
 
   const filteredIncidents = mergedIncidents.filter((inc) => {
     if (inc.hidden) return false;
@@ -2134,6 +2168,53 @@ export default function Home() {
                     Save a place from the sidebar to see it pinned here.
                   </p>
                 )}
+
+                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
+                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Crowdsourced reports</p>
+                <button
+                  onClick={() => setShowUserReports((v) => !v)}
+                  className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
+                  style={{ color: "var(--panel-text-secondary)" }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                  aria-pressed={showUserReports}
+                >
+                  <span className="flex items-center gap-2">
+                    <span aria-hidden="true">👥</span>
+                    <span>Show user reports{userReports.length > 0 ? ` (${userReports.length})` : ""}</span>
+                  </span>
+                  <div
+                    className={`w-8 h-4 rounded-full transition-colors relative ${showUserReports ? "bg-purple-500" : ""}`}
+                    style={!showUserReports ? { background: "var(--panel-input-bg)" } : {}}
+                  >
+                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${showUserReports ? "left-4" : "left-0.5"}`} />
+                  </div>
+                </button>
+                {/* "Verified only" stays inert when the parent toggle
+                    is off — leaving it visible-but-disabled makes the
+                    relationship between the two settings obvious
+                    without hiding affordances based on state. */}
+                <button
+                  onClick={() => setVerifiedReportsOnly((v) => !v)}
+                  disabled={!showUserReports}
+                  className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs disabled:opacity-50"
+                  style={{ color: "var(--panel-text-secondary)" }}
+                  onMouseEnter={(e) => { if (showUserReports) e.currentTarget.style.background = "var(--panel-hover)"; }}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                  aria-pressed={verifiedReportsOnly}
+                  title="Hide reports that haven't been confirmed by other users yet"
+                >
+                  <span className="flex items-center gap-2">
+                    <span aria-hidden="true">✅</span>
+                    <span>Verified only (≥1 net confirm)</span>
+                  </span>
+                  <div
+                    className={`w-8 h-4 rounded-full transition-colors relative ${verifiedReportsOnly && showUserReports ? "bg-green-500" : ""}`}
+                    style={!(verifiedReportsOnly && showUserReports) ? { background: "var(--panel-input-bg)" } : {}}
+                  >
+                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${verifiedReportsOnly ? "left-4" : "left-0.5"}`} />
+                  </div>
+                </button>
 
                 <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
                 <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Avoid in routing</p>
