@@ -140,6 +140,28 @@ The frontend service worker only registers in production builds, so
 local push testing requires `npm run build && npm start` rather than
 `npm run dev`.
 
+#### Closed-tab commute predictions (optional)
+
+When a signed-in user with push enabled has a recurring commute
+pattern, the client uploads a tiny `commuteSchedules` document to
+Firestore. To fire the actual notification when the tab is closed,
+point an external scheduler at `POST /api/push/tick-commutes` every
+1–2 minutes:
+
+```bash
+# Set a long random secret on the backend
+PHILLY_PULSE_COMMUTE_TICK_SECRET="<long random string>"
+
+# Then call from cron / GH Actions / Cloud Scheduler:
+curl -X POST https://api.phlpulse.com/api/push/tick-commutes \
+  -H "Authorization: Bearer $PHILLY_PULSE_COMMUTE_TICK_SECRET"
+```
+
+The endpoint is a no-op (`503`) when the secret env var isn't set,
+so leaving it unconfigured in dev is safe. The same scheduler can
+drive future server-fired triggers; the response includes `scanned`
+/ `fired` / `skipped` counts for monitoring.
+
 ### Production
 
 - **Frontend** is deployed on Vercel at [phlpulse.com](https://phlpulse.com)

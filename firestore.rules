@@ -224,5 +224,46 @@ service cloud.firestore {
         && resource.data.uid == request.auth.uid;
       allow create, update: if false;
     }
+
+    // Server-side commute predictions. The client uploads its own
+    // schedule (one doc per uid+bucket) so the backend cron can
+    // fire the same nudge whether the tab is open or fully closed.
+    // Schema:
+    //   uid                      string  (== request.auth.uid)
+    //   bucketKey                string
+    //   destLat, destLng         number
+    //   destLabel                string
+    //   matchedCategory          string ("home" | "work" | null)
+    //   typicalDepartureMinute   number  0..1439
+    //   typicalDurationMin       number
+    //   isWeekend                bool
+    //   confidence               number  0..1
+    //   tz                       string  IANA timezone
+    //   updatedAt                number  (client epoch ms)
+    //   lastFiredYmd             string  (server-only; client never sets)
+    //   lastFiredAtMs            number  (server-only)
+    match /commuteSchedules/{scheduleId} {
+      allow read, delete: if request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && resource.data.uid == request.auth.uid;
+      // Create / update by the schedule's owner. Field allowlist
+      // keeps the document tight; the server-side `lastFired*` fields
+      // are written by the FastAPI tick endpoint with the Admin SDK
+      // (which bypasses these rules) and must NOT be settable by a
+      // malicious client (otherwise they could permanently suppress
+      // their own commute pings, or worse, someone else's).
+      allow create, update: if request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly([
+          'uid','bucketKey','destLat','destLng','destLabel',
+          'matchedCategory','typicalDepartureMinute','typicalDurationMin',
+          'isWeekend','confidence','tz','updatedAt'
+        ])
+        && request.resource.data.typicalDepartureMinute is number
+        && request.resource.data.typicalDepartureMinute >= 0
+        && request.resource.data.typicalDepartureMinute < 1440
+        && request.resource.data.confidence is number;
+    }
   }
 }

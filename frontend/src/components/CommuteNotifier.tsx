@@ -11,7 +11,13 @@
 
 import { useEffect } from "react";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
-import { evaluateCommuteNotification } from "@/lib/commute-notify";
+import { useAuth } from "@/contexts/AuthContext";
+import {
+  evaluateCommuteNotification,
+  isCommuteNotificationsEnabled,
+} from "@/lib/commute-notify";
+import { predictNextCommute } from "@/lib/commute-patterns";
+import { upsertCommuteSchedule } from "@/lib/commute-schedule-sync";
 import { subscribeTripHistory } from "@/lib/trip-history";
 
 const POLL_MS = 60_000;
@@ -29,12 +35,47 @@ function planRoute(label: string, dest: { lat: number; lng: number }): void {
 
 export default function CommuteNotifier() {
   const { destinations } = useSavedDestinations();
+  const { user } = useAuth();
 
   useEffect(() => {
     let cancelled = false;
+    let lastSyncedBucket = "";
+    let lastSyncMs = 0;
     const tick = () => {
       if (cancelled) return;
       void evaluateCommuteNotification(destinations, planRoute);
+      // Best-effort server-side sync: if the user is signed in and
+      // has commute notifications opted in, push the current
+      // prediction up to Firestore so the FastAPI cron can fire it
+      // even if the tab is fully closed at departure time.
+      // We rate-limit to once per 30 min per bucket to keep writes
+      // off the critical path; the prediction shape is stable
+      // enough that more frequent uploads aren't useful.
+      if (
+        user &&
+        !user.isAnonymous &&
+        isCommuteNotificationsEnabled()
+      ) {
+        try {
+          const prediction = predictNextCommute(destinations);
+          if (prediction && prediction.confidence >= 0.5) {
+            const now = Date.now();
+            const sameBucket = prediction.bucketKey === lastSyncedBucket;
+            const recent = sameBucket && now - lastSyncMs < 30 * 60_000;
+            if (!recent) {
+              lastSyncedBucket = prediction.bucketKey;
+              lastSyncMs = now;
+              void upsertCommuteSchedule(user.uid, prediction).catch(() => {
+                // Sync failures are silent; the in-tab notifier
+                // still works and the next tick will retry.
+                lastSyncMs = 0;
+              });
+            }
+          }
+        } catch {
+          /* predictor failures shouldn't break the tick loop */
+        }
+      }
     };
 
     // Run immediately on mount + every minute. The predictor itself
@@ -61,7 +102,7 @@ export default function CommuteNotifier() {
       document.removeEventListener("visibilitychange", onVis);
       unsub();
     };
-  }, [destinations]);
+  }, [destinations, user]);
 
   return null;
 }
