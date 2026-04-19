@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import PlaceActions from "@/components/PlaceActions";
 import UserReportControls from "@/components/UserReportControls";
+import IncidentLifecycleControls from "@/components/IncidentLifecycleControls";
 import { isUserReportIncidentId, type UserReport } from "@/lib/user-reports";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -359,6 +360,10 @@ export default function IncidentDetail({ incident, onClose, userReport = null }:
             report={userReport}
             onDeleted={onClose}
           />
+        )}
+
+        {!isUserReport && (
+          <IncidentLifecycleControls incidentId={incident.id} />
         )}
 
         {incident.description && (

@@ -139,5 +139,53 @@ service cloud.firestore {
           && request.auth.uid == voterUid;
       }
     }
+
+    // Lifecycle aggregates for scanner incidents — "is this still
+    // happening?" votes. The parent doc id matches the incident id
+    // exactly so a one-shot getDoc resolves the status. The doc is
+    // either created by the first voter or updated by subsequent
+    // voters; the rules constrain writes to the four aggregate
+    // fields so a malicious client can't stuff arbitrary keys in.
+    // Reads are public so the UI can show "STILL HAPPENING · 3 in
+    // last hour" badges without authentication.
+    match /incidentStatus/{incidentId} {
+      allow read: if true;
+      allow create: if request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.resource.data.keys().hasOnly(
+            ['incidentId', 'stillCount', 'resolvedCount', 'lastVoteAtMs', 'lastVoterUid']
+          )
+        && request.resource.data.stillCount is number
+        && request.resource.data.resolvedCount is number
+        && request.resource.data.stillCount >= 0
+        && request.resource.data.resolvedCount >= 0
+        && request.resource.data.lastVoterUid == request.auth.uid;
+      allow update: if request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['stillCount', 'resolvedCount', 'lastVoteAtMs', 'lastVoterUid'])
+        && request.resource.data.stillCount is number
+        && request.resource.data.resolvedCount is number
+        && request.resource.data.stillCount >= 0
+        && request.resource.data.resolvedCount >= 0
+        && request.resource.data.lastVoterUid == request.auth.uid;
+      allow delete: if isAdmin();
+
+      // Per-voter records under each incident. Voter doc id MUST be
+      // the voter's uid (prevents double voting); the value field is
+      // restricted to "still" or "resolved" so callers can't sneak
+      // a sentinel value past the validation. There's no
+      // self-vote-prevention here because scanner incidents have no
+      // owner — anyone may vote.
+      match /votes/{voterUid} {
+        allow read: if true;
+        allow create, update: if request.auth != null
+          && request.auth.token.firebase.sign_in_provider != 'anonymous'
+          && request.auth.uid == voterUid
+          && request.resource.data.value in ['still', 'resolved'];
+        allow delete: if request.auth != null
+          && request.auth.uid == voterUid;
+      }
+    }
   }
 }
