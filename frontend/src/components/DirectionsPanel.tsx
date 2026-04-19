@@ -19,8 +19,11 @@ import {
   Star,
   Plus,
   Calendar,
+  Bell,
+  BellOff,
 } from "lucide-react";
 import { downloadIcs } from "@/lib/ics";
+import { addReminder, removeReminder } from "@/lib/scheduled-reminders";
 import { geocodePhilly } from "@/lib/search";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
 import {
@@ -223,6 +226,22 @@ export default function DirectionsPanel({
   // planning trips later in the day).
   const [departAt, setDepartAt] = useState<Date | null>(null);
   const [departPickerOpen, setDepartPickerOpen] = useState(false);
+  // "Remind me before this trip" lead time, in minutes. Null = no
+  // reminder set. Lives in component state so toggling it doesn't
+  // immediately write to storage; the reminder is created when the
+  // user picks a lead value (and re-created when the lead changes).
+  const [reminderLead, setReminderLead] = useState<number | null>(null);
+  const [reminderId, setReminderId] = useState<string | null>(null);
+  // Drop any pending reminder when the user clears the scheduled
+  // departure or swaps to a different destination — keeping a stale
+  // reminder for "the previous trip" would be confusing.
+  useEffect(() => {
+    if (reminderId && (!departAt || !destLoc)) {
+      try { removeReminder(reminderId); } catch { /* ignore */ }
+      setReminderId(null);
+      setReminderLead(null);
+    }
+  }, [departAt, destLoc, reminderId]);
   // Recent destinations strip — populated from the same localStorage
   // ring the search box uses, so picking somewhere in the search shows
   // up here too. Hidden once a destination is chosen.
@@ -967,6 +986,97 @@ export default function DirectionsPanel({
                       Reset
                     </button>
                   )}
+                </div>
+              )}
+
+              {/* Remind-me-before-this-trip row. Only meaningful for
+                  scheduled (future) departures — for "leave now" the
+                  reminder would fire instantly which is just noise.
+                  We persist the reminder via the scheduled-reminders
+                  store so the ReminderRunner at root will surface a
+                  banner / push when it's time. */}
+              {departAt && departAt.getTime() > Date.now() + 60_000 && destLoc && (
+                <div
+                  className="flex items-center justify-between gap-2 rounded-lg px-3 py-2"
+                  style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)" }}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    {reminderLead ? (
+                      <Bell className="w-3.5 h-3.5 shrink-0" style={{ color: "#3b82f6" }} />
+                    ) : (
+                      <BellOff className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
+                    )}
+                    <span className="text-[11px] font-medium" style={{ color: "var(--panel-text)" }}>
+                      Remind me
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {[5, 10, 30].map((m) => {
+                      const active = reminderLead === m;
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => {
+                            // Replace any previous reminder for this
+                            // exact destination/departure pair.
+                            if (reminderId) {
+                              try { removeReminder(reminderId); } catch { /* ignore */ }
+                            }
+                            const departTs = departAt.getTime();
+                            const fireAt = departTs - m * 60_000;
+                            // Don't bother arming a reminder whose
+                            // fire time is already in the past — that
+                            // would just resolve to a "missed" banner
+                            // immediately, which is confusing.
+                            if (fireAt <= Date.now()) {
+                              setReminderLead(null);
+                              setReminderId(null);
+                              return;
+                            }
+                            const r = addReminder({
+                              fireAt,
+                              departAt: departTs,
+                              leadMinutes: m,
+                              destLabel: destLoc.display_name.split(",")[0] || "destination",
+                              destLat: destLoc.lat,
+                              destLng: destLoc.lng,
+                              mode: activeMode,
+                            });
+                            setReminderId(r.id);
+                            setReminderLead(m);
+                          }}
+                          aria-pressed={active}
+                          className="px-2 py-1 rounded-md text-[10px] font-semibold transition-colors"
+                          style={{
+                            background: active ? "rgba(59,130,246,0.18)" : "var(--panel-bg)",
+                            color: active ? "#3b82f6" : "var(--panel-text-secondary)",
+                            border: `1px solid ${active ? "rgba(59,130,246,0.40)" : "var(--panel-border)"}`,
+                          }}
+                        >
+                          {m}m
+                        </button>
+                      );
+                    })}
+                    {reminderLead && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (reminderId) {
+                            try { removeReminder(reminderId); } catch { /* ignore */ }
+                          }
+                          setReminderLead(null);
+                          setReminderId(null);
+                        }}
+                        className="px-1.5 py-1 rounded-md text-[10px] font-medium transition-colors"
+                        style={{ color: "var(--panel-text-muted)" }}
+                        title="Cancel reminder"
+                        aria-label="Cancel reminder"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
