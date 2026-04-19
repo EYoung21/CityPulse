@@ -301,9 +301,19 @@ export default function SearchSidebar({
    *  the destination; mode:"from" pre-fills the origin. */
   useEffect(() => {
     function handler(e: Event) {
-      const detail = (e as CustomEvent<{ mode: "to" | "from"; lat: number; lng: number; label: string }>).detail;
+      const detail = (e as CustomEvent<{
+        mode: "to" | "from";
+        lat: number;
+        lng: number;
+        label: string;
+        /** Optional ORS transport profile. When present, switches the
+         *  active mode before computing the route — used by the
+         *  Get-to-safety panel to force "Walk" vs "Drive" rather than
+         *  inheriting whatever the user last selected. */
+        transport?: TransportMode;
+      }>).detail;
       if (!detail) return;
-      const { mode, lat, lng, label } = detail;
+      const { mode, lat, lng, label, transport } = detail;
       if (mode === "to") {
         setDestQuery(label);
         setDestLoc({ display_name: label, lat, lng });
@@ -313,6 +323,7 @@ export default function SearchSidebar({
         setOriginLoc({ display_name: label, lat, lng });
         onPreviewPins?.({ lat, lng }, destLocRef.current ? { lat: destLocRef.current.lat, lng: destLocRef.current.lng } : null);
       }
+      if (transport) setActiveMode(transport);
       setView("directions");
     }
     window.addEventListener("pp:plan-route", handler);

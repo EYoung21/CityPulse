@@ -52,6 +52,8 @@ import TurnList from "@/components/TurnList";
 import SearchAreaPill from "@/components/SearchAreaPill";
 import RecenterPill from "@/components/RecenterPill";
 import AlongRoutePanel from "@/components/AlongRoutePanel";
+import SafetyEscapeButton from "@/components/SafetyEscapeButton";
+import SafetyEscapePanel from "@/components/SafetyEscapePanel";
 import UndoToastHost from "@/components/UndoToastHost";
 import KeyboardShortcutsHelp from "@/components/KeyboardShortcutsHelp";
 import InstallPrompt from "@/components/InstallPrompt";
@@ -299,6 +301,10 @@ export default function Home() {
    *  meaningful when a trip is active — toggling closes the panel
    *  when the trip ends so it doesn't persist into a stale state. */
   const [alongRouteOpen, setAlongRouteOpen] = useState(false);
+  /** Whether the Get-to-safety bottom sheet is open. Always-available
+   *  (i.e. not gated on an active trip) because the whole point is to
+   *  reach it when something has gone wrong. */
+  const [safetyEscapeOpen, setSafetyEscapeOpen] = useState(false);
   const [tripMode, setTripMode] = useState<string | null>(null);
   const [tripSteps, setTripSteps] = useState<ManeuverStep[] | null>(null);
   // Toggles the full step-by-step list overlay. Auto-cleared when the
@@ -588,6 +594,7 @@ export default function Home() {
   // event so the host shell stays alive. No-op on web.
   useEffect(() => {
     function onBack(ev: Event) {
+      if (safetyEscapeOpen)       { setSafetyEscapeOpen(false);  ev.preventDefault(); return; }
       if (selectedId)             { setSelectedId(null);         ev.preventDefault(); return; }
       if (clusterIncidentIds)     { setClusterIncidentIds(null); ev.preventDefault(); return; }
       if (selectedDistrict)       { setSelectedDistrict(null);   ev.preventDefault(); return; }
@@ -600,7 +607,7 @@ export default function Home() {
     }
     window.addEventListener("pp:native-back", onBack);
     return () => window.removeEventListener("pp:native-back", onBack);
-  }, [selectedId, clusterIncidentIds, selectedDistrict, mapTap, droppedPin, showLayers, showAbout, showTheme, showInbox]);
+  }, [selectedId, clusterIncidentIds, selectedDistrict, mapTap, droppedPin, showLayers, showAbout, showTheme, showInbox, safetyEscapeOpen]);
 
   /** Deep-link bootstrap (read once on mount):
    *   ?incident=<id>            → select that incident when it arrives in the feed
@@ -1846,6 +1853,18 @@ export default function Home() {
         />
       )}
 
+      {/* Get-to-safety panel — bottom-anchored emergency sheet with
+          the closest staffed safe spaces (police / hospital / fire /
+          24h gas) plus a one-tap Call 911. Available at all times
+          (with or without an active trip) since the user may be in
+          distress when they reach for it. */}
+      {safetyEscapeOpen && (
+        <SafetyEscapePanel
+          userLocation={userLocation}
+          onClose={() => setSafetyEscapeOpen(false)}
+        />
+      )}
+
       {/* Maneuver chip — floating turn-by-turn pill (active trip + ORS steps only) */}
       {tripGeometry && tripSteps && tripSteps.length > 0 && (
         <div
@@ -1916,6 +1935,15 @@ export default function Home() {
             mode={tripMode}
           />
         )}
+        {/* Get-to-safety — always visible. Distinct red shield with a
+            subtle breathing pulse so it's findable at a glance when
+            the user actually needs it. Tapping opens a sheet with the
+            closest staffed safe spaces and a Call 911 button. */}
+        <SafetyEscapeButton
+          active={safetyEscapeOpen}
+          onClick={() => setSafetyEscapeOpen((v) => !v)}
+        />
+
         {/* "Search along route" — only meaningful while a trip is
             active; hidden the rest of the time so the button column
             doesn't grow unnecessarily. Toggles a bottom-anchored
