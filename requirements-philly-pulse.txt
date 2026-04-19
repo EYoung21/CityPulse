@@ -5,3 +5,5 @@ openai
 pyyaml
 firebase-admin>=6.5.0
 beautifulsoup4
+pywebpush>=2.0.0
+py-vapid>=1.9.0

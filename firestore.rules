@@ -209,5 +209,20 @@ service cloud.firestore {
           && request.auth.uid == voterUid;
       }
     }
+
+    // Web Push subscriptions. Written exclusively by the backend
+    // service account via Firebase Admin SDK (which bypasses these
+    // rules), so no client-side path is needed for create/update.
+    // Owners can read their own row to confirm registration; admins
+    // can read all rows for auditing dead endpoints. Owners can also
+    // delete their own row as a "panic unsubscribe" path that
+    // doesn't require the backend to be reachable.
+    match /pushSubscriptions/{subId} {
+      allow read: if isAdmin()
+        || (request.auth != null && resource.data.uid == request.auth.uid);
+      allow delete: if request.auth != null
+        && resource.data.uid == request.auth.uid;
+      allow create, update: if false;
+    }
   }
 }
