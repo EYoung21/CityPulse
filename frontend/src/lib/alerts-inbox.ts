@@ -1,3 +1,5 @@
+import { isCategoryMuted } from "@/lib/alert-mutes";
+
 /** localStorage-backed log of alert surfaces (off-screen incidents,
  *  incident-ahead, etc.) so the user has a persistent inbox to scroll
  *  through after the ephemeral chips disappear. Capped to keep storage
@@ -65,6 +67,13 @@ export function getAlerts(): InboxAlert[] {
 }
 
 export function recordAlert(a: Omit<InboxAlert, "ts" | "read">): void {
+  // Per-category mute gate: if the user has explicitly silenced this
+  // incident type, drop the entry on the floor — don't even log it
+  // to the inbox. The mute is about "stop interrupting me", and a
+  // pile of muted-but-still-listed entries would force the user to
+  // dismiss noise they already opted out of.
+  if (isCategoryMuted(a.category)) return;
+
   const existing = read();
   // Dedupe — if we already have this exact id within the TTL, just bump
   // its timestamp so it floats to the top instead of stacking duplicates.

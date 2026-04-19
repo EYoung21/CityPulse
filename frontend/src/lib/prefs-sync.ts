@@ -55,6 +55,8 @@ export const SYNCED_PREF_KEYS = [
   "pp:avoid-areas",
   "pp:filter-presets",
   "pp:quiet-hours",
+  "pp:muted-categories",
+  "pp:scheduled-reminders",
 ] as const;
 
 export type SyncedPrefKey = typeof SYNCED_PREF_KEYS[number];

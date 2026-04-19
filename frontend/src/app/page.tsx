@@ -44,6 +44,8 @@ import AvoidAreasManager from "@/components/AvoidAreasManager";
 import OfflineTilesPanel from "@/components/OfflineTilesPanel";
 import MeasureToolPanel from "@/components/MeasureToolPanel";
 import MapSnapshotButton from "@/components/MapSnapshotButton";
+import ReminderRunner from "@/components/ReminderRunner";
+import ReminderBanner from "@/components/ReminderBanner";
 import FilterPresetsBar from "@/components/FilterPresetsBar";
 import ManeuverChip from "@/components/ManeuverChip";
 import TurnList from "@/components/TurnList";
@@ -61,6 +63,7 @@ import OffscreenIncidentChip from "@/components/OffscreenIncidentChip";
 import IncidentAheadChip from "@/components/IncidentAheadChip";
 import AlertsInbox from "@/components/AlertsInbox";
 import { recordAlert, subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
+import { loadMutedCategories } from "@/lib/alert-mutes";
 import { recordTrip, updateTrip, type TripHistoryEntry } from "@/lib/trip-history";
 import { getParkedPin, subscribeParkedPin, type ParkedPin } from "@/lib/parked-pin";
 import { setPref } from "@/lib/prefs-sync";
@@ -856,12 +859,16 @@ export default function Home() {
     if (!bounds || !center) return;
 
     // Find the highest-severity *new* incident we haven't dismissed.
+    // Categories the user has muted are skipped at the source — they
+    // shouldn't show as a chip *or* in the inbox.
+    const muted = loadMutedCategories();
     let best: { inc: Incident; w: number } | null = null;
     for (const inc of incidents) {
       if (seenIncidentIdsRef.current.has(inc.id)) continue;
       seenIncidentIdsRef.current.add(inc.id);
       if (dismissedAlertIdsRef.current.has(inc.id)) continue;
       if (inc.lat == null || inc.lng == null) continue;
+      if (muted.has(inc.severity_category)) continue;
       const w = inc.w_eff ?? 0.5;
       if (w < 0.55) continue; // only meaningful severity
       const inView =
@@ -955,10 +962,12 @@ export default function Home() {
     );
     if (!userProj) return;
 
+    const mutedAhead = loadMutedCategories();
     let best: { inc: Incident; distM: number } | null = null;
     for (const inc of incidents) {
       if (inc.lat == null || inc.lng == null) continue;
       if (aheadDismissedRef.current.has(inc.id)) continue;
+      if (mutedAhead.has(inc.severity_category)) continue;
       const w = inc.w_eff ?? 0.5;
       if (w < 0.55) continue; // mirror off-screen-chip threshold
       const proj = distanceAlongRoute([inc.lat, inc.lng], tripGeometry);
@@ -1568,6 +1577,15 @@ export default function Home() {
           beforeinstallprompt (or iOS Safari with a custom hint), and
           only if the user hasn't already dismissed. */}
       <InstallPrompt />
+
+      {/* Scheduled-trip reminder runner + banner. Runner is headless
+          (renders nothing); it sweeps localStorage on mount, arms
+          timers / polling, and dispatches `pp:trip-reminder` events.
+          The banner subscribes to those events and shows the toast
+          UI. Mounted at root so reminders fire regardless of which
+          panel/sidebar the user is currently looking at. */}
+      <ReminderRunner />
+      <ReminderBanner />
 
       {/* Resume-trip pill — surfaces a recent in-progress trip after a
           page refresh / accidental tab close. Hides once the user

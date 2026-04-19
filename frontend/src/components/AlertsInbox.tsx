@@ -11,7 +11,7 @@ import {
   subscribeAlerts,
   type InboxAlert,
 } from "@/lib/alerts-inbox";
-import { getSeverity } from "@/lib/severity";
+import { getSeverity, SEVERITY_MAP } from "@/lib/severity";
 import {
   formatQuietWindow,
   isQuietNow,
@@ -20,6 +20,11 @@ import {
   subscribeQuietHours,
   type QuietHoursConfig,
 } from "@/lib/quiet-hours";
+import {
+  loadMutedCategories,
+  toggleCategoryMute,
+  subscribeMutedCategories,
+} from "@/lib/alert-mutes";
 
 interface Props {
   open: boolean;
@@ -52,6 +57,12 @@ export default function AlertsInbox({ open, onClose, onJump }: Props) {
   const [quiet, setQuiet] = useState<QuietHoursConfig>(() => loadQuietHours());
   const [showSettings, setShowSettings] = useState(false);
   const [quietActive, setQuietActive] = useState<boolean>(() => isQuietNow());
+  const [muted, setMuted] = useState<Set<string>>(() => loadMutedCategories());
+
+  useEffect(() => {
+    setMuted(loadMutedCategories());
+    return subscribeMutedCategories(setMuted);
+  }, []);
 
   useEffect(() => {
     setAlerts(getAlerts());
@@ -259,6 +270,49 @@ export default function AlertsInbox({ open, onClose, onJump }: Props) {
                   Active window: {formatQuietWindow(quiet)}{quietActive ? " · suppressing now" : ""}
                 </p>
               )}
+
+              <div className="h-px" style={{ background: "var(--panel-border)" }} />
+
+              <div>
+                <p className="text-xs font-semibold" style={{ color: "var(--panel-text)" }}>
+                  Mute by category
+                </p>
+                <p className="text-[10px] leading-snug mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                  Tap to silence push + chip alerts for that incident type. Markers stay visible on the map.
+                </p>
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                  {Object.entries(SEVERITY_MAP).map(([slug, cfg]) => {
+                    const on = muted.has(slug);
+                    return (
+                      <button
+                        key={slug}
+                        type="button"
+                        onClick={() => toggleCategoryMute(slug)}
+                        aria-pressed={on}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] transition-colors"
+                        style={{
+                          background: on
+                            ? "var(--panel-bg)"
+                            : `${cfg.color}22`,
+                          color: on
+                            ? "var(--panel-text-muted)"
+                            : cfg.color,
+                          border: `1px solid ${on ? "var(--panel-border)" : `${cfg.color}55`}`,
+                          textDecoration: on ? "line-through" : "none",
+                        }}
+                        title={on ? `Unmute ${cfg.label}` : `Mute ${cfg.label}`}
+                      >
+                        {cfg.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {muted.size > 0 && (
+                  <p className="text-[10px] mt-1.5" style={{ color: "var(--panel-text-muted)" }}>
+                    Muted: {muted.size} {muted.size === 1 ? "category" : "categories"}.
+                  </p>
+                )}
+              </div>
             </div>
           )}
 

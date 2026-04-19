@@ -405,6 +405,23 @@
   .live-share-pulse { animation: none; }
 }
 
+/* === Speed chip — slow red shadow pulse while sustained over the limit ===
+   Box-shadow only (no transform) so the chip doesn't physically wobble,
+   which would be distracting in the corner of the user's eye while
+   driving. The animation matches the duration of the sustained-speeding
+   timer cadence so users get a visual confirmation that the warning
+   state is "real" rather than GPS noise. */
+.speedchip-overspeed {
+  animation: speedchip-overspeed 1.4s ease-in-out infinite;
+}
+@keyframes speedchip-overspeed {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.55); }
+  50%      { box-shadow: 0 0 0 10px rgba(239,68,68,0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .speedchip-overspeed { animation: none; }
+}
+
 /* === Dropped pin (long-press) — sticky red marker with subtle bob === */
 .dropped-pin-marker {
   width: 36px;
