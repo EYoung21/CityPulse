@@ -40,6 +40,24 @@
       "short_name": "Directions",
       "description": "Plan a safe route",
       "url": "/?source=shortcut-directions"
+    },
+    {
+      "name": "Saved Places",
+      "short_name": "Saved",
+      "description": "Open your saved places and lists",
+      "url": "/?source=shortcut-saved"
+    },
+    {
+      "name": "Recent Alerts",
+      "short_name": "Alerts",
+      "description": "Open the alerts inbox",
+      "url": "/?source=shortcut-inbox"
+    },
+    {
+      "name": "Find My Parked Car",
+      "short_name": "Parked",
+      "description": "Walk-back directions to your parked spot",
+      "url": "/?source=shortcut-parked"
     }
   ]
 }
