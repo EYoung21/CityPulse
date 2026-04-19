@@ -38,6 +38,7 @@ import type { WaypointPin } from "@/components/IncidentMap";
 import RouteOptionPicker from "@/components/RouteOptionPicker";
 import AvoidancePrefsPicker from "@/components/AvoidancePrefsPicker";
 import RideshareLinks from "@/components/RideshareLinks";
+import OptimizeOrderButton from "@/components/OptimizeOrderButton";
 import { Reorder, useDragControls } from "framer-motion";
 import { GripVertical } from "lucide-react";
 
@@ -746,28 +747,46 @@ export default function DirectionsPanel({
           </div>
         )}
 
-        {stops.length < 5 && (
-          <button
-            onClick={() =>
-              setStops([
-                ...stops,
-                {
-                  id: typeof crypto !== "undefined" && "randomUUID" in crypto
-                    ? crypto.randomUUID()
-                    : `stop-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                  query: "",
-                  loc: null,
-                },
-              ])
-            }
-            className="mt-2 flex items-center gap-2 px-3 py-1.5 text-xs font-medium transition-colors rounded-lg"
-            style={{ color: "var(--panel-text-secondary)" }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-          >
-            <Plus className="w-3.5 h-3.5" /> Add stop
-          </button>
-        )}
+        <div className="mt-2 flex items-center gap-1 flex-wrap">
+          {stops.length < 5 && (
+            <button
+              onClick={() =>
+                setStops([
+                  ...stops,
+                  {
+                    id: typeof crypto !== "undefined" && "randomUUID" in crypto
+                      ? crypto.randomUUID()
+                      : `stop-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                    query: "",
+                    loc: null,
+                  },
+                ])
+              }
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium transition-colors rounded-lg"
+              style={{ color: "var(--panel-text-secondary)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            >
+              <Plus className="w-3.5 h-3.5" /> Add stop
+            </button>
+          )}
+          {/* Show the optimizer button when we have at least two
+              intermediate stops with resolved coordinates and known
+              endpoints — anything less can't be reordered usefully. */}
+          {originLoc &&
+            destLoc &&
+            stops.filter((s) => s.loc).length >= 2 && (
+              <OptimizeOrderButton
+                originLoc={originLoc}
+                destLoc={destLoc}
+                stops={stops}
+                onApply={(reordered) => {
+                  setStops(reordered);
+                  setActiveDropdown(null);
+                }}
+              />
+            )}
+        </div>
 
         {previewLoading && (
           <div

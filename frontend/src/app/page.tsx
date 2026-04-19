@@ -42,6 +42,8 @@ import DistrictCard from "@/components/DistrictCard";
 import DroppedPinCard from "@/components/DroppedPinCard";
 import AvoidAreasManager from "@/components/AvoidAreasManager";
 import OfflineTilesPanel from "@/components/OfflineTilesPanel";
+import MeasureToolPanel from "@/components/MeasureToolPanel";
+import FilterPresetsBar from "@/components/FilterPresetsBar";
 import ManeuverChip from "@/components/ManeuverChip";
 import TurnList from "@/components/TurnList";
 import SearchAreaPill from "@/components/SearchAreaPill";
@@ -277,6 +279,11 @@ export default function Home() {
   const [previewWaypoints, setPreviewWaypoints] = useState<WaypointPin[] | null>(null);
   const [showAbout, setShowAbout] = useState(false);
   const [showLayers, setShowLayers] = useState(false);
+  // Map measurement tool. When `measureMode` is on, every map tap
+  // appends a vertex to `measurePoints` and the SafetyScoreCard /
+  // dropped-pin codepaths are bypassed.
+  const [measureMode, setMeasureMode] = useState(false);
+  const [measurePoints, setMeasurePoints] = useState<[number, number][]>([]);
   const [heatmapEnabled, setHeatmapEnabled] = useState(true);
   const [districtsEnabled, setDistrictsEnabled] = useState(false);
   // "This hour's hotspots" overlay — when on, the heatmap weights
@@ -1130,9 +1137,34 @@ export default function Home() {
         selectedId={selectedId}
         onSelectIncident={(id) => { setMapTap(null); setDroppedPin(null); setSelectedId(id); setPillTarget(null); if (window.innerWidth < 768) setSidebarOpen(false); }}
         routes={routes}
-        onMapTap={(lat, lng) => { setSelectedId(null); setDroppedPin(null); setMapTap({ lat, lng }); setScoreAnchor({ lat, lng }); setPillTarget(null); }}
-        onLongPress={(lat, lng) => { setSelectedId(null); setMapTap(null); setDroppedPin({ lat, lng }); setScoreAnchor({ lat, lng }); setPillTarget(null); }}
+        onMapTap={(lat, lng) => {
+          if (measureMode) {
+            // Measure mode swallows the tap — append to vertices and
+            // skip every other map-tap side effect (SafetyScoreCard,
+            // dropped-pin reset, pill, etc.) so the user can chain
+            // points without losing UI state.
+            setMeasurePoints((p) => [...p, [lat, lng]]);
+            return;
+          }
+          setSelectedId(null);
+          setDroppedPin(null);
+          setMapTap({ lat, lng });
+          setScoreAnchor({ lat, lng });
+          setPillTarget(null);
+        }}
+        onLongPress={(lat, lng) => {
+          // Long-press still drops a sticky pin even in measure mode —
+          // the underlying gesture is too distinct to repurpose, and
+          // having access to "Avoid this area" / "Copy coords" without
+          // exiting measure mode is the right call.
+          setSelectedId(null);
+          setMapTap(null);
+          setDroppedPin({ lat, lng });
+          setScoreAnchor({ lat, lng });
+          setPillTarget(null);
+        }}
         droppedPin={droppedPin}
+        measurePoints={measureMode ? measurePoints : null}
         onMapMove={(lat, lng, zoom) => {
           // Pill suppressed while any overlay card is up — they obscure
           // most of the map and the action would feel duplicative.
@@ -1433,6 +1465,15 @@ export default function Home() {
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
             <div className="w-px h-6 shrink-0 hidden md:block" style={{ background: "var(--pill-border)" }} />
 
+            <FilterPresetsBar
+              activeCats={activeCats}
+              timeFilterHours={timeFilter}
+              onApply={(cats, hours) => {
+                setActiveCats(cats);
+                setTimeFilter(hours);
+              }}
+            />
+
             <button
               onClick={() => setActiveCats(new Set())}
               className={`flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 md:py-2 rounded-full text-[10px] md:text-xs font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
@@ -1641,6 +1682,22 @@ export default function Home() {
 
       {/* Bottom-right controls (lifted so map markers under corner overlap UI less) */}
       <div className="absolute md:bottom-[4.5rem] pp-bottom-controls right-3 z-[1001] flex flex-col items-end gap-1.5 md:gap-2 pointer-events-auto">
+        {/* Measurement readout — sits at the very top of the column
+            when active so the running distance is the first thing the
+            user reads after dropping a vertex. Renders nothing in
+            non-measure mode. */}
+        <MeasureToolPanel
+          active={measureMode}
+          points={measurePoints}
+          onToggle={() => {
+            // Exiting measure mode also clears the polyline so re-
+            // entering starts fresh — saves the user a "Clear" tap.
+            setMeasureMode(false);
+            setMeasurePoints([]);
+          }}
+          onUndo={() => setMeasurePoints((p) => p.slice(0, -1))}
+          onClear={() => setMeasurePoints([])}
+        />
         {/* Live ETA share — Firestore-backed, only visible while a
             trip is active. Owns its own state; we just hand it the
             trip metadata. Tucked into the bottom-right column so it
@@ -1924,6 +1981,43 @@ export default function Home() {
                     style={!todOverlayEnabled ? { background: "var(--panel-input-bg)" } : {}}
                   >
                     <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${todOverlayEnabled ? "left-4" : "left-0.5"}`} />
+                  </div>
+                </button>
+
+                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
+                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Tools</p>
+                <button
+                  onClick={() => {
+                    // Toggling on closes the menu so the user can
+                    // immediately tap the map; toggling off clears
+                    // any in-progress vertices for symmetry with the
+                    // X button on the readout panel.
+                    if (measureMode) {
+                      setMeasureMode(false);
+                      setMeasurePoints([]);
+                    } else {
+                      setMeasureMode(true);
+                      setShowLayers(false);
+                    }
+                  }}
+                  className="w-full flex items-start justify-between gap-2 px-2 py-2 rounded-lg transition-colors text-xs"
+                  style={{ color: "var(--panel-text-secondary)" }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                  aria-pressed={measureMode}
+                  title="Tap two or more points on the map to read distance + bearing"
+                >
+                  <span className="flex flex-col items-start gap-0.5 min-w-0">
+                    <span>Measure distance</span>
+                    <span className="text-[9px]" style={{ color: "var(--panel-text-muted)" }}>
+                      Tap points to read distance + bearing
+                    </span>
+                  </span>
+                  <div
+                    className={`w-8 h-4 rounded-full transition-colors relative shrink-0 mt-0.5 ${measureMode ? "bg-amber-500" : ""}`}
+                    style={!measureMode ? { background: "var(--panel-input-bg)" } : {}}
+                  >
+                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${measureMode ? "left-4" : "left-0.5"}`} />
                   </div>
                 </button>
 

@@ -53,6 +53,7 @@ export const SYNCED_PREF_KEYS = [
   "pp:recent-searches",
   "pp:voice-nav-enabled",
   "pp:avoid-areas",
+  "pp:filter-presets",
 ] as const;
 
 export type SyncedPrefKey = typeof SYNCED_PREF_KEYS[number];

@@ -313,6 +313,12 @@ interface Props {
   userHeading?: number | null;
   /** Basemap tile style. Defaults to "auto" (follows the active theme). */
   basemapStyle?: BasemapStyle;
+  /** Sequence of points dropped via the measurement tool. When
+   *  non-null, IncidentMap renders a dashed polyline + numbered
+   *  vertex markers in a dedicated layer. The host (page.tsx) owns
+   *  the array; tapping the map while measure mode is on appends a
+   *  new point via the standard onMapTap callback. */
+  measurePoints?: [number, number][] | null;
   /** Read-only polyline rendered when the user opens a shared-trip link
    *  (`?trip=<token>`). Visually distinct from `tripRouteGeometry` to
    *  signal that it's someone *else's* route, not the viewer's. */
@@ -891,6 +897,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     nearbyPois = null,
     savedPlaces = null,
     onSavedPlaceClick,
+    measurePoints = null,
   },
   ref
 ) {
@@ -903,6 +910,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const nearbyPoiLayerRef = useRef<L.LayerGroup | null>(null);
   const savedPlacesLayerRef = useRef<L.LayerGroup | null>(null);
   const userAvoidLayerRef = useRef<L.LayerGroup | null>(null);
+  const measureLayerRef = useRef<L.LayerGroup | null>(null);
   // Latest click handler — kept in a ref so the layer effect can stay
   // dependent only on `savedPlaces` and not re-create markers every
   // time the parent rebinds its callback.
@@ -1080,6 +1088,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     nearbyPoiLayerRef.current = L.layerGroup().addTo(map);
     savedPlacesLayerRef.current = L.layerGroup().addTo(map);
     userAvoidLayerRef.current = L.layerGroup().addTo(map);
+    measureLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
     const setZoomCSSVar = (z: number) => {
@@ -1611,6 +1620,46 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     });
     return () => { unsub(); };
   }, []);
+
+  // Measurement-tool overlay: dashed amber polyline + numbered vertex
+  // pins. Cheap to redraw on every change since `measurePoints` is
+  // tiny (typically <10 entries) and the layer is opt-in.
+  useEffect(() => {
+    const layer = measureLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (!measurePoints || measurePoints.length === 0) return;
+
+    if (measurePoints.length >= 2) {
+      L.polyline(measurePoints, {
+        color: "#f59e0b",
+        weight: 3,
+        opacity: 0.95,
+        dashArray: "6 6",
+        interactive: false,
+      }).addTo(layer);
+    }
+
+    measurePoints.forEach(([lat, lng], i) => {
+      const num = i + 1;
+      const icon = L.divIcon({
+        className: "pp-measure-vertex",
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+        html:
+          `<div style="width:20px;height:20px;border-radius:50%;` +
+          `background:#f59e0b;border:2px solid #fff;color:#fff;` +
+          `font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;` +
+          `box-shadow:0 2px 6px rgba(0,0,0,0.4);font-family:system-ui,-apple-system,sans-serif;">${num}</div>`,
+      });
+      L.marker([lat, lng], {
+        icon,
+        keyboard: false,
+        interactive: false,
+        zIndexOffset: 700,
+      }).addTo(layer);
+    });
+  }, [measurePoints]);
 
   useEffect(() => {
     const highlight = selectedHighlightRef.current;
