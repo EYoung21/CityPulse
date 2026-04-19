@@ -367,6 +367,15 @@ export default function Home() {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem("pp:user-reports-verified-only") === "1";
   });
+  // Companion to the lifecycle voting feature: when enabled,
+  // community-resolved scanner incidents disappear from the map +
+  // alerts entirely (instead of just being faded). Defaults to OFF
+  // because hiding raw signal is a stronger choice than dimming it
+  // — users opt in once they trust the community status.
+  const [hideResolved, setHideResolved] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("pp:hide-resolved-incidents") === "1";
+  });
   useEffect(() => {
     if (typeof window === "undefined") return;
     setPref("pp:show-user-reports", showUserReports ? "1" : "0");
@@ -375,6 +384,10 @@ export default function Home() {
     if (typeof window === "undefined") return;
     setPref("pp:user-reports-verified-only", verifiedReportsOnly ? "1" : "0");
   }, [verifiedReportsOnly]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setPref("pp:hide-resolved-incidents", hideResolved ? "1" : "0");
+  }, [hideResolved]);
 
   const [safetyPoiCats, setSafetyPoiCats] = useState<Set<SafetyPoiCategory>>(() => new Set());
   const [safetyPois, setSafetyPois] = useState<
@@ -1167,6 +1180,12 @@ export default function Home() {
 
   const filteredIncidents = mergedIncidents.filter((inc) => {
     if (inc.hidden) return false;
+    // Optional: hide community-resolved incidents entirely. This is a
+    // user-controlled escalation of the default fade behaviour — it
+    // also drops the incident from the alerts inbox, off-screen
+    // chips, and the heatmap (because we filter before the heat
+    // layer reads from `filteredIncidents`).
+    if (hideResolved && inc.lifecycle_status === "resolved") return false;
     const cutoff = Date.now() - timeFilter * 60 * 60 * 1000;
     if (new Date(inc.reported_at).getTime() < cutoff) return false;
     if (activeCats.size > 0 && !activeCats.has(inc.severity_category)) return false;
@@ -2274,6 +2293,38 @@ export default function Home() {
                 </button>
 
                 <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
+                <p
+                  className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1"
+                  style={{ color: "var(--panel-text-muted)" }}
+                >
+                  Incident lifecycle
+                </p>
+                <button
+                  onClick={() => setHideResolved((v) => !v)}
+                  className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
+                  style={{ color: "var(--panel-text-secondary)" }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                  aria-pressed={hideResolved}
+                  title="Drop community-resolved incidents from the map, alerts, and heatmap entirely (instead of just fading them)."
+                >
+                  <span className="flex items-center gap-2">
+                    <span aria-hidden="true">✓</span>
+                    <span>Hide community-resolved</span>
+                  </span>
+                  <div
+                    className={`w-8 h-4 rounded-full transition-colors relative ${hideResolved ? "bg-green-500" : ""}`}
+                    style={!hideResolved ? { background: "var(--panel-input-bg)" } : {}}
+                  >
+                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${hideResolved ? "left-4" : "left-0.5"}`} />
+                  </div>
+                </button>
+                <p className="text-[9px] px-2 pb-1 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
+                  Off (default): resolved scenes fade with a green check.
+                  On: they disappear from the map, list, and heatmap.
+                </p>
+
+                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
                 <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Avoid in routing</p>
                 <AvoidAreasManager
                   onJump={(a) => {
@@ -2532,6 +2583,21 @@ export default function Home() {
             >
               Send feedback or report a bug
             </button>
+            {/* Public moderation transparency. Same audience as the
+                feedback CTA — users curious enough to read the
+                disclaimer are also the ones who appreciate a
+                receipts-style breakdown of how reports are handled. */}
+            <a
+              href="/transparency"
+              className="mt-2 w-full inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors"
+              style={{
+                background: "rgba(168,85,247,0.10)",
+                color: "#a855f7",
+                border: "1px solid rgba(168,85,247,0.30)",
+              }}
+            >
+              See community moderation transparency →
+            </a>
           </motion.div>
         )}
       </AnimatePresence>
