@@ -108,6 +108,10 @@ import {
   type UserReport,
 } from "@/lib/user-reports";
 import { enrichIncidents } from "@/lib/incident-weights";
+import {
+  subscribeAllIncidentStatuses,
+  type IncidentLifecycleAggregate,
+} from "@/lib/incident-status";
 import { buildLocalSummary } from "@/lib/local-summary";
 import { getNeighborhood, incidentsInNeighborhood, NEIGHBORHOODS, type Neighborhood } from "@/lib/neighborhoods";
 import { getCurrentCity } from "@/lib/pulse-cities";
@@ -220,6 +224,18 @@ export default function Home() {
   // below so the rest of the app (markers, alerts inbox, off-screen
   // chips, area scoring) sees them without any per-consumer changes.
   const [userReports, setUserReports] = useState<UserReport[]>([]);
+  // Community lifecycle aggregates ("still happening" / "resolved")
+  // for any incident that's been voted on in the last ~48h. Fed into
+  // `enrichIncidents` so resolved markers fade, the heatmap stops
+  // weighting them, and the alerts inbox can quietly skip them.
+  const [lifecycleStatuses, setLifecycleStatuses] = useState<
+    Map<string, IncidentLifecycleAggregate>
+  >(() => new Map());
+  // Mirror of `lifecycleStatuses` for use inside intervals/effects
+  // that shouldn't re-bind every time the map updates. Kept in sync
+  // via the same setter wrapper so we avoid a stale closure during
+  // the periodic w_eff refresh.
+  const lifecycleStatusesRef = useRef<Map<string, IncidentLifecycleAggregate>>(new Map());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [summary, setSummary] = useState<string>("");
   const [stats, setStats] = useState<StatsResponse | null>(null);
@@ -873,7 +889,12 @@ export default function Home() {
 
   useEffect(() => {
     const id = setInterval(() => {
-      setIncidents((prev) => enrichIncidents(prev));
+      // Pass the latest lifecycle map so each refresh tick also
+      // applies the most current community signal — otherwise an
+      // incident that was just voted "resolved" wouldn't lose its
+      // weight until the next snapshot pushed a new `incidents`
+      // array down.
+      setIncidents((prev) => enrichIncidents(prev, lifecycleStatusesRef.current));
     }, WEIGHT_REFRESH_MS);
     return () => clearInterval(id);
   }, []);
@@ -885,6 +906,24 @@ export default function Home() {
   useEffect(() => {
     const unsub = subscribeUserReports(setUserReports, (e) =>
       console.warn("User reports subscribe failed:", e)
+    );
+    return unsub;
+  }, []);
+
+  // Live subscription to lifecycle aggregates. The query is bounded
+  // by `lastVoteAtMs >= now-48h` so the listener stays cheap as the
+  // collection grows; older votes naturally fall off the visualisation
+  // and revert incidents to scanner-only weighting.
+  useEffect(() => {
+    const unsub = subscribeAllIncidentStatuses(
+      (next) => {
+        lifecycleStatusesRef.current = next;
+        setLifecycleStatuses(next);
+      },
+      {
+        windowHours: 48,
+        onError: (e) => console.warn("Incident statuses subscribe failed:", e),
+      }
     );
     return unsub;
   }, []);
@@ -917,6 +956,13 @@ export default function Home() {
       if (dismissedAlertIdsRef.current.has(inc.id)) continue;
       if (inc.lat == null || inc.lng == null) continue;
       if (muted.has(inc.severity_category)) continue;
+      // Don't surface a chip for an incident the community has voted
+      // resolved — it'd be jarring to be steered toward a cleared
+      // scene. The w_eff threshold below would catch most of these
+      // (resolved incidents drop to ~15% weight) but the explicit
+      // check protects against fresh, high-severity incidents that
+      // a single early "resolved" vote shouldn't be able to demote.
+      if (inc.lifecycle_status === "resolved") continue;
       const w = inc.w_eff ?? 0.5;
       if (w < 0.55) continue; // only meaningful severity
       const inView =
@@ -1099,14 +1145,25 @@ export default function Home() {
   //   - `verifiedReportsOnly = true` → only reports whose net vote
   //     score is ≥ 1 (more confirms than disputes) are merged.
   const mergedIncidents = useMemo(() => {
-    if (!showUserReports || userReports.length === 0) return incidents;
+    // Even when there are no user reports to merge, we still want to
+    // apply the lifecycle map to the scanner-only stream so resolved
+    // incidents fade and "still active" votes nudge the heatmap up.
+    if (!showUserReports || userReports.length === 0) {
+      return lifecycleStatuses.size === 0
+        ? incidents
+        : enrichIncidents(incidents, lifecycleStatuses);
+    }
     const filtered = verifiedReportsOnly
       ? userReports.filter((r) => r.confirmCount - r.disputeCount >= 1)
       : userReports;
-    if (filtered.length === 0) return incidents;
+    if (filtered.length === 0) {
+      return lifecycleStatuses.size === 0
+        ? incidents
+        : enrichIncidents(incidents, lifecycleStatuses);
+    }
     const reported = filtered.map(userReportToIncident);
-    return enrichIncidents([...incidents, ...reported]);
-  }, [incidents, userReports, showUserReports, verifiedReportsOnly]);
+    return enrichIncidents([...incidents, ...reported], lifecycleStatuses);
+  }, [incidents, userReports, showUserReports, verifiedReportsOnly, lifecycleStatuses]);
 
   const filteredIncidents = mergedIncidents.filter((inc) => {
     if (inc.hidden) return false;

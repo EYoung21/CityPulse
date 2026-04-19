@@ -26,6 +26,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   AlertTriangle,
+  ClipboardList,
   Loader2,
   MapPin,
   MessageSquare,
@@ -34,27 +35,33 @@ import {
   Users,
 } from "lucide-react";
 import {
-  adminDeleteUserReport,
   HIDE_THRESHOLD,
   subscribeAllUserReportsForAdmin,
   USER_REPORT_CATEGORIES,
   type UserReport,
 } from "@/lib/user-reports";
 import {
-  adminDeleteFeedback,
   FEEDBACK_KINDS,
   FEEDBACK_STATUSES,
-  setFeedbackStatus,
   subscribeFeedback,
   type FeedbackEntry,
   type FeedbackStatus,
 } from "@/lib/feedback";
+import {
+  auditDeleteFeedback,
+  auditDeleteUserReport,
+  auditSetFeedbackStatus,
+  describeAuditAction,
+  subscribeModerationAudit,
+  type ModerationAuditEntry,
+} from "@/lib/moderation-audit";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface Props {
   onBack: () => void;
 }
 
-type Tab = "reports" | "feedback";
+type Tab = "reports" | "feedback" | "audit";
 
 function fmtAgo(ms: number): string {
   const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
@@ -127,11 +134,30 @@ export default function ModerationPanel({ onBack }: Props) {
               Feedback
             </span>
           </button>
+          <button
+            type="button"
+            onClick={() => setTab("audit")}
+            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+              tab === "audit" ? "bg-purple-500 text-white" : ""
+            }`}
+            style={tab === "audit" ? {} : { color: "var(--panel-text-secondary)" }}
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <ClipboardList className="w-3 h-3" />
+              Audit log
+            </span>
+          </button>
         </div>
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === "reports" ? <ReportsTab /> : <FeedbackTab />}
+        {tab === "reports" ? (
+          <ReportsTab />
+        ) : tab === "feedback" ? (
+          <FeedbackTab />
+        ) : (
+          <AuditTab />
+        )}
       </div>
     </div>
   );
@@ -140,6 +166,7 @@ export default function ModerationPanel({ onBack }: Props) {
 // ── User reports tab ─────────────────────────────────────────────────
 
 function ReportsTab() {
+  const { user } = useAuth();
   const [reports, setReports] = useState<UserReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -167,17 +194,29 @@ function ReportsTab() {
     return copy;
   }, [reports, sort]);
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (r: UserReport) => {
+    if (!user?.uid) {
+      alert("Sign in as an admin to delete reports.");
+      return;
+    }
     if (!confirm("Delete this report? This is immediate and can't be undone.")) return;
-    setBusyIds((prev) => new Set(prev).add(id));
+    setBusyIds((prev) => new Set(prev).add(r.id));
     try {
-      await adminDeleteUserReport(id);
+      // Snippet captures category + (truncated) note so the audit
+      // log entry remains useful after the source row is gone.
+      const meta = categoryMeta(r.category);
+      const snippet = `${meta?.label ?? r.category}${r.note ? ` — ${r.note}` : ""}`;
+      await auditDeleteUserReport(r.id, snippet, {
+        uid: user.uid,
+        email: user.email ?? null,
+        displayName: user.displayName ?? null,
+      });
     } catch (e) {
       alert(e instanceof Error ? e.message : "Delete failed.");
     } finally {
       setBusyIds((prev) => {
         const next = new Set(prev);
-        next.delete(id);
+        next.delete(r.id);
         return next;
       });
     }
@@ -351,7 +390,7 @@ function ReportsTab() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => void handleDelete(r.id)}
+                  onClick={() => void handleDelete(r)}
                   disabled={busyIds.has(r.id)}
                   className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium disabled:opacity-50"
                   style={{
@@ -379,6 +418,7 @@ function ReportsTab() {
 // ── Feedback tab ─────────────────────────────────────────────────────
 
 function FeedbackTab() {
+  const { user } = useAuth();
   const [statusFilter, setStatusFilter] = useState<FeedbackStatus | "all">("new");
   const [rows, setRows] = useState<FeedbackEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -395,32 +435,55 @@ function FeedbackTab() {
     return unsub;
   }, [statusFilter]);
 
-  const setStatus = async (id: string, next: FeedbackStatus) => {
-    setBusyIds((prev) => new Set(prev).add(id));
+  const setStatus = async (row: FeedbackEntry, next: FeedbackStatus) => {
+    if (!user?.uid) {
+      alert("Sign in as an admin to change feedback status.");
+      return;
+    }
+    if (row.status === next) return;
+    setBusyIds((prev) => new Set(prev).add(row.id));
     try {
-      await setFeedbackStatus(id, next);
+      await auditSetFeedbackStatus(
+        row.id,
+        row.status,
+        next,
+        row.message,
+        {
+          uid: user.uid,
+          email: user.email ?? null,
+          displayName: user.displayName ?? null,
+        }
+      );
     } catch (e) {
       alert(e instanceof Error ? e.message : "Update failed.");
     } finally {
       setBusyIds((prev) => {
         const n = new Set(prev);
-        n.delete(id);
+        n.delete(row.id);
         return n;
       });
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (row: FeedbackEntry) => {
+    if (!user?.uid) {
+      alert("Sign in as an admin to delete feedback.");
+      return;
+    }
     if (!confirm("Delete this feedback row? This is immediate.")) return;
-    setBusyIds((prev) => new Set(prev).add(id));
+    setBusyIds((prev) => new Set(prev).add(row.id));
     try {
-      await adminDeleteFeedback(id);
+      await auditDeleteFeedback(row.id, row.message, {
+        uid: user.uid,
+        email: user.email ?? null,
+        displayName: user.displayName ?? null,
+      });
     } catch (e) {
       alert(e instanceof Error ? e.message : "Delete failed.");
     } finally {
       setBusyIds((prev) => {
         const n = new Set(prev);
-        n.delete(id);
+        n.delete(row.id);
         return n;
       });
     }
@@ -569,7 +632,7 @@ function FeedbackTab() {
               <div className="mt-2 flex items-center gap-2">
                 <select
                   value={row.status}
-                  onChange={(e) => void setStatus(row.id, e.target.value as FeedbackStatus)}
+                  onChange={(e) => void setStatus(row, e.target.value as FeedbackStatus)}
                   disabled={busyIds.has(row.id)}
                   className="px-2 py-1 rounded text-[11px] disabled:opacity-50"
                   style={{
@@ -587,7 +650,7 @@ function FeedbackTab() {
                 )}
                 <button
                   type="button"
-                  onClick={() => void handleDelete(row.id)}
+                  onClick={() => void handleDelete(row)}
                   disabled={busyIds.has(row.id)}
                   className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium disabled:opacity-50"
                   style={{
@@ -603,6 +666,151 @@ function FeedbackTab() {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ── Audit log tab ────────────────────────────────────────────────────
+
+function AuditTab() {
+  const [rows, setRows] = useState<ModerationAuditEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [kindFilter, setKindFilter] = useState<
+    "all" | ModerationAuditEntry["kind"]
+  >("all");
+
+  useEffect(() => {
+    setLoading(true);
+    const unsub = subscribeModerationAudit(
+      kindFilter === "all" ? {} : { kind: kindFilter },
+      (data) => { setRows(data); setLoading(false); setError(null); },
+      (err) => { setError(err.message); setLoading(false); }
+    );
+    return unsub;
+  }, [kindFilter]);
+
+  const KINDS: {
+    value: "all" | ModerationAuditEntry["kind"];
+    label: string;
+    color: string;
+  }[] = [
+    { value: "all",                 label: "All",        color: "#a855f7" },
+    { value: "userReport.delete",   label: "Report deletes", color: "#ef4444" },
+    { value: "feedback.delete",     label: "Feedback deletes", color: "#ef4444" },
+    { value: "feedback.status",     label: "Status changes", color: "#3b82f6" },
+  ];
+
+  return (
+    <div className="h-full flex flex-col">
+      <div
+        className="flex items-center gap-2 px-4 py-2 shrink-0 text-[11px] overflow-x-auto"
+        style={{
+          background: "var(--panel-bg, rgba(15,15,25,0.85))",
+          borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.06))",
+        }}
+      >
+        <span style={{ color: "var(--panel-text-muted)" }}>Filter:</span>
+        {KINDS.map((k) => {
+          const active = kindFilter === k.value;
+          return (
+            <button
+              key={k.value}
+              type="button"
+              onClick={() => setKindFilter(k.value)}
+              className="px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition-colors"
+              style={{
+                background: active ? `${k.color}22` : "var(--panel-input-bg)",
+                color: active ? k.color : "var(--panel-text-secondary)",
+                border: `1px solid ${active ? `${k.color}55` : "var(--panel-border)"}`,
+              }}
+            >
+              {k.label}
+            </button>
+          );
+        })}
+        <span className="ml-auto" style={{ color: "var(--panel-text-muted)" }}>
+          {rows.length} entr{rows.length === 1 ? "y" : "ies"}
+        </span>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {loading && (
+          <div
+            className="flex items-center justify-center gap-2 py-12 text-xs"
+            style={{ color: "var(--panel-text-muted)" }}
+          >
+            <Loader2 className="w-4 h-4 animate-spin" />
+            Loading audit log…
+          </div>
+        )}
+        {!loading && error && (
+          <div
+            className="flex items-start gap-2 mx-4 my-4 p-3 rounded-lg text-xs"
+            style={{ background: "rgba(239,68,68,0.10)", color: "#ef4444" }}
+          >
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div>
+              {error}
+              <p className="mt-1 text-[11px] opacity-80">
+                The audit feed requires the deployed firestore.rules to grant
+                <code> read </code> on <code>moderationAudit/&#123;id&#125;</code>
+                to your admin email.
+              </p>
+            </div>
+          </div>
+        )}
+        {!loading && !error && rows.length === 0 && (
+          <div
+            className="text-center py-12 text-xs"
+            style={{ color: "var(--panel-text-muted)" }}
+          >
+            No audit entries yet. Moderation actions you take will appear here.
+          </div>
+        )}
+        {rows.map((entry) => (
+          <div
+            key={entry.id}
+            className="px-4 py-2.5"
+            style={{ borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.05))" }}
+          >
+            <div className="flex items-center gap-2 flex-wrap text-[11px]">
+              <span
+                className="px-1.5 py-0.5 rounded font-mono uppercase"
+                style={{
+                  background: entry.kind.endsWith(".delete")
+                    ? "rgba(239,68,68,0.15)"
+                    : "rgba(59,130,246,0.15)",
+                  color: entry.kind.endsWith(".delete") ? "#ef4444" : "#3b82f6",
+                }}
+              >
+                {describeAuditAction(entry)}
+              </span>
+              <span style={{ color: "var(--panel-text)" }} className="font-medium">
+                {entry.actorDisplayName || entry.actorEmail || entry.actorUid.slice(0, 8) + "…"}
+              </span>
+              <span style={{ color: "var(--panel-text-muted)" }} title={new Date(entry.createdAtMs).toString()}>
+                · {fmtAgo(entry.createdAtMs)}
+              </span>
+            </div>
+            {entry.targetSnippet && (
+              <p
+                className="mt-1 text-[12px] leading-snug whitespace-pre-wrap"
+                style={{ color: "var(--panel-text-secondary)" }}
+              >
+                &ldquo;{entry.targetSnippet}&rdquo;
+              </p>
+            )}
+            <div
+              className="mt-1 flex items-center gap-3 text-[10px] font-mono flex-wrap"
+              style={{ color: "var(--panel-text-muted)" }}
+            >
+              <span>target: {entry.targetId.slice(0, 16)}…</span>
+              <span>actor: {entry.actorUid.slice(0, 8)}…</span>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

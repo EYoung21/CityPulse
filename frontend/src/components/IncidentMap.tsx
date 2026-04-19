@@ -217,24 +217,46 @@ function createIncidentGlyphIcon(
   uid: number,
   wEff: number,
   isHighSev: boolean,
-  greyed: boolean
+  greyed: boolean,
+  /** Community-derived lifecycle status. "resolved" fades the
+   *  marker and overlays a green check-badge; "still" leaves the
+   *  marker bright and adds a small amber pulse so users can see at
+   *  a glance which incidents the community has confirmed. */
+  lifecycle?: Incident["lifecycle_status"]
 ): L.DivIcon {
   const kind = resolveBlipKind(inc);
   const mc = monoColor(kind);
   const base = 18;
   const box = 22;
   const half = 11;
-  const opacity = greyed ? 0.25 : 0.92;
-  const filt = greyed
-    ? "filter:grayscale(0.6) saturate(0.3) brightness(0.85);"
-    : "filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5));";
+  // Resolved gets the strongest fade — even harder than off-route
+  // greying — because we want "the community says this is over" to
+  // be visually quieter than an active marker that just happens to
+  // be away from the user's trip.
+  const isResolved = lifecycle === "resolved";
+  const isStill = lifecycle === "still";
+  const opacity = isResolved ? 0.18 : greyed ? 0.25 : 0.92;
+  const filt = isResolved
+    ? "filter:grayscale(0.85) saturate(0.2) brightness(0.9);"
+    : greyed
+      ? "filter:grayscale(0.6) saturate(0.3) brightness(0.85);"
+      : "filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5));";
   const svg = monoGlyphSvg(kind, uid);
+  // Small status badge in the upper-right of the marker. We render
+  // it as inline SVG (rather than an emoji) so it scales cleanly with
+  // the parent transform and sidesteps font-render variation.
+  const badge = isResolved
+    ? `<div style="position:absolute;top:-3px;right:-3px;width:10px;height:10px;border-radius:50%;background:#22c55e;border:1.5px solid rgba(255,255,255,0.95);box-shadow:0 1px 2px rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;color:#fff;font-size:7px;font-weight:900;line-height:1;" title="Community-resolved">✓</div>`
+    : isStill
+      ? `<div style="position:absolute;top:-3px;right:-3px;width:8px;height:8px;border-radius:50%;background:#f59e0b;border:1.5px solid rgba(255,255,255,0.95);box-shadow:0 0 0 2px rgba(245,158,11,0.20);" title="Community-confirmed active"></div>`
+      : "";
   return L.divIcon({
     className: "pp-incident-marker",
     iconSize: [box, box],
     iconAnchor: [half, half],
     html: `<div class="pp-incident-marker-inner" style="position:relative;width:${box}px;height:${box}px;box-sizing:border-box;">
       <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:${base}px;height:${base}px;opacity:${opacity};${filt}">${svg}</div>
+      ${badge}
     </div>`,
   });
 }
@@ -1412,7 +1434,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         glyphUid++,
         inc.w_eff,
         inc.s_base >= 0.7,
-        greyed
+        greyed,
+        inc.lifecycle_status
       );
       const marker = L.marker([inc.lat, inc.lng], { icon });
       (marker as any)._ppIncidentId = inc.id;
