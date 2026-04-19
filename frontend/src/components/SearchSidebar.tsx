@@ -32,6 +32,7 @@ import { saveTripSnapshot, clearTripSnapshot, updateTripProgress } from "@/lib/t
 import { share as nativeShare } from "@/lib/native";
 import { setPref } from "@/lib/prefs-sync";
 import { useAuth } from "@/contexts/AuthContext";
+import { publishRouteState } from "@/lib/route-state";
 
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
@@ -329,6 +330,20 @@ export default function SearchSidebar({
     window.addEventListener("pp:plan-route", handler);
     return () => window.removeEventListener("pp:plan-route", handler);
   }, [originLoc, onPreviewPins]);
+
+  /** Publish the current route-planning state so leaf components like
+   *  PlaceActions can show context-aware controls (e.g. "Add as stop")
+   *  without prop-drilling our internal view/origin/dest state down to
+   *  every card. The pubsub diff-checks before notifying subscribers,
+   *  so the cost of running this on every render is negligible. */
+  useEffect(() => {
+    publishRouteState({
+      view,
+      hasOrigin: originLoc !== null,
+      hasDest: destLoc !== null,
+      tripActive: view === "trip",
+    });
+  }, [view, originLoc, destLoc]);
 
   /** Listen for "add this POI as an intermediate stop" events fired by
    *  AlongRoutePanel. We append a new fully-resolved stop to the

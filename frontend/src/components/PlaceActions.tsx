@@ -15,11 +15,13 @@ import {
   Star,
   MapPin,
   Car,
+  Plus,
   type LucideIcon,
 } from "lucide-react";
 import { plusCode } from "@/lib/plus-code";
 import { share as nativeShare, haptic as nativeHaptic } from "@/lib/native";
 import { setParkedPin } from "@/lib/parked-pin";
+import { useRouteState } from "@/lib/route-state";
 import {
   CATEGORY_LABELS,
   useSavedDestinations,
@@ -42,7 +44,7 @@ interface Props {
   incidentTime?: string;
 }
 
-type ToastKind = "copied-coords" | "copied-pluscode" | "saved" | "parked" | null;
+type ToastKind = "copied-coords" | "copied-pluscode" | "saved" | "parked" | "added-stop" | null;
 
 /** Compact action-button row shared by SafetyScoreCard, IncidentDetail, and
  *  DroppedPinCard. Buttons: Directions to / from, Share, Open in Maps,
@@ -67,6 +69,13 @@ export default function PlaceActions({
   const [toast, setToast] = useState<ToastKind>(null);
   const [savePickerOpen, setSavePickerOpen] = useState(false);
   const { canSave, addDestination, destinations } = useSavedDestinations();
+  // We only show "Add as stop" when the user is mid-route-planning or
+  // mid-trip — otherwise the button is confusing for users who haven't
+  // opened the directions panel yet. Source of truth is the global
+  // route-state pubsub published by SearchSidebar.
+  const routeState = useRouteState();
+  const canAddStop =
+    routeState.view === "directions" || routeState.tripActive;
 
   const flashToast = useCallback((kind: ToastKind) => {
     setToast(kind);
@@ -181,6 +190,21 @@ export default function PlaceActions({
     );
   }, [lat, lng, displayLabel, haptic]);
 
+  /** Insert this place as an intermediate stop on the active route.
+   *  SearchSidebar listens for `pp:add-stop` and appends the waypoint;
+   *  DirectionsPanel will recompute the polyline on its next debounced
+   *  pass. Same event AlongRoutePanel uses, so both code paths share
+   *  one handler upstream. */
+  const onAddAsStop = useCallback(() => {
+    haptic();
+    window.dispatchEvent(
+      new CustomEvent("pp:add-stop", {
+        detail: { name: displayLabel, lat, lng },
+      })
+    );
+    flashToast("added-stop");
+  }, [lat, lng, displayLabel, flashToast, haptic]);
+
   const btn =
     "shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-lg transition-colors active:scale-95";
   const btnStyle: React.CSSProperties = {
@@ -198,7 +222,9 @@ export default function PlaceActions({
           ? "Saved"
           : toast === "parked"
             ? "Parked here"
-            : "";
+            : toast === "added-stop"
+              ? "Added as stop"
+              : "";
 
   return (
     <div className="relative">
@@ -225,6 +251,23 @@ export default function PlaceActions({
         >
           <CornerUpRight className="w-4 h-4" />
         </button>
+        {canAddStop && (
+          <button
+            type="button"
+            onClick={onAddAsStop}
+            title="Add as stop on current route"
+            aria-label="Add this location as a stop on the current route"
+            className={btn}
+            style={{
+              ...btnStyle,
+              color: "#3b82f6",
+              background: "rgba(59,130,246,0.10)",
+              borderColor: "rgba(59,130,246,0.30)",
+            }}
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        )}
         <button
           type="button"
           onClick={onShare}
