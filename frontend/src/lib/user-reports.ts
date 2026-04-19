@@ -237,7 +237,49 @@ export async function submitUserReport(
   recent.unshift({ ts: now, category: input.category, lat: input.lat, lng: input.lng });
   saveRecentSubmissions(recent);
 
+  // Fire-and-forget closed-tab push fan-out for nearby subscribers.
+  // The backend re-reads the report and confirms the caller owns it,
+  // so a network/auth failure here can never produce a wrong-owner
+  // push — worst case the fan-out simply doesn't happen.
+  void notifyNearbyForReport(ref.id).catch(() => {
+    /* the report itself succeeded; the optional notification
+       piggyback isn't worth surfacing to the user */
+  });
+
   return ref.id;
+}
+
+/** Best-effort POST to the backend's user-report fan-out endpoint.
+ *  Splits out so it can be retried later (e.g. from a "broadcast
+ *  again" affordance) without re-running the Firestore write. */
+async function notifyNearbyForReport(reportId: string): Promise<void> {
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
+  // Skip silently when the backend isn't reachable from this build —
+  // there's no point even fetching an ID token in that case.
+  if (!apiBase && typeof window !== "undefined") {
+    // Same-origin deploys can still hit relative URLs; try the
+    // request and accept the cost of one network round-trip if the
+    // server returns 404. The branch above only catches builds
+    // where the env var is explicitly empty AND we're SSR.
+  }
+  let idToken: string | null = null;
+  try {
+    const auth = (await import("firebase/auth")).getAuth(getFirebaseApp());
+    if (auth.currentUser && !auth.currentUser.isAnonymous) {
+      idToken = await auth.currentUser.getIdToken();
+    }
+  } catch {
+    return;
+  }
+  if (!idToken) return;
+  await fetch(`${apiBase}/api/push/notify-user-report`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ reportId }),
+  });
 }
 
 /** Owner-only deletion. Surfaced from the report's incident card so

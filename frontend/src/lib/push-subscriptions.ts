@@ -405,6 +405,96 @@ export async function unsubscribePush(): Promise<PushStatus> {
   return getPushStatus();
 }
 
+/** Subscription metadata for a single device, as returned by
+ *  /api/push/devices. The endpoint URL itself is intentionally not
+ *  included — only an `endpointHint` (the trailing 12 chars) so the
+ *  UI can disambiguate identical-UA browsers without leaking the
+ *  full push-service credential. */
+export interface PushDevice {
+  id: string;
+  userAgent: string;
+  city: string;
+  createdAtMs: number;
+  lastUsedMs: number;
+  lastNearbyPushMs: number;
+  notifyLat: number | null;
+  notifyLng: number | null;
+  notifyRadiusKm: number | null;
+  endpointHint: string;
+  /** True when this device matches the current browser's
+   *  subscription. Computed client-side after fetching the device
+   *  list — the server doesn't know which device made the call. */
+  isThisDevice?: boolean;
+}
+
+export async function listPushDevices(): Promise<PushDevice[]> {
+  const idToken = await getIdToken();
+  if (!idToken) return [];
+  try {
+    const res = await fetch(`${API_BASE}/api/push/devices`, {
+      headers: { Authorization: `Bearer ${idToken}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { devices?: PushDevice[] };
+    const devices = data.devices ?? [];
+    // Mark the current device so the UI can render a "this device"
+    // badge. We re-derive the doc id from the current subscription
+    // endpoint via the same SHA-256 hash the backend uses.
+    const sub = await getCurrentSubscription();
+    if (sub) {
+      const currentId = await sha256Hex(sub.endpoint);
+      for (const d of devices) {
+        if (d.id === currentId) d.isThisDevice = true;
+      }
+    }
+    return devices;
+  } catch {
+    return [];
+  }
+}
+
+export async function revokePushDevice(deviceId: string): Promise<boolean> {
+  const idToken = await getIdToken();
+  if (!idToken) return false;
+  try {
+    const res = await fetch(`${API_BASE}/api/push/revoke-device`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({ deviceId }),
+    });
+    if (!res.ok) return false;
+    // If we just revoked the current device, also tear down the
+    // browser-side PushSubscription so the user isn't left in a
+    // half-subscribed state (browser thinks subscribed; server has
+    // no record).
+    const sub = await getCurrentSubscription();
+    if (sub) {
+      const currentId = await sha256Hex(sub.endpoint);
+      if (currentId === deviceId) {
+        try { await sub.unsubscribe(); } catch { /* best effort */ }
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function sha256Hex(s: string): Promise<string> {
+  const data = new TextEncoder().encode(s);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  const bytes = new Uint8Array(buf);
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 1) {
+    out += bytes[i].toString(16).padStart(2, "0");
+  }
+  return out;
+}
+
 export interface PushTestResult {
   ok: boolean;
   /** "no_devices" when the user is signed in but hasn't subscribed

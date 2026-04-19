@@ -613,6 +613,12 @@ export default function Home() {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const incidentParam = params.get("incident");
+    // ?userReport=<docId> arrives from Web Push notifications fired
+    // by another nearby user's submission. We translate it to the
+    // synthetic incident id used by `userReportToIncident` so the
+    // existing incident-detail flow lights up without duplicating
+    // selection logic for two near-identical entities.
+    const userReportParam = params.get("userReport");
     const latParam = params.get("lat");
     const lngParam = params.get("lng");
     const zoomParam = params.get("zoom");
@@ -656,6 +662,12 @@ export default function Home() {
 
     if (incidentParam) {
       pendingDeepIncidentRef.current = incidentParam;
+    } else if (userReportParam) {
+      // Re-prefix to match the synthetic id minted by
+      // userReportToIncident; the existing pendingDeepIncidentRef
+      // matcher will then resolve it once the report has loaded
+      // into the merged incidents array.
+      pendingDeepIncidentRef.current = `user-${userReportParam}`;
     } else if (latParam && lngParam) {
       const lat = parseFloat(latParam);
       const lng = parseFloat(lngParam);
@@ -669,9 +681,9 @@ export default function Home() {
       }
     }
 
-    if (incidentParam || latParam || lngParam || zoomParam || tripParam || sourceParam) {
+    if (incidentParam || userReportParam || latParam || lngParam || zoomParam || tripParam || sourceParam) {
       const cleaned = new URL(window.location.href);
-      ["incident", "lat", "lng", "zoom", "trip", "source"].forEach((k) => cleaned.searchParams.delete(k));
+      ["incident", "userReport", "lat", "lng", "zoom", "trip", "source"].forEach((k) => cleaned.searchParams.delete(k));
       window.history.replaceState({}, "", cleaned.toString());
     }
   }, []);

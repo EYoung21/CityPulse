@@ -29,20 +29,60 @@ import {
   AlertTriangle,
   Crosshair,
   MapPin,
+  Trash2,
+  Smartphone,
+  Monitor,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   getPushStatus,
+  listPushDevices,
   loadAlertArea,
+  revokePushDevice,
   sendTestPush,
   subscribePush,
   unsubscribePush,
   updateAlertArea,
   type AlertArea,
+  type PushDevice,
   type PushStatus,
 } from "@/lib/push-subscriptions";
 
 const DEFAULT_RADIUS_LABEL = "3";
+
+/** Best-effort UA → friendly device label. We only need to
+ *  distinguish "phone in your pocket" from "desktop at home" — the
+ *  full UA string is too noisy to render verbatim. */
+function describeUserAgent(ua: string): { label: string; isMobile: boolean } {
+  if (!ua) return { label: "Unknown device", isMobile: false };
+  const isMobile = /Mobile|Android|iPhone|iPad|iPod/i.test(ua);
+  // Order matters: Edge contains "Chrome" in its UA, etc.
+  let browser = "Browser";
+  if (/Edg\//i.test(ua)) browser = "Edge";
+  else if (/OPR\/|Opera/i.test(ua)) browser = "Opera";
+  else if (/Firefox/i.test(ua)) browser = "Firefox";
+  else if (/Chrome/i.test(ua)) browser = "Chrome";
+  else if (/Safari/i.test(ua)) browser = "Safari";
+  let os = "";
+  if (/iPhone|iPad|iPod/i.test(ua)) os = "iOS";
+  else if (/Android/i.test(ua)) os = "Android";
+  else if (/Mac OS X/i.test(ua)) os = "macOS";
+  else if (/Windows/i.test(ua)) os = "Windows";
+  else if (/Linux/i.test(ua)) os = "Linux";
+  return { label: os ? `${browser} on ${os}` : browser, isMobile };
+}
+
+function formatRelative(ms: number): string {
+  if (!ms) return "never";
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return "just now";
+  const m = Math.floor(diff / 60_000);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} hr ago`;
+  const d = Math.floor(h / 24);
+  return `${d} d ago`;
+}
 
 function geoErrorMessage(e: GeolocationPositionError): string {
   if (e.code === 1) return "Location permission denied. Enable it in your browser settings.";
@@ -59,9 +99,16 @@ export default function PushSettings() {
   const [info, setInfo] = useState<string | null>(null);
   const [area, setArea] = useState<AlertArea | null>(null);
   const [areaBusy, setAreaBusy] = useState(false);
+  const [devices, setDevices] = useState<PushDevice[] | null>(null);
+  const [showDevices, setShowDevices] = useState(false);
+  const [revoking, setRevoking] = useState<string | null>(null);
 
   const refresh = async () => {
     setStatus(await getPushStatus());
+  };
+
+  const refreshDevices = async () => {
+    setDevices(await listPushDevices());
   };
 
   useEffect(() => {
@@ -70,6 +117,10 @@ export default function PushSettings() {
     // Re-check when the auth state changes — flipping from
     // anonymous → signed in unlocks the subscribe affordance.
   }, [user?.uid, user?.isAnonymous]);
+
+  useEffect(() => {
+    if (showDevices) void refreshDevices();
+  }, [showDevices, status?.subscribed]);
 
   // Listen for the SW telling us a subscription was invalidated
   // (browser key rotation, site-data clear). Just refresh; the user
@@ -388,20 +439,128 @@ export default function PushSettings() {
             )}
           </div>
 
-          <button
-            type="button"
-            onClick={onTest}
-            disabled={busy}
-            className="mt-1.5 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] disabled:opacity-50"
-            style={{
-              background: "var(--panel-input-bg)",
-              color: "var(--panel-text-secondary)",
-              border: "1px solid var(--panel-border)",
-            }}
-          >
-            <Send className="w-2.5 h-2.5" />
-            Send test push
-          </button>
+          <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              onClick={onTest}
+              disabled={busy}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] disabled:opacity-50"
+              style={{
+                background: "var(--panel-input-bg)",
+                color: "var(--panel-text-secondary)",
+                border: "1px solid var(--panel-border)",
+              }}
+            >
+              <Send className="w-2.5 h-2.5" />
+              Send test push
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDevices((v) => !v)}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px]"
+              style={{
+                background: "var(--panel-input-bg)",
+                color: "var(--panel-text-secondary)",
+                border: "1px solid var(--panel-border)",
+              }}
+              aria-expanded={showDevices}
+            >
+              {showDevices ? "Hide my devices" : "Show my devices"}
+            </button>
+          </div>
+
+          {showDevices && (
+            <div
+              className="mt-1.5 p-2 rounded-md space-y-1.5"
+              style={{
+                background: "var(--panel-input-bg)",
+                border: "1px solid var(--panel-border)",
+              }}
+            >
+              {devices === null ? (
+                <div className="flex items-center gap-1.5 text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Loading subscribed devices…
+                </div>
+              ) : devices.length === 0 ? (
+                <p className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+                  No devices subscribed yet.
+                </p>
+              ) : (
+                devices.map((d) => {
+                  const meta = describeUserAgent(d.userAgent);
+                  const Icon = meta.isMobile ? Smartphone : Monitor;
+                  const lastSeen = d.lastUsedMs || d.createdAtMs;
+                  return (
+                    <div
+                      key={d.id}
+                      className="flex items-start gap-2 p-1.5 rounded"
+                      style={{
+                        background: "var(--panel-bg)",
+                        border: `1px solid ${d.isThisDevice ? "rgba(129,140,248,0.40)" : "var(--panel-border)"}`,
+                      }}
+                    >
+                      <Icon className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[11px] font-medium truncate" style={{ color: "var(--panel-text)" }}>
+                            {meta.label}
+                          </span>
+                          {d.isThisDevice && (
+                            <span
+                              className="px-1 py-px rounded text-[9px]"
+                              style={{
+                                background: "rgba(129,140,248,0.15)",
+                                color: "#818cf8",
+                                border: "1px solid rgba(129,140,248,0.40)",
+                              }}
+                            >
+                              this device
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                          Subscribed {formatRelative(d.createdAtMs)}
+                          {d.lastUsedMs ? ` · last push ${formatRelative(lastSeen)}` : ""}
+                          {d.notifyLat !== null && d.notifyLng !== null && d.notifyRadiusKm
+                            ? ` · ${d.notifyRadiusKm} km area`
+                            : " · no alert area"}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setRevoking(d.id);
+                          const ok = await revokePushDevice(d.id);
+                          setRevoking(null);
+                          if (ok) {
+                            await refreshDevices();
+                            // If we just revoked the current device,
+                            // refresh the top-level status so the
+                            // Enable button comes back.
+                            if (d.isThisDevice) await refresh();
+                            setInfo(`Revoked ${meta.label}.`);
+                          } else {
+                            setError("Couldn't revoke that device.");
+                          }
+                        }}
+                        disabled={revoking === d.id}
+                        aria-label={`Revoke ${meta.label}`}
+                        className="shrink-0 p-1 rounded transition-colors disabled:opacity-50 hover:bg-white/5"
+                        style={{ color: "#ef4444" }}
+                      >
+                        {revoking === d.id ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3 h-3" />
+                        )}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
         </>
       )}
       {error && (

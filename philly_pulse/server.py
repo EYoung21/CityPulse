@@ -1357,6 +1357,110 @@ async def push_unsubscribe(
     return {"status": "ok" if ok else "not_found"}
 
 
+class PushNotifyUserReportRequest(BaseModel):
+    reportId: str
+
+
+@app.post("/api/push/notify-user-report")
+async def push_notify_user_report(
+    body: PushNotifyUserReportRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Fan out a freshly-submitted user report to nearby subscribers.
+
+    The backend re-reads the report from Firestore using the
+    Admin SDK and confirms `ownerUid == request uid` before fanning
+    out — this means the client never gets to choose where the push
+    lands. A user submitting a report in their own neighborhood
+    will only ping subscribers whose alert area actually contains
+    that lat/lng."""
+    decoded = _verify_firebase_token(authorization)
+    uid = decoded["uid"]
+    if not push_mod.push_available():
+        # Don't 503 here — the user's report submit succeeded and
+        # the only thing that failed is the optional notification
+        # piggyback. Returning a soft "skipped" lets the caller log
+        # rather than treat it as an error.
+        return {"status": "skipped", "reason": "push_not_configured"}
+
+    try:
+        result = push_mod.notify_nearby_user_report(
+            report_id=body.reportId,
+            requesting_uid=uid,
+        )
+    except Exception as e:  # pragma: no cover — defensive
+        logger.warning("push notify-user-report failed: %s", e)
+        raise HTTPException(status_code=500, detail="Push fan-out failed") from e
+    return {"status": "ok", **result}
+
+
+@app.get("/api/push/devices")
+async def push_list_devices(authorization: Optional[str] = Header(None)):
+    """List the calling user's push subscriptions across devices.
+
+    The endpoint URL is intentionally truncated in the response so
+    the client doesn't accidentally render a 250-char FCM URL into
+    the UI; the doc id (a hash of the endpoint) is the stable
+    handle for revoke calls. UA + alert area are surfaced so users
+    can recognize "this is my old phone" without leaking the
+    underlying push-service identifiers."""
+    decoded = _verify_firebase_token(authorization)
+    uid = decoded["uid"]
+    try:
+        subs = push_mod.list_subscriptions_for_uid(uid)
+    except Exception as e:
+        logger.warning("push devices list failed: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to list devices") from e
+
+    out = []
+    for s in subs:
+        endpoint = str(s.get("endpoint") or "")
+        # Show enough of the endpoint to disambiguate identical
+        # user-agents (e.g. two Chromes on different desktops) but
+        # not enough to be a meaningful credential.
+        endpoint_hint = endpoint[-12:] if endpoint else ""
+        out.append({
+            "id": s.get("id"),
+            "userAgent": s.get("userAgent") or "",
+            "city": s.get("city") or "",
+            "createdAtMs": int(s.get("createdAtMs") or 0),
+            "lastUsedMs": int(s.get("lastUsedMs") or 0),
+            "lastNearbyPushMs": int(s.get("lastNearbyPushMs") or 0),
+            "notifyLat": s.get("notifyLat"),
+            "notifyLng": s.get("notifyLng"),
+            "notifyRadiusKm": s.get("notifyRadiusKm"),
+            "endpointHint": endpoint_hint,
+        })
+    # Sort newest first so the most recent registration is on top.
+    out.sort(key=lambda r: r["createdAtMs"], reverse=True)
+    return {"devices": out}
+
+
+class PushRevokeDeviceRequest(BaseModel):
+    """Revoke a single device by its subscription doc id (the SHA-256
+    hash of the endpoint URL). Using the id rather than the raw
+    endpoint URL avoids ever needing to round-trip the (long, push-
+    service-credentialed) endpoint string back to the server."""
+    deviceId: str
+
+
+@app.post("/api/push/revoke-device")
+async def push_revoke_device(
+    body: PushRevokeDeviceRequest,
+    authorization: Optional[str] = Header(None),
+):
+    decoded = _verify_firebase_token(authorization)
+    uid = decoded["uid"]
+    try:
+        result = push_mod.revoke_subscription_by_id(body.deviceId, uid)
+    except Exception as e:
+        logger.warning("push revoke-device failed: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to revoke device") from e
+    if result == "forbidden":
+        raise HTTPException(status_code=403, detail="Not your device")
+    return {"status": result}
+
+
 @app.post("/api/push/test")
 async def push_test(authorization: Optional[str] = Header(None)):
     """Send a verification ping to every device the calling user has
