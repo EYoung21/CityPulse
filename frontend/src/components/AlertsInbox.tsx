@@ -25,6 +25,12 @@ import {
   toggleCategoryMute,
   subscribeMutedCategories,
 } from "@/lib/alert-mutes";
+import {
+  enableCommuteNotifications,
+  isCommuteNotificationsEnabled,
+  setCommuteNotificationsEnabled,
+} from "@/lib/commute-notify";
+import { notificationsSupported } from "@/lib/notifications";
 
 interface Props {
   open: boolean;
@@ -58,10 +64,27 @@ export default function AlertsInbox({ open, onClose, onJump }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [quietActive, setQuietActive] = useState<boolean>(() => isQuietNow());
   const [muted, setMuted] = useState<Set<string>>(() => loadMutedCategories());
+  // Mirror the localStorage flag so the toggle reflects the live
+  // state (and updates if the user enabled it from a different
+  // surface like the prediction pill or another tab).
+  const [commuteNotify, setCommuteNotify] = useState<boolean>(
+    () => isCommuteNotificationsEnabled()
+  );
+  const [commuteNotifyError, setCommuteNotifyError] = useState<string | null>(null);
 
   useEffect(() => {
     setMuted(loadMutedCategories());
     return subscribeMutedCategories(setMuted);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = (e: Event) => {
+      const det = (e as CustomEvent<{ on: boolean }>).detail;
+      setCommuteNotify(!!det?.on);
+    };
+    window.addEventListener("pp:commute-notify-changed", handler);
+    return () => window.removeEventListener("pp:commute-notify-changed", handler);
   }, []);
 
   useEffect(() => {
@@ -312,6 +335,67 @@ export default function AlertsInbox({ open, onClose, onJump }: Props) {
                     Muted: {muted.size} {muted.size === 1 ? "category" : "categories"}.
                   </p>
                 )}
+              </div>
+
+              <div className="h-px" style={{ background: "var(--panel-border)" }} />
+
+              <div className="flex items-center justify-between">
+                <div className="min-w-0 pr-2">
+                  <p className="text-xs font-semibold" style={{ color: "var(--panel-text)" }}>
+                    Predict my commute
+                  </p>
+                  <p className="text-[10px] leading-snug mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                    Send a heads-up notification ~10 min before you usually leave for a recurring trip.
+                  </p>
+                  {!notificationsSupported() && (
+                    <p className="text-[10px] mt-1" style={{ color: "#f59e0b" }}>
+                      Your browser doesn&rsquo;t support push notifications.
+                    </p>
+                  )}
+                  {commuteNotifyError && (
+                    <p className="text-[10px] mt-1" style={{ color: "#ef4444" }}>
+                      {commuteNotifyError}
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setCommuteNotifyError(null);
+                    if (commuteNotify) {
+                      setCommuteNotificationsEnabled(false);
+                      setCommuteNotify(false);
+                      return;
+                    }
+                    const ok = await enableCommuteNotifications();
+                    if (!ok) {
+                      setCommuteNotifyError(
+                        notificationsSupported()
+                          ? "Notification permission was denied. Enable it in your browser settings."
+                          : "Notifications not supported on this device."
+                      );
+                      setCommuteNotify(false);
+                    } else {
+                      setCommuteNotify(true);
+                    }
+                  }}
+                  disabled={!notificationsSupported()}
+                  className="shrink-0 disabled:opacity-50"
+                  aria-pressed={commuteNotify}
+                  aria-label={commuteNotify ? "Disable commute predictions" : "Enable commute predictions"}
+                >
+                  <span
+                    className="block w-10 h-5 rounded-full relative transition-colors"
+                    style={{
+                      background: commuteNotify ? "#a855f7" : "var(--panel-border)",
+                    }}
+                  >
+                    <span
+                      className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-md transition-transform"
+                      style={{ left: commuteNotify ? "1.375rem" : "0.125rem" }}
+                    />
+                  </span>
+                </button>
               </div>
             </div>
           )}

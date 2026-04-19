@@ -46,12 +46,16 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getFirestore,
+  increment,
   limit as limitFn,
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
+  setDoc,
   where,
 } from "firebase/firestore";
 import type { Incident } from "@/lib/api";
@@ -106,7 +110,18 @@ export interface UserReport {
   ownerName: string;
   createdAtMs: number;
   expiresAtMs: number;
+  /** Aggregated vote counts maintained by clients via the
+   *  `voteOnUserReport` transaction. Default to 0 for legacy docs
+   *  that pre-date the voting feature. */
+  confirmCount: number;
+  disputeCount: number;
 }
+
+/** Reports that drop below this net score are hidden client-side
+ *  (and ideally cleaned up by a server function). Net score = confirms
+ *  minus disputes. -3 was chosen so a single misclick doesn't bury a
+ *  legit report, but a small cluster of disputes is enough to act. */
+export const HIDE_THRESHOLD = -3;
 
 interface NewUserReportInput {
   lat: number;
@@ -269,6 +284,8 @@ function mapDoc(id: string, d: Record<string, unknown>): UserReport | null {
     ownerName: String(d.ownerName ?? "Reporter"),
     createdAtMs: createdMs,
     expiresAtMs: expiresMs,
+    confirmCount: typeof d.confirmCount === "number" ? d.confirmCount : 0,
+    disputeCount: typeof d.disputeCount === "number" ? d.disputeCount : 0,
   };
 }
 
@@ -299,6 +316,11 @@ export function subscribeUserReports(
         const r = mapDoc(d.id, d.data());
         if (!r) return;
         if (r.expiresAtMs <= now) return;
+        // Hide reports that have been buried by community disputes.
+        // The doc itself stays in Firestore for owner reference and
+        // for any moderation surface; a follow-up cleanup function
+        // can hard-delete them on a schedule.
+        if (r.confirmCount - r.disputeCount <= HIDE_THRESHOLD) return;
         list.push(r);
       });
       onData(list);
@@ -307,14 +329,141 @@ export function subscribeUserReports(
   );
 }
 
+/** Vote payload values: +1 confirm, -1 dispute, 0 retract. */
+export type UserReportVoteValue = 1 | -1 | 0;
+
+interface VoterSnapshot {
+  uid: string;
+  isAnonymous: boolean;
+}
+
+/** Cast / change / retract a vote on a user report. Uses a Firestore
+ *  transaction so the parent's `confirmCount` / `disputeCount`
+ *  aggregates stay consistent with the per-voter `votes/{uid}` doc.
+ *
+ *  Returns the resulting net score (`confirmCount - disputeCount`)
+ *  after the vote — handy for the UI to surface "now at +2" feedback
+ *  without waiting for the snapshot listener to round-trip. */
+export async function voteOnUserReport(
+  reportId: string,
+  next: UserReportVoteValue,
+  voter: VoterSnapshot
+): Promise<number> {
+  if (!isFirebaseConfigured()) throw new Error("Sign in to vote.");
+  if (voter.isAnonymous) throw new Error("Sign in with Google or email to vote.");
+
+  const db = getFirestore(getFirebaseApp());
+  const reportRef = doc(db, COLLECTION, reportId);
+  const voteRef = doc(db, COLLECTION, reportId, "votes", voter.uid);
+
+  return runTransaction(db, async (tx) => {
+    const reportSnap = await tx.get(reportRef);
+    if (!reportSnap.exists()) throw new Error("Report no longer exists.");
+    const reportData = reportSnap.data();
+    // Owners voting on their own report would skew the signal — bail
+    // before mutating anything. The UI hides the buttons in this
+    // case, but the rule belongs here too as a defense-in-depth.
+    if (reportData.ownerUid === voter.uid) {
+      throw new Error("You can't vote on your own report.");
+    }
+
+    const voteSnap = await tx.get(voteRef);
+    const prev: UserReportVoteValue = voteSnap.exists()
+      ? ((voteSnap.data().value as 1 | -1) ?? 0)
+      : 0;
+
+    if (prev === next) {
+      // Nothing changed — return the current aggregates so the caller
+      // can still update local UI without a write round-trip.
+      return (
+        (typeof reportData.confirmCount === "number" ? reportData.confirmCount : 0) -
+        (typeof reportData.disputeCount === "number" ? reportData.disputeCount : 0)
+      );
+    }
+
+    const confirmDelta =
+      (next === 1 ? 1 : 0) - (prev === 1 ? 1 : 0);
+    const disputeDelta =
+      (next === -1 ? 1 : 0) - (prev === -1 ? 1 : 0);
+
+    if (next === 0) {
+      tx.delete(voteRef);
+    } else {
+      tx.set(voteRef, {
+        value: next,
+        voterUid: voter.uid,
+        createdAt: serverTimestamp(),
+      });
+    }
+    if (confirmDelta !== 0 || disputeDelta !== 0) {
+      tx.update(reportRef, {
+        confirmCount: increment(confirmDelta),
+        disputeCount: increment(disputeDelta),
+      });
+    }
+
+    const newConfirm =
+      (typeof reportData.confirmCount === "number" ? reportData.confirmCount : 0) + confirmDelta;
+    const newDispute =
+      (typeof reportData.disputeCount === "number" ? reportData.disputeCount : 0) + disputeDelta;
+    return newConfirm - newDispute;
+  });
+}
+
+/** Read the current viewer's vote on a report (or 0 if none). One-
+ *  shot, not subscribed — the UI calls this once per opened popup.
+ *  Returns 0 silently if Firebase isn't configured or the user is
+ *  anonymous. */
+export async function getMyVote(
+  reportId: string,
+  voterUid: string
+): Promise<UserReportVoteValue> {
+  if (!isFirebaseConfigured() || !voterUid) return 0;
+  const db = getFirestore(getFirebaseApp());
+  const ref = doc(db, COLLECTION, reportId, "votes", voterUid);
+  try {
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return 0;
+    const v = (snap.data() as { value?: number }).value;
+    return v === 1 ? 1 : v === -1 ? -1 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Owner-only "thanks, I saw it" acknowledgement — clears the
+ *  report from the live layer immediately rather than waiting for
+ *  the 4h TTL. Just a thin wrapper around deleteUserReport for
+ *  symmetry with the voting controls. */
+export async function dismissOwnReport(reportId: string): Promise<void> {
+  await deleteUserReport(reportId);
+}
+
+// Silence an unused-import warning when setDoc isn't referenced
+// elsewhere (re-exported for any future test that needs to seed
+// votes directly).
+export const _setDocForTests = setDoc;
+
 /** Convert a UserReport into an Incident-shaped object so existing
  *  consumers (map markers, alerts inbox, area scoring) can render
  *  them without a code change. The `id` is prefixed with `user-` so
  *  callers can detect crowdsourced rows when they want to special-
  *  case them (e.g. to attach a deletion control or to badge with the
- *  reporter's name). */
+ *  reporter's name).
+ *
+ *  Confidence is dampened by the net vote score: a report with no
+ *  community confirmation defaults to 0.6, climbs toward 0.95 with
+ *  confirmations, and drops toward 0.2 with disputes. This piggy-
+ *  backs on the existing heatmap weighting (computeWEff multiplies
+ *  by confidence) so highly-disputed reports fade out of the
+ *  hotspots and confirmed reports sharpen them. */
 export function userReportToIncident(r: UserReport): Incident {
   const noteText = r.note ? r.note : USER_REPORT_CATEGORIES.find((c) => c.severity === r.category)?.label ?? "Report";
+  const net = r.confirmCount - r.disputeCount;
+  // Map net votes into a 0.2…0.95 confidence band via a soft logistic
+  // step so a single confirm/dispute moves the needle a bit but the
+  // signal saturates instead of going to 0/1 immediately.
+  const confidence = Math.max(0.2, Math.min(0.95, 0.6 + 0.12 * net));
   return {
     id: `user-${r.id}`,
     reported_at: new Date(r.createdAtMs).toISOString(),
@@ -324,7 +473,7 @@ export function userReportToIncident(r: UserReport): Incident {
     location_text: null,
     lat: r.lat,
     lng: r.lng,
-    confidence: 0.6,
+    confidence,
     geocode_status: "user",
     location_confidence: "direct",
     inhibitor_status: "passed",
