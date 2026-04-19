@@ -100,14 +100,30 @@ def _db():
 @dataclass
 class PushSubscription:
     """Mirrors the W3C PushSubscription.toJSON() shape we accept from
-    the browser, plus a `uid` so we know who to notify and an
-    optional `userAgent` for debugging."""
+    the browser, plus a `uid` so we know who to notify, an optional
+    `userAgent` for debugging, and an optional alert area for
+    proximity-based triggers.
+
+    The alert area is opt-in: when `notify_lat`/`notify_lng` are
+    present, the user wants closed-tab pings for nearby high-severity
+    scanner incidents. When absent (default), the subscription only
+    receives pushes the user explicitly opts into (e.g. test pings,
+    direct-to-uid messages).
+
+    `notify_radius_km` defaults to 3 km — small enough to feel like
+    "my neighborhood" rather than "anywhere in the city," large
+    enough to catch incidents on the user's regular walking radius.
+    Capped on read so a malformed value can't accidentally turn a
+    subscription into a global firehose."""
     endpoint: str
     p256dh: str
     auth: str
     uid: str
     user_agent: str = ""
     city: str = ""
+    notify_lat: Optional[float] = None
+    notify_lng: Optional[float] = None
+    notify_radius_km: float = 3.0
     created_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
     last_used_ms: int = 0
 
@@ -122,9 +138,33 @@ def derive_subscription_hash(endpoint: str) -> str:
     return hashlib.sha256(endpoint.encode("utf-8")).hexdigest()
 
 
+# Hard cap on alert radius. A 50 km bubble around a single phone
+# would defeat the "nearby" framing; we clamp anything over this
+# down. Below 0.1 km we treat as "no area" since GPS jitter alone
+# overwhelms the signal at that scale.
+_MAX_ALERT_RADIUS_KM = 25.0
+_MIN_ALERT_RADIUS_KM = 0.1
+
+
 def upsert_subscription(sub: PushSubscription) -> str:
     """Idempotent insert. Returns the doc id used."""
     doc_id = derive_subscription_hash(sub.endpoint)
+
+    # Validate + clamp the alert area. We accept the subscription
+    # even if the area is malformed — drop it silently and the user
+    # just doesn't get nearby pings until they re-set it.
+    notify_lat: Optional[float] = None
+    notify_lng: Optional[float] = None
+    radius = max(_MIN_ALERT_RADIUS_KM, min(_MAX_ALERT_RADIUS_KM, sub.notify_radius_km or 3.0))
+    if (
+        sub.notify_lat is not None
+        and sub.notify_lng is not None
+        and -90.0 <= sub.notify_lat <= 90.0
+        and -180.0 <= sub.notify_lng <= 180.0
+    ):
+        notify_lat = float(sub.notify_lat)
+        notify_lng = float(sub.notify_lng)
+
     _db().collection("pushSubscriptions").document(doc_id).set({
         "endpoint": sub.endpoint,
         # The two crypto material fields the browser hands back.
@@ -135,8 +175,17 @@ def upsert_subscription(sub: PushSubscription) -> str:
         "uid": sub.uid,
         "userAgent": sub.user_agent or "",
         "city": sub.city or "",
+        "notifyLat": notify_lat,
+        "notifyLng": notify_lng,
+        "notifyRadiusKm": radius,
         "createdAtMs": sub.created_at_ms,
         "lastUsedMs": sub.last_used_ms,
+        # Per-subscription cooldown for nearby alerts. Bumped on
+        # every nearby push; the trigger refuses to send again
+        # within `_NEARBY_COOLDOWN_MS`. Stored on the doc itself
+        # (rather than a side cache) so a process restart doesn't
+        # reset everyone's cooldown to zero.
+        "lastNearbyPushMs": 0,
     })
     return doc_id
 
@@ -287,6 +336,151 @@ def send_to_uid(
 
 
 # ── Helpers exposed for the frontend ────────────────────────────────
+
+# ── Proximity-based fan-out ─────────────────────────────────────────
+
+# Earth radius in km for the haversine. We compute distance per
+# candidate subscription rather than relying on Firestore geoqueries
+# because the subscription set per city is small (tens to hundreds)
+# and a Python-side filter is way simpler than maintaining geohash
+# indexes for what is effectively a "ping nearby phones" rule.
+_EARTH_KM = 6371.0088
+
+# Minimum gap between nearby-incident pushes to a single subscription.
+# Also the dedupe window: if two incidents land within this span, the
+# second one will be suppressed. 5 minutes is the middle ground —
+# long enough to avoid spamming a phone during a multi-incident event
+# (e.g. a multi-vehicle MVA generating three transcripts), short
+# enough that a separate incident an hour later still gets through.
+_NEARBY_COOLDOWN_MS = 5 * 60 * 1000
+
+# Severity gate: only s_base values at or above this trigger a
+# closed-tab push. Lower-severity categories (medical assist, minor
+# disorder) would create push fatigue. The threshold matches the
+# frontend's "high-severity" visual bucket so the user's mental
+# model is consistent across in-app and OS notifications.
+_NEARBY_S_BASE_FLOOR = 0.7
+
+# Skip incidents the inhibitor flagged as blocked or that geocoded
+# below this confidence. Pushing low-confidence locations would
+# direct users to the wrong block.
+_NEARBY_MIN_LOCATION_CONFIDENCE = ("high", "medium")
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    import math
+    rlat1, rlat2 = math.radians(lat1), math.radians(lat2)
+    dlat = rlat2 - rlat1
+    dlng = math.radians(lng2 - lng1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(rlat1) * math.cos(rlat2) * math.sin(dlng / 2) ** 2
+    return 2 * _EARTH_KM * math.asin(math.sqrt(a))
+
+
+def find_nearby_subscriptions(
+    city: str, lat: float, lng: float
+) -> list[dict[str, Any]]:
+    """Return subscriptions in the city whose alert area contains the
+    given point. We over-fetch (city scope) and filter in Python; see
+    the docstring above on `_EARTH_KM` for why we don't bother with
+    geohash indexes here."""
+    out: list[dict[str, Any]] = []
+    for sub in list_all_subscriptions(city=city):
+        nlat = sub.get("notifyLat")
+        nlng = sub.get("notifyLng")
+        radius = float(sub.get("notifyRadiusKm") or 0.0)
+        if nlat is None or nlng is None or radius <= 0:
+            continue
+        # Cheap bounding-box prefilter so we don't haversine for
+        # subscriptions that obviously can't match. Latitude degrees
+        # are ~111 km apart; longitude is latitude-dependent but at
+        # mid-latitudes the same approximation is conservative
+        # enough for a prefilter.
+        max_deg = (radius / 111.0) * 1.5
+        if abs(nlat - lat) > max_deg:
+            continue
+        if abs(nlng - lng) > max_deg:
+            continue
+        if _haversine_km(nlat, nlng, lat, lng) <= radius:
+            out.append(sub)
+    return out
+
+
+def notify_nearby_incident(
+    *,
+    incident_id: str,
+    city: str,
+    lat: float,
+    lng: float,
+    severity_category: str,
+    s_base: float,
+    location_text: Optional[str] = None,
+    location_confidence: Optional[str] = None,
+    inhibitor_status: Optional[str] = None,
+) -> dict[str, int]:
+    """Server-side trigger: push to every subscription whose alert
+    area contains the incident location, subject to severity floor,
+    confidence floor, inhibitor status, and per-subscription cooldown.
+
+    Returns aggregate counters so the caller can log per-incident
+    delivery health without iterating per-subscription results."""
+    if not push_available():
+        return {"sent": 0, "skipped_no_push": 1, "matched": 0, "cooldown": 0}
+    if s_base < _NEARBY_S_BASE_FLOOR:
+        return {"sent": 0, "below_severity": 1, "matched": 0, "cooldown": 0}
+    if inhibitor_status and inhibitor_status == "blocked":
+        return {"sent": 0, "blocked": 1, "matched": 0, "cooldown": 0}
+    if location_confidence and location_confidence not in _NEARBY_MIN_LOCATION_CONFIDENCE:
+        return {"sent": 0, "low_confidence": 1, "matched": 0, "cooldown": 0}
+
+    matches = find_nearby_subscriptions(city, lat, lng)
+    if not matches:
+        return {"sent": 0, "matched": 0, "cooldown": 0}
+
+    now_ms = int(time.time() * 1000)
+    sent = failed = cooldown = 0
+    label = severity_category.replace("_", " ").title()
+    where = location_text or f"{lat:.4f}, {lng:.4f}"
+    payload = {
+        "kind": "nearby_incident",
+        "incidentId": incident_id,
+        "title": f"{label} reported nearby",
+        "body": f"Near {where}. Tap for details.",
+        # Drives the SW's notificationclick deep-link.
+        "url": f"/?incident={incident_id}",
+        # Same `tag` so a stream of nearby pings collapses rather
+        # than stacking — last-write-wins matches user expectations.
+        "tag": f"pp:nearby:{city}",
+        "requireInteraction": False,
+        "severity_category": severity_category,
+    }
+
+    for sub in matches:
+        last_ms = int(sub.get("lastNearbyPushMs") or 0)
+        if now_ms - last_ms < _NEARBY_COOLDOWN_MS:
+            cooldown += 1
+            continue
+        ok, _status = send_to_subscription(sub, payload, ttl_seconds=15 * 60)
+        if ok:
+            sent += 1
+            try:
+                _db().collection("pushSubscriptions").document(sub["id"]).update(
+                    {"lastNearbyPushMs": now_ms}
+                )
+            except Exception:
+                # Cooldown bookkeeping failure is non-fatal — the
+                # actual push went out, and a missed cooldown bump
+                # just means the next nearby incident will also
+                # ping. Acceptable.
+                pass
+        else:
+            failed += 1
+    return {
+        "sent": sent,
+        "failed": failed,
+        "matched": len(matches),
+        "cooldown": cooldown,
+    }
+
 
 def public_key_b64url() -> str:
     """The browser needs the VAPID public key as a base64url string

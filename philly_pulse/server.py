@@ -799,6 +799,34 @@ async def ingest(req: IngestRequest):
             "lng": lng,
         })
 
+        # Server-backed Web Push fan-out for closed-tab subscribers.
+        # We run this best-effort and *after* the incident is stored
+        # so a push failure can never block the ingest pipeline. The
+        # severity / confidence / inhibitor gates live inside
+        # notify_nearby_incident so this call site stays a one-liner.
+        try:
+            push_stats = push_mod.notify_nearby_incident(
+                incident_id=incident_id,
+                city=city,
+                lat=lat,
+                lng=lng,
+                severity_category=category,
+                s_base=s_base,
+                location_text=location_text,
+                location_confidence=location_confidence,
+                inhibitor_status=inh.status,
+            )
+            if push_stats.get("sent"):
+                logger.info(
+                    "Web Push fan-out for incident %s: %s",
+                    incident_id, push_stats,
+                )
+        except Exception as e:  # pragma: no cover — defensive
+            logger.warning(
+                "Web Push fan-out failed for incident %s: %s",
+                incident_id, e,
+            )
+
     store.insert_extraction(
         feed_id=feed_id,
         raw_text=req.text,
@@ -1246,12 +1274,22 @@ def _verify_firebase_token(authorization: Optional[str]) -> dict:
 
 
 class PushSubscribeRequest(BaseModel):
-    """Mirrors `PushSubscription.toJSON()` plus a tiny client context."""
+    """Mirrors `PushSubscription.toJSON()` plus a tiny client context.
+
+    `notifyLat`/`notifyLng`/`notifyRadiusKm` are optional alert-area
+    fields. When set, the user wants closed-tab pings for nearby
+    high-severity scanner incidents. Omitting them means "subscribe
+    me to direct messages only" — useful for users who want test
+    pings + future direct alerts but don't want neighborhood-wide
+    notifications."""
     endpoint: str
     p256dh: str
     auth: str
     userAgent: str | None = None
     city: str | None = None
+    notifyLat: float | None = None
+    notifyLng: float | None = None
+    notifyRadiusKm: float | None = None
 
 
 @app.get("/api/push/public-key")
@@ -1289,6 +1327,9 @@ async def push_subscribe(
             uid=uid,
             user_agent=(body.userAgent or "")[:200],  # bound it; some UA strings are huge
             city=(body.city or "")[:64],
+            notify_lat=body.notifyLat,
+            notify_lng=body.notifyLng,
+            notify_radius_km=body.notifyRadiusKm if body.notifyRadiusKm is not None else 3.0,
         )
         doc_id = push_mod.upsert_subscription(sub)
     except Exception as e:
