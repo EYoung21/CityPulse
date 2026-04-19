@@ -212,6 +212,29 @@ def list_subscriptions_for_uid(uid: str) -> list[dict[str, Any]]:
     return [{"id": d.id, **(d.to_dict() or {})} for d in docs]
 
 
+def revoke_subscription_by_id(sub_id: str, expected_uid: str) -> str:
+    """Owner-scoped revoke by Firestore doc id.
+
+    Returns one of:
+      - "ok"           – deleted
+      - "not_found"    – doc doesn't exist
+      - "forbidden"    – doc exists but `uid` doesn't match caller
+
+    The caller-uid check is done here (rather than only in the
+    Firestore security rules) so the API endpoint can return a 403
+    instead of letting a server-side write fail with a less
+    actionable error."""
+    ref = _db().collection("pushSubscriptions").document(sub_id)
+    snap = ref.get()
+    if not snap.exists:
+        return "not_found"
+    data = snap.to_dict() or {}
+    if data.get("uid") != expected_uid:
+        return "forbidden"
+    ref.delete()
+    return "ok"
+
+
 def list_all_subscriptions(city: Optional[str] = None) -> list[dict[str, Any]]:
     """City filter is optional so single-city deployments don't pay the
     indexing cost; pass None to push to every subscriber regardless of
@@ -479,6 +502,127 @@ def notify_nearby_incident(
         "failed": failed,
         "matched": len(matches),
         "cooldown": cooldown,
+    }
+
+
+# ── User-report fan-out ─────────────────────────────────────────────
+
+# Severity gate for user reports — a separate (lower) floor than
+# scanner incidents because users only file reports they actually
+# witnessed, and the categories are pre-curated. We still skip
+# "minor / informational" categories to avoid push fatigue.
+_USER_REPORT_PUSH_CATEGORIES = {
+    # Map to USER_REPORT_CATEGORIES on the frontend; the backend
+    # doesn't import that list directly to keep the FE/BE decoupled.
+    # Add a category here when you decide it's worth a closed-tab
+    # push to the people nearby.
+    "user_violent",
+    "user_hazard",
+    "user_fire",
+    "user_medical",
+    "user_active_threat",
+}
+
+
+def notify_nearby_user_report(
+    *,
+    report_id: str,
+    requesting_uid: str,
+) -> dict[str, int]:
+    """Fan-out for a freshly-submitted user report.
+
+    The report is re-read from Firestore so the backend never trusts
+    client-supplied location (a malicious client could otherwise
+    push to neighborhoods unrelated to whatever they actually wrote
+    down). The caller's UID must match `ownerUid` on the report —
+    we don't allow third-party "amplification" of someone else's
+    submission."""
+    if not push_available():
+        return {"sent": 0, "skipped_no_push": 1, "matched": 0, "cooldown": 0}
+
+    try:
+        snap = _db().collection("userReports").document(report_id).get()
+    except Exception as e:
+        logger.warning("notify_nearby_user_report: lookup failed for %s: %s", report_id, e)
+        return {"sent": 0, "lookup_failed": 1, "matched": 0, "cooldown": 0}
+
+    if not snap.exists:
+        return {"sent": 0, "not_found": 1, "matched": 0, "cooldown": 0}
+
+    data = snap.to_dict() or {}
+    if data.get("ownerUid") != requesting_uid:
+        # Defensive: someone calling the fan-out endpoint with
+        # someone else's report id. We refuse — the originator owns
+        # the right to amplify their own submission.
+        return {"sent": 0, "ownership_mismatch": 1, "matched": 0, "cooldown": 0}
+
+    category = str(data.get("category") or "")
+    if category not in _USER_REPORT_PUSH_CATEGORIES:
+        return {"sent": 0, "below_severity": 1, "matched": 0, "cooldown": 0}
+
+    lat = data.get("lat")
+    lng = data.get("lng")
+    city = data.get("city") or ""
+    if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)) or not city:
+        return {"sent": 0, "incomplete": 1, "matched": 0, "cooldown": 0}
+
+    matches = find_nearby_subscriptions(city, float(lat), float(lng))
+    if not matches:
+        return {"sent": 0, "matched": 0, "cooldown": 0}
+
+    now_ms = int(time.time() * 1000)
+    sent = failed = cooldown = self_skipped = 0
+    note = str(data.get("note") or "").strip()
+    label = category.replace("user_", "").replace("_", " ").title()
+    body = (
+        f"Reported nearby: {note[:120]}"
+        if note
+        else f"{label} reported nearby."
+    )
+    payload = {
+        "kind": "nearby_user_report",
+        "reportId": report_id,
+        "title": f"{label} reported by a nearby user",
+        "body": body,
+        # User-report incident IDs are prefixed in the frontend
+        # (`userReportToIncident`) so the same `?incident=` deep-link
+        # path resolves them. We send the raw report id and let the
+        # page-side adapter route it correctly.
+        "url": f"/?userReport={report_id}",
+        "tag": f"pp:nearby-user:{city}",
+        "requireInteraction": False,
+        "category": category,
+    }
+
+    for sub in matches:
+        # Don't push the originator's own report back to their other
+        # devices — they obviously already know about it. We compare
+        # on uid (not endpoint) so all of a user's devices are
+        # excluded together.
+        if sub.get("uid") == requesting_uid:
+            self_skipped += 1
+            continue
+        last_ms = int(sub.get("lastNearbyPushMs") or 0)
+        if now_ms - last_ms < _NEARBY_COOLDOWN_MS:
+            cooldown += 1
+            continue
+        ok, _status = send_to_subscription(sub, payload, ttl_seconds=15 * 60)
+        if ok:
+            sent += 1
+            try:
+                _db().collection("pushSubscriptions").document(sub["id"]).update(
+                    {"lastNearbyPushMs": now_ms}
+                )
+            except Exception:
+                pass
+        else:
+            failed += 1
+    return {
+        "sent": sent,
+        "failed": failed,
+        "matched": len(matches),
+        "cooldown": cooldown,
+        "self_skipped": self_skipped,
     }
 
 
