@@ -50,7 +50,8 @@ const COLLECTION = "moderationAudit";
 export type ModerationActionKind =
   | "userReport.delete"
   | "feedback.delete"
-  | "feedback.status";
+  | "feedback.status"
+  | "push.broadcast";
 
 export interface ModerationAuditEntry {
   id: string;
@@ -287,6 +288,72 @@ export async function auditSetFeedbackStatus(
   }
 }
 
+/** Push broadcast snapshot — captured *after* the backend confirms
+ *  the broadcast went out, so we record actual delivery counts (not
+ *  just intent). Lets a "did this broadcast reach anyone?" audit
+ *  question be answered without joining anything else. */
+export interface BroadcastAuditSnapshot {
+  city: string | null;
+  title: string;
+  body: string;
+  url: string | null;
+  requireInteraction: boolean;
+  matched: number;
+  sent: number;
+  failed: number;
+  /** Sum of snoozed + quiet-hours skips. */
+  skipped: number;
+  /** Stable per-broadcast tag the SW used; useful for cross-
+   *  referencing if a user later asks "what was that ping?". */
+  serverTag: string | null;
+}
+
+/** Record an admin broadcast in the audit log. Unlike the other
+ *  audit wrappers this does NOT perform the action — the broadcast
+ *  is sent by the FastAPI backend, and we just append the audit
+ *  entry after. The fail-loud pattern still applies: a broadcast
+ *  that ships but fails to audit raises so the admin can retry the
+ *  audit write. */
+export async function auditPushBroadcast(
+  snapshot: BroadcastAuditSnapshot,
+  actor: ActorSnapshot
+): Promise<void> {
+  // The "target" of a broadcast is a synthetic id (no underlying
+  // doc); we encode the city + tag so the audit list can render
+  // it as "Broadcast to philly · pp:broadcast:1729...".
+  const targetId = `${snapshot.city ?? "all"}:${snapshot.serverTag ?? "untagged"}`.slice(0, 200);
+  // The snippet shows the title + first chunk of the body so an
+  // admin scrolling the audit list sees the substance, not just
+  // the metadata.
+  const snippet = `${snapshot.title} — ${snapshot.body}`.slice(0, 140);
+  try {
+    await recordModerationAction(
+      {
+        kind: "push.broadcast",
+        targetId,
+        targetSnippet: snippet,
+        payload: {
+          city: snapshot.city,
+          title: snapshot.title,
+          body: snapshot.body,
+          url: snapshot.url,
+          requireInteraction: snapshot.requireInteraction,
+          matched: snapshot.matched,
+          sent: snapshot.sent,
+          failed: snapshot.failed,
+          skipped: snapshot.skipped,
+          serverTag: snapshot.serverTag,
+        },
+      },
+      actor
+    );
+  } catch (e) {
+    throw new Error(
+      `Broadcast sent, but audit log write failed: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+}
+
 /** Tiny pretty-printer for audit rows in the UI. */
 export function describeAuditAction(entry: ModerationAuditEntry): string {
   switch (entry.kind) {
@@ -299,6 +366,15 @@ export function describeAuditAction(entry: ModerationAuditEntry): string {
       const to = entry.payload.to as string | undefined;
       if (from && to) return `Set feedback ${from} → ${to}`;
       return "Updated feedback status";
+    }
+    case "push.broadcast": {
+      const city = (entry.payload.city as string | null) ?? "all cities";
+      const sent = entry.payload.sent as number | undefined;
+      const matched = entry.payload.matched as number | undefined;
+      if (typeof sent === "number" && typeof matched === "number") {
+        return `Broadcast push to ${city} (${sent}/${matched} delivered)`;
+      }
+      return `Broadcast push to ${city}`;
     }
     default:
       return "Moderation action";

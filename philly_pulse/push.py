@@ -999,6 +999,123 @@ def notify_due_commutes() -> dict[str, int]:
     }
 
 
+# ── Admin broadcast ─────────────────────────────────────────────────
+
+# A short body cap keeps notifications scannable on a lock-screen
+# (Android cuts long bodies at ~120 chars; iOS has its own limits).
+# The composer enforces the same limit client-side as a UX nicety,
+# but we re-enforce here because the API is the source of truth.
+_BROADCAST_BODY_MAX = 240
+_BROADCAST_TITLE_MAX = 80
+
+
+def count_subscribers_for_city(city: Optional[str]) -> int:
+    """Recipient preview helper for the admin composer. Counts every
+    subscription with a matching `city` field; passing None counts
+    every subscription regardless of city.
+
+    Note: this is the *subscription* count, not the unique-user
+    count — a user with phone+desktop registered counts as two.
+    That mirrors the actual fan-out behaviour, so the preview
+    accurately reflects "how many notifications I'm about to send"."""
+    try:
+        return len(list_all_subscriptions(city=city))
+    except Exception as e:
+        logger.warning("count_subscribers_for_city failed: %s", e)
+        return 0
+
+
+def broadcast_to_city(
+    *,
+    city: Optional[str],
+    title: str,
+    body: str,
+    url: Optional[str] = None,
+    require_interaction: bool = False,
+    actor_uid: str,
+    actor_email: Optional[str],
+) -> dict[str, Any]:
+    """Fan out a single notification to every subscription in `city`.
+
+    City filter is optional — passing None broadcasts to every
+    subscriber across every pulse city, intended for app-wide
+    maintenance / outage messages. Most real broadcasts should be
+    city-scoped.
+
+    The push respects `pp:push-snooze-until` and `pp:quiet-hours`
+    on a per-recipient basis, same as every other fan-out, but does
+    NOT respect the per-category mute pref — broadcasts have no
+    incident category, and admins are explicitly trying to reach
+    users who might have category mutes set during an emergency.
+    The `requireInteraction` flag is passed through so a true
+    "shelter in place" broadcast can hold itself open until the
+    user dismisses, while a routine update can autodismiss."""
+    if not push_available():
+        return {"sent": 0, "failed": 0, "matched": 0, "skipped": 0, "error": "push_not_configured"}
+
+    title = (title or "").strip()[:_BROADCAST_TITLE_MAX]
+    body = (body or "").strip()[:_BROADCAST_BODY_MAX]
+    if not title or not body:
+        return {"sent": 0, "failed": 0, "matched": 0, "skipped": 0, "error": "title_and_body_required"}
+
+    matches = list_all_subscriptions(city=city)
+    if not matches:
+        return {"sent": 0, "failed": 0, "matched": 0, "skipped": 0}
+
+    # Use a stable tag per broadcast so a user with multiple devices
+    # sees the same notification on each rather than a stack of
+    # near-duplicates if the fan-out lands across a few seconds.
+    tag = f"pp:broadcast:{int(time.time())}"
+    payload = {
+        "kind": "admin_broadcast",
+        "title": title,
+        "body": body,
+        "tag": tag,
+        "url": url or "/",
+        "requireInteraction": bool(require_interaction),
+    }
+
+    seen_uids: dict[str, dict[str, bool]] = {}
+    sent = failed = quiet = snoozed = 0
+
+    for sub in matches:
+        uid = str(sub.get("uid") or "")
+        if uid:
+            cached = seen_uids.get(uid)
+            if cached is None:
+                cached = {
+                    "snoozed": _is_snoozed_for_uid(uid),
+                    "quiet": _is_quiet_now_for_uid(uid, None),
+                }
+                seen_uids[uid] = cached
+            if cached["snoozed"]:
+                snoozed += 1
+                continue
+            if cached["quiet"]:
+                quiet += 1
+                continue
+        ok, _status = send_to_subscription(sub, payload, ttl_seconds=60 * 60)
+        if ok:
+            sent += 1
+        else:
+            failed += 1
+
+    logger.info(
+        "Admin broadcast by %s (uid=%s) to city=%s: matched=%d sent=%d failed=%d snoozed=%d quiet=%d",
+        actor_email or "?", actor_uid, city or "<all>",
+        len(matches), sent, failed, snoozed, quiet,
+    )
+    return {
+        "sent": sent,
+        "failed": failed,
+        "matched": len(matches),
+        "skipped": snoozed + quiet,
+        "snoozed": snoozed,
+        "quiet": quiet,
+        "tag": tag,
+    }
+
+
 def public_key_b64url() -> str:
     """The browser needs the VAPID public key as a base64url string
     (no padding) when calling `pushManager.subscribe`. Keys are

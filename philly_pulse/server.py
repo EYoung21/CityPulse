@@ -1273,6 +1273,36 @@ def _verify_firebase_token(authorization: Optional[str]) -> dict:
     return decoded
 
 
+# Keep in sync with ADMIN_EMAILS in frontend/src/contexts/AuthContext.tsx
+# and the isAdmin() function in firestore.rules. All three places must
+# reference the same set or the admin surface goes inconsistent — a
+# user could see admin UI and have their writes silently rejected, or
+# vice versa.
+_ADMIN_EMAILS = {
+    "eliyoung4now@gmail.com",
+    "kethansany@gmail.com",
+    "rickywhy@gmail.com",
+}
+
+
+def _verify_firebase_admin(authorization: Optional[str]) -> dict:
+    """Strict variant of `_verify_firebase_token`: also requires the
+    decoded token's email to be in the admin allow-list AND email-
+    verified. Raises 403 if the user is signed in but not an admin,
+    so the frontend can distinguish "you're not allowed" from "you
+    aren't authenticated"."""
+    decoded = _verify_firebase_token(authorization)
+    email = (decoded.get("email") or "").lower()
+    if not email or email not in _ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Admin only")
+    if not decoded.get("email_verified"):
+        # We require email verification specifically for admin actions
+        # so a stolen-not-yet-verified Google account can't immediately
+        # broadcast to the city. Regular auth doesn't enforce this.
+        raise HTTPException(status_code=403, detail="Verify email to act as admin")
+    return decoded
+
+
 class PushSubscribeRequest(BaseModel):
     """Mirrors `PushSubscription.toJSON()` plus a tiny client context.
 
@@ -1485,6 +1515,72 @@ async def push_tick_commutes(authorization: Optional[str] = Header(None)):
     except Exception as e:
         logger.warning("commute tick failed: %s", e)
         raise HTTPException(status_code=500, detail="Commute tick failed") from e
+    return {"status": "ok", **result}
+
+
+class PushBroadcastPreviewRequest(BaseModel):
+    """Recipient count preview for the admin composer. The frontend
+    fires this whenever the admin selects a city so they see the
+    blast radius before they hit Send."""
+    city: Optional[str] = None
+
+
+@app.post("/api/push/broadcast-preview")
+async def push_broadcast_preview(
+    body: PushBroadcastPreviewRequest,
+    authorization: Optional[str] = Header(None),
+):
+    _verify_firebase_admin(authorization)
+    return {"recipients": push_mod.count_subscribers_for_city(body.city)}
+
+
+class PushBroadcastRequest(BaseModel):
+    """Admin city-wide broadcast. `city` is an optional pulse city
+    slug (philly, sf, nyc, …). Pass null/None to broadcast across
+    every pulse city — that's intended for app-wide outage / status
+    messages and should be reserved for genuine emergencies.
+
+    `url` is the deep-link target the SW will open on
+    notificationclick. Defaults to "/" so the user lands on the map
+    if it isn't set. `requireInteraction=true` makes the
+    notification stick until dismissed (use sparingly — it's the
+    "shelter in place" affordance, not the "did you know" one)."""
+    city: Optional[str] = None
+    title: str
+    body: str
+    url: Optional[str] = None
+    requireInteraction: bool = False
+
+
+@app.post("/api/push/broadcast")
+async def push_broadcast(
+    body: PushBroadcastRequest,
+    authorization: Optional[str] = Header(None),
+):
+    decoded = _verify_firebase_admin(authorization)
+    if not push_mod.push_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Server-side push is not configured (missing VAPID env vars).",
+        )
+    try:
+        result = push_mod.broadcast_to_city(
+            city=body.city,
+            title=body.title,
+            body=body.body,
+            url=body.url,
+            require_interaction=body.requireInteraction,
+            actor_uid=decoded["uid"],
+            actor_email=decoded.get("email"),
+        )
+    except Exception as e:
+        logger.warning("admin broadcast failed: %s", e)
+        raise HTTPException(status_code=500, detail="Broadcast failed") from e
+    err = result.pop("error", None) if isinstance(result, dict) else None
+    if err == "title_and_body_required":
+        raise HTTPException(status_code=400, detail="Title and body are required.")
+    if err == "push_not_configured":
+        raise HTTPException(status_code=503, detail="Push not configured.")
     return {"status": "ok", **result}
 
 
