@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { MapPin, X, Hash, Ban, Check } from "lucide-react";
 import PlaceActions from "@/components/PlaceActions";
 import NearbyPois from "@/components/NearbyPois";
+import QuickSavePlace from "@/components/QuickSavePlace";
 import { reverseGeocode } from "@/lib/search";
 import { plusCode } from "@/lib/plus-code";
 import { addAvoidArea } from "@/lib/avoid-areas";
@@ -100,6 +101,13 @@ export default function DroppedPinCard({ lat, lng, onClose }: Props) {
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 
         <PlaceActions lat={lat} lng={lng} label={address ?? undefined} />
+
+        {/* Inline quick-save form. The bookmark icon in PlaceActions
+            persists with the auto-generated label only; QuickSavePlace
+            adds name editing + per-list assignment so users can drop a
+            pin directly into "Coffee shops" without opening the
+            sidebar. */}
+        <QuickSavePlace lat={lat} lng={lng} suggestedName={address ?? undefined} />
 
         <button
           type="button"

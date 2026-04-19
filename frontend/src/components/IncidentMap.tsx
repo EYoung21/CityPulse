@@ -259,6 +259,10 @@ export interface MapHandle {
   getBounds: () => { north: number; south: number; east: number; west: number } | null;
   /** Current map center. */
   getCenter: () => { lat: number; lng: number } | null;
+  /** Raw DOM element wrapping the Leaflet map. Returned so other
+   *  components can rasterize the visible map (e.g. share-as-image)
+   *  without reaching into the imperative handle for everything. */
+  getContainer: () => HTMLElement | null;
 }
 
 export interface WaypointPin {
@@ -988,6 +992,11 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       if (!map) return null;
       const c = map.getCenter();
       return { lat: c.lat, lng: c.lng };
+    },
+    getContainer: () => {
+      const map = mapRef.current;
+      if (!map) return null;
+      return map.getContainer();
     },
   }));
 

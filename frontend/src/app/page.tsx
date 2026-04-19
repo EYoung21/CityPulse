@@ -43,6 +43,7 @@ import DroppedPinCard from "@/components/DroppedPinCard";
 import AvoidAreasManager from "@/components/AvoidAreasManager";
 import OfflineTilesPanel from "@/components/OfflineTilesPanel";
 import MeasureToolPanel from "@/components/MeasureToolPanel";
+import MapSnapshotButton from "@/components/MapSnapshotButton";
 import FilterPresetsBar from "@/components/FilterPresetsBar";
 import ManeuverChip from "@/components/ManeuverChip";
 import TurnList from "@/components/TurnList";
@@ -2020,6 +2021,21 @@ export default function Home() {
                     <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${measureMode ? "left-4" : "left-0.5"}`} />
                   </div>
                 </button>
+                {/* Map screenshot — captures the visible map (with overlays
+                    and markers) as a watermarked PNG and routes through the
+                    Web Share API on mobile or a download fallback on
+                    desktop. Lives in the Tools section so it sits next to
+                    the other "do something with the current view"
+                    actions. */}
+                <MapSnapshotButton
+                  variant="row"
+                  getMapElement={() => mapRef.current?.getContainer?.() ?? null}
+                  caption={
+                    tripGeometry && tripStatsRef.current?.dest
+                      ? `PhillyPulse · ${tripStatsRef.current.dest.display_name.split(",")[0] || "trip"}`
+                      : "PhillyPulse · safe routes"
+                  }
+                />
 
                 <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
                 <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Saved places</p>

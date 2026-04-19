@@ -1,5 +1,7 @@
 "use client";
 
+import { isQuietNow } from "@/lib/quiet-hours";
+
 /** Centralised TTS queue for navigation announcements.
  *
  *  ManeuverChip already speaks individual turn instructions inline,
@@ -66,6 +68,12 @@ interface SpeakOptions {
 export function speakNav(text: string, opts: SpeakOptions = {}): void {
   if (!isVoiceNavSupported() || !isVoiceNavEnabled()) return;
   const priority: VoiceNavPriority = opts.priority ?? "info";
+
+  // Quiet-hours gate. Turn-by-turn maneuvers always speak — silencing
+  // them mid-drive would be a safety regression — but ambient alerts
+  // and trip-info chatter are suppressed during the user's quiet
+  // window.
+  if (priority !== "turn" && isQuietNow()) return;
 
   // De-dupe by key+window. Falling outside the window or providing a
   // distinct key forces a fresh utterance.
