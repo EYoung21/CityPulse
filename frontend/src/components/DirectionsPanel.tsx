@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   MapPin,
   Footprints,
@@ -39,6 +39,7 @@ import { userAvoidZones } from "@/lib/avoid-areas";
 import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
 import RouteOptionPicker from "@/components/RouteOptionPicker";
+import { scoreRouteOptions, type RouteSafetyScore } from "@/lib/route-safety";
 import AvoidancePrefsPicker from "@/components/AvoidancePrefsPicker";
 import RideshareLinks from "@/components/RideshareLinks";
 import OptimizeOrderButton from "@/components/OptimizeOrderButton";
@@ -217,6 +218,14 @@ export default function DirectionsPanel({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [routeOptions, setRouteOptions] = useState<RouteOption[]>([]);
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
+  // Per-route incident-density scores. Recomputed whenever the option
+  // set changes _or_ the incident stream updates — both are cheap (few
+  // hundred incidents × <10 routes × ~50 polyline points), and a memo
+  // keeps the work off the render hot path.
+  const routeSafetyScores = useMemo<Map<string, RouteSafetyScore>>(
+    () => scoreRouteOptions(routeOptions, incidents, 120),
+    [routeOptions, incidents]
+  );
   const [routeError, setRouteError] = useState<string | null>(null);
   const [startNavBusy, setStartNavBusy] = useState(false);
   // Optional shifted-departure: when null, ETA is computed against
@@ -835,6 +844,7 @@ export default function DirectionsPanel({
               options={routeOptions}
               selectedId={selectedOptionId}
               onSelect={handleSelectRouteOption}
+              safetyScores={routeSafetyScores}
             />
           </div>
         )}

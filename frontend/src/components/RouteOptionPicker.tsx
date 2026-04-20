@@ -1,13 +1,21 @@
 "use client";
 
-import { Clock, Route as RouteIcon, ShieldCheck, Ban, Loader2 } from "lucide-react";
+import { Clock, Route as RouteIcon, ShieldCheck, Ban, Loader2, AlertTriangle } from "lucide-react";
 import type { RouteOption } from "@/lib/routing";
+import type { RouteSafetyScore } from "@/lib/route-safety";
 
 interface Props {
   options: RouteOption[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   loading?: boolean;
+  /** Optional per-route safety scores keyed by RouteOption id. When
+   *  provided, each card surfaces a concrete "X nearby" badge and
+   *  the option with the lowest weighted exposure earns a "Lowest
+   *  exposure" callout — strictly more informative than the binary
+   *  `isSafer` flag, which only reflects whether the avoid-polygon
+   *  pass returned a result. */
+  safetyScores?: Map<string, RouteSafetyScore>;
 }
 
 function fmtMin(min: number): string {
@@ -38,6 +46,7 @@ export default function RouteOptionPicker({
   selectedId,
   onSelect,
   loading,
+  safetyScores,
 }: Props) {
   if (loading && options.length === 0) {
     return (
@@ -59,6 +68,38 @@ export default function RouteOptionPicker({
   // Anchor for relative ETA deltas ("+3 min vs fastest").
   const fastestMin = Math.min(...options.map((o) => o.route.durationMin));
 
+  // Find the option with the lowest weighted exposure so we can
+  // visually distinguish the "objectively safest" choice. Ties are
+  // broken by raw count, then by ETA so the user gets a stable order.
+  const lowestExposureId = (() => {
+    if (!safetyScores || safetyScores.size === 0) return null;
+    let bestId: string | null = null;
+    let bestWeighted = Infinity;
+    let bestCount = Infinity;
+    let bestMin = Infinity;
+    for (const opt of options) {
+      const s = safetyScores.get(opt.id);
+      if (!s) continue;
+      if (
+        s.weighted < bestWeighted ||
+        (s.weighted === bestWeighted && s.count < bestCount) ||
+        (s.weighted === bestWeighted && s.count === bestCount && opt.route.durationMin < bestMin)
+      ) {
+        bestId = opt.id;
+        bestWeighted = s.weighted;
+        bestCount = s.count;
+        bestMin = opt.route.durationMin;
+      }
+    }
+    // Don't crown a winner when every option has the same exposure —
+    // that's noise, not a meaningful recommendation.
+    const allEqual = options.every((opt) => {
+      const s = safetyScores.get(opt.id);
+      return s && s.weighted === bestWeighted && s.count === bestCount;
+    });
+    return allEqual ? null : bestId;
+  })();
+
   return (
     <div className="flex flex-col gap-2">
       <p
@@ -75,6 +116,8 @@ export default function RouteOptionPicker({
             deltaMin >= 1
               ? `+${Math.round(deltaMin)} min`
               : null;
+          const score = safetyScores?.get(opt.id);
+          const isLowestExposure = lowestExposureId !== null && opt.id === lowestExposureId;
 
           return (
             <button
@@ -127,7 +170,7 @@ export default function RouteOptionPicker({
                   )}
                 </div>
                 <p
-                  className="text-xs mt-0.5 flex items-center gap-2"
+                  className="text-xs mt-0.5 flex items-center gap-2 flex-wrap"
                   style={{ color: "var(--panel-text-secondary)" }}
                 >
                   <span className="inline-flex items-center gap-1">
@@ -141,7 +184,33 @@ export default function RouteOptionPicker({
                       <span className="truncate">{opt.subtitle}</span>
                     </>
                   )}
+                  {score && score.count > 0 && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span
+                        className="inline-flex items-center gap-1"
+                        title={`${score.count} recent incident${score.count === 1 ? "" : "s"} within 120 m of this route`}
+                        style={{ color: score.weighted >= 3 ? "#f59e0b" : "var(--panel-text-secondary)" }}
+                      >
+                        <AlertTriangle className="w-3 h-3" />
+                        {score.count} nearby
+                      </span>
+                    </>
+                  )}
                 </p>
+                {isLowestExposure && (
+                  <span
+                    className="inline-flex items-center gap-1 mt-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                    style={{
+                      background: "rgba(34,197,94,0.14)",
+                      color: "#22c55e",
+                    }}
+                    title="Lowest weighted incident exposure of the listed routes"
+                  >
+                    <ShieldCheck className="w-2.5 h-2.5" />
+                    Lowest exposure
+                  </span>
+                )}
               </div>
             </button>
           );
