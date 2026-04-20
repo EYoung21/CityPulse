@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, MapPin, Plus, Search, X } from "lucide-react";
 import { fetchPoisInBounds, NEARBY_POI_CATEGORIES, type NearbyPoiCategory } from "@/lib/overpass";
+import { evaluateOpeningHours, formatOpeningBadge } from "@/lib/opening-hours";
 import { polylineBbox, rankAlongRoute, type AlongRoutePoi, type RoutePoint } from "@/lib/along-route";
 
 interface Props {
@@ -82,7 +83,7 @@ export default function AlongRoutePanel({ geometry, userLocation, onClose, initi
       if (seq !== fetchSeqRef.current) return;
       const ranked = rankAlongRoute(
         polyline,
-        raw.map((p) => ({ id: p.id, name: p.name, lat: p.lat, lng: p.lng })),
+        raw.map((p) => ({ id: p.id, name: p.name, lat: p.lat, lng: p.lng, openingHours: p.openingHours })),
         { maxPerpM: 500, maxResults: 12 }
       );
       setState({ category: cat, loading: false, results: ranked, error: null });
@@ -213,6 +214,13 @@ export default function AlongRoutePanel({ geometry, userLocation, onClose, initi
             <ul className="divide-y" style={{ borderColor: "var(--panel-border)" }}>
               {state.results.map((poi) => {
                 const fromUser = userLocation ? haversineM(userLocation, poi) : null;
+                const badge = formatOpeningBadge(evaluateOpeningHours(poi.openingHours));
+                const badgeColor =
+                  badge?.tone === "open" || badge?.tone === "always"
+                    ? "#22c55e"
+                    : badge?.tone === "closing-soon"
+                      ? "#f59e0b"
+                      : "#94a3b8";
                 return (
                   <li key={poi.id} className="flex items-start gap-3 px-3 py-2.5">
                     <div className="min-w-0 flex-1">
@@ -224,6 +232,15 @@ export default function AlongRoutePanel({ geometry, userLocation, onClose, initi
                         {fromUser != null && ` · ${fmtMeters(fromUser)} away`}
                         {" · "}{fmtMeters(poi.perpM)} off route
                       </p>
+                      {badge && (
+                        <p
+                          className="text-[11px] mt-0.5"
+                          style={{ color: badgeColor }}
+                          title={poi.openingHours}
+                        >
+                          {badge.label}
+                        </p>
+                      )}
                     </div>
                     <button
                       type="button"

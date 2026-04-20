@@ -25,6 +25,10 @@ export interface AlongRoutePoiInput {
   name: string;
   lat: number;
   lng: number;
+  /** Pass-through opening_hours from Overpass so consumers (the
+   *  AlongRoutePanel list) can render an "Open · closes 9 PM" badge
+   *  without re-fetching. */
+  openingHours?: string;
 }
 
 export interface AlongRoutePoi extends AlongRoutePoiInput {

@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Navigation, MapPin } from "lucide-react";
+import { Loader2, Navigation, MapPin, Clock } from "lucide-react";
 import { fetchNearbyPois, POI_CATEGORIES, type Poi, type PoiCategory } from "@/lib/overpass";
+import { evaluateOpeningHours, formatOpeningBadge } from "@/lib/opening-hours";
 
 interface Props {
   lat: number;
@@ -108,7 +109,15 @@ export default function NearbyPois({ lat, lng, onSelect }: Props) {
               Nothing within 1 km. Try zooming out and dropping a new pin.
             </div>
           ) : (
-            results.map((poi, i) => (
+            results.map((poi, i) => {
+              const badge = formatOpeningBadge(evaluateOpeningHours(poi.openingHours));
+              const badgeColor =
+                badge?.tone === "open" || badge?.tone === "always"
+                  ? "#22c55e"
+                  : badge?.tone === "closing-soon"
+                    ? "#f59e0b"
+                    : "#94a3b8";
+              return (
               <div
                 key={poi.id}
                 onClick={() => handleSelect(poi)}
@@ -123,9 +132,22 @@ export default function NearbyPois({ lat, lng, onSelect }: Props) {
                   <p className="text-xs font-medium truncate" style={{ color: "var(--panel-text)" }} title={poi.name}>
                     {poi.name}
                   </p>
-                  <p className="text-[10px] truncate" style={{ color: "var(--panel-text-muted)" }}>
-                    {fmtDistance(poi.distance)}
-                    {poi.hint && ` · ${poi.hint}`}
+                  <p className="text-[10px] truncate flex items-center gap-1" style={{ color: "var(--panel-text-muted)" }}>
+                    <span>{fmtDistance(poi.distance)}</span>
+                    {poi.hint && <><span aria-hidden="true">·</span><span className="truncate">{poi.hint}</span></>}
+                    {badge && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span
+                          className="inline-flex items-center gap-0.5"
+                          style={{ color: badgeColor }}
+                          title={poi.openingHours}
+                        >
+                          <Clock className="w-2.5 h-2.5" />
+                          {badge.label}
+                        </span>
+                      </>
+                    )}
                   </p>
                 </div>
                 <button
@@ -141,7 +163,8 @@ export default function NearbyPois({ lat, lng, onSelect }: Props) {
                   <Navigation className="w-3.5 h-3.5" />
                 </button>
               </div>
-            ))
+              );
+            })
           )}
         </div>
       )}
