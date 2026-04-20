@@ -34,6 +34,14 @@ export interface TripHistoryEntry {
   rating?: number;
   /** Optional freeform notes set by the user from the recap card. */
   notes?: string;
+  /** Decimated route polyline captured at trip start. Optional because
+   *  pre-existing entries (recorded before this field was added) and
+   *  trips where geometry was unavailable simply omit it. Stored as
+   *  `[lat, lng]` pairs — same shape as everywhere else in the app —
+   *  and decimated to ~120 points to stay under the per-entry size
+   *  budget while still tracing the route well enough for a GPX
+   *  export to look right when imported into Strava / Garmin. */
+  geometry?: [number, number][];
 }
 
 type Listener = (entries: TripHistoryEntry[]) => void;
