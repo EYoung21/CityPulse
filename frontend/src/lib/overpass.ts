@@ -57,6 +57,18 @@ export interface Poi {
   distance: number;
   /** Optional address-ish hint pulled from tags. */
   hint?: string;
+  /** Raw OSM `opening_hours` tag value, when contributors filled it
+   *  in. Most US POIs leave this blank — when present it can be a
+   *  full schedule string ("Mo-Fr 09:00-17:00; Sa 10:00-14:00"),
+   *  the special token "24/7", or freeform text. We surface it as-is
+   *  to consumers; `lib/opening-hours` interprets a useful subset. */
+  openingHours?: string;
+  /** Optional contact info from OSM tags — not currently rendered
+   *  in any list, but picked up here so future surfaces (place
+   *  detail card, share dialog) don't need a second Overpass round
+   *  trip. */
+  phone?: string;
+  website?: string;
 }
 
 export const POI_CATEGORIES: { id: PoiCategory; label: string; emoji: string }[] = [
@@ -201,6 +213,9 @@ out center ${limit * 2};`;
             lng: elLng,
             distance: haversineM(lat, lng, elLat, elLng),
             hint: tags["addr:street"] || tags.cuisine || tags.brand || undefined,
+            openingHours: tags["opening_hours"] || undefined,
+            phone: tags.phone || tags["contact:phone"] || undefined,
+            website: tags.website || tags["contact:website"] || undefined,
           };
         })
         .filter((p): p is Poi => p !== null)
@@ -294,6 +309,9 @@ out center ${limit * 2};`;
             lng: elLng,
             distance: haversineM(cLat, cLng, elLat, elLng),
             hint: tags["addr:street"] || tags.operator || tags.brand || undefined,
+            openingHours: tags["opening_hours"] || undefined,
+            phone: tags.phone || tags["contact:phone"] || undefined,
+            website: tags.website || tags["contact:website"] || undefined,
           };
         })
         .filter((p): p is Poi => p !== null)
