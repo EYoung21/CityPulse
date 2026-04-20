@@ -63,12 +63,16 @@ export interface Poi {
    *  the special token "24/7", or freeform text. We surface it as-is
    *  to consumers; `lib/opening-hours` interprets a useful subset. */
   openingHours?: string;
-  /** Optional contact info from OSM tags — not currently rendered
-   *  in any list, but picked up here so future surfaces (place
-   *  detail card, share dialog) don't need a second Overpass round
-   *  trip. */
+  /** Optional contact info from OSM tags — surfaced as Call / Site
+   *  CTA buttons on POI rows when present. */
   phone?: string;
   website?: string;
+  /** OSM `wheelchair` tag (`yes` / `limited` / `no`). Surfaced as a
+   *  small accessibility badge so users can see at a glance whether a
+   *  shop is step-free without opening the place card. We don't
+   *  invent values: undefined means contributors haven't tagged it
+   *  yet, which is far more common than `no`. */
+  wheelchair?: "yes" | "limited" | "no";
 }
 
 export const POI_CATEGORIES: { id: PoiCategory; label: string; emoji: string }[] = [
@@ -105,6 +109,15 @@ const FILTERS: Record<PoiCategory, string> = {
   // McDonald's just because it has a bathroom.
   toilets:          '["amenity"="toilets"]',
 };
+
+/** Normalize the OSM `wheelchair` tag to one of three known values.
+ *  We deliberately don't pass through unknown values (`designated`,
+ *  `permissive`, etc.) — they're rare in practice and conflating them
+ *  with "yes" would be misleading. */
+function parseWheelchair(value: string | undefined): "yes" | "limited" | "no" | undefined {
+  if (value === "yes" || value === "limited" || value === "no") return value;
+  return undefined;
+}
 
 const memCache = new Map<string, { at: number; data: Poi[] }>();
 const CACHE_TTL_MS = 10 * 60 * 1000;
@@ -216,6 +229,7 @@ out center ${limit * 2};`;
             openingHours: tags["opening_hours"] || undefined,
             phone: tags.phone || tags["contact:phone"] || undefined,
             website: tags.website || tags["contact:website"] || undefined,
+            wheelchair: parseWheelchair(tags.wheelchair),
           };
         })
         .filter((p): p is Poi => p !== null)
@@ -312,6 +326,7 @@ out center ${limit * 2};`;
             openingHours: tags["opening_hours"] || undefined,
             phone: tags.phone || tags["contact:phone"] || undefined,
             website: tags.website || tags["contact:website"] || undefined,
+            wheelchair: parseWheelchair(tags.wheelchair),
           };
         })
         .filter((p): p is Poi => p !== null)
