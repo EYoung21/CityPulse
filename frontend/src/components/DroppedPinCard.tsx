@@ -9,6 +9,7 @@ import ReportPinForm from "@/components/ReportPinForm";
 import { reverseGeocode } from "@/lib/search";
 import { plusCode } from "@/lib/plus-code";
 import { addAvoidArea } from "@/lib/avoid-areas";
+import { fetchPlaceAtPoint, type PlaceAtPoint } from "@/lib/overpass";
 
 interface Props {
   lat: number;
@@ -25,11 +26,19 @@ export default function DroppedPinCard({ lat, lng, onClose }: Props) {
   // Local "added" feedback state — shows a Check icon for ~2s after
   // the user adds this pin to their avoid-areas blocklist.
   const [avoidAdded, setAvoidAdded] = useState(false);
+  // Nearest tagged business within ~30m of the drop point, if any.
+  // Lets us surface Call / Site CTAs in PlaceActions when the user
+  // long-pressed on (or right next to) a real shop/cafe/clinic.
+  // Null while loading or when nothing tagged is nearby — both look
+  // identical to the user (no extra buttons appear) so the panel
+  // doesn't twitch or shift layout depending on resolution latency.
+  const [nearbyPlace, setNearbyPlace] = useState<PlaceAtPoint | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setAddress(null);
+    setNearbyPlace(null);
     reverseGeocode(lat, lng)
       .then((label) => {
         if (!cancelled) setAddress(label);
@@ -37,6 +46,13 @@ export default function DroppedPinCard({ lat, lng, onClose }: Props) {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
+    // Best-effort POI lookup runs in parallel with reverse geocoding
+    // — both hit different services, so racing them shaves perceived
+    // latency. The lookup quietly resolves to null if nothing is
+    // tagged at the drop point.
+    fetchPlaceAtPoint(lat, lng).then((place) => {
+      if (!cancelled) setNearbyPlace(place);
+    });
     return () => {
       cancelled = true;
     };
@@ -101,7 +117,27 @@ export default function DroppedPinCard({ lat, lng, onClose }: Props) {
 
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 
-        <PlaceActions lat={lat} lng={lng} label={address ?? undefined} />
+        {nearbyPlace && (nearbyPlace.name || nearbyPlace.kind) && (
+          <p
+            className="text-[10px] -mt-1"
+            style={{ color: "var(--panel-text-muted)" }}
+            title={`Nearest tagged place — ${Math.round(nearbyPlace.distanceM)}m away`}
+          >
+            Near{" "}
+            <span style={{ color: "var(--panel-text-secondary)" }}>
+              {nearbyPlace.name}
+            </span>
+            {nearbyPlace.kind ? ` · ${nearbyPlace.kind}` : ""}
+          </p>
+        )}
+
+        <PlaceActions
+          lat={lat}
+          lng={lng}
+          label={address ?? undefined}
+          phone={nearbyPlace?.phone}
+          website={nearbyPlace?.website}
+        />
 
         {/* Inline quick-save form. The bookmark icon in PlaceActions
             persists with the auto-generated label only; QuickSavePlace

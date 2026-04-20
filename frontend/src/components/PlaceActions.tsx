@@ -16,6 +16,8 @@ import {
   MapPin,
   Car,
   Plus,
+  Phone,
+  Globe,
   type LucideIcon,
 } from "lucide-react";
 import { plusCode } from "@/lib/plus-code";
@@ -42,6 +44,15 @@ interface Props {
   incidentCategory?: string;
   /** ISO timestamp; rendered as "X min ago" on the OG card. */
   incidentTime?: string;
+  /** Optional contact info — surfaced as Call / Site CTA buttons at
+   *  the head of the action row when present. Populated by callers
+   *  who have OSM tag data on hand (DroppedPinCard does a small
+   *  Overpass lookup; SafetyScoreCard could similarly opt in if we
+   *  ever want phone CTAs on the tap-pulse card). Both are optional
+   *  and independent — websites without phones, phones without
+   *  websites, both, or neither all render correctly. */
+  phone?: string;
+  website?: string;
 }
 
 type ToastKind = "copied-coords" | "copied-pluscode" | "saved" | "parked" | "added-stop" | null;
@@ -65,6 +76,8 @@ export default function PlaceActions({
   incidentId,
   incidentCategory,
   incidentTime,
+  phone,
+  website,
 }: Props) {
   const [toast, setToast] = useState<ToastKind>(null);
   const [savePickerOpen, setSavePickerOpen] = useState(false);
@@ -240,6 +253,42 @@ export default function PlaceActions({
           >
             <Navigation className="w-4 h-4" />
           </button>
+        )}
+        {phone && (
+          <a
+            href={`tel:${phone.replace(/[^0-9+]/g, "")}`}
+            onClick={haptic}
+            title={`Call ${phone}`}
+            aria-label={`Call ${phone}`}
+            className={btn}
+            style={{
+              ...btnStyle,
+              color: "#22c55e",
+              background: "rgba(34,197,94,0.10)",
+              borderColor: "rgba(34,197,94,0.30)",
+            }}
+          >
+            <Phone className="w-4 h-4" />
+          </a>
+        )}
+        {website && (
+          <a
+            href={website}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={haptic}
+            title={`Open website (${website})`}
+            aria-label="Open website"
+            className={btn}
+            style={{
+              ...btnStyle,
+              color: "#3b82f6",
+              background: "rgba(59,130,246,0.10)",
+              borderColor: "rgba(59,130,246,0.30)",
+            }}
+          >
+            <Globe className="w-4 h-4" />
+          </a>
         )}
         <button
           type="button"

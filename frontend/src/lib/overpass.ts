@@ -342,3 +342,137 @@ out center ${limit * 2};`;
   console.warn("[pp] overpass bbox failed", lastErr);
   return [];
 }
+
+/** Tagged-place metadata returned by `fetchPlaceAtPoint` — a strict
+ *  subset of `Poi` minus the category union, since at the long-press
+ *  call site the POI may be a shop, amenity, or tourism feature and
+ *  forcing it into one of our seven UI categories would be lossy. */
+export interface PlaceAtPoint {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  distanceM: number;
+  phone?: string;
+  website?: string;
+  openingHours?: string;
+  wheelchair?: "yes" | "limited" | "no";
+  /** Raw OSM kind for display ("Cafe", "Pharmacy", "Bank") — derived
+   *  from the most specific tag we recognize. */
+  kind?: string;
+}
+
+const placeAtMemCache = new Map<string, { at: number; data: PlaceAtPoint | null }>();
+
+/** Look up the nearest *named* tagged place within `radiusM` meters of
+ *  a point. Used by DroppedPinCard so a long-press that lands on (or
+ *  next to) a tagged business surfaces the same Call/Site CTAs that
+ *  NearbyPois rows offer.
+ *
+ *  We constrain the Overpass query to nodes/ways with both a `name`
+ *  tag AND one of the recognized place keys (`amenity`, `shop`,
+ *  `tourism`, `office`, `leisure`, `healthcare`) — without that
+ *  constraint the result set explodes (every named building, alley,
+ *  monument). 30m default radius matches the typical sidewalk-to-
+ *  storefront distance; bigger lots like supermarkets are caught by
+ *  the way center being inside that radius. */
+export async function fetchPlaceAtPoint(
+  lat: number,
+  lng: number,
+  radiusM = 30
+): Promise<PlaceAtPoint | null> {
+  const key = `place:${lat.toFixed(5)},${lng.toFixed(5)}:${radiusM}`;
+  const mem = placeAtMemCache.get(key);
+  if (mem && Date.now() - mem.at < CACHE_TTL_MS) return mem.data;
+
+  // Reuse the bbox/named cache namespace for sessionStorage but key
+  // separately so the type's safe to read back.
+  if (typeof sessionStorage !== "undefined") {
+    try {
+      const raw = sessionStorage.getItem(`pp:overpass:${key}`);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { at: number; data: PlaceAtPoint | null };
+        if (Date.now() - parsed.at < CACHE_TTL_MS) {
+          placeAtMemCache.set(key, parsed);
+          return parsed.data;
+        }
+      }
+    } catch { /* ignore parse errors */ }
+  }
+
+  // Six unioned subqueries — one per "this is a real place" key
+  // family. We omit `building=*` because most buildings are unnamed
+  // outlines that contain a separate amenity node, and querying both
+  // would just dedupe back down to the amenity anyway.
+  const filters = ['["amenity"]', '["shop"]', '["tourism"]', '["office"]', '["leisure"]', '["healthcare"]'];
+  const around = `(around:${radiusM},${lat},${lng})`;
+  const subqueries = filters
+    .flatMap((f) => [`node["name"]${f}${around};`, `way["name"]${f}${around};`])
+    .join("\n  ");
+  const query = `[out:json][timeout:10];
+(
+  ${subqueries}
+);
+out center 12;`;
+
+  let lastErr: unknown;
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `data=${encodeURIComponent(query)}`,
+      });
+      if (!res.ok) { lastErr = new Error(`Overpass ${res.status}`); continue; }
+      const data = (await res.json()) as { elements?: OverpassElement[] };
+      const ranked = (data.elements ?? [])
+        .map((el): PlaceAtPoint | null => {
+          const elLat = el.lat ?? el.center?.lat;
+          const elLng = el.lon ?? el.center?.lon;
+          if (elLat == null || elLng == null) return null;
+          const tags = el.tags ?? {};
+          const name = tags.name || tags.brand || tags.operator;
+          if (!name) return null;
+          // Pick the most specific tag for the "kind" label. Order
+          // matters — shop is more specific than amenity for retail,
+          // healthcare beats amenity for clinics, etc.
+          const kindRaw =
+            tags.shop || tags.healthcare || tags.amenity || tags.tourism ||
+            tags.office || tags.leisure;
+          const kind = kindRaw
+            ? kindRaw.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+            : undefined;
+          return {
+            id: `${el.type}/${el.id}`,
+            name,
+            lat: elLat,
+            lng: elLng,
+            distanceM: haversineM(lat, lng, elLat, elLng),
+            phone: tags.phone || tags["contact:phone"] || undefined,
+            website: tags.website || tags["contact:website"] || undefined,
+            openingHours: tags["opening_hours"] || undefined,
+            wheelchair: parseWheelchair(tags.wheelchair),
+            kind,
+          };
+        })
+        .filter((p): p is PlaceAtPoint => p !== null)
+        .sort((a, b) => a.distanceM - b.distanceM);
+
+      const nearest = ranked[0] ?? null;
+      placeAtMemCache.set(key, { at: Date.now(), data: nearest });
+      if (typeof sessionStorage !== "undefined") {
+        try {
+          sessionStorage.setItem(
+            `pp:overpass:${key}`,
+            JSON.stringify({ at: Date.now(), data: nearest })
+          );
+        } catch { /* over quota — ignore */ }
+      }
+      return nearest;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  console.warn("[pp] overpass place-at-point failed", lastErr);
+  return null;
+}

@@ -54,6 +54,7 @@ import RecenterPill from "@/components/RecenterPill";
 import AlongRoutePanel from "@/components/AlongRoutePanel";
 import ParkingApproachPill from "@/components/ParkingApproachPill";
 import SafetyEscapeButton from "@/components/SafetyEscapeButton";
+import CompassIndicator from "@/components/CompassIndicator";
 import SafetyEscapePanel from "@/components/SafetyEscapePanel";
 import UndoToastHost from "@/components/UndoToastHost";
 import KeyboardShortcutsHelp from "@/components/KeyboardShortcutsHelp";
@@ -2035,6 +2036,15 @@ export default function Home() {
             <Search className="w-4 h-4" />
           </button>
         )}
+        {/* Compass — only renders when the device is publishing a
+            heading (iOS gates this behind a permission grant the
+            useDeviceHeading hook handles). The face stays north-up
+            with the map; a red arrow shows which way the user is
+            facing. Tapping recenters on the user, mirroring Maps. */}
+        <CompassIndicator
+          heading={userHeading ?? null}
+          onClick={userLocation ? goToMyLocation : undefined}
+        />
         <button
           type="button"
           onClick={goToMyLocation}
