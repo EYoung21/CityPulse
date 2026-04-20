@@ -14,6 +14,10 @@ interface Props {
   userLocation: { lat: number; lng: number } | null;
   /** Close handler — also fires when the user picks an action. */
   onClose: () => void;
+  /** Optional category to auto-select on mount. Used by the
+   *  approaching-destination parking pill to skip the "pick a chip"
+   *  step when the user already knows what they're looking for. */
+  initialCategory?: NearbyPoiCategory;
 }
 
 interface FetchState {
@@ -48,7 +52,7 @@ function haversineM(a: { lat: number; lng: number }, b: { lat: number; lng: numb
  *  This is the closest analogue to Google Maps' "Search along route"
  *  drawer that we can build without paid routing APIs.
  */
-export default function AlongRoutePanel({ geometry, userLocation, onClose }: Props) {
+export default function AlongRoutePanel({ geometry, userLocation, onClose, initialCategory }: Props) {
   const [state, setState] = useState<FetchState>({
     category: null,
     loading: false,
@@ -112,6 +116,20 @@ export default function AlongRoutePanel({ geometry, userLocation, onClose }: Pro
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Auto-select a starting category when the caller asked for one
+  // (e.g. the parking-on-approach pill). Polyline length is the gate
+  // — `pickCategory` no-ops below 2 points anyway, but waiting until
+  // we have geometry avoids a flicker of empty state.
+  useEffect(() => {
+    if (!initialCategory) return;
+    if (polyline.length < 2) return;
+    void pickCategory(initialCategory);
+    // We only want this to fire on the first valid render with the
+    // requested category — re-running on every dep change would
+    // refetch on user category taps. Intentionally narrow deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialCategory, polyline.length]);
 
   return (
     <div

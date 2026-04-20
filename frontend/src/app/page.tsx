@@ -52,6 +52,7 @@ import TurnList from "@/components/TurnList";
 import SearchAreaPill from "@/components/SearchAreaPill";
 import RecenterPill from "@/components/RecenterPill";
 import AlongRoutePanel from "@/components/AlongRoutePanel";
+import ParkingApproachPill from "@/components/ParkingApproachPill";
 import SafetyEscapeButton from "@/components/SafetyEscapeButton";
 import SafetyEscapePanel from "@/components/SafetyEscapePanel";
 import UndoToastHost from "@/components/UndoToastHost";
@@ -301,10 +302,19 @@ export default function Home() {
    *  meaningful when a trip is active — toggling closes the panel
    *  when the trip ends so it doesn't persist into a stale state. */
   const [alongRouteOpen, setAlongRouteOpen] = useState(false);
+  /** Optional category to pre-select when the AlongRoutePanel opens.
+   *  Set by the parking-on-approach pill so the panel skips the
+   *  "pick a chip" step. Cleared whenever the panel closes so the
+   *  next manual open starts on the empty state. */
+  const [alongRouteInitialCategory, setAlongRouteInitialCategory] =
+    useState<NearbyPoiCategory | undefined>(undefined);
   /** Whether the Get-to-safety bottom sheet is open. Always-available
    *  (i.e. not gated on an active trip) because the whole point is to
    *  reach it when something has gone wrong. */
   const [safetyEscapeOpen, setSafetyEscapeOpen] = useState(false);
+  /** Per-trip dismissal flag for the "Need parking?" pill. Reset
+   *  whenever a new trip starts so the next drive can re-prompt. */
+  const [parkingPillDismissed, setParkingPillDismissed] = useState(false);
   const [tripMode, setTripMode] = useState<string | null>(null);
   const [tripSteps, setTripSteps] = useState<ManeuverStep[] | null>(null);
   // Toggles the full step-by-step list overlay. Auto-cleared when the
@@ -1511,6 +1521,10 @@ export default function Home() {
               // build a recap card when it ends (the SearchSidebar's
               // `routeInfo` is gone by then).
               setFollowMe(true);
+              // Fresh trip → re-arm the parking-on-approach pill so the
+              // user sees the prompt even if they dismissed it last
+              // drive.
+              setParkingPillDismissed(false);
               if (meta) {
                 tripStatsRef.current = {
                   startedAt: Date.now(),
@@ -1842,6 +1856,29 @@ export default function Home() {
         />
       )}
 
+      {/* "Need parking?" approach pill — only visible when the user is
+          driving _and_ within the last ~800 m of their trip. We gate
+          on absolute remaining distance (not a raw progress %) so the
+          prompt fires at the same physical proximity regardless of
+          trip length. Dismissed-state is per-trip and resets on
+          trip start. */}
+      {tripGeometry &&
+        tripMode === "driving-car" &&
+        !parkingPillDismissed &&
+        !alongRouteOpen &&
+        tripStatsRef.current?.totalDistanceKm != null &&
+        (1 - tripProgress) * tripStatsRef.current.totalDistanceKm * 1000 < 800 &&
+        tripProgress < 0.99 && (
+          <ParkingApproachPill
+            onOpenParking={() => {
+              setAlongRouteInitialCategory("parking");
+              setAlongRouteOpen(true);
+              setParkingPillDismissed(true);
+            }}
+            onDismiss={() => setParkingPillDismissed(true)}
+          />
+        )}
+
       {/* Search-along-route drawer — bottom-anchored, only visible
           during an active trip. Issues a single Overpass bbox query
           per category and ranks POIs by detour distance. */}
@@ -1849,7 +1886,13 @@ export default function Home() {
         <AlongRoutePanel
           geometry={tripGeometry}
           userLocation={userLocation}
-          onClose={() => setAlongRouteOpen(false)}
+          initialCategory={alongRouteInitialCategory}
+          onClose={() => {
+            setAlongRouteOpen(false);
+            // Clear the auto-pick so the next manual open returns to
+            // the empty "pick a chip" state.
+            setAlongRouteInitialCategory(undefined);
+          }}
         />
       )}
 
