@@ -29,6 +29,12 @@ export interface AlongRoutePoiInput {
    *  AlongRoutePanel list) can render an "Open · closes 9 PM" badge
    *  without re-fetching. */
   openingHours?: string;
+  /** Pass-through OSM accessibility tag. Same shape as Poi.wheelchair. */
+  wheelchair?: "yes" | "limited" | "no";
+  /** Pass-through contact tags so the search-along-route list can
+   *  surface tap-to-call / open-website without a second lookup. */
+  phone?: string;
+  website?: string;
 }
 
 export interface AlongRoutePoi extends AlongRoutePoiInput {

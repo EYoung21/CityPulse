@@ -83,7 +83,16 @@ export default function AlongRoutePanel({ geometry, userLocation, onClose, initi
       if (seq !== fetchSeqRef.current) return;
       const ranked = rankAlongRoute(
         polyline,
-        raw.map((p) => ({ id: p.id, name: p.name, lat: p.lat, lng: p.lng, openingHours: p.openingHours })),
+        raw.map((p) => ({
+          id: p.id,
+          name: p.name,
+          lat: p.lat,
+          lng: p.lng,
+          openingHours: p.openingHours,
+          wheelchair: p.wheelchair,
+          phone: p.phone,
+          website: p.website,
+        })),
         { maxPerpM: 500, maxResults: 12 }
       );
       setState({ category: cat, loading: false, results: ranked, error: null });
