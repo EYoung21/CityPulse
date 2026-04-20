@@ -29,10 +29,54 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { buildListShareUrl } from "@/lib/share-list";
 import { requestUndoableAction } from "@/lib/undo-toast";
+import { preferredSpeedUnit } from "@/hooks/useGpsSpeed";
 
 interface Props {
   onFlyTo: (lat: number, lng: number) => void;
   onDirections: (name: string, coords: { lat: number; lng: number }) => void;
+  /** Current user position. When provided, each saved-place row shows
+   *  a "0.4 mi" / "640 m" label so the user can scan their list by
+   *  proximity at a glance. Optional because the sidebar can render
+   *  before geolocation resolves. */
+  userPos?: { lat: number; lng: number } | null;
+}
+
+/** Great-circle distance in meters between two lat/lng pairs. Pulled
+ *  inline rather than imported from `lib/along-route` to avoid
+ *  dragging the routing surface into the sidebar bundle. */
+function haversineM(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number }
+): number {
+  const R = 6_371_000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 +
+    Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/** Format a meters distance honoring the user's mph/kmh preference.
+ *  We reuse `preferredSpeedUnit` for consistency with TripHistory and
+ *  the speed readout — toggling units in one place flips them in
+ *  every nearby surface. */
+function fmtDistance(meters: number, unit: "mph" | "kmh"): string {
+  if (unit === "mph") {
+    const ft = meters * 3.28084;
+    if (ft < 528) return `${Math.round(ft / 10) * 10} ft`;
+    const mi = meters / 1609.34;
+    return mi < 10 ? `${mi.toFixed(1)} mi` : `${Math.round(mi)} mi`;
+  }
+  if (meters < 1000) {
+    return meters < 100
+      ? `${Math.round(meters / 5) * 5} m`
+      : `${Math.round(meters / 10) * 10} m`;
+  }
+  const km = meters / 1000;
+  return km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
 }
 
 const CATEGORY_ICON: Record<SavedCategory, LucideIcon> = {
@@ -61,7 +105,8 @@ function listColor(list: SavedList): string {
   return palette[hash % palette.length];
 }
 
-export default function SavedPlaces({ onFlyTo, onDirections }: Props) {
+export default function SavedPlaces({ onFlyTo, onDirections, userPos }: Props) {
+  const distanceUnit = preferredSpeedUnit();
   const {
     destinations,
     lists,
@@ -186,6 +231,9 @@ export default function SavedPlaces({ onFlyTo, onDirections }: Props) {
     const Icon = CATEGORY_ICON[dest.category];
     const baseColor = accentColor ?? CATEGORY_COLOR[dest.category];
     const menuOpen = openMenu === dest.id;
+    const distanceLabel = userPos
+      ? fmtDistance(haversineM(userPos, dest), distanceUnit)
+      : null;
     return (
       <div
         key={dest.id}
@@ -199,13 +247,24 @@ export default function SavedPlaces({ onFlyTo, onDirections }: Props) {
           className="w-3.5 h-3.5 shrink-0"
           style={{ color: baseColor, fill: dest.category === "favorite" ? baseColor : "transparent" }}
         />
-        <span
-          className="text-xs truncate flex-1"
-          style={{ color: "var(--panel-text)" }}
-          title={dest.name}
-        >
-          {dest.name}
-        </span>
+        <div className="flex-1 min-w-0">
+          <span
+            className="text-xs truncate block"
+            style={{ color: "var(--panel-text)" }}
+            title={dest.name}
+          >
+            {dest.name}
+          </span>
+          {distanceLabel && (
+            <span
+              className="text-[10px] tabular-nums block leading-tight"
+              style={{ color: "var(--panel-text-muted)" }}
+              aria-label={`${distanceLabel} from your location`}
+            >
+              {distanceLabel} away
+            </span>
+          )}
+        </div>
         <button
           onClick={(e) => {
             e.stopPropagation();

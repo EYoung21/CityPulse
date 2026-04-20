@@ -629,7 +629,7 @@ export default function SearchSidebar({
               Get Safe Directions
             </button>
 
-            <SavedPlaces onFlyTo={onFlyTo} onDirections={openDirections} />
+            <SavedPlaces onFlyTo={onFlyTo} onDirections={openDirections} userPos={userPos} />
 
             <TripHistory
               onReplay={(entry) => {
