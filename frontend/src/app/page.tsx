@@ -570,6 +570,12 @@ export default function Home() {
     wasSafeRoute: boolean;
     origin?: { display_name: string; lat: number; lng: number };
     dest?: { display_name: string; lat: number; lng: number };
+    /** Decimated geometry kept on the trip so we can stash it into
+     *  trip-history at completion for GPX export. We snapshot at
+     *  start (geometry doesn't drift mid-trip — reroutes blow away
+     *  the trip and start a new one) and decimate to ~120 vertices
+     *  to stay under localStorage budget. */
+    geometry?: [number, number][];
   } | null>(null);
   const lastTripProgressRef = useRef(0);
   useEffect(() => { lastTripProgressRef.current = tripProgress; }, [tripProgress]);
@@ -1528,6 +1534,24 @@ export default function Home() {
               // drive.
               setParkingPillDismissed(false);
               if (meta) {
+                // Decimate the polyline down to ~120 vertices for
+                // GPX export. Long routes can have 2000+ raw points
+                // which would blow the localStorage budget once we
+                // multiply by MAX_ENTRIES history entries.
+                let geomForHistory: [number, number][] | undefined;
+                if (geometry && geometry.length >= 2) {
+                  const target = 120;
+                  if (geometry.length <= target) {
+                    geomForHistory = geometry.slice();
+                  } else {
+                    const step = (geometry.length - 1) / (target - 1);
+                    const decimated: [number, number][] = [];
+                    for (let i = 0; i < target; i++) {
+                      decimated.push(geometry[Math.round(i * step)]);
+                    }
+                    geomForHistory = decimated;
+                  }
+                }
                 tripStatsRef.current = {
                   startedAt: Date.now(),
                   totalDistanceKm: meta.distanceKm,
@@ -1536,6 +1560,7 @@ export default function Home() {
                   wasSafeRoute: meta.isSafe,
                   origin: meta.origin,
                   dest: meta.dest,
+                  geometry: geomForHistory,
                 };
                 // Spoken departure summary — once at trip start. We
                 // delay slightly so the manuever chip's first
@@ -1595,6 +1620,7 @@ export default function Home() {
                   ...recap,
                   origin: stats.origin,
                   dest: stats.dest,
+                  geometry: stats.geometry,
                 });
                 setTripRecapHistoryId(entry.id);
               } else {

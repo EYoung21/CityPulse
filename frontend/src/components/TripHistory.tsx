@@ -8,6 +8,7 @@ import {
   Footprints,
   Accessibility,
   Clock,
+  Download,
   MapPin,
   Navigation,
   Star,
@@ -21,6 +22,7 @@ import {
   subscribeTripHistory,
   type TripHistoryEntry,
 } from "@/lib/trip-history";
+import { downloadTripGpx, hasExportableGeometry } from "@/lib/gpx-export";
 import { requestUndoableAction } from "@/lib/undo-toast";
 import { preferredSpeedUnit } from "@/hooks/useGpsSpeed";
 
@@ -156,6 +158,19 @@ export default function TripHistory({ onReplay }: Props) {
                 )}
               </div>
               <div className="flex items-center gap-0.5 shrink-0">
+                {hasExportableGeometry(e) && (
+                  <button
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      downloadTripGpx(e);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-emerald-500/70 hover:text-emerald-500"
+                    aria-label={`Download GPX for trip to ${destLabel}`}
+                    title="Download GPX"
+                  >
+                    <Download className="w-3 h-3" />
+                  </button>
+                )}
                 <button
                   onClick={(ev) => {
                     ev.stopPropagation();
