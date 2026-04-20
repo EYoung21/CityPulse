@@ -12,6 +12,14 @@ import "leaflet.heat";
 import "leaflet.markercluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
+// Side-effect import: registers `L.maplibreGL(...)` on the leaflet
+// namespace so the vector-tiles toggle can swap it in for the raster
+// `L.tileLayer` we use by default. The CSS is required by MapLibre
+// itself for its compass/attribution glyphs even though we don't show
+// them.
+import "maplibre-gl/dist/maplibre-gl.css";
+import "@maplibre/maplibre-gl-leaflet";
+import { vectorBasemapStyleUrl, isVectorTilesEnabled, subscribeVectorTiles } from "@/lib/vector-basemap";
 import type { Incident } from "@/lib/api";
 import { heatmapWeight } from "@/lib/severity";
 import type { RouteData } from "@/components/RoutePanel";
@@ -946,7 +954,12 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const previewLayerRef = useRef<L.LayerGroup | null>(null);
   const transportMarkerRef = useRef<L.Marker | null>(null);
   const animFrameRef = useRef<number | null>(null);
-  const tileLayerRef = useRef<L.TileLayer | null>(null);
+  /** Either the raster L.TileLayer or — when the user enabled vector
+   *  tiles in the Layers menu — the L.maplibreGL adapter layer. We
+   *  keep both in the same ref so the rest of the file can stay
+   *  unaware of which renderer is active. */
+  const tileLayerRef = useRef<L.Layer | null>(null);
+  const usingVectorTilesRef = useRef<boolean>(false);
   const trailLayerRef = useRef<L.LayerGroup | null>(null);
   const districtsLayerRef = useRef<L.LayerGroup | null>(null);
   const droppedPinMarkerRef = useRef<L.Marker | null>(null);
@@ -1063,10 +1076,24 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
     L.control.zoom({ position: "topright" }).addTo(map);
 
-    tileLayerRef.current = L.tileLayer(basemapUrl(basemapStyle, isDark), {
-      attribution: basemapAttribution(basemapStyle),
-      maxZoom: 19,
-    }).addTo(map);
+    // Initial base layer. The vector-tiles toggle persists in
+    // localStorage so we honor it on first paint without waiting for a
+    // React render.
+    usingVectorTilesRef.current = isVectorTilesEnabled();
+    if (usingVectorTilesRef.current) {
+      tileLayerRef.current = L.maplibreGL({
+        style: vectorBasemapStyleUrl(basemapStyle, isDark),
+        attributionControl: false,
+      }).addTo(map);
+      // The MapLibre layer doesn't surface attribution through Leaflet,
+      // so attach the CARTO/OSM credit directly to Leaflet's control.
+      map.attributionControl?.addAttribution(basemapAttribution(basemapStyle));
+    } else {
+      tileLayerRef.current = L.tileLayer(basemapUrl(basemapStyle, isDark), {
+        attribution: basemapAttribution(basemapStyle),
+        maxZoom: 19,
+      }).addTo(map);
+    }
 
     markersRef.current = L.markerClusterGroup({
       maxClusterRadius: 60,
@@ -1291,24 +1318,52 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Switch tiles when theme or explicit basemap style changes.
+  // Switch tiles when theme, explicit basemap style, or the vector-
+  // tiles preference changes. The vector-tiles toggle is handled by
+  // tearing down the current layer and recreating one of the right
+  // type — `L.tileLayer.setUrl` doesn't apply to the MaplibreGL layer
+  // and vice versa.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !tileLayerRef.current) return;
-    tileLayerRef.current.setUrl(basemapUrl(basemapStyle, isDark));
-    // Attribution can change too (e.g. CARTO ↔ OSM Standard).
-    const attrControl = map.attributionControl;
-    if (attrControl) {
-      try {
-        // Leaflet's attribution control doesn't expose a "replace" API, so we
-        // re-add by removing the previous string and inserting the new one.
-        attrControl.removeAttribution(basemapAttribution("voyager"));
-        attrControl.removeAttribution(basemapAttribution("streets"));
-        attrControl.addAttribution(basemapAttribution(basemapStyle));
-      } catch {
-        /* ignore */
+    if (!map) return;
+
+    const apply = (vector: boolean) => {
+      const attrControl = map.attributionControl;
+      if (tileLayerRef.current) {
+        map.removeLayer(tileLayerRef.current);
+        tileLayerRef.current = null;
       }
-    }
+      // Aggressively scrub all known basemap credits before re-adding
+      // — Leaflet's attribution control silently dedupes by string, so
+      // a stale "OSM Standard" line could otherwise linger after the
+      // user picked Voyager.
+      if (attrControl) {
+        try {
+          attrControl.removeAttribution(basemapAttribution("voyager"));
+          attrControl.removeAttribution(basemapAttribution("streets"));
+        } catch { /* ignore */ }
+      }
+      if (vector) {
+        tileLayerRef.current = L.maplibreGL({
+          style: vectorBasemapStyleUrl(basemapStyle, isDark),
+          attributionControl: false,
+        }).addTo(map);
+        attrControl?.addAttribution(basemapAttribution(basemapStyle));
+      } else {
+        tileLayerRef.current = L.tileLayer(basemapUrl(basemapStyle, isDark), {
+          attribution: basemapAttribution(basemapStyle),
+          maxZoom: 19,
+        }).addTo(map);
+      }
+      usingVectorTilesRef.current = vector;
+    };
+
+    apply(usingVectorTilesRef.current);
+    // React to changes from the Layers menu (or other tabs in the
+    // same browser via `storage` events propagated through the lib's
+    // pubsub).
+    const unsub = subscribeVectorTiles((v) => apply(v));
+    return () => { unsub(); };
   }, [isDark, basemapStyle]);
 
   const stableOnSelect = useCallback(onSelectIncident, [onSelectIncident]);

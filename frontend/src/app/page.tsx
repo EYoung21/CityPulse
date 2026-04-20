@@ -92,6 +92,7 @@ import { useGpsSpeed } from "@/hooks/useGpsSpeed";
 import { decodeTripToken, type DecodedTripToken } from "@/lib/share-trip";
 import type { ManeuverStep } from "@/lib/routing";
 import type { MapHandle, WaypointPin, BasemapStyle } from "@/components/IncidentMap";
+import { useVectorTiles } from "@/lib/vector-basemap";
 import {
   fetchIncidents,
   fetchSummary,
@@ -538,6 +539,7 @@ export default function Home() {
   useEffect(() => {
     if (typeof window !== "undefined") setPref("pp:basemap", basemapStyle);
   }, [basemapStyle]);
+  const [vectorTilesEnabled, setVectorTilesEnabled] = useVectorTiles();
   const [showTheme, setShowTheme] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
   // Tracked separately from the inbox panel itself so the bell badge
@@ -2528,6 +2530,30 @@ export default function Home() {
                     </button>
                   );
                 })}
+                <button
+                  onClick={() => setVectorTilesEnabled(!vectorTilesEnabled)}
+                  className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
+                  style={{ color: "var(--panel-text-secondary)" }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                  title="Render the basemap with MapLibre WebGL for sharper labels and smoother zoom. Beta — markers and overlays are unaffected."
+                >
+                  <span className="flex items-center gap-2">
+                    <span>Vector tiles</span>
+                    <span
+                      className="text-[9px] px-1 py-0.5 rounded"
+                      style={{ background: "rgba(59,130,246,0.18)", color: "#3b82f6" }}
+                    >
+                      BETA
+                    </span>
+                  </span>
+                  <div
+                    className="w-8 h-4 rounded-full transition-colors relative"
+                    style={vectorTilesEnabled ? { background: "#3b82f6" } : { background: "var(--panel-input-bg)" }}
+                  >
+                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${vectorTilesEnabled ? "left-4" : "left-0.5"}`} />
+                  </div>
+                </button>
               </motion.div>
             )}
           </AnimatePresence>
