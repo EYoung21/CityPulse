@@ -25,7 +25,7 @@ import {
   updateProfile,
   type User,
 } from "firebase/auth";
-import { collection, deleteDoc, doc, getDoc, getDocs, getFirestore, serverTimestamp, setDoc, writeBatch } from "firebase/firestore";
+import { Timestamp, collection, deleteDoc, doc, getDocs, getFirestore, onSnapshot, serverTimestamp, setDoc, writeBatch } from "firebase/firestore";
 import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
 
 const ADMIN_EMAILS = ["eliyoung4now@gmail.com", "kethansany@gmail.com", "rickywhy@gmail.com"];
@@ -63,6 +63,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [tier, setTier] = useState<UserTier>("free");
+  // proUntil mirrors users/{uid}.proUntil from Firestore. It's set
+  // by the Stripe webhook when a finite-duration pass (currently
+  // just the 3-day pass) is purchased. Independent of `tier` so a
+  // user can hold both a subscription AND a pass without one
+  // stomping the other on cancel/refund. Resolved into isPro via
+  // an OR below.
+  const [proUntil, setProUntil] = useState<Date | null>(null);
+  // Tick state purely so we can re-render on pass expiry without
+  // requiring a Firestore write. Bumped by a setTimeout scheduled
+  // to fire at the exact `proUntil` moment whenever it changes.
+  const [, setExpiryTick] = useState(0);
 
   // Cross-domain auth: if we arrived with a __pulse_token param, exchange it
   useEffect(() => {
@@ -101,28 +112,90 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     const auth = getAuth(getFirebaseApp());
-    const unsub = onAuthStateChanged(auth, async (u) => {
+
+    // Holds the Firestore subscription for the currently-signed-in
+    // user. We tear it down on every auth state change to avoid
+    // leaking a listener after sign-out and to avoid a stale doc
+    // shadowing the new user's data on account switching.
+    let userDocUnsub: (() => void) | null = null;
+
+    const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
+
+      // Always clean up any previous user-doc listener before we
+      // either subscribe to the new one or settle into the
+      // signed-out state. Otherwise an account switch (sign out →
+      // sign in as someone else) leaks the previous listener and
+      // briefly flashes the previous user's tier.
+      if (userDocUnsub) {
+        userDocUnsub();
+        userDocUnsub = null;
+      }
+
       if (u && u.email) {
-        try {
-          const db = getFirestore(getFirebaseApp());
-          const snap = await getDoc(doc(db, "users", u.uid));
-          const data = snap.data();
-          if (data?.tier && ["free", "pro", "enterprise"].includes(data.tier)) {
-            setTier(data.tier as UserTier);
-          } else {
+        const db = getFirestore(getFirebaseApp());
+        // Real-time listener so a Stripe webhook write — either
+        // tier:'pro' on subscription or proUntil on a 3-day pass —
+        // reflects in the UI within a second of the webhook firing,
+        // with no page reload required.
+        userDocUnsub = onSnapshot(
+          doc(db, "users", u.uid),
+          (snap) => {
+            const data = snap.data();
+            if (data?.tier && ["free", "pro", "enterprise"].includes(data.tier)) {
+              setTier(data.tier as UserTier);
+            } else {
+              setTier("free");
+            }
+            // Firestore Timestamps round-trip as objects with .toDate;
+            // be defensive about the field being missing or wrong-typed
+            // (e.g. left over from a manual Firestore edit during
+            // testing) so a malformed doc doesn't crash the provider.
+            const raw = data?.proUntil as Timestamp | undefined;
+            const next = raw && typeof raw.toDate === "function" ? raw.toDate() : null;
+            setProUntil(next);
+            setLoading(false);
+          },
+          () => {
+            // Read denied or transient — fall back to free rather
+            // than gambling on a stale grant.
             setTier("free");
+            setProUntil(null);
+            setLoading(false);
           }
-        } catch {
-          setTier("free");
-        }
+        );
       } else {
         setTier("free");
+        setProUntil(null);
+        setLoading(false);
       }
-      setLoading(false);
     });
-    return () => unsub();
+
+    return () => {
+      unsub();
+      if (userDocUnsub) userDocUnsub();
+    };
   }, []);
+
+  // Schedule a tick at the exact moment a pass expires so the UI
+  // re-locks Pro features without waiting for the next Firestore
+  // write or a page reload. We don't actually need to write
+  // anything — the isPro derivation below re-reads `new Date()` on
+  // every render, so a single state bump is enough to trigger the
+  // re-evaluation. We cap the timeout at ~24 days (max safe
+  // setTimeout delay is ~24.8 days; longer values fire immediately).
+  // For passes longer than that we'd need a recurring scheduler,
+  // but the 3-day pass is well inside the safe range.
+  useEffect(() => {
+    if (!proUntil) return;
+    const ms = proUntil.getTime() - Date.now();
+    if (ms <= 0) return;
+    const safe = Math.min(ms, 24 * 24 * 60 * 60 * 1000);
+    const handle = window.setTimeout(() => {
+      setExpiryTick((n) => n + 1);
+    }, safe);
+    return () => window.clearTimeout(handle);
+  }, [proUntil]);
 
   // Mirror tier to localStorage so non-React libs (alerts-inbox prune,
   // saved-place limit, etc.) can read it synchronously without prop
@@ -282,7 +355,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const isAdmin = !!user?.email && ADMIN_EMAILS.includes(user.email.toLowerCase());
-  const isPro = tier === "pro" || tier === "enterprise" || isAdmin;
+  // A user is Pro if any of three are true: their persistent tier is
+  // a paid one, they're a hard-coded admin, or they hold an unexpired
+  // finite-duration pass. The pass check is `>` so a proUntil exactly
+  // equal to "right now" reads as expired (matches the webhook's
+  // intent of granting full hours and not a tick more).
+  const isPro =
+    tier === "pro" ||
+    tier === "enterprise" ||
+    isAdmin ||
+    (!!proUntil && proUntil.getTime() > Date.now());
 
   const value = useMemo(
     () => ({

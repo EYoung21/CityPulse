@@ -17,7 +17,7 @@ export default function UpgradePrompt({ feature, description, inline, onClose }:
   const [loading, setLoading] = useState(false);
   const { user } = useAuth();
 
-  async function handleUpgrade(plan: "monthly" | "annual") {
+  async function handleUpgrade(plan: "monthly" | "annual" | "3day") {
     setLoading(true);
     try {
       const res = await fetch(CHECKOUT_URL, {
@@ -143,7 +143,7 @@ export default function UpgradePrompt({ feature, description, inline, onClose }:
             opacity: loading ? 0.6 : 1,
           }}
         >
-          Upgrade — $4.99/mo
+          Upgrade — $7.99/mo
         </button>
         <button
           onClick={() => handleUpgrade("annual")}
@@ -161,7 +161,7 @@ export default function UpgradePrompt({ feature, description, inline, onClose }:
             opacity: loading ? 0.6 : 1,
           }}
         >
-          Annual — $39.99/yr
+          Annual — $59.99/yr
           <span
             style={{
               display: "block",
@@ -171,7 +171,47 @@ export default function UpgradePrompt({ feature, description, inline, onClose }:
               marginTop: "2px",
             }}
           >
-            Save 33%
+            Save 37%
+          </span>
+        </button>
+
+        {/* Lower-commitment one-time pass for tourists / event-night
+         *  buyers / try-before-you-subscribe users. Visually muted vs
+         *  the monthly+annual stack so it reads as a secondary path,
+         *  not the headline offer — but still discoverable enough to
+         *  capture revenue from anyone who would otherwise bounce on
+         *  the subscription ask. The "no auto-renew" subtitle is the
+         *  single most important UX detail here: subscription regret
+         *  is the #1 reason people don't tap upgrade modals, and a
+         *  one-time pass with that promise neutralizes that fear. */}
+        <button
+          onClick={() => handleUpgrade("3day")}
+          disabled={loading}
+          style={{
+            padding: "10px",
+            marginTop: "4px",
+            borderRadius: "10px",
+            border: "1px dashed rgba(255,255,255,0.12)",
+            background: "transparent",
+            color: "rgba(255,255,255,0.7)",
+            fontSize: "13px",
+            fontWeight: 500,
+            cursor: loading ? "wait" : "pointer",
+            transition: "all 0.2s ease",
+            opacity: loading ? 0.6 : 1,
+          }}
+        >
+          Just visiting? 3-Day Pass — $5.99
+          <span
+            style={{
+              display: "block",
+              fontSize: "10px",
+              fontWeight: 400,
+              color: "rgba(255,255,255,0.4)",
+              marginTop: "2px",
+            }}
+          >
+            One-time charge · no auto-renew
           </span>
         </button>
       </div>

@@ -156,11 +156,18 @@ const CATEGORY_PILLS = [
 ] as const;
 
 const TIME_FILTERS = [
-  { label: "5m", hours: 5 / 60, pro: false },
-  { label: "10m", hours: 10 / 60, pro: false },
-  { label: "30m", hours: 0.5, pro: false },
+  // Free tier gets exactly one window: 1h. Sub-hour options are a
+  // Pro "precision tool" and 3h+ is Pro "depth" — both are gated.
+  // The lone free button keeps the page-looks-alive default for
+  // anonymous visitors without giving away the deeper history that
+  // is the actual premium value prop. The click handler at the
+  // render site (around line 1738) reads `pro` to decide whether
+  // to fire the upgrade modal vs apply the filter.
+  { label: "5m", hours: 5 / 60, pro: true },
+  { label: "10m", hours: 10 / 60, pro: true },
+  { label: "30m", hours: 0.5, pro: true },
   { label: "1h", hours: 1, pro: false },
-  { label: "3h", hours: 3, pro: false },
+  { label: "3h", hours: 3, pro: true },
   { label: "6h", hours: 6, pro: true },
   { label: "24h", hours: 24, pro: true },
   { label: "3d", hours: 72, pro: true },
@@ -273,7 +280,7 @@ function MapHome() {
   const [summary, setSummary] = useState<string>("");
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [routes, setRoutes] = useState<RouteData | null>(null);
-  const [timeFilter, setTimeFilter] = useState(24);
+  const [timeFilter, setTimeFilter] = useState(1);
   const [activeCats, setActiveCats] = useState<Set<string>>(new Set());
   const [mapTap, setMapTap] = useState<{ lat: number; lng: number } | null>(null);
   /** "Score this area" pill anchor: the lat/lng we last opened a card on (or
@@ -1760,6 +1767,16 @@ function MapHome() {
               timeFilterHours={timeFilter}
               onApply={(cats, hours) => {
                 setActiveCats(cats);
+                // Defensive clamp: a Pro user who later downgrades may
+                // still have presets in localStorage that reference a
+                // gated time window. Honoring those would silently
+                // bypass the paywall, so we re-check `pro` here and
+                // fire the upgrade modal instead of applying.
+                const tf = TIME_FILTERS.find((t) => t.hours === hours);
+                if (tf?.pro && !isPro) {
+                  setShowUpgrade("Extended History");
+                  return;
+                }
                 setTimeFilter(hours);
               }}
             />
