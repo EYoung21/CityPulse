@@ -104,9 +104,9 @@ interface VoterSnapshot {
   isAnonymous: boolean;
 }
 
-/** Cast / change / retract a vote on a scanner incident. Same
- *  transactional shape as `voteOnUserReport` so the parent doc's
- *  aggregates stay in sync with the per-voter vote.
+/** Cast / change / retract a vote on a scanner incident. Uses the
+ *  same transactional shape we used for crowdsourced reports so the
+ *  parent doc's aggregates stay in sync with the per-voter vote.
  *
  *  Pass `next === null` to retract an existing vote without writing
  *  a new one. Returns the resulting aggregate so callers can update

@@ -17,9 +17,7 @@ import {
   Volume2,
 } from "lucide-react";
 import PlaceActions from "@/components/PlaceActions";
-import UserReportControls from "@/components/UserReportControls";
 import IncidentLifecycleControls from "@/components/IncidentLifecycleControls";
-import { isUserReportIncidentId, type UserReport } from "@/lib/user-reports";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -273,13 +271,9 @@ function WaveformPlayer({
 interface Props {
   incident: Incident;
   onClose: () => void;
-  /** Live user-report data for crowdsourced incidents (id starts
-   *  with `user-`). Optional — when absent for a user report, the
-   *  voting controls render a loading placeholder. */
-  userReport?: UserReport | null;
 }
 
-export default function IncidentDetail({ incident, onClose, userReport = null }: Props) {
+export default function IncidentDetail({ incident, onClose }: Props) {
   const sev = getSeverity(incident.severity_category);
   const confidencePct = Math.round(incident.confidence * 100);
   const audioSrc = incident.audio_url
@@ -288,10 +282,6 @@ export default function IncidentDetail({ incident, onClose, userReport = null }:
       ? `${API_BASE}/api/audio/${incident.audio_clip}`
       : null;
   const hasAudio = !!audioSrc;
-  // User reports don't have scanner audio, AI confidence, or
-  // inhibitor metadata. We branch on this flag rather than fork the
-  // whole component so the existing layout/spacing stays consistent.
-  const isUserReport = isUserReportIncidentId(incident.id);
 
   // Mentions are appended chronologically by the dedup pipeline. We
   // render them oldest-first so the "story" reads naturally (initial
@@ -328,16 +318,10 @@ export default function IncidentDetail({ incident, onClose, userReport = null }:
               >
                 {sev.label}
               </span>
-              {isUserReport ? (
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-purple-500/30 text-purple-400 flex items-center gap-1">
-                  USER REPORT
-                </span>
-              ) : (
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-500 flex items-center gap-1">
-                  <AlertTriangle className="w-2.5 h-2.5" />
-                  UNVERIFIED
-                </span>
-              )}
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-500 flex items-center gap-1">
+                <AlertTriangle className="w-2.5 h-2.5" />
+                UNVERIFIED
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <h3
@@ -379,17 +363,7 @@ export default function IncidentDetail({ incident, onClose, userReport = null }:
 
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 
-        {isUserReport && (
-          <UserReportControls
-            incidentId={incident.id}
-            report={userReport}
-            onDeleted={onClose}
-          />
-        )}
-
-        {!isUserReport && (
-          <IncidentLifecycleControls incidentId={incident.id} />
-        )}
+        <IncidentLifecycleControls incidentId={incident.id} />
 
         {incident.description && (
           <div className="rounded-lg p-3" style={{ background: "var(--panel-input-bg)" }}>
@@ -402,37 +376,34 @@ export default function IncidentDetail({ incident, onClose, userReport = null }:
           </div>
         )}
 
-        {!isUserReport && (
-          <div className="rounded-lg p-3" style={{ background: "var(--panel-input-bg)" }}>
-            <p className="text-[10px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-2">
-              <Radio className="w-3 h-3" /> SCANNER TRANSCRIPT
+        <div className="rounded-lg p-3" style={{ background: "var(--panel-input-bg)" }}>
+          <p className="text-[10px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-2">
+            <Radio className="w-3 h-3" /> SCANNER TRANSCRIPT
+          </p>
+
+          {hasAudio ? (
+            <WaveformPlayer
+              src={audioSrc!}
+              transcript={incident.raw_text}
+              wordTimings={incident.word_timings}
+            />
+          ) : (
+            <p
+              className="text-xs leading-relaxed italic"
+              style={{ color: "var(--panel-text-secondary)" }}
+            >
+              &ldquo;{incident.raw_text}&rdquo;
             </p>
+          )}
 
-            {hasAudio ? (
-              <WaveformPlayer
-                src={audioSrc!}
-                transcript={incident.raw_text}
-                wordTimings={incident.word_timings}
-              />
-            ) : (
-              <p
-                className="text-xs leading-relaxed italic"
-                style={{ color: "var(--panel-text-secondary)" }}
-              >
-                &ldquo;{incident.raw_text}&rdquo;
-              </p>
-            )}
+          {!hasAudio && (
+            <div className="mt-2 flex items-center gap-1.5 text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+              <Volume2 className="w-3 h-3" />
+              Audio not available
+            </div>
+          )}
+        </div>
 
-            {!hasAudio && (
-              <div className="mt-2 flex items-center gap-1.5 text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
-                <Volume2 className="w-3 h-3" />
-                Audio not available
-              </div>
-            )}
-          </div>
-        )}
-
-        {!isUserReport && (
         <div className="flex gap-3">
           {[
             {
@@ -469,7 +440,6 @@ export default function IncidentDetail({ incident, onClose, userReport = null }:
             </div>
           ))}
         </div>
-        )}
 
         {incident.lat != null && incident.lng != null && (
           <div className="pt-1" style={{ borderTop: "1px solid var(--panel-border)" }}>
@@ -486,7 +456,7 @@ export default function IncidentDetail({ incident, onClose, userReport = null }:
           </div>
         )}
 
-        {!isUserReport && updateMentions.length > 0 && (
+        {updateMentions.length > 0 && (
           <div className="rounded-lg p-3" style={{ background: "var(--panel-input-bg)" }}>
             <p className="text-[10px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-2">
               <Radio className="w-3 h-3" />
@@ -542,7 +512,7 @@ export default function IncidentDetail({ incident, onClose, userReport = null }:
           </div>
         )}
 
-        {!isUserReport && incident.inhibitor_status !== "passed" && (
+        {incident.inhibitor_status !== "passed" && (
           <div className="flex items-center gap-2 text-xs text-amber-500 bg-amber-500/10 rounded-lg px-3 py-2">
             <Shield className="w-3.5 h-3.5" />
             <span className="font-mono text-[10px]">
@@ -552,18 +522,16 @@ export default function IncidentDetail({ incident, onClose, userReport = null }:
           </div>
         )}
 
-        {!isUserReport && (
-          <div
-            className="flex items-center gap-2 text-[10px] pt-1"
-            style={{ color: "var(--panel-text-muted)" }}
-          >
-            <Brain className="w-3 h-3" />
-            <span>Processed by AI pipeline with ethical guardrails</span>
-            {incident.inhibitor_status === "passed" && (
-              <Shield className="w-3 h-3 text-green-500/50" />
-            )}
-          </div>
-        )}
+        <div
+          className="flex items-center gap-2 text-[10px] pt-1"
+          style={{ color: "var(--panel-text-muted)" }}
+        >
+          <Brain className="w-3 h-3" />
+          <span>Processed by AI pipeline with ethical guardrails</span>
+          {incident.inhibitor_status === "passed" && (
+            <Shield className="w-3 h-3 text-green-500/50" />
+          )}
+        </div>
       </div>
     </div>
   );

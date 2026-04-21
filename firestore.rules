@@ -85,61 +85,6 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    match /userReports/{reportId} {
-      allow read: if true;
-      allow create: if request.auth != null
-        && request.auth.token.firebase.sign_in_provider != 'anonymous'
-        && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.lat is number
-        && request.resource.data.lng is number
-        && request.resource.data.lat >= -90 && request.resource.data.lat <= 90
-        && request.resource.data.lng >= -180 && request.resource.data.lng <= 180
-        && request.resource.data.category in [
-            'user_hazard', 'user_crash', 'user_police', 'user_disorder', 'user_other'
-          ]
-        && (!('note' in request.resource.data) || request.resource.data.note is string)
-        && (!('note' in request.resource.data) || request.resource.data.note.size() <= 140)
-        && request.resource.data.ownerName is string
-        && request.resource.data.ownerName.size() <= 60
-        && request.resource.data.expiresAt is number;
-      // Updates are limited to the confirmCount/disputeCount
-      // aggregates that the voting transaction maintains. Any other
-      // field change is rejected so reports remain immutable post-
-      // creation. We don't try to validate the exact delta from the
-      // rules — clients pass `increment(±1)` on the parent doc as
-      // part of a transaction that also writes the per-voter
-      // `votes/{uid}` doc, and Firestore guarantees both succeed or
-      // both fail.
-      allow update: if request.auth != null
-        && request.auth.token.firebase.sign_in_provider != 'anonymous'
-        && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['confirmCount', 'disputeCount'])
-        && request.resource.data.confirmCount is number
-        && request.resource.data.disputeCount is number
-        && request.resource.data.confirmCount >= 0
-        && request.resource.data.disputeCount >= 0;
-      allow delete: if (request.auth != null
-          && request.auth.uid == resource.data.ownerUid)
-        || isAdmin();
-
-      // Per-voter records under each report. Anyone signed-in (and
-      // not anonymous) may add their own vote document; the doc id
-      // MUST equal the voter's uid so a single user can't double-
-      // vote by writing multiple ids. The owner of the parent report
-      // can't vote on themselves. Reads are public so the UI can
-      // surface vote totals or your own current vote.
-      match /votes/{voterUid} {
-        allow read: if true;
-        allow create, update: if request.auth != null
-          && request.auth.token.firebase.sign_in_provider != 'anonymous'
-          && request.auth.uid == voterUid
-          && request.resource.data.value in [1, -1]
-          && get(/databases/$(database)/documents/userReports/$(reportId)).data.ownerUid != request.auth.uid;
-        allow delete: if request.auth != null
-          && request.auth.uid == voterUid;
-      }
-    }
-
     // Append-only audit log of admin moderation actions. Admins can
     // create entries (and read them all back); nobody can update or
     // delete. The moderation surface writes one row per destructive
@@ -155,7 +100,7 @@ service cloud.firestore {
       allow create: if isAdmin()
         && request.resource.data.actorUid == request.auth.uid
         && request.resource.data.kind in [
-            'userReport.delete', 'feedback.delete', 'feedback.status', 'push.broadcast'
+            'feedback.delete', 'feedback.status'
           ]
         && request.resource.data.targetId is string
         && request.resource.data.targetId.size() <= 200;

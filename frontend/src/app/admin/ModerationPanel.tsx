@@ -1,47 +1,38 @@
 "use client";
 
-/** Moderation surface for crowdsourced reports + in-app feedback.
+/** Moderation surface for in-app feedback + admin audit trail.
  *
  *  Two tabs:
- *    1. **User reports** — every `userReports` row in the current
- *       city (no client-side `expiresAt` or HIDE_THRESHOLD pruning),
- *       sortable by net votes, with a 1-tap "delete" that removes
- *       the row from Firestore. Useful for taking down obviously
- *       abusive submissions before the community votes them out.
- *    2. **Feedback** — every `feedback` row, grouped by triage state
+ *    1. **Feedback** — every `feedback` row, grouped by triage state
  *       (new / triaged / resolved / wontfix). Each row exposes a
- *       status dropdown and a delete button.
+ *       status dropdown and a delete button. This is the only
+ *       channel users have to talk to the maintainers from inside
+ *       the app, so it's the daily-driver inbox.
+ *    2. **Audit log** — append-only ledger of every moderator action
+ *       (status changes, deletions). Useful for accountability and
+ *       for answering "why did this row change?" weeks later.
  *
  *  The view is gated on the launcher level (Providers.tsx only
  *  renders ModerationPanel for admin users). Firestore rules are the
  *  real source of truth — non-admins that hit the page directly
  *  would still get permission errors on every read.
  *
- *  Performance: both subscriptions cap at a few hundred rows so
- *  large backlogs don't melt the browser. If the inbox ever exceeds
- *  that we'll add server-side pagination instead of bumping the
- *  cap. */
+ *  Performance: the feedback subscription caps at a few hundred rows
+ *  so a large backlog doesn't melt the browser. If the inbox ever
+ *  exceeds that we'll add server-side pagination instead of bumping
+ *  the cap. */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowLeft,
   AlertTriangle,
   ClipboardList,
   Loader2,
-  MapPin,
   MessageSquare,
-  Megaphone,
   RefreshCw,
-  Send,
   Trash2,
   Users,
 } from "lucide-react";
-import {
-  HIDE_THRESHOLD,
-  subscribeAllUserReportsForAdmin,
-  USER_REPORT_CATEGORIES,
-  type UserReport,
-} from "@/lib/user-reports";
 import {
   FEEDBACK_KINDS,
   FEEDBACK_STATUSES,
@@ -51,25 +42,18 @@ import {
 } from "@/lib/feedback";
 import {
   auditDeleteFeedback,
-  auditDeleteUserReport,
-  auditPushBroadcast,
   auditSetFeedbackStatus,
   describeAuditAction,
   subscribeModerationAudit,
   type ModerationAuditEntry,
 } from "@/lib/moderation-audit";
-import {
-  previewBroadcastRecipients,
-  sendBroadcast,
-} from "@/lib/push-subscriptions";
-import { getCurrentCity, PULSE_CITIES } from "@/lib/pulse-cities";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface Props {
   onBack: () => void;
 }
 
-type Tab = "reports" | "feedback" | "audit" | "broadcast";
+type Tab = "feedback" | "audit";
 
 function fmtAgo(ms: number): string {
   const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
@@ -81,12 +65,11 @@ function fmtAgo(ms: number): string {
   return `${d} d ago`;
 }
 
-function categoryMeta(slug: string) {
-  return USER_REPORT_CATEGORIES.find((c) => c.severity === slug);
-}
-
 export default function ModerationPanel({ onBack }: Props) {
-  const [tab, setTab] = useState<Tab>("reports");
+  // Default to the feedback tab — that's the only channel users
+  // have to reach us once they're in the app, so admins should land
+  // on the inbox without an extra click.
+  const [tab, setTab] = useState<Tab>("feedback");
   return (
     <div
       className="h-screen flex flex-col overflow-hidden"
@@ -118,19 +101,6 @@ export default function ModerationPanel({ onBack }: Props) {
         >
           <button
             type="button"
-            onClick={() => setTab("reports")}
-            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-              tab === "reports" ? "bg-purple-500 text-white" : ""
-            }`}
-            style={tab === "reports" ? {} : { color: "var(--panel-text-secondary)" }}
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <MapPin className="w-3 h-3" />
-              User reports
-            </span>
-          </button>
-          <button
-            type="button"
             onClick={() => setTab("feedback")}
             className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
               tab === "feedback" ? "bg-purple-500 text-white" : ""
@@ -155,298 +125,11 @@ export default function ModerationPanel({ onBack }: Props) {
               Audit log
             </span>
           </button>
-          <button
-            type="button"
-            onClick={() => setTab("broadcast")}
-            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-              tab === "broadcast" ? "bg-purple-500 text-white" : ""
-            }`}
-            style={tab === "broadcast" ? {} : { color: "var(--panel-text-secondary)" }}
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <Megaphone className="w-3 h-3" />
-              Broadcast
-            </span>
-          </button>
         </div>
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === "reports" ? (
-          <ReportsTab />
-        ) : tab === "feedback" ? (
-          <FeedbackTab />
-        ) : tab === "broadcast" ? (
-          <BroadcastTab />
-        ) : (
-          <AuditTab />
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── User reports tab ─────────────────────────────────────────────────
-
-function ReportsTab() {
-  const { user } = useAuth();
-  const [reports, setReports] = useState<UserReport[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
-  const [sort, setSort] = useState<"newest" | "score" | "disputed">("newest");
-
-  useEffect(() => {
-    setLoading(true);
-    const unsub = subscribeAllUserReportsForAdmin(
-      (rows) => { setReports(rows); setLoading(false); setError(null); },
-      (err) => { setError(err.message); setLoading(false); }
-    );
-    return unsub;
-  }, []);
-
-  const sorted = useMemo(() => {
-    const copy = [...reports];
-    if (sort === "score") {
-      copy.sort((a, b) => (b.confirmCount - b.disputeCount) - (a.confirmCount - a.disputeCount));
-    } else if (sort === "disputed") {
-      copy.sort((a, b) => (a.confirmCount - a.disputeCount) - (b.confirmCount - b.disputeCount));
-    } else {
-      copy.sort((a, b) => b.createdAtMs - a.createdAtMs);
-    }
-    return copy;
-  }, [reports, sort]);
-
-  const handleDelete = async (r: UserReport) => {
-    if (!user?.uid) {
-      alert("Sign in as an admin to delete reports.");
-      return;
-    }
-    if (!confirm("Delete this report? This is immediate and can't be undone.")) return;
-    setBusyIds((prev) => new Set(prev).add(r.id));
-    try {
-      // Snippet captures category + (truncated) note so the audit
-      // log entry remains useful after the source row is gone.
-      const meta = categoryMeta(r.category);
-      const snippet = `${meta?.label ?? r.category}${r.note ? ` — ${r.note}` : ""}`;
-      await auditDeleteUserReport(
-        r.id,
-        snippet,
-        {
-          uid: user.uid,
-          email: user.email ?? null,
-          displayName: user.displayName ?? null,
-        },
-        {
-          category: r.category,
-          ownerUid: r.ownerUid,
-          ownerName: r.ownerName ?? null,
-          lat: r.lat,
-          lng: r.lng,
-          confirmCount: r.confirmCount,
-          disputeCount: r.disputeCount,
-          createdAtMs: r.createdAtMs,
-        }
-      );
-    } catch (e) {
-      alert(e instanceof Error ? e.message : "Delete failed.");
-    } finally {
-      setBusyIds((prev) => {
-        const next = new Set(prev);
-        next.delete(r.id);
-        return next;
-      });
-    }
-  };
-
-  const buried = sorted.filter((r) => r.confirmCount - r.disputeCount <= HIDE_THRESHOLD).length;
-  const expired = sorted.filter((r) => r.expiresAtMs <= Date.now()).length;
-
-  return (
-    <div className="h-full flex flex-col">
-      <div
-        className="flex items-center gap-3 px-4 py-2 shrink-0 text-[11px]"
-        style={{
-          background: "var(--panel-bg, rgba(15,15,25,0.85))",
-          borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.06))",
-          color: "var(--panel-text-muted)",
-        }}
-      >
-        <span>{sorted.length} total</span>
-        {buried > 0 && (
-          <span style={{ color: "#ef4444" }}>· {buried} hidden by votes</span>
-        )}
-        {expired > 0 && (
-          <span style={{ color: "#f59e0b" }}>· {expired} past TTL</span>
-        )}
-        <div className="ml-auto inline-flex items-center gap-1">
-          <span>Sort:</span>
-          {([
-            ["newest", "Newest"],
-            ["score", "Highest score"],
-            ["disputed", "Most disputed"],
-          ] as const).map(([k, label]) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => setSort(k)}
-              className="px-2 py-0.5 rounded transition-colors"
-              style={{
-                background: sort === k ? "rgba(168,85,247,0.18)" : "transparent",
-                color: sort === k ? "#a855f7" : "var(--panel-text-muted)",
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto">
-        {loading && (
-          <div
-            className="flex items-center justify-center gap-2 py-12 text-xs"
-            style={{ color: "var(--panel-text-muted)" }}
-          >
-            <Loader2 className="w-4 h-4 animate-spin" />
-            Loading reports…
-          </div>
-        )}
-        {!loading && error && (
-          <div
-            className="flex items-start gap-2 mx-4 my-4 p-3 rounded-lg text-xs"
-            style={{ background: "rgba(239,68,68,0.10)", color: "#ef4444" }}
-          >
-            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-            <div>
-              {error}
-              <p className="mt-1 text-[11px] opacity-80">
-                Check that you&rsquo;re signed in with an admin account and that
-                Firestore rules have been deployed (firestore.rules).
-              </p>
-            </div>
-          </div>
-        )}
-        {!loading && !error && sorted.length === 0 && (
-          <div
-            className="text-center py-12 text-xs"
-            style={{ color: "var(--panel-text-muted)" }}
-          >
-            No reports in this city yet.
-          </div>
-        )}
-        <div className="divide-y" style={{ borderColor: "var(--panel-border)" }}>
-          {sorted.map((r) => {
-            const meta = categoryMeta(r.category);
-            const net = r.confirmCount - r.disputeCount;
-            const buried = net <= HIDE_THRESHOLD;
-            const expired = r.expiresAtMs <= Date.now();
-            return (
-              <div
-                key={r.id}
-                className="px-4 py-3 flex items-start gap-3"
-                style={{
-                  background: buried || expired ? "rgba(239,68,68,0.04)" : "transparent",
-                  borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.05))",
-                }}
-              >
-                <div
-                  className="text-base shrink-0 w-6 text-center"
-                  aria-hidden="true"
-                >
-                  {meta?.glyph ?? "•"}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap text-[11px]">
-                    <span
-                      className="font-semibold"
-                      style={{ color: "var(--panel-text)" }}
-                    >
-                      {meta?.label ?? r.category}
-                    </span>
-                    <span style={{ color: "var(--panel-text-muted)" }}>·</span>
-                    <span style={{ color: "var(--panel-text-secondary)" }}>
-                      {r.ownerName || "Reporter"}
-                    </span>
-                    <span style={{ color: "var(--panel-text-muted)" }}>·</span>
-                    <span style={{ color: "var(--panel-text-muted)" }} title={new Date(r.createdAtMs).toString()}>
-                      {fmtAgo(r.createdAtMs)}
-                    </span>
-                    <span
-                      className="ml-1 px-1.5 py-0.5 rounded font-mono"
-                      style={{
-                        color: net > 0 ? "#22c55e" : net < 0 ? "#ef4444" : "var(--panel-text-muted)",
-                        background:
-                          net > 0 ? "rgba(34,197,94,0.10)" :
-                          net < 0 ? "rgba(239,68,68,0.10)" :
-                          "var(--panel-input-bg)",
-                      }}
-                    >
-                      {net > 0 ? `+${net}` : net} ({r.confirmCount}/{r.disputeCount})
-                    </span>
-                    {buried && (
-                      <span
-                        className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
-                        style={{ background: "rgba(239,68,68,0.15)", color: "#ef4444" }}
-                      >
-                        Hidden
-                      </span>
-                    )}
-                    {expired && (
-                      <span
-                        className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
-                        style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}
-                      >
-                        Expired
-                      </span>
-                    )}
-                  </div>
-                  {r.note && (
-                    <p
-                      className="mt-1 text-[12px] leading-snug whitespace-pre-wrap"
-                      style={{ color: "var(--panel-text)" }}
-                    >
-                      {r.note}
-                    </p>
-                  )}
-                  <div
-                    className="mt-1 flex items-center gap-3 text-[10px] font-mono"
-                    style={{ color: "var(--panel-text-muted)" }}
-                  >
-                    <a
-                      href={`https://www.google.com/maps?q=${r.lat},${r.lng}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="hover:underline"
-                    >
-                      {r.lat.toFixed(5)}, {r.lng.toFixed(5)}
-                    </a>
-                    <span>uid: {r.ownerUid.slice(0, 8)}…</span>
-                    <span>id: {r.id.slice(0, 8)}…</span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void handleDelete(r)}
-                  disabled={busyIds.has(r.id)}
-                  className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium disabled:opacity-50"
-                  style={{
-                    background: "rgba(239,68,68,0.10)",
-                    color: "#ef4444",
-                    border: "1px solid rgba(239,68,68,0.30)",
-                  }}
-                >
-                  {busyIds.has(r.id) ? (
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                  ) : (
-                    <Trash2 className="w-3 h-3" />
-                  )}
-                  Delete
-                </button>
-              </div>
-            );
-          })}
-        </div>
+        {tab === "feedback" ? <FeedbackTab /> : <AuditTab />}
       </div>
     </div>
   );
@@ -734,7 +417,6 @@ function AuditTab() {
     color: string;
   }[] = [
     { value: "all",                 label: "All",        color: "#a855f7" },
-    { value: "userReport.delete",   label: "Report deletes", color: "#ef4444" },
     { value: "feedback.delete",     label: "Feedback deletes", color: "#ef4444" },
     { value: "feedback.status",     label: "Status changes", color: "#3b82f6" },
   ];
@@ -839,64 +521,6 @@ function AuditTab() {
                 &ldquo;{entry.targetSnippet}&rdquo;
               </p>
             )}
-            {/* Structured snapshot for report deletes — gives "what
-                exactly was removed" at a glance, even after the
-                source row is gone. We render it as a compact pill
-                row instead of a full table so the audit feed stays
-                scannable. */}
-            {entry.kind === "userReport.delete" && entry.payload && (
-              <div
-                className="mt-1.5 flex items-center gap-2 flex-wrap text-[10px]"
-                style={{ color: "var(--panel-text-muted)" }}
-              >
-                {typeof entry.payload.category === "string" && (
-                  <span className="px-1.5 py-0.5 rounded" style={{ background: "var(--panel-input-bg)" }}>
-                    {String(entry.payload.category)}
-                  </span>
-                )}
-                {typeof entry.payload.netVotes === "number" && (
-                  <span
-                    className="px-1.5 py-0.5 rounded font-mono"
-                    style={{
-                      background:
-                        (entry.payload.netVotes as number) > 0
-                          ? "rgba(34,197,94,0.10)"
-                          : (entry.payload.netVotes as number) < 0
-                            ? "rgba(239,68,68,0.10)"
-                            : "var(--panel-input-bg)",
-                      color:
-                        (entry.payload.netVotes as number) > 0
-                          ? "#22c55e"
-                          : (entry.payload.netVotes as number) < 0
-                            ? "#ef4444"
-                            : undefined,
-                    }}
-                  >
-                    {(entry.payload.netVotes as number) > 0 ? "+" : ""}
-                    {entry.payload.netVotes as number}
-                    {" "}({entry.payload.confirmCount as number}/{entry.payload.disputeCount as number})
-                  </span>
-                )}
-                {typeof entry.payload.lat === "number" && typeof entry.payload.lng === "number" && (
-                  <a
-                    href={`https://www.google.com/maps?q=${entry.payload.lat},${entry.payload.lng}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-mono hover:underline"
-                  >
-                    {(entry.payload.lat as number).toFixed(4)}, {(entry.payload.lng as number).toFixed(4)}
-                  </a>
-                )}
-                {typeof entry.payload.ageAtDeleteMs === "number" && (
-                  <span className="font-mono">
-                    age: {fmtAgo(Date.now() - (entry.payload.ageAtDeleteMs as number))}
-                  </span>
-                )}
-                {typeof entry.payload.ownerName === "string" && (
-                  <span>by {entry.payload.ownerName as string}</span>
-                )}
-              </div>
-            )}
             <div
               className="mt-1 flex items-center gap-3 text-[10px] font-mono flex-wrap"
               style={{ color: "var(--panel-text-muted)" }}
@@ -907,379 +531,6 @@ function AuditTab() {
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-// ── Broadcast tab ────────────────────────────────────────────────────
-
-/** Title/body lengths matching the backend caps so the user can't
- *  compose something that gets silently truncated by the API. */
-const BROADCAST_TITLE_MAX = 80;
-const BROADCAST_BODY_MAX = 240;
-
-/** Two-step composer: edit → confirm with recipient count. The
- *  confirmation step is non-negotiable for a city-wide push since
- *  the audience can't be recalled — once webpush hands the payload
- *  to the push service we can't yank it back. */
-function BroadcastTab() {
-  const { user } = useAuth();
-  const currentCity = useMemo(() => getCurrentCity(), []);
-
-  const [city, setCity] = useState<string | "all">(currentCity.slug);
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const [url, setUrl] = useState("");
-  const [requireInteraction, setRequireInteraction] = useState(false);
-
-  const [recipients, setRecipients] = useState<number | null>(null);
-  const [loadingPreview, setLoadingPreview] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [lastResult, setLastResult] = useState<{
-    sent: number;
-    matched: number;
-    failed: number;
-    skipped: number;
-  } | null>(null);
-
-  // Live preview the recipient count whenever the city selector
-  // changes; debounced lightly so flipping the dropdown doesn't
-  // hammer the backend on every keystroke / arrow-key press.
-  useEffect(() => {
-    let cancelled = false;
-    setLoadingPreview(true);
-    setRecipients(null);
-    const t = window.setTimeout(async () => {
-      const targetCity = city === "all" ? null : city;
-      try {
-        const n = await previewBroadcastRecipients(targetCity);
-        if (!cancelled) setRecipients(n);
-      } finally {
-        if (!cancelled) setLoadingPreview(false);
-      }
-    }, 250);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, [city]);
-
-  const titleTrim = title.trim();
-  const bodyTrim = body.trim();
-  const canCompose = titleTrim.length > 0 && bodyTrim.length > 0;
-
-  const onSend = async () => {
-    if (!user || !canCompose) return;
-    setSending(true);
-    setError(null);
-    setLastResult(null);
-    const targetCity = city === "all" ? null : city;
-    try {
-      const result = await sendBroadcast({
-        city: targetCity,
-        title: titleTrim,
-        body: bodyTrim,
-        url: url.trim() || null,
-        requireInteraction,
-      });
-      setLastResult({
-        sent: result.sent,
-        matched: result.matched,
-        failed: result.failed,
-        skipped: result.skipped,
-      });
-      try {
-        await auditPushBroadcast(
-          {
-            city: targetCity,
-            title: titleTrim,
-            body: bodyTrim,
-            url: url.trim() || null,
-            requireInteraction,
-            matched: result.matched,
-            sent: result.sent,
-            failed: result.failed,
-            skipped: result.skipped,
-            serverTag: result.tag ?? null,
-          },
-          {
-            uid: user.uid,
-            email: user.email ?? null,
-            displayName: user.displayName ?? null,
-          }
-        );
-      } catch (auditErr) {
-        // Broadcast went out, audit failed — surface the error so
-        // the admin can investigate without us silently losing the
-        // record. The recipient count UI still updates.
-        setError(auditErr instanceof Error ? auditErr.message : String(auditErr));
-      }
-      setConfirming(false);
-      // Clear the composer on success so the next broadcast starts
-      // from a blank slate; the toast-style result panel below stays
-      // visible until the next compose action.
-      setTitle("");
-      setBody("");
-      setUrl("");
-      setRequireInteraction(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <div className="h-full overflow-y-auto p-4 space-y-3 max-w-xl mx-auto">
-      <div
-        className="p-3 rounded-lg border"
-        style={{
-          background: "rgba(168,85,247,0.08)",
-          borderColor: "rgba(168,85,247,0.30)",
-        }}
-      >
-        <div className="flex items-center gap-2 mb-1.5">
-          <Megaphone className="w-4 h-4 text-purple-400" />
-          <span className="text-sm font-semibold" style={{ color: "var(--panel-text)" }}>
-            Send a city-wide push
-          </span>
-        </div>
-        <p className="text-[11px]" style={{ color: "var(--panel-text-secondary)" }}>
-          This goes out to every Web Push subscriber in the selected
-          city. Use it for genuine emergencies (shelter-in-place,
-          severe weather, area-wide hazard) or critical product
-          announcements — not for marketing or weekly digests. Every
-          broadcast is recorded in the audit log with delivery counts.
-        </p>
-      </div>
-
-      <div className="space-y-2">
-        <div>
-          <label
-            className="block text-[11px] font-medium mb-1"
-            style={{ color: "var(--panel-text-secondary)" }}
-          >
-            City
-          </label>
-          <select
-            value={city}
-            onChange={(e) => setCity(e.target.value as string | "all")}
-            className="w-full px-2 py-1.5 rounded-md text-xs"
-            style={{
-              background: "var(--panel-input-bg)",
-              color: "var(--panel-text)",
-              border: "1px solid var(--panel-border)",
-            }}
-          >
-            {PULSE_CITIES.map((c) => (
-              <option key={c.slug} value={c.slug}>
-                {c.name} ({c.slug})
-              </option>
-            ))}
-            <option value="all">All cities (use sparingly)</option>
-          </select>
-          <p className="mt-1 text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
-            {loadingPreview ? (
-              <span className="inline-flex items-center gap-1">
-                <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                Counting subscribers…
-              </span>
-            ) : recipients === null ? (
-              "—"
-            ) : (
-              <>{recipients.toLocaleString()} subscribed device{recipients === 1 ? "" : "s"} match this city.</>
-            )}
-          </p>
-        </div>
-
-        <div>
-          <label
-            className="block text-[11px] font-medium mb-1"
-            style={{ color: "var(--panel-text-secondary)" }}
-          >
-            Title <span style={{ color: "var(--panel-text-muted)" }}>({title.length}/{BROADCAST_TITLE_MAX})</span>
-          </label>
-          <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value.slice(0, BROADCAST_TITLE_MAX))}
-            placeholder="e.g. Severe weather warning"
-            className="w-full px-2 py-1.5 rounded-md text-xs"
-            style={{
-              background: "var(--panel-input-bg)",
-              color: "var(--panel-text)",
-              border: "1px solid var(--panel-border)",
-            }}
-          />
-        </div>
-
-        <div>
-          <label
-            className="block text-[11px] font-medium mb-1"
-            style={{ color: "var(--panel-text-secondary)" }}
-          >
-            Body <span style={{ color: "var(--panel-text-muted)" }}>({body.length}/{BROADCAST_BODY_MAX})</span>
-          </label>
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value.slice(0, BROADCAST_BODY_MAX))}
-            rows={4}
-            placeholder="What's happening, and what should the user do?"
-            className="w-full px-2 py-1.5 rounded-md text-xs resize-none"
-            style={{
-              background: "var(--panel-input-bg)",
-              color: "var(--panel-text)",
-              border: "1px solid var(--panel-border)",
-            }}
-          />
-        </div>
-
-        <div>
-          <label
-            className="block text-[11px] font-medium mb-1"
-            style={{ color: "var(--panel-text-secondary)" }}
-          >
-            Tap-to-open URL <span style={{ color: "var(--panel-text-muted)" }}>(optional)</span>
-          </label>
-          <input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="/transparency  ·  /?incident=…  ·  https://example.org/info"
-            className="w-full px-2 py-1.5 rounded-md text-xs"
-            style={{
-              background: "var(--panel-input-bg)",
-              color: "var(--panel-text)",
-              border: "1px solid var(--panel-border)",
-            }}
-          />
-          <p className="mt-1 text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
-            Defaults to the map. Same-origin links open in the existing
-            tab if one's open.
-          </p>
-        </div>
-
-        <label className="flex items-center gap-2 text-[11px]" style={{ color: "var(--panel-text-secondary)" }}>
-          <input
-            type="checkbox"
-            checked={requireInteraction}
-            onChange={(e) => setRequireInteraction(e.target.checked)}
-          />
-          Require interaction (notification stays visible until tapped)
-        </label>
-      </div>
-
-      {error && (
-        <div
-          className="p-2 rounded text-[11px] flex items-start gap-1.5"
-          style={{
-            background: "rgba(239,68,68,0.10)",
-            color: "#fca5a5",
-            border: "1px solid rgba(239,68,68,0.30)",
-          }}
-        >
-          <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {lastResult && !confirming && (
-        <div
-          className="p-2 rounded text-[11px]"
-          style={{
-            background: "rgba(34,197,94,0.10)",
-            color: "#86efac",
-            border: "1px solid rgba(34,197,94,0.30)",
-          }}
-        >
-          Broadcast delivered to {lastResult.sent.toLocaleString()} of{" "}
-          {lastResult.matched.toLocaleString()} devices
-          {lastResult.failed > 0 && <> · {lastResult.failed} failed</>}
-          {lastResult.skipped > 0 && <> · {lastResult.skipped} respected user prefs (snooze / quiet hours)</>}.
-        </div>
-      )}
-
-      {!confirming ? (
-        <button
-          type="button"
-          onClick={() => {
-            setError(null);
-            setLastResult(null);
-            setConfirming(true);
-          }}
-          disabled={!canCompose}
-          className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-medium disabled:opacity-50"
-          style={{
-            background: canCompose ? "rgba(168,85,247,0.20)" : "var(--panel-input-bg)",
-            color: canCompose ? "#c084fc" : "var(--panel-text-muted)",
-            border: `1px solid ${canCompose ? "rgba(168,85,247,0.40)" : "var(--panel-border)"}`,
-          }}
-        >
-          <Send className="w-3 h-3" />
-          Review broadcast
-        </button>
-      ) : (
-        <div
-          className="p-3 rounded-lg space-y-2"
-          style={{
-            background: "rgba(239,68,68,0.08)",
-            border: "1px solid rgba(239,68,68,0.30)",
-          }}
-        >
-          <p className="text-[11px] font-medium" style={{ color: "#fca5a5" }}>
-            About to push to {(recipients ?? 0).toLocaleString()} device
-            {recipients === 1 ? "" : "s"} ({city === "all" ? "all cities" : city}). Confirm to send.
-          </p>
-          <div
-            className="p-2 rounded"
-            style={{
-              background: "var(--panel-bg)",
-              border: "1px solid var(--panel-border)",
-            }}
-          >
-            <p className="text-xs font-semibold" style={{ color: "var(--panel-text)" }}>{titleTrim}</p>
-            <p className="text-[11px] mt-0.5" style={{ color: "var(--panel-text-secondary)" }}>{bodyTrim}</p>
-            {url.trim() && (
-              <p className="text-[10px] mt-1 font-mono" style={{ color: "var(--panel-text-muted)" }}>
-                → {url.trim()}
-              </p>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setConfirming(false)}
-              disabled={sending}
-              className="flex-1 px-3 py-1.5 rounded-md text-xs disabled:opacity-50"
-              style={{
-                background: "var(--panel-input-bg)",
-                color: "var(--panel-text-secondary)",
-                border: "1px solid var(--panel-border)",
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={onSend}
-              disabled={sending || !canCompose}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50"
-              style={{
-                background: "rgba(239,68,68,0.20)",
-                color: "#f87171",
-                border: "1px solid rgba(239,68,68,0.40)",
-              }}
-            >
-              {sending ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
-              ) : (
-                <Send className="w-3 h-3" />
-              )}
-              {sending ? "Sending…" : "Send broadcast"}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

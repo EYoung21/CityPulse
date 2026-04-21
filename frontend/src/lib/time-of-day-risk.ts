@@ -25,7 +25,6 @@
  */
 
 import type { Incident } from "@/lib/api";
-import { isUserReportIncidentId } from "@/lib/user-reports";
 
 const R_KM = 6371;
 const MIN_INCIDENTS_FOR_CURVE = 8;
@@ -77,10 +76,6 @@ export function buildTimeOfDayProfile(
 
   for (const inc of incidents) {
     if (inc.lat == null || inc.lng == null) continue;
-    // Skip user-submitted reports — they're noisy, often duplicated,
-    // and would bias the historical-shape signal toward whatever was
-    // crowdsourced today rather than the location's actual rhythm.
-    if (isUserReportIncidentId(inc.id)) continue;
     if (haversineKm(center, { lat: inc.lat, lng: inc.lng }) > radiusKm) continue;
     const ts = Date.parse(inc.reported_at);
     if (Number.isNaN(ts)) continue;
