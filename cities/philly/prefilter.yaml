@@ -1,0 +1,23 @@
+# Per-city prefilter overrides for Philadelphia.
+# These EXTEND the shared defaults at philly_pulse/data/prefilter_default.yaml.
+# See that file for the architecture and the full list of universal patterns.
+#
+# Add only patterns/keywords that are specific to PPD/PFD/SEPTA radio.
+
+noise_patterns:
+  # PPD unit roll-call patterns: "Charlie one to base", "David two
+  # responding" etc. Without an incident keyword these are admin chatter.
+  - "(?i)^(charlie|david|edward|frank|king|mary|nora|highway) (one|two|three|four|five|six|seven|eight|nine|ten)( to (base|dispatch))?[\\s.,!?]*$"
+
+  # SEPTA-specific check-ins.
+  - "(?i)^septa (transit|police) (1[0-9]|[1-9])[\\s.,!?]*$"
+
+keep_keywords:
+  # PPD-specific terminology.
+  - foot pursuit
+  - vehicle pursuit
+  - pgun
+  - shots heard
+  - shots fired
+  - person with a gun
+  - assist officer

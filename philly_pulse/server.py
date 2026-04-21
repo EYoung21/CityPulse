@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import admin_events, geocode, inhibitor, llm, persistence as store, push as push_mod, weights
+from . import admin_events, geocode, inhibitor, llm, persistence as store, prefilter, push as push_mod, weights
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -573,6 +573,36 @@ async def ingest(req: IngestRequest):
             city=city,
         )
         return {"status": "collected", "reason": "LLM auto-processing paused; raw transcript stored"}
+
+    # ── Cheap regex prefilter (saves LLM $$$) ──────────────────────
+    # Drop confirmed-junk lines (acks, hallucinated prompt fragments,
+    # punctuation-only segments) before paying for gpt-4o-mini. The
+    # prefilter is paranoid by default: any line that contains a real
+    # incident keyword bypasses the noise check. See
+    # philly_pulse/prefilter.py and cities/<slug>/prefilter.yaml.
+    pf_keep, pf_reason = prefilter.is_dispatch_likely(req.text, city=city)
+    if not pf_keep:
+        await admin_events.broadcast({
+            "type": "prefilter_skip",
+            "correlation": correlation,
+            "feed_id": feed_id,
+            "reason": pf_reason,
+        })
+        store.insert_extraction(
+            feed_id=feed_id,
+            raw_text=req.text,
+            reported_at=req_timestamp,
+            audio_clip=effective_audio_clip,
+            raw_audio_clip=req.raw_audio_clip,
+            preprocess_meta=req.preprocess_meta,
+            variants=req.variants,
+            llm_relevant=False,
+            llm_confidence=0.0,
+            city=city,
+            prefilter_status="skipped",
+            prefilter_reason=pf_reason,
+        )
+        return {"status": "prefiltered", "reason": pf_reason}
 
     # ── Full pipeline mode ──────────────────────────────────────────
     await admin_events.broadcast({
@@ -1223,6 +1253,16 @@ async def admin_ws(ws: WebSocket):
 async def admin_feeds():
     """List of available Broadcastify feeds."""
     return {"feeds": FEEDS}
+
+
+@app.get("/api/admin/prefilter/metrics")
+async def admin_prefilter_metrics():
+    """In-process counters for the regex prefilter, per city.
+
+    Each city entry has `seen` (total lines), `kept` (passed to LLM),
+    and `skipped` (dropped before LLM). Resets when the worker restarts.
+    """
+    return {"enabled": prefilter.PREFILTER_ENABLED, "metrics": prefilter.get_metrics()}
 
 
 class PredictRequest(BaseModel):
