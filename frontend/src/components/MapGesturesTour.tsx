@@ -3,11 +3,11 @@
 /** First-run interactive walkthrough of map gestures.
  *
  *  Why ship this:
- *    The map supports a half-dozen non-obvious gestures (long-press
- *    to drop a pin, single-tap for a Safety Score Card, two-finger
- *    pinch to zoom, etc.) that users would otherwise discover by
- *    accident — or never. A short, skippable tour up front cuts the
- *    "how do I…" floor.
+ *    The map supports a half-dozen non-obvious gestures (single-tap
+ *    for a Safety Score Card, long-press for a live-activity peek,
+ *    two-finger pinch to zoom, etc.) that users would otherwise
+ *    discover by accident — or never. A short, skippable tour up
+ *    front cuts the "how do I…" floor.
  *
  *  Behaviour:
  *    - Auto-opens once on first visit (gated by a localStorage flag
@@ -62,11 +62,11 @@ const STEPS: Step[] = [
   },
   {
     icon: Hand,
-    title: "Long-press to drop a pin",
+    title: "Long-press for live activity",
     bodyTouch:
-      "Press and hold to drop a sticky pin — useful for sharing a meeting spot, copying coordinates, or saving a place you don't have an address for.",
+      "Press and hold anywhere to peek at what's happening right now — a quick read of incidents reported in the last hour within a block or so. Read-only, dismisses with a tap.",
     bodyMouse:
-      "Right-click (or hold the mouse down for half a second) to drop a sticky pin — handy for sharing a meeting spot, copying coordinates, or saving a place without an address.",
+      "Right-click (or hold the mouse down for half a second) to peek at what's happening right now — a quick read of incidents reported in the last hour within a block or so. Read-only, dismisses with a click.",
     accent: "#a855f7",
   },
   {
