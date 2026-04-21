@@ -56,6 +56,7 @@ export async function GET(req: NextRequest) {
   const accent = SEVERITY_COLOR[category] || "#3b82f6";
   const catLabel = category ? categoryLabel(category) : "PhillyPulse";
   const timeLabel = time ? relTime(time) : "";
+  const logoUrl = new URL("/logo.png", req.url).toString();
 
   return new ImageResponse(
     (
@@ -84,21 +85,14 @@ export async function GET(req: NextRequest) {
         />
 
         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-          <div
-            style={{
-              width: 56,
-              height: 56,
-              borderRadius: 16,
-              background: "rgba(59,130,246,0.15)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              border: "1px solid rgba(59,130,246,0.35)",
-              fontSize: 28,
-            }}
-          >
-            🛡️
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={logoUrl}
+            alt=""
+            width={56}
+            height={56}
+            style={{ display: "block" }}
+          />
           <div style={{ display: "flex", flexDirection: "column" }}>
             <span style={{ fontSize: 22, fontWeight: 700, letterSpacing: 1 }}>
               PhillyPulse
