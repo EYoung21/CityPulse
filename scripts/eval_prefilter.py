@@ -101,20 +101,36 @@ def _parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def _iter_extractions(days: int) -> Iterable[dict]:
+def _iter_extractions(days: int, page_size: int = 2000) -> Iterable[dict]:
     """Stream every `extractions` doc from the last N days.
 
-    Uses a server-side `where` on `reported_at` so we don't pull the
-    full collection. `reported_at` is stored as ISO8601 string, which
-    sorts lexicographically the same as chronologically.
+    Uses a server-side `where` on `reported_at` plus `order_by` +
+    `start_after` cursoring so we never ask Firestore for more than
+    `page_size` rows at a time. The unpaged version blows past the 60s
+    server-side execution deadline once the result set is in the
+    hundred-thousands.
     """
     db = _ensure_client()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    q = db.collection("extractions").where("reported_at", ">=", cutoff)
-    for snap in q.stream():
-        data = snap.to_dict() or {}
-        data["id"] = snap.id
-        yield data
+    base = (
+        db.collection("extractions")
+        .where("reported_at", ">=", cutoff)
+        .order_by("reported_at")
+        .limit(page_size)
+    )
+    last_snap = None
+    while True:
+        q = base if last_snap is None else base.start_after(last_snap)
+        page = list(q.stream())
+        if not page:
+            return
+        for snap in page:
+            data = snap.to_dict() or {}
+            data["id"] = snap.id
+            yield data
+        last_snap = page[-1]
+        if len(page) < page_size:
+            return
 
 
 def _format_pct(num: int, denom: int) -> str:

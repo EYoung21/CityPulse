@@ -118,6 +118,37 @@ keep_keywords:
   - seizure
   - chest pain
   - not breathing
+  # Phrasings that show up constantly in EMS dispatch and were silently
+  # dropped by the "PPD districts 1-26" Whisper-hallucination pattern
+  # (see eval_prefilter.py false-drops on 2026-04-19, 20 Philly cases).
+  - heart
+  - heart attack
+  - heart problem
+  - heart issues
+  - panic attack
+  - trouble breathing
+  - difficulty breathing
+  - difficult to breathe
+  - blood pressure
+  - injury
+  - injured
+  - injured person
+  - head injury
+  - fall
+  - fall victim
+  - fell
+  - mvc
+  - motor vehicle
+  - vehicle rescue
+  - battery
+  - suicide
+  - suicidal
+  - making threats
+  - alcohol withdrawal
+  - withdrawal
+  - pain
+  - argument
+  - chasing
 
   # Traffic / pursuit
   - crash
