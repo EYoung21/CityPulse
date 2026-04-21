@@ -3,6 +3,7 @@
 import { useState, useRef, useMemo } from "react";
 import type { Incident } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
+import IncidentThumbnail from "./IncidentThumbnail";
 import {
   AlertTriangle,
   Flame,
@@ -88,16 +89,25 @@ interface Props {
   incidents: Incident[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /**
+   * When true, each row renders a real OSM map thumbnail (≈110×72)
+   * on the right rail instead of the tiny dot-on-rect placeholder.
+   * Used by the full-screen `/feed` route. The sidebar feed (which
+   * lives next to a real map) keeps the placeholder to save space.
+   */
+  showMapThumbnail?: boolean;
 }
 
 function IncidentCard({
   inc,
   isSelected,
   onSelect,
+  showMapThumbnail,
 }: {
   inc: Incident;
   isSelected: boolean;
   onSelect: () => void;
+  showMapThumbnail?: boolean;
 }) {
   const sev = getSeverity(inc.severity_category);
   const isHighSev = inc.s_base >= 0.7;
@@ -224,7 +234,7 @@ function IncidentCard({
             </button>
           )}
 
-          {inc.lat != null && inc.lng != null && (
+          {inc.lat != null && inc.lng != null && !showMapThumbnail && (
             <div
               className="w-12 h-8 rounded border overflow-hidden shrink-0"
               style={{ borderColor: "var(--panel-border, rgba(255,255,255,0.1))" }}
@@ -262,10 +272,31 @@ function IncidentCard({
         </div>
       </div>
 
-      <div className="flex flex-col items-end gap-0.5 shrink-0">
+      <div className="flex flex-col items-end gap-1 shrink-0">
+        {showMapThumbnail && inc.lat != null && inc.lng != null && (
+          <IncidentThumbnail
+            lat={inc.lat}
+            lng={inc.lng}
+            width={110}
+            height={72}
+            markerColor={sev.markerColor}
+          />
+        )}
         <span className="text-[10px] font-mono" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }}>
           {timeAgo(inc.reported_at)}
         </span>
+        {(inc.mention_count ?? 0) > 1 && inc.last_mention_at && (
+          <span
+            className="text-[9px] font-mono px-1 py-px rounded"
+            style={{
+              background: "rgba(59,130,246,0.15)",
+              color: "#60a5fa",
+            }}
+            title={`${inc.mention_count} scanner mentions`}
+          >
+            +{(inc.mention_count ?? 1) - 1} upd · {timeAgo(inc.last_mention_at)}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -281,7 +312,7 @@ function timeAgo(isoStr: string): string {
   return `${Math.floor(hrs / 24)}d`;
 }
 
-export default function IncidentFeed({ incidents, selectedId, onSelect }: Props) {
+export default function IncidentFeed({ incidents, selectedId, onSelect, showMapThumbnail }: Props) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const blocks = useMemo(() => groupByTimeBlocks(incidents), [incidents]);
 
@@ -331,6 +362,7 @@ export default function IncidentFeed({ incidents, selectedId, onSelect }: Props)
                   inc={inc}
                   isSelected={inc.id === selectedId}
                   onSelect={() => onSelect(inc.id)}
+                  showMapThumbnail={showMapThumbnail}
                 />
               ))}
           </div>

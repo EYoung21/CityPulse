@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Lock } from "lucide-react";
 import { getAuth } from "firebase/auth";
 import { PULSE_CITIES, getCurrentCity, type PulseCity } from "@/lib/pulse-cities";
 import { useAuth } from "@/contexts/AuthContext";
@@ -11,14 +10,21 @@ import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
  * Pulse Network navigation dropdown.
  *
  * Renders a compact globe button in the header that opens a dropdown
- * listing all Pulse cities. The current city is highlighted; others
- * link to their live domains. Free users see other cities as locked.
+ * listing all Pulse cities. The current city is highlighted; tapping
+ * any other city navigates to that deployment's read-only view.
+ *
+ * Cross-city *reads* are free (matches Citizen, lowers acquisition
+ * friction, makes the network effect actually visible). Cross-city
+ * *writes* — saved places, push subs, user reports, custom alert
+ * zones — remain gated to the user's home city or behind Pro on the
+ * destination deployment, enforced at the relevant write endpoints
+ * rather than at this navigation surface.
  */
 export default function PulseNetworkNav() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const current = getCurrentCity();
-  const { user, isPro } = useAuth();
+  const { user } = useAuth();
 
   const navigateToCity = useCallback(async (city: PulseCity) => {
     let url = `https://${city.domain}`;
@@ -125,7 +131,6 @@ export default function PulseNetworkNav() {
               key={city.slug}
               city={city}
               isCurrent={city.slug === current.slug}
-              locked={!isPro && city.slug !== current.slug}
               onNavigate={navigateToCity}
               onClose={() => setOpen(false)}
             />
@@ -163,22 +168,20 @@ export default function PulseNetworkNav() {
 function CityRow({
   city,
   isCurrent,
-  locked,
   onNavigate,
   onClose,
 }: {
   city: PulseCity;
   isCurrent: boolean;
-  locked?: boolean;
   onNavigate: (city: PulseCity) => void;
   onClose: () => void;
 }) {
   return (
     <a
-      href={isCurrent || locked ? "#" : `https://${city.domain}`}
+      href={isCurrent ? "#" : `https://${city.domain}`}
       onClick={(e) => {
         e.preventDefault();
-        if (isCurrent || locked) return;
+        if (isCurrent) return;
         onClose();
         onNavigate(city);
       }}
@@ -188,20 +191,19 @@ function CityRow({
         gap: "10px",
         padding: "8px 14px",
         textDecoration: "none",
-        color: isCurrent ? "#60a5fa" : locked ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.8)",
+        color: isCurrent ? "#60a5fa" : "rgba(255,255,255,0.8)",
         fontSize: "14px",
         fontWeight: isCurrent ? 600 : 400,
         transition: "background 0.15s ease",
-        cursor: isCurrent || locked ? "default" : "pointer",
+        cursor: isCurrent ? "default" : "pointer",
         background: isCurrent ? "rgba(96,165,250,0.08)" : "transparent",
         borderLeft: isCurrent ? "2px solid #60a5fa" : "2px solid transparent",
-        opacity: locked ? 0.6 : 1,
       }}
       onMouseEnter={(e) => {
-        if (!isCurrent && !locked) e.currentTarget.style.background = "rgba(255,255,255,0.06)";
+        if (!isCurrent) e.currentTarget.style.background = "rgba(255,255,255,0.06)";
       }}
       onMouseLeave={(e) => {
-        if (!isCurrent && !locked) e.currentTarget.style.background = "transparent";
+        if (!isCurrent) e.currentTarget.style.background = "transparent";
       }}
     >
       <span style={{ fontSize: "18px", width: "24px", textAlign: "center" }}>
@@ -233,25 +235,7 @@ function CityRow({
           LIVE
         </span>
       )}
-      {locked && (
-        <span
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "3px",
-            fontSize: "9px",
-            padding: "2px 6px",
-            borderRadius: "4px",
-            background: "rgba(139,92,246,0.15)",
-            color: "#a78bfa",
-            fontWeight: 600,
-          }}
-        >
-          <Lock size={9} />
-          PRO
-        </span>
-      )}
-      {!isCurrent && !locked && (
+      {!isCurrent && (
         <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.25)" }}>↗</span>
       )}
     </a>

@@ -65,6 +65,8 @@ import {
   listCommuteSchedules,
   type CommuteScheduleSummary,
 } from "@/lib/commute-schedule-sync";
+import KeywordWatchSettings from "@/components/KeywordWatchSettings";
+import { requestInstallPrompt } from "@/components/InstallPrompt";
 
 const DEFAULT_RADIUS_LABEL = "3";
 
@@ -196,15 +198,43 @@ export default function PushSettings() {
   }
 
   if (!status.supported) {
+    // Detect iOS-not-installed: Safari on iOS doesn't expose
+    // PushManager / Notification at all in a regular tab — only when
+    // the site is launched from the home screen (PWA standalone). If
+    // we're here on iOS, the fix is "install the PWA". Surface the
+    // install prompt on tap rather than leaving the user with a
+    // dead-end warning. Non-iOS unsupported browsers (older Firefox
+    // versions, in-app webviews) get the plain warning since there's
+    // nothing actionable for them.
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    const isIos = /iPhone|iPad|iPod/i.test(ua) ||
+      (typeof navigator !== "undefined" && navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
     return (
       <div>
         <p className="text-xs font-semibold" style={{ color: "var(--panel-text)" }}>
           Closed-tab alerts
         </p>
-        <p className="text-[10px] leading-snug mt-0.5" style={{ color: "#f59e0b" }}>
-          Your browser doesn&rsquo;t support Web Push. iOS users:
-          install PhillyPulse to your home screen first (iOS 16.4+).
-        </p>
+        {isIos ? (
+          <>
+            <p className="text-[10px] leading-snug mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+              Apple requires installing CityPulse to your home screen
+              before it can send alerts (iOS 16.4+).
+            </p>
+            <button
+              type="button"
+              onClick={() => requestInstallPrompt()}
+              className="mt-1.5 px-2.5 py-1 rounded-md text-[10px] font-semibold"
+              style={{ background: "#3b82f6", color: "white" }}
+            >
+              Show install steps
+            </button>
+          </>
+        ) : (
+          <p className="text-[10px] leading-snug mt-0.5" style={{ color: "#f59e0b" }}>
+            Your browser doesn&rsquo;t support Web Push. Try Chrome,
+            Edge, Firefox, or Safari 16.4+ on a home-screen install.
+          </p>
+        )}
       </div>
     );
   }
@@ -824,6 +854,14 @@ export default function PushSettings() {
           )}
         </>
       )}
+
+      <div
+        className="mt-3 pt-3"
+        style={{ borderTop: "1px dashed var(--panel-border)" }}
+      >
+        <KeywordWatchSettings />
+      </div>
+
       {error && (
         <div className="mt-1.5 flex items-start gap-1 text-[10px]" style={{ color: "#ef4444" }}>
           <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />

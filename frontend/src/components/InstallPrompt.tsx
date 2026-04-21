@@ -1,6 +1,6 @@
 "use client";
 
-/** Tasteful "Install PhillyPulse" prompt for browsers that support
+/** Tasteful "Install CityPulse" prompt for browsers that support
  *  the `beforeinstallprompt` event (Chrome, Edge, Samsung Internet, etc).
  *
  *  Why this exists at all:
@@ -9,6 +9,11 @@
  *      conversion materially.
  *    - We get to choose *when* to ask — well after the user has shown
  *      intent, not on first paint where it'd feel spammy.
+ *    - On iOS specifically, install is the *only* way to receive Web
+ *      Push notifications (Apple gates push behind PWA installation).
+ *      So this isn't just a nice-to-have on iOS — it's the unlock for
+ *      keyword scanner alerts, commute predictions, and off-screen
+ *      pings. The copy on iOS leads with that.
  *
  *  Behavior:
  *    - Wait for `beforeinstallprompt` (Chromium browsers fire it once
@@ -16,8 +21,11 @@
  *      worker registered).
  *    - Defer the captured event so we control the timing.
  *    - Don't show on the first visit. Only show after the user has
- *      been on the site for 60 seconds *or* viewed a SafetyScoreCard
- *      / opened the Layers menu — i.e. demonstrated engagement.
+ *      been on the site for 60 seconds *or* a high-intent moment fires
+ *      (e.g. user tapped "enable push" while on iOS-not-installed —
+ *      see `requestInstallPrompt()` below). The engagement floor
+ *      keeps first-paint clean; the manual trigger lets us show
+ *      exactly when the user is most receptive.
  *    - Once shown, give the user 3 choices: install, not now (snooze
  *      30 days), never (permanent dismiss). Both dismiss paths
  *      persist via localStorage.
@@ -25,6 +33,17 @@
  *      "standalone capable but not installed" state and show a
  *      custom mini-tutorial (Add to Home Screen) instead.
  */
+
+/** Manual high-intent trigger. Fire this from places like the push
+ *  permission flow when you've detected the user is on iOS-not-
+ *  installed and they've just demonstrated they want notifications.
+ *  Bypasses the engagement timer; still respects the dismiss state
+ *  so we don't pester someone who has already said "never". */
+export const INSTALL_PROMPT_EVENT = "pp:request-install";
+export function requestInstallPrompt(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(INSTALL_PROMPT_EVENT));
+}
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -109,6 +128,18 @@ export default function InstallPrompt() {
     // to know what we are.
     const showTimer = window.setTimeout(() => setVisible(true), ENGAGEMENT_DELAY_MS);
 
+    // High-intent override: when a feature like "enable push" detects
+    // it can't proceed without the PWA being installed, it dispatches
+    // INSTALL_PROMPT_EVENT. Skip the engagement timer and show now.
+    // Still honor the dismiss state — if the user has already said
+    // "never" we don't override that.
+    const onManualRequest = () => {
+      if (loadDismiss() === "never") return;
+      setVisible(true);
+      if (isIos()) setIosHint(true);
+    };
+    window.addEventListener(INSTALL_PROMPT_EVENT, onManualRequest);
+
     // If the user installs through the browser's native UI, drop our
     // prompt so it doesn't keep nagging.
     const onInstalled = () => {
@@ -120,6 +151,7 @@ export default function InstallPrompt() {
 
     return () => {
       window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+      window.removeEventListener(INSTALL_PROMPT_EVENT, onManualRequest);
       window.removeEventListener("appinstalled", onInstalled);
       window.clearTimeout(showTimer);
       if (iosTimer) window.clearTimeout(iosTimer);
@@ -176,7 +208,7 @@ export default function InstallPrompt() {
         // (KeyboardShortcutsHelp uses z-1100; UndoToastHost ~ 1095).
         style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }}
         role="dialog"
-        aria-label="Install PhillyPulse"
+        aria-label="Install CityPulse"
       >
         <div
           className="pointer-events-auto w-full max-w-sm rounded-2xl shadow-2xl backdrop-blur-xl overflow-hidden"
@@ -201,15 +233,19 @@ export default function InstallPrompt() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold" style={{ color: "var(--panel-text)" }}>
-                Install PhillyPulse
+                {iosHint && !deferred ? "Get safety alerts on iOS" : "Install CityPulse"}
               </p>
               {deferred ? (
                 <p className="text-[11px] mt-0.5 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
-                  Get faster launches, an app icon, and offline support.
+                  Get instant launches, an app icon, offline support, and
+                  push alerts when CityPulse isn&rsquo;t open.
                 </p>
               ) : (
                 <p className="text-[11px] mt-0.5 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
-                  Tap the <Share2 className="inline w-3 h-3 align-text-top mx-0.5" /> share button, then choose <span className="font-medium">"Add to Home Screen"</span>.
+                  Apple requires installing CityPulse to your home screen
+                  before it can send alerts. Tap{" "}
+                  <Share2 className="inline w-3 h-3 align-text-top mx-0.5" />{" "}
+                  Share, then <span className="font-medium">&ldquo;Add to Home Screen&rdquo;</span>.
                 </p>
               )}
             </div>

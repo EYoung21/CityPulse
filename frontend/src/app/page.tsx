@@ -70,6 +70,7 @@ import OffscreenIncidentChip from "@/components/OffscreenIncidentChip";
 import IncidentAheadChip from "@/components/IncidentAheadChip";
 import AlertsInbox from "@/components/AlertsInbox";
 import { recordAlert, subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
+import { setAppBadge } from "@/lib/app-badge";
 import { loadMutedCategories } from "@/lib/alert-mutes";
 import { recordTrip, updateTrip, type TripHistoryEntry } from "@/lib/trip-history";
 import { getParkedPin, subscribeParkedPin, type ParkedPin } from "@/lib/parked-pin";
@@ -90,6 +91,10 @@ import { notifyIfBackgrounded } from "@/lib/notifications";
 import { getSeverity } from "@/lib/severity";
 import { useDeviceHeading } from "@/hooks/useDeviceHeading";
 import { useGpsSpeed } from "@/hooks/useGpsSpeed";
+import { useWakeLock } from "@/hooks/useWakeLock";
+import { useMobileHomeRedirect } from "@/hooks/useMobileHomeRedirect";
+import MobileBottomNav from "@/components/MobileBottomNav";
+import InboxUrlSync, { type InboxPanel } from "@/components/InboxUrlSync";
 import { decodeTripToken, type DecodedTripToken } from "@/lib/share-trip";
 import type { ManeuverStep } from "@/lib/routing";
 import type { MapHandle, WaypointPin, BasemapStyle } from "@/components/IncidentMap";
@@ -125,6 +130,7 @@ import Sparkline from "@/components/charts/Sparkline";
 import PulseNetworkNav from "@/components/PulseNetworkNav";
 import { useAuth } from "@/contexts/AuthContext";
 import UpgradePrompt, { ProBadge } from "@/components/UpgradePrompt";
+import { onUpgradeRequested } from "@/lib/upgrade";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 const WEIGHT_REFRESH_MS = 15000;
@@ -162,6 +168,13 @@ const TIME_FILTERS = [
   { label: "1mo", hours: 720, pro: true },
   { label: "3mo", hours: 2160, pro: true },
   { label: "6mo", hours: 4320, pro: true },
+  { label: "1y", hours: 8760, pro: true },
+  // Infinity = "show everything we have on disk". Backfills go back
+  // 180 days on Broadcastify-sourced cities; older data is preserved
+  // forever once ingested. The filter math (Date.now() - hours*ms)
+  // resolves to -Infinity, which the `t >= cutoff` predicate trivially
+  // accepts — no special-casing needed in the filter loop.
+  { label: "All", hours: Number.POSITIVE_INFINITY, pro: true },
 ] as const;
 
 const DEFAULT_FEED_LABELS: Record<string, string> = {
@@ -207,7 +220,22 @@ function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): nu
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 }
 
+/**
+ * Mobile-aware home shell: per the build plan (§4) mobile users land
+ * on `/feed` by default while desktop users land on the map. The
+ * heavy `MapHome` component below isn't even mounted while we're
+ * deciding (or while we're redirecting), which avoids:
+ *   - briefly painting the full map UI on a phone before bouncing
+ *   - eagerly subscribing to Firestore / spinning up Leaflet on a
+ *     visit that is about to leave the route anyway
+ */
 export default function Home() {
+  const decision = useMobileHomeRedirect();
+  if (decision !== "stay") return null;
+  return <MapHome />;
+}
+
+function MapHome() {
   const { mode, resolved, setMode, colorBlindSafe, setColorBlindSafe } = useTheme();
   const { destinations: savedDestinations, lists: savedLists } = useSavedDestinations();
   const isDark = resolved === "dark";
@@ -326,6 +354,11 @@ export default function Home() {
     if (!tripGeometry && showTurnList) setShowTurnList(false);
     if (!tripGeometry && alongRouteOpen) setAlongRouteOpen(false);
   }, [tripGeometry, showTurnList, alongRouteOpen]);
+  // Keep the screen awake while the user is actively navigating, the
+  // same UX Google Maps gives during turn-by-turn. Released
+  // automatically when the trip ends. This is best-effort: browsers
+  // without the Screen Wake Lock API silently no-op.
+  useWakeLock(Boolean(tripGeometry));
   const [previewOrigin, setPreviewOrigin] = useState<{ lat: number; lng: number } | null>(null);
   const [previewDest, setPreviewDest] = useState<{ lat: number; lng: number } | null>(null);
   const [previewWaypoints, setPreviewWaypoints] = useState<WaypointPin[] | null>(null);
@@ -543,14 +576,41 @@ export default function Home() {
   const [vectorTilesEnabled, setVectorTilesEnabled] = useVectorTiles();
   const [showTheme, setShowTheme] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
+  // Which AlertsInbox sub-panel should be visible when it opens. Set
+  // by the bottom-nav URL hint (`?inbox=settings` → "settings"); the
+  // user can still toggle internally once the drawer is up.
+  const [inboxPanel, setInboxPanel] = useState<"list" | "settings">("list");
+  // The query-param sync itself is rendered as a tiny child below
+  // (`<InboxUrlSync />`) — `useSearchParams` requires a Suspense
+  // boundary and we keep it scoped to a leaf component instead of
+  // pulling the entire MapHome under <Suspense>.
+  const handleInboxUrlChange = useCallback((panel: InboxPanel) => {
+    if (panel === "settings") {
+      setInboxPanel("settings");
+      setShowInbox(true);
+    } else if (panel === "list") {
+      setInboxPanel("list");
+      setShowInbox(true);
+    }
+    // panel === null → don't auto-close; the user might have opened
+    // the drawer themselves and there's no `?inbox=` to honor.
+  }, []);
   // Tracked separately from the inbox panel itself so the bell badge
   // updates even while the panel is closed (e.g. an alert lands while
   // the user is mid-trip).
   const [unreadAlerts, setUnreadAlerts] = useState(0);
   useEffect(() => {
-    setUnreadAlerts(unreadCount());
+    const initial = unreadCount();
+    setUnreadAlerts(initial);
+    setAppBadge(initial);
     const unsub = subscribeAlerts((next) => {
-      setUnreadAlerts(next.reduce((n, a) => n + (a.read ? 0 : 1), 0));
+      const n = next.reduce((acc, a) => acc + (a.read ? 0 : 1), 0);
+      setUnreadAlerts(n);
+      // Mirror the unread bell count to the OS app icon for installed
+      // PWAs (Chrome/Edge desktop, iOS 16.4+ Safari home-screen). No-op
+      // in regular browser tabs — the in-app bell is the only surface
+      // there.
+      setAppBadge(n);
     });
     return unsub;
   }, []);
@@ -593,6 +653,10 @@ export default function Home() {
   const [selectedDistrict, setSelectedDistrict] = useState<{ neighborhood: Neighborhood; incidents: Incident[] } | null>(null);
   const [clusterIncidentIds, setClusterIncidentIds] = useState<string[] | null>(null);
   const [showUpgrade, setShowUpgrade] = useState<string | null>(null);
+  // Listen for upgrade requests dispatched by descendants (saved-place
+  // limit, commute toggle, etc.). Centralizing the modal here avoids
+  // mounting one per gated surface and keeps focus management simple.
+  useEffect(() => onUpgradeRequested((feature) => setShowUpgrade(feature)), []);
   const [feedLabels, setFeedLabels] = useState<Record<string, string>>(DEFAULT_FEED_LABELS);
   const mapRef = useRef<MapHandle>(null);
 
@@ -1238,11 +1302,17 @@ export default function Home() {
     return filteredIncidents.filter((i) => idSet.has(i.id));
   }, [clusterIncidentIds, filteredIncidents]);
 
-  const activeTimeLabel = TIME_FILTERS.find((tf) => tf.hours === timeFilter)?.label
-    ? `Last ${TIME_FILTERS.find((tf) => tf.hours === timeFilter)!.label}`
-    : "";
+  const activeTimeLabel = (() => {
+    const tf = TIME_FILTERS.find((t) => t.hours === timeFilter);
+    if (!tf) return "";
+    if (!Number.isFinite(tf.hours)) return "All time";
+    return `Last ${tf.label}`;
+  })();
 
   const trendPct = useMemo(() => {
+    // "All time" has no comparable previous window — short-circuit so
+    // the badge doesn't show a meaningless 100% delta.
+    if (!Number.isFinite(timeFilter)) return 0;
     const windowMs = timeFilter * 60 * 60 * 1000;
     const now = Date.now();
     const currentStart = now - windowMs;
@@ -1323,6 +1393,8 @@ export default function Home() {
 
   return (
     <div className="relative w-full h-screen overflow-hidden" style={{ background: "var(--map-bg)" }}>
+      <MobileBottomNav />
+      <InboxUrlSync onChange={handleInboxUrlChange} />
       <AlertToast incidents={incidents} />
 
       <IncidentMap
@@ -2132,7 +2204,18 @@ export default function Home() {
           </button>
           <AlertsInbox
             open={showInbox}
-            onClose={() => setShowInbox(false)}
+            defaultPanel={inboxPanel}
+            onClose={() => {
+              setShowInbox(false);
+              // Clean the URL so reopening via the bell isn't stuck
+              // on whatever panel the deep-link last requested.
+              if (typeof window !== "undefined" && window.location.search.includes("inbox=")) {
+                const u = new URL(window.location.href);
+                u.searchParams.delete("inbox");
+                window.history.replaceState({}, "", u.toString());
+              }
+              setInboxPanel("list");
+            }}
             onJump={(incidentId, lat, lng) => {
               mapRef.current?.flyTo(lat, lng, 16);
               setSelectedId(incidentId);

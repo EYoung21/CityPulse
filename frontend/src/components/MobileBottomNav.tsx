@@ -1,0 +1,200 @@
+"use client";
+
+/**
+ * Persistent bottom tab bar for the mobile-sized viewport.
+ *
+ * Per the build plan §4: `[Map] [Feed] [Inbox] [Settings]`. This
+ * supersedes the floating `MobileFeedReturnPill` (which is now
+ * removed from MapHome) — the bar is the canonical way to swap
+ * between the four primary surfaces on a phone.
+ *
+ * Routing model:
+ *   - Map     → `/?view=map`            (sticks the map preference)
+ *   - Feed    → `/feed`
+ *   - Inbox   → `/?view=map&inbox=1`    (opens AlertsInbox in list mode)
+ *   - Settings→ `/?view=map&inbox=settings`
+ *                                       (opens AlertsInbox on Settings)
+ *
+ * `MapHome` (`app/page.tsx`) reads the `inbox` query param on mount
+ * and toggles `showInbox` + the inbox's `defaultPanel` accordingly,
+ * so the URL hint round-trips into UI state.
+ *
+ * The bar is *only* rendered when the viewport is ≤767px — desktop
+ * keeps the existing top-bar nav. We render `null` on desktop so the
+ * map's bottom-edge controls (compass, recenter, etc.) keep their
+ * full real estate.
+ */
+
+import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { Map as MapIcon, List, Bell, Settings as SettingsIcon } from "lucide-react";
+import { subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
+
+type TabId = "map" | "feed" | "inbox" | "settings";
+
+interface Tab {
+  id: TabId;
+  label: string;
+  href: string;
+  Icon: React.ComponentType<{ className?: string }>;
+}
+
+const TABS: Tab[] = [
+  { id: "map",      label: "Map",      href: "/?view=map",                Icon: MapIcon },
+  { id: "feed",     label: "Feed",     href: "/feed",                     Icon: List },
+  { id: "inbox",    label: "Inbox",    href: "/?view=map&inbox=1",        Icon: Bell },
+  { id: "settings", label: "Settings", href: "/?view=map&inbox=settings", Icon: SettingsIcon },
+];
+
+/** Standard iOS-style tab bar height (excluding the safe-area inset
+ *  for the home indicator, which we add on top). Exported so the map
+ *  page can pad the bottom of any UI it doesn't want overlapped. */
+export const MOBILE_NAV_HEIGHT_PX = 56;
+
+// Inner component that uses `useSearchParams` — extracted so we can
+// wrap *only this slice* in <Suspense>. Next.js requires a Suspense
+// boundary anywhere `useSearchParams()` is called inside the App
+// Router; the boundary is what lets the rest of the page keep
+// rendering even when the search params haven't been hydrated yet.
+function MobileBottomNavInner() {
+  const [show, setShow] = useState(false);
+  const [unread, setUnread] = useState(0);
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mql = window.matchMedia("(max-width: 767px)");
+    const apply = () => setShow(mql.matches);
+    apply();
+    if (typeof mql.addEventListener === "function") {
+      mql.addEventListener("change", apply);
+      return () => mql.removeEventListener("change", apply);
+    } else if (typeof mql.addListener === "function") {
+      mql.addListener(apply);
+      return () => mql.removeListener(apply);
+    }
+  }, []);
+
+  useEffect(() => {
+    setUnread(unreadCount());
+    return subscribeAlerts(() => setUnread(unreadCount()));
+  }, []);
+
+  if (!show) return null;
+
+  const inboxParam = searchParams?.get("inbox") ?? null;
+  const onFeed = pathname?.startsWith("/feed") ?? false;
+  const activeId: TabId = onFeed
+    ? "feed"
+    : inboxParam === "settings"
+      ? "settings"
+      : inboxParam
+        ? "inbox"
+        : "map";
+
+  return (
+    <nav
+      aria-label="Primary"
+      style={{
+        position: "fixed",
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 1000,
+        display: "flex",
+        alignItems: "stretch",
+        justifyContent: "space-around",
+        height: `calc(${MOBILE_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom, 0px))`,
+        paddingBottom: "env(safe-area-inset-bottom, 0px)",
+        background: "rgba(15,23,42,0.92)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        borderTop: "1px solid rgba(148,163,184,0.18)",
+        boxShadow: "0 -2px 12px rgba(0,0,0,0.35)",
+      }}
+    >
+      {TABS.map((tab) => {
+        const active = activeId === tab.id;
+        return (
+          <Link
+            key={tab.id}
+            href={tab.href}
+            aria-label={tab.label}
+            aria-current={active ? "page" : undefined}
+            // Replace history rather than pushing a new entry every
+            // time the user pings between tabs — keeps the back
+            // button useful (always returns to the prior in-app
+            // surface, not to a chain of nav-tap entries).
+            replace
+            style={{
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 2,
+              textDecoration: "none",
+              color: active ? "#60a5fa" : "#94a3b8",
+              transition: "color 120ms ease",
+              position: "relative",
+              // Comfortable tap target on phones; the icon+label
+              // already eat ~40px so this padding mostly buys
+              // accidental-tap forgiveness around the edges.
+              paddingTop: 4,
+              paddingBottom: 2,
+            }}
+          >
+            <span style={{ position: "relative", lineHeight: 0 }}>
+              <tab.Icon className="w-5 h-5" />
+              {tab.id === "inbox" && unread > 0 && (
+                <span
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    top: -4,
+                    right: -8,
+                    minWidth: 16,
+                    height: 16,
+                    padding: "0 4px",
+                    borderRadius: 9999,
+                    background: "#ef4444",
+                    color: "#fff",
+                    fontSize: 9,
+                    fontWeight: 700,
+                    lineHeight: "16px",
+                    textAlign: "center",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {unread > 9 ? "9+" : unread}
+                </span>
+              )}
+            </span>
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: active ? 700 : 500,
+                letterSpacing: 0.2,
+              }}
+            >
+              {tab.label}
+            </span>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+export default function MobileBottomNav() {
+  // The Suspense fallback renders nothing — the nav is non-essential
+  // chrome, and the alternative (a flash of blank bar) is uglier than
+  // a one-frame absence.
+  return (
+    <Suspense fallback={null}>
+      <MobileBottomNavInner />
+    </Suspense>
+  );
+}

@@ -12,7 +12,31 @@ import { isCategoryMuted } from "@/lib/alert-mutes";
 
 const KEY = "pp:alerts-inbox-v1";
 const MAX_ENTRIES = 50;
-const TTL_MS = 24 * 60 * 60 * 1000; // 24h sliding window
+/** Sliding TTL for free users. Matches the original 24h cap — the
+ *  inbox only contains alerts the user was *already shown* in-app, so
+ *  there's no info-leak parity argument for tightening this further.
+ *  Pro just gets a much longer scrollback. */
+const FREE_TTL_MS = 24 * 60 * 60 * 1000;
+/** Pro users get the full retention window. We cap at 6 months
+ *  matching the map's existing 6mo Pro filter ceiling — beyond that
+ *  storage starts to feel unbounded for what is, after all, just an
+ *  alerts log. */
+const PRO_TTL_MS = 6 * 30 * 24 * 60 * 60 * 1000;
+
+function currentTier(): "free" | "pro" | "enterprise" {
+  if (typeof window === "undefined") return "free";
+  try {
+    const t = window.localStorage.getItem("pp:tier");
+    if (t === "pro" || t === "enterprise") return t;
+  } catch {
+    /* ignore */
+  }
+  return "free";
+}
+
+function ttlForCurrentTier(): number {
+  return currentTier() === "free" ? FREE_TTL_MS : PRO_TTL_MS;
+}
 
 export interface InboxAlert {
   /** Stable id — usually the incident id, suffixed with the alert kind
@@ -43,7 +67,7 @@ function read(): InboxAlert[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw) as InboxAlert[];
     if (!Array.isArray(parsed)) return [];
-    const cutoff = Date.now() - TTL_MS;
+    const cutoff = Date.now() - ttlForCurrentTier();
     return parsed.filter((a) => a && typeof a.ts === "number" && a.ts >= cutoff);
   } catch {
     return [];
@@ -105,4 +129,16 @@ export function unreadCount(): number {
 export function subscribeAlerts(fn: Listener): () => void {
   listeners.add(fn);
   return () => { listeners.delete(fn); };
+}
+
+// When the tier changes mid-session (Stripe webhook + Firestore round
+// trip), re-broadcast the (now-pruned) alert list so badge counts and
+// the inbox view shrink without requiring a refresh.
+if (typeof window !== "undefined") {
+  window.addEventListener("pp:tier-changed", () => {
+    const next = read();
+    for (const fn of listeners) {
+      try { fn(next); } catch { /* ignore single bad subscriber */ }
+    }
+  });
 }

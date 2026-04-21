@@ -23,10 +23,13 @@ def _should_use_firestore() -> bool:
 
 if _should_use_firestore():
     from .firestore_store import (
+        append_mention,
         delete_incident,
+        find_recent_duplicate,
         get_conn,
         get_extraction,
         get_incident,
+        get_recent_extractions,
         incident_count,
         inhibitor_stats,
         insert_extraction,
@@ -38,9 +41,12 @@ if _should_use_firestore():
     )
 else:
     from .store import (
+        append_mention,
+        find_recent_duplicate,
         get_conn,
         get_extraction,
         get_incident,
+        get_recent_extractions,
         incident_count,
         inhibitor_stats,
         insert_extraction,

@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState, useEffect, useCallback } from "react";
-import type { Incident } from "@/lib/api";
+import { useRef, useState, useEffect, useCallback, useMemo } from "react";
+import type { Incident, IncidentMention } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
 import {
   AlertTriangle,
@@ -36,6 +36,16 @@ function formatTime(iso: string): string {
     hour12: true,
   });
   return `${date}, ${time}`;
+}
+
+function timeAgoShort(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 function WaveformPlayer({
@@ -283,6 +293,21 @@ export default function IncidentDetail({ incident, onClose, userReport = null }:
   // whole component so the existing layout/spacing stays consistent.
   const isUserReport = isUserReportIncidentId(incident.id);
 
+  // Mentions are appended chronologically by the dedup pipeline. We
+  // render them oldest-first so the "story" reads naturally (initial
+  // dispatch at top, follow-ups below). The very first mention is
+  // already represented by the main transcript block above, so trim
+  // it off to avoid duplication.
+  const updateMentions = useMemo<IncidentMention[]>(() => {
+    const all = incident.mentions ?? [];
+    if (all.length <= 1) return [];
+    const sorted = [...all].sort((a, b) =>
+      (a.at || "").localeCompare(b.at || "")
+    );
+    return sorted.slice(1);
+  }, [incident.mentions]);
+  const mentionCount = incident.mention_count ?? incident.mentions?.length ?? 0;
+
   return (
     <div
       className="rounded-xl overflow-hidden backdrop-blur-xl shadow-2xl"
@@ -458,6 +483,62 @@ export default function IncidentDetail({ incident, onClose, userReport = null }:
                 incidentTime={incident.reported_at}
               />
             </div>
+          </div>
+        )}
+
+        {!isUserReport && updateMentions.length > 0 && (
+          <div className="rounded-lg p-3" style={{ background: "var(--panel-input-bg)" }}>
+            <p className="text-[10px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-2">
+              <Radio className="w-3 h-3" />
+              UPDATES ({mentionCount})
+            </p>
+            <ul className="space-y-2">
+              {updateMentions.map((m, idx) => {
+                const mAudioSrc = m.audio_url
+                  ? m.audio_url
+                  : m.audio_clip && API_BASE
+                    ? `${API_BASE}/api/audio/${m.audio_clip}`
+                    : null;
+                return (
+                  <li
+                    key={`${m.at}-${idx}`}
+                    className="text-xs leading-relaxed pl-2 border-l-2"
+                    style={{
+                      borderColor: sev.markerColor + "55",
+                      color: "var(--panel-text)",
+                    }}
+                  >
+                    <div
+                      className="text-[10px] font-mono mb-1 flex items-center gap-2"
+                      style={{ color: "var(--panel-text-muted)" }}
+                    >
+                      <Clock className="w-2.5 h-2.5" />
+                      Updated {timeAgoShort(m.at)}
+                      {m.feed_id && (
+                        <>
+                          <span style={{ color: "var(--panel-border)" }}>·</span>
+                          <span>feed {m.feed_id}</span>
+                        </>
+                      )}
+                    </div>
+                    <p
+                      className="italic"
+                      style={{ color: "var(--panel-text-secondary)" }}
+                    >
+                      &ldquo;{m.raw_text}&rdquo;
+                    </p>
+                    {mAudioSrc && (
+                      <audio
+                        src={mAudioSrc}
+                        controls
+                        preload="none"
+                        className="w-full mt-1.5 h-7"
+                      />
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           </div>
         )}
 

@@ -222,6 +222,30 @@ def update_extraction(extraction_id: str, updates: dict) -> Optional[dict]:
     return None
 
 
+def get_recent_extractions(
+    feed_id: str,
+    before_iso: str,
+    within_seconds: int = 60,
+    limit: int = 3,
+) -> list[dict]:
+    """No-op for SQLite — extractions only stored in Firestore.
+
+    Adjacent-radio prior context degrades gracefully to no context when
+    running against SQLite; ingestion still works.
+    """
+    return []
+
+
+def find_recent_duplicate(**kwargs) -> Optional[dict]:
+    """No-op for SQLite — incident dedup only runs against Firestore."""
+    return None
+
+
+def append_mention(incident_id: str, mention: dict) -> Optional[dict]:
+    """No-op for SQLite — incident dedup only runs against Firestore."""
+    return None
+
+
 def insert_incident(
     raw_text: str,
     severity_category: str,
@@ -297,6 +321,7 @@ def list_incidents(
     since: Optional[str] = None,
     category: Optional[str] = None,
     include_blocked: bool = False,
+    include_hidden: bool = False,
 ) -> list[dict]:
     conn = get_conn()
     clauses = []
@@ -315,6 +340,9 @@ def list_incidents(
     rows = conn.execute(
         f"SELECT * FROM incidents{where} ORDER BY reported_at DESC", params
     ).fetchall()
+    # SQLite schema doesn't have a `hidden` column, but we accept the kwarg
+    # so the API matches Firestore. include_hidden is a no-op here.
+    _ = include_hidden
     return [dict(r) for r in rows]
 
 

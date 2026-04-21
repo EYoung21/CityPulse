@@ -32,11 +32,26 @@ import {
   setCommuteNotificationsEnabled,
 } from "@/lib/commute-notify";
 import { notificationsSupported } from "@/lib/notifications";
+import { useAuth } from "@/contexts/AuthContext";
+import { requestUpgrade } from "@/lib/upgrade";
+import { requestInstallPrompt } from "@/components/InstallPrompt";
 
 interface Props {
   open: boolean;
   onClose: () => void;
   onJump: (incidentId: string, lat: number, lng: number) => void;
+  /**
+   * Which subview should be visible the first time the drawer opens.
+   * Defaults to `"list"` (recent alerts). Set to `"settings"` to
+   * deep-link straight into the mute / push / commute panel — used
+   * by the mobile bottom nav's Settings tab so users skip the inbox
+   * list when they explicitly tapped Settings.
+   *
+   * Honored on the rising edge of `open` (false→true). After that
+   * the drawer's internal toggle takes over so the user can switch
+   * panels manually without us re-overriding their choice.
+   */
+  defaultPanel?: "list" | "settings";
 }
 
 function fmtAgo(ts: number): string {
@@ -59,10 +74,24 @@ const KIND_LABEL: Record<InboxAlert["kind"], string> = {
  *  language of the existing Theme/Layers menus so the control stack
  *  feels cohesive. Lists the most-recent N alerts with read state,
  *  with single-tap "fly to" + an unread bulk-clear. */
-export default function AlertsInbox({ open, onClose, onJump }: Props) {
+export default function AlertsInbox({ open, onClose, onJump, defaultPanel = "list" }: Props) {
+  const { isPro } = useAuth();
   const [alerts, setAlerts] = useState<InboxAlert[]>([]);
   const [quiet, setQuiet] = useState<QuietHoursConfig>(() => loadQuietHours());
-  const [showSettings, setShowSettings] = useState(false);
+  const [showSettings, setShowSettings] = useState(defaultPanel === "settings");
+
+  // Re-apply `defaultPanel` on each open so deep-linking into Settings
+  // from the bottom nav works repeatedly (not just on initial mount).
+  // We diff against `open` so an in-drawer panel toggle isn't immediately
+  // clobbered by this effect on the next render.
+  useEffect(() => {
+    if (open) {
+      setShowSettings(defaultPanel === "settings");
+    }
+    // Intentionally exclude `defaultPanel` so changing it while open
+    // doesn't fight a user who tapped the in-drawer toggle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
   const [quietActive, setQuietActive] = useState<boolean>(() => isQuietNow());
   const [muted, setMuted] = useState<Set<string>>(() => loadMutedCategories());
   // Mirror the localStorage flag so the toggle reflects the live
@@ -346,17 +375,39 @@ export default function AlertsInbox({ open, onClose, onJump }: Props) {
 
               <div className="flex items-center justify-between">
                 <div className="min-w-0 pr-2">
-                  <p className="text-xs font-semibold" style={{ color: "var(--panel-text)" }}>
+                  <p className="text-xs font-semibold flex items-center gap-1.5" style={{ color: "var(--panel-text)" }}>
                     Predict my commute
+                    {!isPro && (
+                      <span
+                        className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider"
+                        style={{ background: "rgba(168,85,247,0.18)", color: "#a855f7" }}
+                      >
+                        Pro
+                      </span>
+                    )}
                   </p>
                   <p className="text-[10px] leading-snug mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
                     Send a heads-up notification ~10 min before you usually leave for a recurring trip.
                   </p>
-                  {!notificationsSupported() && (
-                    <p className="text-[10px] mt-1" style={{ color: "#f59e0b" }}>
-                      Your browser doesn&rsquo;t support push notifications.
-                    </p>
-                  )}
+                  {!notificationsSupported() && (() => {
+                    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+                    const isIos = /iPhone|iPad|iPod/i.test(ua) ||
+                      (typeof navigator !== "undefined" && navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+                    return isIos ? (
+                      <button
+                        type="button"
+                        onClick={() => requestInstallPrompt()}
+                        className="text-[10px] mt-1 underline"
+                        style={{ color: "#f59e0b" }}
+                      >
+                        Install CityPulse to your home screen to enable alerts.
+                      </button>
+                    ) : (
+                      <p className="text-[10px] mt-1" style={{ color: "#f59e0b" }}>
+                        Your browser doesn&rsquo;t support push notifications.
+                      </p>
+                    );
+                  })()}
                   {commuteNotifyError && (
                     <p className="text-[10px] mt-1" style={{ color: "#ef4444" }}>
                       {commuteNotifyError}
@@ -366,6 +417,14 @@ export default function AlertsInbox({ open, onClose, onJump }: Props) {
                 <button
                   type="button"
                   onClick={async () => {
+                    if (!isPro) {
+                      // Free users get the upgrade prompt instead of the
+                      // toggle action. Even if they enable in localStorage
+                      // the server-side cron (notify_due_commutes) refuses
+                      // to fire for non-Pro uids, so this is just UX.
+                      requestUpgrade("Commute predictions");
+                      return;
+                    }
                     setCommuteNotifyError(null);
                     if (commuteNotify) {
                       setCommuteNotificationsEnabled(false);
@@ -386,18 +445,18 @@ export default function AlertsInbox({ open, onClose, onJump }: Props) {
                   }}
                   disabled={!notificationsSupported()}
                   className="shrink-0 disabled:opacity-50"
-                  aria-pressed={commuteNotify}
+                  aria-pressed={commuteNotify && isPro}
                   aria-label={commuteNotify ? "Disable commute predictions" : "Enable commute predictions"}
                 >
                   <span
                     className="block w-10 h-5 rounded-full relative transition-colors"
                     style={{
-                      background: commuteNotify ? "#a855f7" : "var(--panel-border)",
+                      background: commuteNotify && isPro ? "#a855f7" : "var(--panel-border)",
                     }}
                   >
                     <span
                       className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-md transition-transform"
-                      style={{ left: commuteNotify ? "1.375rem" : "0.125rem" }}
+                      style={{ left: commuteNotify && isPro ? "1.375rem" : "0.125rem" }}
                     />
                   </span>
                 </button>

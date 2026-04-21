@@ -4,9 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { Bookmark, Check, X, Home, Briefcase, Star, MapPin, Plus, Loader2 } from "lucide-react";
 import {
   CATEGORY_LABELS,
+  SavedPlaceLimitError,
   useSavedDestinations,
   type SavedCategory,
 } from "@/hooks/useSavedDestinations";
+import { requestUpgrade } from "@/lib/upgrade";
 
 interface Props {
   lat: number;
@@ -36,7 +38,7 @@ export default function QuickSavePlace({
   suggestedName,
   autoFocus = false,
 }: Props) {
-  const { canSave, addDestination, lists, createList, destinations } = useSavedDestinations();
+  const { canSave, addDestination, lists, createList, destinations, canAddCustom, customCount, freeLimit } = useSavedDestinations();
   const [open, setOpen] = useState(autoFocus);
   const [name, setName] = useState("");
   const [category, setCategory] = useState<SavedCategory>("custom");
@@ -137,6 +139,15 @@ export default function QuickSavePlace({
         setCreatingList(false);
         setNewListName("");
       }, 1400);
+    } catch (e) {
+      if (e instanceof SavedPlaceLimitError) {
+        // Surface the global Pro upgrade modal — page.tsx listens.
+        // We don't auto-collapse the inline form so the user can
+        // upgrade and immediately retry the save without retyping.
+        requestUpgrade(e.feature);
+      } else {
+        throw e;
+      }
     } finally {
       setBusy(false);
     }
@@ -205,6 +216,16 @@ export default function QuickSavePlace({
         {catBtn("favorite", Star, "#f59e0b")}
         {catBtn("custom", MapPin, "#94a3b8")}
       </div>
+
+      {!canAddCustom && (category === "favorite" || category === "custom") && (
+        <p
+          className="text-[10px] leading-snug"
+          style={{ color: "#a855f7" }}
+        >
+          You&rsquo;ve saved {customCount}/{freeLimit} places on the free
+          tier. Upgrade to Pro for unlimited saves.
+        </p>
+      )}
 
       {category === "custom" && (
         <div className="space-y-1.5">

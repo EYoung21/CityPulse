@@ -68,6 +68,7 @@ def insert_incident(
     description: Optional[str] = None,
     word_timings: Optional[list] = None,
     city: Optional[str] = None,
+    mentions: Optional[list[dict]] = None,
 ) -> dict:
     db = _ensure_client()
     incident_id = uuid.uuid4().hex[:12]
@@ -92,11 +93,130 @@ def insert_incident(
         "description": description,
         "word_timings": word_timings,
         "city": city,
+        "mentions": mentions or [],
+        "mention_count": len(mentions or []),
+        "last_mention_at": reported_at,
     }
     ref = db.collection("incidents").document(incident_id)
     ref.set(payload)
     snap = ref.get()
     return _doc_to_row(snap.id, snap.to_dict() or {})
+
+
+# ── Incident dedup ────────────────────────────────────────────────────
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Great-circle distance in km."""
+    from math import radians, sin, cos, asin, sqrt
+
+    r = 6371.0
+    dlat = radians(lat2 - lat1)
+    dlng = radians(lng2 - lng1)
+    a = (
+        sin(dlat / 2) ** 2
+        + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2
+    )
+    return 2 * r * asin(sqrt(a))
+
+
+def find_recent_duplicate(
+    *,
+    city: Optional[str],
+    lat: float,
+    lng: float,
+    severity_category: str,
+    reported_at: str,
+    within_seconds: int = 900,
+    radius_km: float = 0.2,
+    candidate_limit: int = 25,
+) -> Optional[dict]:
+    """Return an existing incident that this new mention should merge into.
+
+    Two scanner mentions are considered the same crime if they share city +
+    severity_category, occur within `within_seconds` of each other, and pin
+    within `radius_km`. Caller is responsible for constructing `reported_at`
+    in ISO 8601 format (string comparison is used as a Firestore filter).
+
+    Returns the matched incident dict, or None.
+    """
+    if lat is None or lng is None or not severity_category:
+        return None
+    try:
+        before_dt = datetime.fromisoformat(reported_at.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    floor_iso = (before_dt - timedelta(seconds=within_seconds)).isoformat()
+
+    db = _ensure_client()
+    try:
+        query = (
+            db.collection("incidents")
+            .where("severity_category", "==", severity_category)
+            .where("reported_at", ">=", floor_iso)
+            .order_by("reported_at", direction=firestore.Query.DESCENDING)
+            .limit(candidate_limit)
+        )
+        if city:
+            query = query.where("city", "==", city)
+
+        for snap in query.stream():
+            data = snap.to_dict() or {}
+            if data.get("hidden") is True:
+                continue
+            if data.get("inhibitor_status") == "blocked":
+                continue
+            cand_lat = data.get("lat")
+            cand_lng = data.get("lng")
+            if cand_lat is None or cand_lng is None:
+                continue
+            if _haversine_km(lat, lng, cand_lat, cand_lng) <= radius_km:
+                return _doc_to_row(snap.id, data)
+    except Exception:
+        return None
+    return None
+
+
+def append_mention(incident_id: str, mention: dict) -> Optional[dict]:
+    """Append a mention to an incident's mentions array atomically.
+
+    Also bumps `mention_count`, advances `last_mention_at`, and (if the
+    new mention has higher confidence) adopts its category/severity.
+    Returns the updated incident dict.
+    """
+    db = _ensure_client()
+    ref = db.collection("incidents").document(incident_id)
+    snap = ref.get()
+    if not snap.exists:
+        return None
+    current = snap.to_dict() or {}
+
+    updates: dict[str, Any] = {
+        "mentions": firestore.ArrayUnion([mention]),
+        "mention_count": firestore.Increment(1),
+    }
+    new_at = mention.get("at")
+    if new_at and (not current.get("last_mention_at") or new_at > current["last_mention_at"]):
+        updates["last_mention_at"] = new_at
+
+    new_conf = float(mention.get("confidence") or 0)
+    cur_conf = float(current.get("confidence") or 0)
+    if new_conf > cur_conf:
+        updates["confidence"] = new_conf
+        if mention.get("description"):
+            updates["description"] = mention["description"]
+        # If the higher-confidence mention also reclassified the call,
+        # adopt that. The s_base bump is the responsibility of the
+        # caller (server.py knows the weights table).
+        new_cat = mention.get("severity_category")
+        if new_cat and new_cat != current.get("severity_category"):
+            updates["severity_category"] = new_cat
+            if mention.get("s_base") is not None:
+                updates["s_base"] = mention["s_base"]
+
+    ref.update(updates)
+    fresh = ref.get()
+    return _doc_to_row(fresh.id, fresh.to_dict() or {})
 
 
 def insert_extraction(
@@ -155,6 +275,51 @@ def get_extraction(extraction_id: str) -> Optional[dict]:
     return {"id": snap.id, **data}
 
 
+def get_recent_extractions(
+    feed_id: str,
+    before_iso: str,
+    within_seconds: int = 60,
+    limit: int = 3,
+) -> list[dict]:
+    """Return up to `limit` most-recent extractions on the same feed within
+    `within_seconds` of `before_iso`, ordered oldest-first.
+
+    Used as adjacent-radio prior context for llm.extract_incident so that
+    officer follow-ups inherit the dispatcher's location. Wrapped in a
+    permissive try/except: a missing composite index or transient Firestore
+    error must never block ingestion.
+
+    Requires a Firestore composite index on (feed_id ASC, reported_at DESC).
+    """
+    if not feed_id or not before_iso:
+        return []
+    try:
+        before_dt = datetime.fromisoformat(before_iso.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return []
+    floor_dt = before_dt - timedelta(seconds=within_seconds)
+    floor_iso = floor_dt.isoformat()
+
+    db = _ensure_client()
+    try:
+        query = (
+            db.collection("extractions")
+            .where("feed_id", "==", feed_id)
+            .where("reported_at", ">=", floor_iso)
+            .where("reported_at", "<", before_iso)
+            .order_by("reported_at", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
+        rows: list[dict] = []
+        for snap in query.stream():
+            data = snap.to_dict() or {}
+            rows.append({"id": snap.id, **data})
+        rows.reverse()
+        return rows
+    except Exception:
+        return []
+
+
 def update_extraction(extraction_id: str, updates: dict) -> Optional[dict]:
     db = _ensure_client()
     ref = db.collection("extractions").document(extraction_id)
@@ -195,6 +360,7 @@ def list_incidents(
     since: Optional[str] = None,
     category: Optional[str] = None,
     include_blocked: bool = False,
+    include_hidden: bool = False,
 ) -> list[dict]:
     db = _ensure_client()
     col = db.collection("incidents")
@@ -203,6 +369,11 @@ def list_incidents(
         for doc in col.order_by("reported_at", direction=firestore.Query.DESCENDING).stream():
             row = _doc_to_row(doc.id, doc.to_dict() or {})
             if not include_blocked and row.get("inhibitor_status") == "blocked":
+                continue
+            # Soft-hidden incidents (e.g. backfill_geocode_repair couldn't
+            # map them) are filtered out of public reads but preserved on
+            # disk so stable IDs / shared URLs / vote history still resolve.
+            if not include_hidden and row.get("hidden") is True:
                 continue
             if since and (row.get("reported_at") or "") < since:
                 continue

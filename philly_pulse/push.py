@@ -39,6 +39,7 @@ import base64
 import hashlib
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -812,6 +813,176 @@ def notify_nearby_user_report(
     }
 
 
+# ── Keyword scanner watches ─────────────────────────────────────────
+#
+# Pro users can register arbitrary keyword watches ("shooting",
+# "Temple", "north philly") that fire whenever a transcript matches.
+# This is independent of severity/category gating because the value
+# prop is "tell me literally any time my keyword shows up." We still
+# enforce per-watch cooldowns and per-uid rate limits so a single
+# overly-broad watch (e.g. "police") doesn't drown the user.
+
+_KEYWORD_COOLDOWN_MS = 90 * 1000  # per-watch min gap, lighter than nearby pushes
+
+
+def _normalize_keyword(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+def _keyword_matches(text_lower: str, kw_lower: str) -> bool:
+    """Substring match by default; if the watch wraps the keyword in
+    double-quotes (e.g. `"shots fired"`), treat it as an exact phrase
+    and require word boundaries so `"car"` doesn't fire on `cargo`."""
+    if not kw_lower:
+        return False
+    if kw_lower.startswith('"') and kw_lower.endswith('"') and len(kw_lower) >= 3:
+        phrase = kw_lower[1:-1]
+        return re.search(rf"\b{re.escape(phrase)}\b", text_lower) is not None
+    return kw_lower in text_lower
+
+
+def list_keyword_watches_for_uid(uid: str) -> list[dict[str, Any]]:
+    docs = (
+        _db()
+        .collection("keywordWatches")
+        .where("uid", "==", uid)
+        .stream()
+    )
+    return [{"id": d.id, **(d.to_dict() or {})} for d in docs]
+
+
+def list_active_keyword_watches(city: str) -> list[dict[str, Any]]:
+    """Return active watches scoped to `city` plus any watches whose
+    `city` is empty (treated as "all cities the user has access to").
+
+    Two queries because Firestore can't OR equality+empty in a single
+    where; the union is small enough that we de-dupe in Python."""
+    out: dict[str, dict[str, Any]] = {}
+    try:
+        for d in (
+            _db()
+            .collection("keywordWatches")
+            .where("active", "==", True)
+            .where("city", "==", city)
+            .stream()
+        ):
+            out[d.id] = {"id": d.id, **(d.to_dict() or {})}
+        for d in (
+            _db()
+            .collection("keywordWatches")
+            .where("active", "==", True)
+            .where("city", "==", "")
+            .stream()
+        ):
+            out[d.id] = {"id": d.id, **(d.to_dict() or {})}
+    except Exception as e:
+        logger.warning("list_active_keyword_watches failed: %s", e)
+    return list(out.values())
+
+
+def notify_keyword_watches(
+    *,
+    incident_id: str,
+    city: str,
+    raw_text: str,
+    severity_category: str,
+    s_base: float,
+    location_text: Optional[str] = None,
+) -> dict[str, int]:
+    """Fan out to every active keyword watch whose keyword appears in
+    the transcript. Skips on cooldown and on disabled subscriptions.
+
+    Designed to be called on every ingest (both new incidents and
+    follow-up mentions) — keyword watches are independent of the
+    dedup pipeline because each new transmission has unique text
+    that might newly match a watch."""
+    if not push_available():
+        return {"sent": 0, "matched": 0, "cooldown": 0, "skipped_no_push": 1}
+    text = raw_text or ""
+    if not text:
+        return {"sent": 0, "matched": 0, "cooldown": 0}
+    text_lower = text.lower()
+
+    watches = list_active_keyword_watches(city)
+    if not watches:
+        return {"sent": 0, "matched": 0, "cooldown": 0}
+
+    now_ms = int(time.time() * 1000)
+    sent = failed = cooldown = below_floor = quiet = snoozed = 0
+    matched = 0
+
+    for w in watches:
+        kw = _normalize_keyword(str(w.get("keyword") or ""))
+        if not _keyword_matches(text_lower, kw):
+            continue
+        matched += 1
+
+        # Optional severity floor on the watch — useful for very
+        # broad keywords (e.g. "north philly") that the user only
+        # wants to hear about for serious incidents.
+        floor = float(w.get("severityFloor") or 0.0)
+        if s_base < floor:
+            below_floor += 1
+            continue
+
+        last_ms = int(w.get("lastFiredMs") or 0)
+        if now_ms - last_ms < _KEYWORD_COOLDOWN_MS:
+            cooldown += 1
+            continue
+
+        uid = str(w.get("uid") or "")
+        if not uid:
+            continue
+        if _is_snoozed_for_uid(uid):
+            snoozed += 1
+            continue
+        if _is_quiet_now_for_uid(uid, None):
+            quiet += 1
+            continue
+
+        # Highlight the matched keyword in the body so the lock-screen
+        # preview obviously answers "why am I getting this push?"
+        snippet = (text[:140] + "…") if len(text) > 140 else text
+        display_kw = kw.strip('"')
+        label = (severity_category or "Scanner").replace("_", " ").title()
+        title = f'"{display_kw}" mentioned on scanner'
+        body_loc = f" near {location_text}" if location_text else ""
+        body = f"{label}{body_loc}: {snippet}"
+        payload = {
+            "kind": "keyword_watch",
+            "incidentId": incident_id,
+            "watchId": w.get("id"),
+            "keyword": display_kw,
+            "title": title,
+            "body": body,
+            "tag": f"pp:keyword:{w.get('id')}",
+            "url": f"/?incident={incident_id}",
+            "requireInteraction": False,
+            "severity_category": severity_category,
+        }
+        result = send_to_uid(uid, payload, ttl_seconds=15 * 60)
+        if result.get("sent", 0) > 0:
+            sent += result["sent"]
+            try:
+                _db().collection("keywordWatches").document(w["id"]).update(
+                    {"lastFiredMs": now_ms, "lastIncidentId": incident_id}
+                )
+            except Exception:
+                pass
+        else:
+            failed += 1
+
+    return {
+        "sent": sent,
+        "matched": matched,
+        "failed": failed,
+        "cooldown": cooldown,
+        "below_floor": below_floor,
+        "quiet": quiet,
+        "snoozed": snoozed,
+    }
+
+
 # ── Commute schedule fan-out ────────────────────────────────────────
 
 # Lead-time / cooldown matches the client-side `commute-notify.ts`
@@ -867,6 +1038,26 @@ def _commute_in_fire_window(typical_min: int, now_min: int) -> bool:
         <= minutes_until
         <= _COMMUTE_LEAD_MIN
     )
+
+
+def _user_tier_for_commute(uid: str) -> str:
+    """Read `users/{uid}.tier` for the commute Pro gate.
+
+    Mirrors `server._user_tier`, kept local to avoid an import cycle
+    (server.py imports from push.py during route registration). Falls
+    back to "free" on any read failure so an outage of the users
+    collection silently downgrades all users — the safe default for a
+    Pro perk: never accidentally promote anyone."""
+    try:
+        from .firestore_store import _ensure_client
+        snap = _ensure_client().collection("users").document(uid).get()
+        if snap.exists:
+            t = ((snap.to_dict() or {}).get("tier") or "free")
+            if t in ("free", "pro", "enterprise"):
+                return t
+    except Exception:
+        pass
+    return "free"
 
 
 def notify_due_commutes() -> dict[str, int]:
@@ -934,6 +1125,16 @@ def notify_due_commutes() -> dict[str, int]:
 
             uid = str(sch.get("uid") or "")
             if not uid:
+                skipped += 1
+                continue
+
+            # Pro-tier gate: commute predictions are a Pro perk. We check
+            # tier here (not at write time) so a downgrade silently stops
+            # the pings without us having to chase the client through a
+            # cleanup ritual. We DO NOT mark `lastFiredYmd` for skipped
+            # tier checks — if the user upgrades mid-window the next
+            # tick can fire normally without losing today's slot.
+            if _user_tier_for_commute(uid) not in ("pro", "enterprise"):
                 skipped += 1
                 continue
 
