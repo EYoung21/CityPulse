@@ -148,16 +148,17 @@ const CATEGORY_PILLS = [
 ] as const;
 
 const TIME_FILTERS = [
-  // Free tier gets exactly one window: 1h. Sub-hour options are a
-  // Pro "precision tool" and 3h+ is Pro "depth" — both are gated.
-  // The lone free button keeps the page-looks-alive default for
-  // anonymous visitors without giving away the deeper history that
-  // is the actual premium value prop. The click handler at the
-  // render site (around line 1738) reads `pro` to decide whether
-  // to fire the upgrade modal vs apply the filter.
-  { label: "5m", hours: 5 / 60, pro: true },
-  { label: "10m", hours: 10 / 60, pro: true },
-  { label: "30m", hours: 0.5, pro: true },
+  // Free tier: every "live view" window ≤1h is free (5m, 10m, 30m, 1h).
+  // Pro tier: everything 3h+ — that's the "depth / lookback" pitch the
+  // upgrade modal sells. Paywalling sub-hour windows is backwards
+  // (a more constrained view than the free 1h is *less* premium, not
+  // more), and it punishes free users for tapping a tighter chip.
+  // The click handler at the render site (around line 1738) reads
+  // `pro` to decide whether to fire the upgrade modal vs apply the
+  // filter; nothing else needs to change to flip a chip's gating.
+  { label: "5m", hours: 5 / 60, pro: false },
+  { label: "10m", hours: 10 / 60, pro: false },
+  { label: "30m", hours: 0.5, pro: false },
   { label: "1h", hours: 1, pro: false },
   { label: "3h", hours: 3, pro: true },
   { label: "6h", hours: 6, pro: true },
