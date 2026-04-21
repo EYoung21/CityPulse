@@ -124,6 +124,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => unsub();
   }, []);
 
+  // Mirror tier to localStorage so non-React libs (alerts-inbox prune,
+  // saved-place limit, etc.) can read it synchronously without prop
+  // drilling through hooks. Also dispatch an event so listeners can
+  // react to upgrades/downgrades within a single tab session.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("pp:tier", tier);
+    } catch {
+      /* storage blocked — non-fatal */
+    }
+    window.dispatchEvent(new CustomEvent("pp:tier-changed", { detail: { tier } }));
+  }, [tier]);
+
   useEffect(() => {
     if (!isFirebaseConfigured() || !user || user.isAnonymous) return;
     if (!user.email) return;

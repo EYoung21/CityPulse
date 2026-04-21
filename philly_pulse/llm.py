@@ -71,8 +71,6 @@ def configure_llm(
 def _build_system_prompt(ctx: dict) -> str:
     city = ctx["city_name"]
     suffix = ctx["geocode_suffix"]
-    clat = ctx["center_lat"]
-    clng = ctx["center_lng"]
 
     return f"""\
 You are an AI assistant that extracts structured incident data from {city} \
@@ -101,10 +99,6 @@ for a civilian reader. No jargon, no police codes. Decode any radio codes into \
 plain language.
 - "confidence": float 0.0-1.0 — your confidence that the extraction is accurate. \
 Lower if the transcript is garbled, ambiguous, or partially inaudible.
-- "lat": float or null — approximate latitude of the incident location in \
-{city} (WGS-84). Use your knowledge of {city} geography. Derive from \
-location_text first, then context_location_text. null if unknown.
-- "lng": float or null — approximate longitude. null if unknown.
 
 ## Common Radio Codes
 Decode these codes when they appear in transcripts:
@@ -129,12 +123,12 @@ Rules:
 severity_category to "admin_or_noise".
 - Prefer specific intersections over vague areas.
 - If multiple incidents are mentioned, extract the most severe one.
-- For lat/lng, use your best estimate for {city} locations. {city} center is \
-roughly {clat}, {clng}. Only provide coordinates you are reasonably confident about.
 - Aggressively extract locations: block numbers, intersections, landmarks, highway \
 references, unit positions.
 - When you see codes like "10-32", "PGUN", "302", decode them to determine the \
 correct severity_category.
+- Do NOT guess coordinates. Geocoding is handled downstream from the location text \
+you extract; never invent lat/lng values.
 """
 
 
@@ -147,14 +141,42 @@ class LLMError(Exception):
     pass
 
 
+def _format_prior_context(prior_context: list[str] | None) -> str | None:
+    """Render prior transmissions as a chronological brief for the LLM.
+
+    Each entry should already be a plain transcript string. Empty / falsy
+    entries are dropped. Returns None if nothing usable remains.
+    """
+    if not prior_context:
+        return None
+    cleaned = [p.strip() for p in prior_context if p and p.strip()]
+    if not cleaned:
+        return None
+    lines = [f"  {i + 1}. {t}" for i, t in enumerate(cleaned)]
+    return (
+        "Earlier transmissions on this same talkgroup, oldest first:\n"
+        + "\n".join(lines)
+        + "\n\nIf the current transmission is a follow-up to one of the above "
+        "(acknowledgment, en-route notification, status update, on-scene "
+        "report, suspect description), reuse the location from that prior "
+        "dispatch when extracting context_location_text and set "
+        "location_confidence to 'context'. Do NOT invent a new location."
+    )
+
+
 async def extract_incident(
     raw_text: str,
     city_context: dict | None = None,
+    prior_context: list[str] | None = None,
 ) -> Optional[dict]:
     """Extract structured incident data from a raw transcript line.
 
     city_context, if provided, overrides the default city for this call.
     Expected keys: city_name, geocode_suffix, center_lat, center_lng, bounds.
+
+    prior_context, if provided, is a chronological list of recent transcript
+    strings on the same talkgroup. Used to attach officer follow-ups to the
+    location of the original dispatch (see plan: adjacent_radio_context).
 
     Returns a dict with is_dispatch_relevant, severity_category,
     location_text, and confidence. Returns None if the LLM says
@@ -167,7 +189,12 @@ async def extract_incident(
 
     ctx = city_context or _default_city_context
     prompt = _build_system_prompt(ctx)
-    bounds = ctx.get("bounds", _PHILLY_BOUNDS)
+
+    messages: list[dict] = [{"role": "system", "content": prompt}]
+    prior_block = _format_prior_context(prior_context)
+    if prior_block:
+        messages.append({"role": "system", "content": prior_block})
+    messages.append({"role": "user", "content": raw_text})
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(
@@ -178,10 +205,7 @@ async def extract_incident(
             },
             json={
                 "model": OPENAI_MODEL,
-                "messages": [
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": raw_text},
-                ],
+                "messages": messages,
                 "temperature": 0.0,
                 "max_tokens": 300,
             },
@@ -214,16 +238,11 @@ async def extract_incident(
     if cat not in SEVERITY_CATEGORIES:
         raise LLMError(f"Invalid severity_category '{cat}'. Must be one of {SEVERITY_CATEGORIES}")
 
-    llm_lat = data.get("lat")
-    llm_lng = data.get("lng")
-    if llm_lat is not None and llm_lng is not None:
-        try:
-            llm_lat, llm_lng = float(llm_lat), float(llm_lng)
-            if not (bounds["lat_min"] <= llm_lat <= bounds["lat_max"]
-                    and bounds["lng_min"] <= llm_lng <= bounds["lng_max"]):
-                llm_lat, llm_lng = None, None
-        except (ValueError, TypeError):
-            llm_lat, llm_lng = None, None
+    # Coordinate fields are intentionally not parsed. The LLM was previously
+    # asked for `lat`/`lng` and would hallucinate the city center whenever
+    # it didn't actually know — causing unrelated incidents to pile up at
+    # one coord. Geocoding is now exclusively Nominatim against the
+    # extracted location text. See plan: incident_geocode_hallucination.
 
     location_text = data.get("location_text")
     context_location = data.get("context_location_text")
@@ -241,6 +260,4 @@ async def extract_incident(
         "context_location_text": context_location,
         "confidence": float(data.get("confidence", 0.7)),
         "description": data.get("description"),
-        "llm_lat": llm_lat,
-        "llm_lng": llm_lng,
     }

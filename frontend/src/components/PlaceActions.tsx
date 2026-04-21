@@ -26,9 +26,11 @@ import { setParkedPin } from "@/lib/parked-pin";
 import { useRouteState } from "@/lib/route-state";
 import {
   CATEGORY_LABELS,
+  SavedPlaceLimitError,
   useSavedDestinations,
   type SavedCategory,
 } from "@/hooks/useSavedDestinations";
+import { requestUpgrade } from "@/lib/upgrade";
 
 interface Props {
   lat: number;
@@ -174,9 +176,18 @@ export default function PlaceActions({
   const onSaveAs = useCallback(async (cat: SavedCategory) => {
     haptic();
     if (!canSave) return;
-    await addDestination(displayLabel, lat, lng, cat);
-    setSavePickerOpen(false);
-    flashToast("saved");
+    try {
+      await addDestination(displayLabel, lat, lng, cat);
+      setSavePickerOpen(false);
+      flashToast("saved");
+    } catch (e) {
+      if (e instanceof SavedPlaceLimitError) {
+        setSavePickerOpen(false);
+        requestUpgrade(e.feature);
+      } else {
+        throw e;
+      }
+    }
   }, [canSave, addDestination, displayLabel, lat, lng, flashToast, haptic]);
 
   const onDirectionsTo = useCallback(() => {

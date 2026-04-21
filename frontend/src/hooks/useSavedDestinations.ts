@@ -21,6 +21,23 @@ import { useAuth } from "@/contexts/AuthContext";
  *  else (the user's freeform saved places). */
 export type SavedCategory = "home" | "work" | "favorite" | "custom";
 
+/** Free-tier cap on user-curated saved places (Favorite + Custom).
+ *  Home and Work are singletons by design — they don't count toward
+ *  the limit, matching how Google Maps / Apple Maps treat them. */
+export const FREE_SAVED_LIMIT = 3;
+
+/** Thrown by `addDestination` when a free-tier user has already saved
+ *  the maximum number of Favorite/Custom places. Callers should catch
+ *  this and surface the upgrade prompt — see QuickSavePlace and
+ *  PlaceActions for the canonical handling. */
+export class SavedPlaceLimitError extends Error {
+  feature = "Unlimited saved places";
+  constructor() {
+    super(`Saved-place limit reached (${FREE_SAVED_LIMIT})`);
+    this.name = "SavedPlaceLimitError";
+  }
+}
+
 export const CATEGORY_LABELS: Record<SavedCategory, string> = {
   home: "Home",
   work: "Work",
@@ -55,12 +72,22 @@ export interface SavedDestination {
 }
 
 export function useSavedDestinations() {
-  const { user } = useAuth();
+  const { user, isPro } = useAuth();
   const [destinations, setDestinations] = useState<SavedDestination[]>([]);
   const [lists, setLists] = useState<SavedList[]>([]);
   const [loading, setLoading] = useState(true);
 
   const canSave = isFirebaseConfigured() && !!user && !user.isAnonymous;
+
+  // Pro gate: cap Favorite/Custom saves at FREE_SAVED_LIMIT for free
+  // tier. Home/Work are singletons (the hook itself replaces, not
+  // appends) so they don't count against the limit. Existing rows are
+  // grandfathered — the limit only blocks *new* saves; downgraded Pro
+  // users keep visibility/edit on everything they already saved.
+  const customCount = destinations.filter(
+    (d) => d.category === "custom" || d.category === "favorite"
+  ).length;
+  const canAddCustom = isPro || customCount < FREE_SAVED_LIMIT;
 
   useEffect(() => {
     if (!canSave) {
@@ -129,6 +156,15 @@ export function useSavedDestinations() {
       listId: string | null = null,
     ) => {
       if (!canSave) return;
+      // Free-tier limit: only Favorite/Custom count. Home/Work are
+      // singletons and intentionally exempt — see FREE_SAVED_LIMIT.
+      if (
+        (category === "custom" || category === "favorite") &&
+        !isPro &&
+        customCount >= FREE_SAVED_LIMIT
+      ) {
+        throw new SavedPlaceLimitError();
+      }
       const db = getFirestore(getFirebaseApp());
       const col = collection(db, "users", user!.uid, "savedDestinations");
 
@@ -148,7 +184,7 @@ export function useSavedDestinations() {
         createdAt: serverTimestamp(),
       });
     },
-    [canSave, user, destinations]
+    [canSave, user, destinations, isPro, customCount]
   );
 
   const removeDestination = useCallback(
@@ -238,6 +274,9 @@ export function useSavedDestinations() {
     lists,
     loading,
     canSave,
+    canAddCustom,
+    customCount,
+    freeLimit: FREE_SAVED_LIMIT,
     addDestination,
     removeDestination,
     setCategory,

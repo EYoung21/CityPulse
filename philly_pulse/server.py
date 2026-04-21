@@ -11,7 +11,7 @@ import os
 import random
 import re
 import subprocess
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -584,8 +584,30 @@ async def ingest(req: IngestRequest):
     city_llm_ctx = _get_city_llm_context(city)
     city_geo_ctx = _get_city_geo_context(city)
 
+    # Adjacent-radio context: pull the last few transcripts on this same
+    # talkgroup within the past minute so the LLM can attach follow-ups
+    # ("show me responding") to the original dispatch's location instead
+    # of failing to extract one. See plan: adjacent_radio_context.
+    prior_context: list[str] = []
     try:
-        extraction = await llm.extract_incident(req.text, city_context=city_llm_ctx)
+        recent = store.get_recent_extractions(
+            feed_id=feed_id,
+            before_iso=req_timestamp,
+            within_seconds=60,
+            limit=3,
+        )
+        prior_context = [
+            r.get("raw_text", "") for r in recent if r.get("raw_text")
+        ]
+    except Exception as e:
+        logger.debug("prior_context lookup failed (non-fatal): %s", e)
+
+    try:
+        extraction = await llm.extract_incident(
+            req.text,
+            city_context=city_llm_ctx,
+            prior_context=prior_context or None,
+        )
     except llm.LLMError as e:
         await admin_events.broadcast({
             "type": "llm_error",
@@ -634,8 +656,6 @@ async def ingest(req: IngestRequest):
     location_text = extraction["location_text"]
     confidence = extraction["confidence"]
     description = extraction.get("description")
-    llm_lat = extraction.get("llm_lat")
-    llm_lng = extraction.get("llm_lng")
     s_base = weights.get_s_base(category)
 
     await admin_events.broadcast({
@@ -646,8 +666,6 @@ async def ingest(req: IngestRequest):
         "category": category,
         "confidence": confidence,
         "location_text": location_text,
-        "llm_lat": llm_lat,
-        "llm_lng": llm_lng,
         "s_base": s_base,
     })
 
@@ -716,25 +734,22 @@ async def ingest(req: IngestRequest):
             "incident_id": incident["id"],
         }
 
-    # 3-tier location resolution
+    # Geocode the location text via Nominatim. We no longer fall back to
+    # LLM-predicted coords — the model hallucinates the city center when it
+    # doesn't actually know the address, which caused unrelated incidents to
+    # cluster at one point. If Nominatim can't resolve the text, the
+    # incident is dropped (or, post-repair, soft-hidden by the unmapped queue).
     location_confidence = extraction.get("location_confidence", "none")
     lat, lng = None, None
     geocode_status = "failed"
 
-    # Tier 1 & 2: geocode the location text (direct or context)
     if location_text:
         coords = await geocode.geocode(location_text, geo_ctx=city_geo_ctx)
         if coords:
             lat, lng = coords
             geocode_status = f"success_{location_confidence}"
-        elif llm_lat is not None and llm_lng is not None:
-            lat, lng = llm_lat, llm_lng
-            geocode_status = f"llm_fallback_{location_confidence}"
         else:
             geocode_status = f"no_result_{location_confidence}"
-    elif llm_lat is not None and llm_lng is not None:
-        lat, lng = llm_lat, llm_lng
-        geocode_status = "llm_fallback"
 
     await admin_events.broadcast({
         "type": "geocode_result",
@@ -748,29 +763,13 @@ async def ingest(req: IngestRequest):
 
     # Only create an incident if we have a real location (Tier 1 or 2)
     incident_id = None
+    incident: dict | None = None
+    merge_outcome: str | None = None
     if lat is not None and lng is not None:
-        incident = store.insert_incident(
-            raw_text=req.text,
-            severity_category=category,
-            s_base=s_base,
-            confidence=confidence,
-            location_text=location_text,
-            lat=lat,
-            lng=lng,
-            geocode_status=geocode_status,
-            location_confidence=location_confidence,
-            inhibitor_status=inh.status,
-            inhibitor_reason=inh.reason,
-            reported_at=req_timestamp,
-            audio_clip=effective_audio_clip,
-            feed_id=feed_id,
-            description=description,
-            word_timings=effective_word_timings,
-            city=city,
-        )
-        incident_id = incident["id"]
-
-        # Save audio ONLY for incidents that make it onto the map
+        # Save the audio first so the resulting URL can be embedded in
+        # whichever path we take (new incident, or appended mention on a
+        # dedup match). Previously this only ran on the create path; now
+        # it has to run before we decide.
         audio_url = None
         if _pending_audio_data and effective_audio_clip:
             try:
@@ -779,18 +778,88 @@ async def ingest(req: IngestRequest):
             except OSError as e:
                 logger.error("Failed to save audio clip (disk full?): %s", e)
 
-        # Store the Firebase Storage URL in the incident document
-        if audio_url and incident_id:
+        # Build the mention payload that represents *this* transmission.
+        # Used both as the seed entry on a brand-new incident and as the
+        # appended entry on a dedup merge.
+        mention = {
+            "at": req_timestamp,
+            "raw_text": req.text,
+            "audio_clip": effective_audio_clip,
+            "audio_url": audio_url,
+            "feed_id": feed_id,
+            "location_text": location_text,
+            "location_confidence": location_confidence,
+            "confidence": confidence,
+            "severity_category": category,
+            "s_base": s_base,
+            "description": description,
+        }
+
+        # Dedup: if a recent same-category incident exists within ~200m
+        # in the past 15 min, append this transmission as an "Update"
+        # instead of creating a duplicate pin. See plan: incident_dedup.
+        existing = None
+        try:
+            existing = store.find_recent_duplicate(
+                city=city,
+                lat=lat,
+                lng=lng,
+                severity_category=category,
+                reported_at=req_timestamp,
+            )
+        except Exception as e:
+            logger.debug("dedup lookup failed (non-fatal): %s", e)
+
+        if existing:
             try:
-                store.update_incident(incident_id, {"audio_url": audio_url})
+                merged = store.append_mention(existing["id"], mention)
+                if merged is not None:
+                    incident = merged
+                    incident_id = existing["id"]
+                    merge_outcome = "merged"
             except Exception as e:
-                logger.warning("Failed to store audio_url: %s", e)
+                logger.warning("append_mention failed for %s: %s", existing.get("id"), e)
+
+        if incident_id is None:
+            incident = store.insert_incident(
+                raw_text=req.text,
+                severity_category=category,
+                s_base=s_base,
+                confidence=confidence,
+                location_text=location_text,
+                lat=lat,
+                lng=lng,
+                geocode_status=geocode_status,
+                location_confidence=location_confidence,
+                inhibitor_status=inh.status,
+                inhibitor_reason=inh.reason,
+                reported_at=req_timestamp,
+                audio_clip=effective_audio_clip,
+                feed_id=feed_id,
+                description=description,
+                word_timings=effective_word_timings,
+                city=city,
+                mentions=[mention],
+            )
+            incident_id = incident["id"]
+            merge_outcome = "created"
+
+            # Set audio_url on the incident root for the create path so
+            # the existing player UI keeps working without having to
+            # always read the latest mention. (Merged incidents keep the
+            # original pin's audio_url; the new clip is reachable via
+            # the mentions stack.)
+            if audio_url:
+                try:
+                    store.update_incident(incident_id, {"audio_url": audio_url})
+                except Exception as e:
+                    logger.warning("Failed to store audio_url: %s", e)
 
         await admin_events.broadcast({
             "type": "incident_stored",
             "correlation": correlation,
             "feed_id": feed_id,
-            "outcome": "created",
+            "outcome": merge_outcome or "created",
             "incident_id": incident_id,
             "category": category,
             "confidence": confidence,
@@ -804,26 +873,54 @@ async def ingest(req: IngestRequest):
         # so a push failure can never block the ingest pipeline. The
         # severity / confidence / inhibitor gates live inside
         # notify_nearby_incident so this call site stays a one-liner.
+        # Skip on merges: the original incident already fanned out;
+        # follow-up mentions shouldn't double-notify the same users.
+        if merge_outcome == "created":
+            try:
+                push_stats = push_mod.notify_nearby_incident(
+                    incident_id=incident_id,
+                    city=city,
+                    lat=lat,
+                    lng=lng,
+                    severity_category=category,
+                    s_base=s_base,
+                    location_text=location_text,
+                    location_confidence=location_confidence,
+                    inhibitor_status=inh.status,
+                )
+                if push_stats.get("sent"):
+                    logger.info(
+                        "Web Push fan-out for incident %s: %s",
+                        incident_id, push_stats,
+                    )
+            except Exception as e:  # pragma: no cover — defensive
+                logger.warning(
+                    "Web Push fan-out failed for incident %s: %s",
+                    incident_id, e,
+                )
+
+        # Keyword-watch fan-out runs on every transmission (created and
+        # merged) because each new transcript can newly match a watch
+        # phrase that the original incident didn't trigger. Per-watch
+        # cooldown inside notify_keyword_watches keeps a chatty incident
+        # from flooding subscribers.
         try:
-            push_stats = push_mod.notify_nearby_incident(
+            kw_stats = push_mod.notify_keyword_watches(
                 incident_id=incident_id,
                 city=city,
-                lat=lat,
-                lng=lng,
+                raw_text=req.text or "",
                 severity_category=category,
                 s_base=s_base,
                 location_text=location_text,
-                location_confidence=location_confidence,
-                inhibitor_status=inh.status,
             )
-            if push_stats.get("sent"):
+            if kw_stats.get("sent"):
                 logger.info(
-                    "Web Push fan-out for incident %s: %s",
-                    incident_id, push_stats,
+                    "Keyword-watch fan-out for incident %s: %s",
+                    incident_id, kw_stats,
                 )
         except Exception as e:  # pragma: no cover — defensive
             logger.warning(
-                "Web Push fan-out failed for incident %s: %s",
+                "Keyword-watch fan-out failed for incident %s: %s",
                 incident_id, e,
             )
 
@@ -848,7 +945,7 @@ async def ingest(req: IngestRequest):
     )
 
     if incident_id:
-        return {"status": "created", "incident": incident}
+        return {"status": merge_outcome or "created", "incident": incident}
     return {"status": "no_location", "extraction_only": True}
 
 
@@ -864,6 +961,155 @@ async def get_incidents(
     except Exception:
         incidents = []
     return {"incidents": incidents}
+
+
+def _normalize_search_term(s: str) -> str:
+    return re.sub(r"\s+", " ", s.strip()).lower()
+
+
+def _incident_matches_query(inc: dict, terms: list[str]) -> bool:
+    """All terms must appear (case-insensitive) in at least one searchable
+    field. Multi-term queries behave as AND so e.g. `shooting temple`
+    finds shootings near Temple even though those words live in
+    different fields.
+    """
+    haystacks = [
+        str(inc.get("raw_text") or ""),
+        str(inc.get("severity_category") or ""),
+        str(inc.get("description") or ""),
+        str(inc.get("location_text") or ""),
+    ]
+    blob = " ".join(haystacks).lower()
+    return all(t in blob for t in terms)
+
+
+@app.get("/api/incidents/page")
+async def page_incidents(
+    cursor: str | None = Query(None, description="Opaque cursor: ISO reported_at of the last row from the prior page"),
+    limit: int = Query(20, ge=1, le=50, description="Page size"),
+    since: str | None = Query(None, description="Lower bound (defaults to now-24h)"),
+    category: str | None = Query(None, description="Severity category filter"),
+    city: str | None = Query(None, description="City slug filter"),
+    near_lat: float | None = Query(None, ge=-90.0, le=90.0),
+    near_lng: float | None = Query(None, ge=-180.0, le=180.0),
+):
+    """Cursor-paginated feed for the full-screen `/feed` route.
+
+    Cursor is the `reported_at` of the last row on the previous page;
+    the next page is "everything strictly older than that". When
+    `near_lat`/`near_lng` are supplied we sort by distance instead of
+    time (which makes "near me" feel right even when an old incident
+    is geographically closer than a fresher one). Default `since` is
+    24h to match the map's default window — the caller passes a
+    longer `since` for power users on Pro tiers.
+    """
+    if not since:
+        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    try:
+        incidents = store.list_incidents(since=since, category=category)
+    except Exception:
+        incidents = []
+    if city:
+        incidents = [i for i in incidents if i.get("city") == city]
+    # Apply cursor *before* sorting in proximity mode: the cursor is
+    # only meaningful for chronological pagination. Proximity pages
+    # don't paginate by cursor (the user expects the closest items
+    # first; "load more" just bumps the limit on the next call).
+    if near_lat is not None and near_lng is not None:
+        scored: list[tuple[float, dict]] = []
+        for inc in incidents:
+            lat = inc.get("lat")
+            lng = inc.get("lng")
+            if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
+                continue
+            try:
+                d = _haversine_km_inline(near_lat, near_lng, float(lat), float(lng))
+            except Exception:
+                continue
+            scored.append((d, inc))
+        scored.sort(key=lambda t: t[0])
+        page = [
+            {**inc, "distance_km": round(d, 3)}
+            for d, inc in scored[:limit]
+        ]
+        return {
+            "incidents": weights.enrich_incidents(page) if page else [],
+            "next_cursor": None,
+            "mode": "near",
+        }
+
+    incidents.sort(key=lambda i: i.get("reported_at") or "", reverse=True)
+    if cursor:
+        incidents = [i for i in incidents if (i.get("reported_at") or "") < cursor]
+    page = incidents[:limit]
+    next_cursor = (
+        page[-1].get("reported_at") if len(page) == limit and page else None
+    )
+    try:
+        page = weights.enrich_incidents(page)
+    except Exception:
+        pass
+    return {"incidents": page, "next_cursor": next_cursor, "mode": "recent"}
+
+
+def _haversine_km_inline(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    import math
+    R = 6371.0088
+    rlat1, rlat2 = math.radians(lat1), math.radians(lat2)
+    dlat = rlat2 - rlat1
+    dlng = math.radians(lng2 - lng1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(rlat1) * math.cos(rlat2) * math.sin(dlng / 2) ** 2
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+@app.get("/api/incidents/search")
+async def search_incidents(
+    q: str = Query(..., description="Free-text query"),
+    since: str | None = Query(None, description="ISO lower bound (default: today-3h)"),
+    until: str | None = Query(None, description="ISO upper bound (default: now)"),
+    category: str | None = Query(None, description="Severity category filter"),
+    limit: int = Query(50, ge=1, le=200, description="Max results"),
+    city: str | None = Query(None, description="City slug filter"),
+):
+    """Full-text search over incident title/category/description/transcript.
+
+    Adheres to the time window the caller passes in. The frontend uses
+    this so that "search results match what the user is already looking
+    at" — the same time-filter chip drives both the map and search. Pro
+    callers pass an `since` that extends back further than the free 3-hr
+    floor; gating is enforced by the frontend.
+    """
+    norm = _normalize_search_term(q)
+    if not norm:
+        return {"results": [], "total": 0, "query": q}
+
+    terms = [t for t in norm.split(" ") if t]
+
+    try:
+        incidents = store.list_incidents(since=since, category=category)
+    except Exception:
+        incidents = []
+
+    if until:
+        incidents = [i for i in incidents if (i.get("reported_at") or "") <= until]
+    if city:
+        incidents = [i for i in incidents if i.get("city") == city]
+
+    matched = [i for i in incidents if _incident_matches_query(i, terms)]
+    matched.sort(key=lambda i: i.get("reported_at") or "", reverse=True)
+
+    truncated = matched[:limit]
+    try:
+        truncated = weights.enrich_incidents(truncated)
+    except Exception:
+        pass
+
+    return {
+        "results": truncated,
+        "total": len(matched),
+        "query": q,
+        "terms": terms,
+    }
 
 
 @app.post("/api/seed")
@@ -1026,9 +1272,30 @@ async def admin_predict(req: PredictRequest):
     predict_llm_ctx = _get_city_llm_context(ext_city)
     predict_geo_ctx = _get_city_geo_context(ext_city)
 
-    # LLM extraction
+    # Adjacent-radio context (same as ingest path).
+    prior_context: list[str] = []
+    if reported_at:
+        try:
+            recent = store.get_recent_extractions(
+                feed_id=feed_id,
+                before_iso=reported_at,
+                within_seconds=60,
+                limit=3,
+            )
+            prior_context = [
+                r.get("raw_text", "")
+                for r in recent
+                if r.get("raw_text") and r.get("id") != req.extraction_id
+            ]
+        except Exception as e:
+            logger.debug("prior_context lookup failed (non-fatal): %s", e)
+
     try:
-        result = await llm.extract_incident(raw_text, city_context=predict_llm_ctx)
+        result = await llm.extract_incident(
+            raw_text,
+            city_context=predict_llm_ctx,
+            prior_context=prior_context or None,
+        )
     except llm.LLMError as e:
         raise HTTPException(status_code=502, detail=f"LLM error: {e}")
 
@@ -1044,8 +1311,6 @@ async def admin_predict(req: PredictRequest):
     category = result["severity_category"]
     location_text = result["location_text"]
     confidence = result["confidence"]
-    llm_lat = result.get("llm_lat")
-    llm_lng = result.get("llm_lng")
     s_base = weights.get_s_base(category)
 
     # Inhibitor
@@ -1056,7 +1321,7 @@ async def admin_predict(req: PredictRequest):
         confidence=confidence,
     )
 
-    # 3-tier geocode
+    # Geocode via Nominatim only. See ingest path / plan: incident_geocode_hallucination.
     location_confidence = result.get("location_confidence", "none")
     lat, lng = None, None
     geocode_status = "failed"
@@ -1065,14 +1330,8 @@ async def admin_predict(req: PredictRequest):
         if coords:
             lat, lng = coords
             geocode_status = f"success_{location_confidence}"
-        elif llm_lat is not None and llm_lng is not None:
-            lat, lng = llm_lat, llm_lng
-            geocode_status = f"llm_fallback_{location_confidence}"
         else:
             geocode_status = f"no_result_{location_confidence}"
-    elif llm_lat is not None and llm_lng is not None:
-        lat, lng = llm_lat, llm_lng
-        geocode_status = "llm_fallback"
 
     store.update_extraction(req.extraction_id, {
         "llm_relevant": True,
@@ -1285,6 +1544,42 @@ _ADMIN_EMAILS = {
 }
 
 
+def _user_tier(uid: str) -> str:
+    """Read the calling user's billing tier from `users/{uid}.tier`.
+
+    Returns one of "free", "pro", "enterprise" — matches the values
+    the AuthContext writes from the frontend. Anything unrecognised
+    or any read failure falls back to "free" so the caller never
+    accidentally grants Pro on a Firestore outage."""
+    try:
+        from .firestore_store import _ensure_client
+        snap = _ensure_client().collection("users").document(uid).get()
+        if snap.exists:
+            t = ((snap.to_dict() or {}).get("tier") or "free")
+            if t in ("free", "pro", "enterprise"):
+                return t
+    except Exception as e:
+        logger.debug("_user_tier read failed for %s: %s", uid, e)
+    return "free"
+
+
+def _is_pro_uid(decoded: dict) -> bool:
+    """Pro check used by Pro-gated endpoints. Admins always count as
+    Pro because they need to be able to dogfood the gated features."""
+    email = (decoded.get("email") or "").lower()
+    if email and email in _ADMIN_EMAILS:
+        return True
+    uid = decoded.get("uid") or ""
+    if not uid:
+        return False
+    return _user_tier(uid) in ("pro", "enterprise")
+
+
+def _require_pro(decoded: dict) -> None:
+    if not _is_pro_uid(decoded):
+        raise HTTPException(status_code=402, detail="Pro subscription required")
+
+
 def _verify_firebase_admin(authorization: Optional[str]) -> dict:
     """Strict variant of `_verify_firebase_token`: also requires the
     decoded token's email to be in the admin allow-list AND email-
@@ -1489,6 +1784,168 @@ async def push_revoke_device(
     if result == "forbidden":
         raise HTTPException(status_code=403, detail="Not your device")
     return {"status": result}
+
+
+# ── Keyword scanner watches (Pro) ───────────────────────────────────
+#
+# These endpoints back the "notify me when 'shooting' is mentioned"
+# feature. The store layer lives in push.py; the API surface enforces
+# Pro-tier gating, normalizes input, and caps per-user watch count
+# so a single account can't spawn an unbounded number of fanouts.
+
+_MAX_WATCHES_PER_USER = 25
+_MAX_KEYWORD_LEN = 64
+
+
+class KeywordWatchCreateRequest(BaseModel):
+    keyword: str
+    city: Optional[str] = None
+    severityFloor: Optional[float] = 0.0
+
+
+class KeywordWatchUpdateRequest(BaseModel):
+    active: Optional[bool] = None
+    severityFloor: Optional[float] = None
+
+
+def _watch_to_response(w: dict) -> dict:
+    return {
+        "id": w.get("id"),
+        "keyword": w.get("keyword") or "",
+        "city": w.get("city") or "",
+        "severityFloor": float(w.get("severityFloor") or 0.0),
+        "active": bool(w.get("active", True)),
+        "createdAtMs": int(w.get("createdAtMs") or 0),
+        "lastFiredMs": int(w.get("lastFiredMs") or 0),
+        "lastIncidentId": w.get("lastIncidentId") or None,
+    }
+
+
+@app.get("/api/keyword-watches")
+async def list_keyword_watches(authorization: Optional[str] = Header(None)):
+    """Return every keyword watch the calling user owns. Read-only is
+    allowed for free users so the UI can show the existing watches and
+    a Pro-upsell when they try to add another."""
+    decoded = _verify_firebase_token(authorization)
+    uid = decoded["uid"]
+    try:
+        watches = push_mod.list_keyword_watches_for_uid(uid)
+    except Exception as e:
+        logger.warning("list_keyword_watches failed: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to list watches") from e
+    watches.sort(key=lambda w: w.get("createdAtMs") or 0, reverse=True)
+    return {
+        "watches": [_watch_to_response(w) for w in watches],
+        "isPro": _is_pro_uid(decoded),
+        "maxWatches": _MAX_WATCHES_PER_USER,
+    }
+
+
+@app.post("/api/keyword-watches")
+async def create_keyword_watch(
+    body: KeywordWatchCreateRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Pro-only. Creates a watch and returns the newly-created doc."""
+    decoded = _verify_firebase_token(authorization)
+    _require_pro(decoded)
+    uid = decoded["uid"]
+
+    keyword = (body.keyword or "").strip()
+    if not keyword or len(keyword) > _MAX_KEYWORD_LEN:
+        raise HTTPException(status_code=400, detail="Keyword must be 1-64 chars")
+    # Don't allow nakedly broad single-letter watches.
+    if len(keyword.strip('"')) < 2:
+        raise HTTPException(status_code=400, detail="Keyword too short")
+
+    try:
+        existing = push_mod.list_keyword_watches_for_uid(uid)
+    except Exception as e:
+        logger.warning("list watches failed: %s", e)
+        existing = []
+    if len(existing) >= _MAX_WATCHES_PER_USER:
+        raise HTTPException(status_code=400, detail=f"Watch limit reached ({_MAX_WATCHES_PER_USER})")
+    # Prevent dupes (case-insensitive). Keeps the user's settings page
+    # from silently filling with copies on rapid double-submits.
+    norm = keyword.lower()
+    if any((str(w.get("keyword") or "").lower() == norm) for w in existing):
+        raise HTTPException(status_code=400, detail="Watch already exists")
+
+    severity_floor = float(body.severityFloor or 0.0)
+    if severity_floor < 0.0 or severity_floor > 1.0:
+        severity_floor = max(0.0, min(1.0, severity_floor))
+
+    city = (body.city or "").strip()
+    now_ms = int(time.time() * 1000)
+    doc_ref = (
+        push_mod._db().collection("keywordWatches").document()  # type: ignore[attr-defined]
+    )
+    payload = {
+        "uid": uid,
+        "keyword": keyword,
+        "city": city,
+        "severityFloor": severity_floor,
+        "active": True,
+        "createdAtMs": now_ms,
+        "lastFiredMs": 0,
+        "lastIncidentId": None,
+    }
+    doc_ref.set(payload)
+    return {"watch": _watch_to_response({"id": doc_ref.id, **payload})}
+
+
+@app.patch("/api/keyword-watches/{watch_id}")
+async def update_keyword_watch(
+    watch_id: str,
+    body: KeywordWatchUpdateRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Toggle active or change severity floor. No keyword edits — those
+    require deleting and re-creating so the change is intentional."""
+    decoded = _verify_firebase_token(authorization)
+    uid = decoded["uid"]
+    ref = push_mod._db().collection("keywordWatches").document(watch_id)  # type: ignore[attr-defined]
+    snap = ref.get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Watch not found")
+    data = snap.to_dict() or {}
+    if data.get("uid") != uid:
+        raise HTTPException(status_code=403, detail="Not your watch")
+
+    updates: dict[str, Any] = {}
+    if body.active is not None:
+        updates["active"] = bool(body.active)
+    if body.severityFloor is not None:
+        sf = max(0.0, min(1.0, float(body.severityFloor)))
+        updates["severityFloor"] = sf
+    if not updates:
+        return {"watch": _watch_to_response({"id": watch_id, **data})}
+    # Pro check only if turning a watch back on — disabling is always
+    # allowed (so a user who downgrades doesn't get stuck with active
+    # watches they can't silence).
+    if updates.get("active") is True and not _is_pro_uid(decoded):
+        raise HTTPException(status_code=402, detail="Pro subscription required")
+    ref.update(updates)
+    merged = {**data, **updates, "id": watch_id}
+    return {"watch": _watch_to_response(merged)}
+
+
+@app.delete("/api/keyword-watches/{watch_id}")
+async def delete_keyword_watch(
+    watch_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    decoded = _verify_firebase_token(authorization)
+    uid = decoded["uid"]
+    ref = push_mod._db().collection("keywordWatches").document(watch_id)  # type: ignore[attr-defined]
+    snap = ref.get()
+    if not snap.exists:
+        return {"status": "not_found"}
+    data = snap.to_dict() or {}
+    if data.get("uid") != uid:
+        raise HTTPException(status_code=403, detail="Not your watch")
+    ref.delete()
+    return {"status": "ok"}
 
 
 _COMMUTE_TICK_SECRET = os.getenv("PHILLY_PULSE_COMMUTE_TICK_SECRET")

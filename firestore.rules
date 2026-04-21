@@ -225,6 +225,22 @@ service cloud.firestore {
       allow create, update: if false;
     }
 
+    // Pro-only keyword scanner watches. Owner can read/list their own
+    // and delete any of them (so a downgraded user can still clean up
+    // after losing Pro). Create/update are *server-only*: the FastAPI
+    // tier-enforced endpoints write via the Admin SDK and bypass
+    // these rules. We deliberately don't try to enforce the Pro
+    // gate here because the user's tier lives in `users/{uid}.tier`
+    // and rules can't easily get/lookup that across collections
+    // without making every write expensive.
+    match /keywordWatches/{watchId} {
+      allow read: if isAdmin()
+        || (request.auth != null && resource.data.uid == request.auth.uid);
+      allow delete: if request.auth != null
+        && resource.data.uid == request.auth.uid;
+      allow create, update: if false;
+    }
+
     // Server-side commute predictions. The client uploads its own
     // schedule (one doc per uid+bucket) so the backend cron can
     // fire the same nudge whether the tab is open or fully closed.

@@ -619,7 +619,12 @@ export default function SearchSidebar({
     <>
       {view === "search" && (
           <>
-            <SearchInput onFlyTo={onFlyTo} onDirections={openDirections} />
+            <SearchInput
+              onFlyTo={onFlyTo}
+              onDirections={openDirections}
+              timeFilterHours={timeFilterHours}
+              onSelectIncident={onSelectIncident}
+            />
 
             <button
               onClick={() => openDirections()}

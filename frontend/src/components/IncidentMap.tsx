@@ -24,6 +24,7 @@ import type { Incident } from "@/lib/api";
 import { heatmapWeight } from "@/lib/severity";
 import type { RouteData } from "@/components/RoutePanel";
 import { NEIGHBORHOODS, type Neighborhood, incidentsInNeighborhood } from "@/lib/neighborhoods";
+import { useCityNeighborhoods } from "@/hooks/useCityNeighborhoods";
 import { getCurrentCity } from "@/lib/pulse-cities";
 import { spawnSnapPulse } from "@/lib/snap-pulse";
 
@@ -960,6 +961,10 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
    *  unaware of which renderer is active. */
   const tileLayerRef = useRef<L.Layer | null>(null);
   const usingVectorTilesRef = useRef<boolean>(false);
+  // Lazy-load the active city's neighborhood polygons. `version` bumps
+  // once the JSON file lands so the districts effect below re-runs and
+  // swaps rectangles → true polygons without a manual reload.
+  const { version: neighborhoodsVersion } = useCityNeighborhoods();
   const trailLayerRef = useRef<L.LayerGroup | null>(null);
   const districtsLayerRef = useRef<L.LayerGroup | null>(null);
   const droppedPinMarkerRef = useRef<L.Marker | null>(null);
@@ -1917,31 +1922,57 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       const severity = count === 0 ? 0 : Math.min(count / 8, 1);
       const fillOpacity = 0.08 + severity * 0.18;
 
-      const rect = L.rectangle(
-        [[n.bounds.south, n.bounds.west], [n.bounds.north, n.bounds.east]],
-        {
+      // Prefer the true GeoJSON polygon when it's been wired in for
+      // this neighborhood (lib/neighborhoods.ts); fall back to the
+      // axis-aligned rectangle that legacy entries still use. Either
+      // way we end up with a Leaflet `Path` we can wire click /
+      // hover to identically.
+      let shape: L.Path;
+      if (n.polygon && n.polygon.length > 0) {
+        // Leaflet expects [lat, lng]; our polygon storage matches
+        // GeoJSON ([lng, lat]) so we flip per vertex. We pass *all*
+        // outer rings so MultiPolygon neighborhoods (SF Marina,
+        // Brooklyn waterfront pieces, etc.) render every piece —
+        // Leaflet treats an array of rings as one path with multiple
+        // sub-shapes which is exactly what we want.
+        const ringsLatLng: L.LatLngTuple[][] = n.polygon.map((ring) =>
+          ring.map(([lng, lat]) => [lat, lng] as L.LatLngTuple)
+        );
+        shape = L.polygon(ringsLatLng, {
           color,
           weight: 2,
           opacity: 0.6,
           fillColor: color,
           fillOpacity,
           dashArray: "6 3",
-        }
-      );
+        });
+      } else {
+        shape = L.rectangle(
+          [[n.bounds.south, n.bounds.west], [n.bounds.north, n.bounds.east]],
+          {
+            color,
+            weight: 2,
+            opacity: 0.6,
+            fillColor: color,
+            fillOpacity,
+            dashArray: "6 3",
+          }
+        );
+      }
 
-      rect.on("click", (e: L.LeafletMouseEvent) => {
+      shape.on("click", (e: L.LeafletMouseEvent) => {
         L.DomEvent.stopPropagation(e);
         onDistrictClickRef.current?.(n, nIncidents);
       });
 
-      rect.on("mouseover", () => {
-        rect.setStyle({ fillOpacity: fillOpacity + 0.12, weight: 3, opacity: 0.9 });
+      shape.on("mouseover", () => {
+        shape.setStyle({ fillOpacity: fillOpacity + 0.12, weight: 3, opacity: 0.9 });
       });
-      rect.on("mouseout", () => {
-        rect.setStyle({ fillOpacity, weight: 2, opacity: 0.6 });
+      shape.on("mouseout", () => {
+        shape.setStyle({ fillOpacity, weight: 2, opacity: 0.6 });
       });
 
-      rect.addTo(layer);
+      shape.addTo(layer);
 
       const label = L.divIcon({
         className: "",
@@ -1967,7 +1998,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       });
       L.marker([n.center.lat, n.center.lng], { icon: label, interactive: false }).addTo(layer);
     }
-  }, [districtsEnabled, incidents]);
+  }, [districtsEnabled, incidents, neighborhoodsVersion]);
 
   // Routes, avoidance zones, A/B pins — only re-draws when routes object changes
   useEffect(() => {

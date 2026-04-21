@@ -372,8 +372,25 @@ def transcribe_and_post(
     else:
         chunks = [audio_data]
 
+    # Parse the archive's start timestamp once so we can advance per chunk.
+    # Each chunk represents `chunk_seconds` of audio after the previous, so
+    # we increment the per-chunk reported_at accordingly. Without this, all
+    # chunks within a 30-min archive share one timestamp and the server's
+    # adjacent-radio-context query (60s window on same feed_id) would never
+    # find sibling chunks. See plan: adjacent_radio_context.
+    try:
+        _archive_dt = datetime.datetime.fromisoformat(
+            archive_timestamp.replace("Z", "+00:00")
+        )
+    except (ValueError, TypeError):
+        _archive_dt = None
+
     transcribed = 0
     for ci, chunk in enumerate(chunks):
+        if _archive_dt is not None:
+            chunk_ts = (_archive_dt + datetime.timedelta(seconds=ci * chunk_seconds)).isoformat()
+        else:
+            chunk_ts = archive_timestamp
         try:
             raw_clip_id = uuid.uuid4().hex[:12]
             try:
@@ -458,7 +475,7 @@ def transcribe_and_post(
 
             payload: dict = {
                 "text": standard_text,
-                "timestamp": archive_timestamp,
+                "timestamp": chunk_ts,
                 "feed_id": feed_id,
                 "raw_audio_clip": raw_clip_id,
                 "variants": variants_list,
