@@ -1,0 +1,162 @@
+# Per-city LLM prefilter for CityPulse — confirmed-junk regexes.
+#
+# This file is the SHARED defaults applied to every city. Per-city YAMLs
+# (cities/<slug>/prefilter.yaml) layer on top: they can extend either list
+# but cannot remove a default entry. If you need to scope a default down
+# to fewer cities, move it out of here and replicate it in the relevant
+# per-city files.
+#
+# Architecture: blocklist + universal-incident escape hatch.
+#   1. If the transcript matches ANY noise_pattern AND contains NO
+#      keep_keyword, the prefilter returns False → skip the LLM call.
+#   2. In every other case (no noise hit, OR noise hit but a real
+#      incident keyword is also present), return True → pay for the LLM.
+#
+# Default behavior is paranoid: when in doubt, pay. We only skip lines
+# we are very confident the LLM would have rejected.
+#
+# All patterns are compiled as case-insensitive Python re. Use
+# re.fullmatch semantics by anchoring with ^/$ where appropriate.
+
+noise_patterns:
+  # Whisper hallucinations of the radio prompt itself.
+  - "(?i)PPD districts? 1[-\u2013]26"
+  - "(?i)NYPD precincts? 1 (through|to) 123"
+
+  # Generic radio acknowledgements / status calls that carry no incident
+  # data. These are the bulk of every scanner feed. The pattern allows
+  # multiple acks chained with commas/whitespace ("In service, 10-4",
+  # "Copy radio, standby") because that is by far the most common form.
+  - "(?i)^\\s*(in service|10[- ]?4|10[- ]?8|10[- ]?7|copy(?: that| radio)?|roger|stand ?by|out of service|on the air|okay?)([\\s,]+(in service|10[- ]?4|10[- ]?8|10[- ]?7|copy(?: that| radio)?|roger|stand ?by|out of service|on the air|okay?))*[\\s.,!?]*$"
+
+  # Dot-only / punctuation-only / single-character segments. Whisper
+  # output that survived the transcriber filters will rarely look like
+  # this, but the cost of catching it twice is zero.
+  - "^[\\W_]*$"
+  - "^.{0,2}$"
+
+  # Pure number readbacks ("nineteen-twenty", "five-five-five") with no
+  # surrounding words — these are unit IDs being read for inventory and
+  # carry no incident.
+  - "^[\\s\\d\\-,.]+$"
+
+  # Beep / alert tone Whisper-isms that the transcriber's beep filter
+  # may have replaced with the literal token.
+  - "^\\s*\\[(beeps|noise|silence|music|inaudible)\\]\\s*$"
+
+  # Common Whisper YouTube-corpus hallucinations that slipped past the
+  # full_block_phrases list (those are exact substrings; these are
+  # phrasings that need word-boundary handling).
+  - "(?i)\\bthank(s)? (you )?for (watching|listening|your patience)\\b"
+  - "(?i)\\bsubtitles? by\\b"
+  - "(?i)\\btranscription by\\b"
+  - "(?i)\\bcaptions? by\\b"
+
+  # Initial-prompt regurgitation: Whisper sometimes echoes a chunk of the
+  # initial_prompt verbatim when it can't transcribe the audio. The
+  # exact strings vary by city's initial_prompt, but these phrases only
+  # ever appear in our prompts, never in real dispatch.
+  - "(?i)^short dispatch[.\\s]*$"
+  - "(?i)numbers spoken separately"
+
+# Universal incident keywords. If ANY of these appears in the transcript
+# (case-insensitive, word-boundary aware), the prefilter ALWAYS passes
+# the line to the LLM, even if a noise_pattern also fires. This is the
+# safety net for the "officer mentions 10-4 then describes a shooting"
+# class of false drop.
+#
+# These are intentionally broad. We don't try to be clever here; the
+# LLM is the actual classifier.
+keep_keywords:
+  # Weapons / violence
+  - gun
+  - guns
+  - firearm
+  - rifle
+  - pistol
+  - knife
+  - knives
+  - blade
+  - shot
+  - shots
+  - shooting
+  - shooter
+  - shotgun
+  - armed
+  - weapon
+  - stab
+  - stabbed
+  - stabbing
+  - assault
+  - assaulted
+  - fight
+  - fighting
+  - robbery
+  - robbed
+  - robbing
+
+  # Fire / hazmat
+  - fire
+  - smoke
+  - flames
+  - burning
+  - hazmat
+  - gas leak
+  - explosion
+
+  # Medical
+  - medic
+  - medics
+  - ems
+  - ambulance
+  - cardiac
+  - unconscious
+  - unresponsive
+  - bleeding
+  - overdose
+  - od
+  - seizure
+  - chest pain
+  - not breathing
+
+  # Traffic / pursuit
+  - crash
+  - accident
+  - collision
+  - rollover
+  - pursuit
+  - chase
+  - dui
+  - hit and run
+  - hit-and-run
+
+  # Other dispatch-worthy
+  - burglary
+  - intruder
+  - prowler
+  - domestic
+  - hostage
+  - kidnap
+  - missing
+  - person down
+  - foot pursuit
+  - shots fired
+  - shots heard
+
+  # Universal radio codes that imply an incident (10-31/32/33/50/52/65/etc.)
+  # Match as standalone tokens to avoid colliding with version strings.
+  - 10-31
+  - 10-32
+  - 10-33
+  - 10-50
+  - 10-52
+  - 10-54
+  - 10-62
+  - 10-65
+  - 10-80
+  - pgun
+  - pwea
+  - robp
+  - bip
+  - gunsht
+  - 302

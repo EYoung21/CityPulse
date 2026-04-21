@@ -1,0 +1,12 @@
+# Per-city prefilter overrides for Chattanooga.
+# Extends philly_pulse/data/prefilter_default.yaml.
+
+noise_patterns:
+  # Generic CPD unit check-ins.
+  - "(?i)^(adam|baker|charlie|david|edward|frank|george)\\s*\\d+\\s+(10[- ]?8|10[- ]?7|in service|out of service)[\\s.,!?]*$"
+
+keep_keywords:
+  # CPD/HCSO-specific.
+  - signal 8     # Domestic.
+  - signal 23    # Robbery in progress.
+  - signal 50    # Vehicle accident.

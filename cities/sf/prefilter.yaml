@@ -1,0 +1,15 @@
+# Per-city prefilter overrides for San Francisco.
+# Extends philly_pulse/data/prefilter_default.yaml.
+
+noise_patterns:
+  # SFPD district check-ins (e.g. "3 Henry 14" reporting).
+  - "(?i)^[1-9]\\s+(adam|boy|charles|david|edward|frank|george|henry|ida|john|king|lincoln|mary|nora|ocean|paul|queen|robert|sam|tom|union|victor|william|x-ray|young|zebra)\\s+\\d+\\s+(10[- ]?8|10[- ]?7|in service|out of service)[\\s.,!?]*$"
+
+keep_keywords:
+  # SFPD-specific codes.
+  - 415         # Disturbance call.
+  - 459         # Burglary.
+  - 211         # Robbery.
+  - 245         # ADW / aggravated assault.
+  - 5150        # Mental-health hold.
+  - 187         # Homicide.

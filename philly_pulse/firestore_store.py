@@ -237,6 +237,8 @@ def insert_extraction(
     geocode_status: Optional[str] = None,
     incident_id: Optional[str] = None,
     city: Optional[str] = None,
+    prefilter_status: Optional[str] = None,
+    prefilter_reason: Optional[str] = None,
 ) -> dict:
     db = _ensure_client()
     eid = uuid.uuid4().hex[:12]
@@ -260,6 +262,8 @@ def insert_extraction(
         "geocode_status": geocode_status,
         "incident_id": incident_id,
         "city": city,
+        "prefilter_status": prefilter_status,
+        "prefilter_reason": prefilter_reason,
     }
     ref = db.collection("extractions").document(eid)
     ref.set(payload)

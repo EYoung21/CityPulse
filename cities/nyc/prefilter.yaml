@@ -1,0 +1,18 @@
+# Per-city prefilter overrides for New York City.
+# Extends philly_pulse/data/prefilter_default.yaml.
+
+noise_patterns:
+  # NYPD "central, K" / "central, on the air" check-ins.
+  - "(?i)^central[,.]?\\s*(k|on the air|standing by)[\\s.,!?]*$"
+
+  # FDNY status without incident.
+  - "(?i)^(engine|ladder|battalion|squad)\\s*\\d+\\s*(in service|10[- ]?8|out of service)[\\s.,!?]*$"
+
+keep_keywords:
+  # NYPD-specific dispatch codes.
+  - 10-13       # Officer needs assistance — highest priority NYPD code.
+  - 10-85       # Officer needs backup at scene.
+  - 10-10       # Possible crime in progress (NYPD usage).
+  - "10-30"     # Robbery in progress (NYPD).
+  - eddp        # Emotionally disturbed person.
+  - signal 13
