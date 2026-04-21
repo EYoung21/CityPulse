@@ -112,7 +112,7 @@ export default function SafetyScoreCard({ lat, lng, incidents, onClose }: Props)
         <NearbyPois lat={lat} lng={lng} />
 
         <p className="text-[9px] text-center pt-0.5" style={{ color: "var(--panel-text-muted)" }}>
-          Tap to score · long-press to drop a pin
+          Tap to score · long-press for live activity
         </p>
       </div>
     </div>
