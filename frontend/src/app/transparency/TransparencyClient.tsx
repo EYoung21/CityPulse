@@ -3,16 +3,16 @@
 /** Public transparency page.
  *
  *  Shows aggregate moderation health for the active pulse city:
- *  how many crowdsourced reports were submitted in the trailing
- *  30-day window, how many were community-verified vs. auto-hidden
- *  vs. moderator-removed, and a category breakdown.
+ *  how many scanner-derived incidents the AI pipeline shipped in the
+ *  trailing 30-day window, how much moderator activity the audit log
+ *  recorded, and how many feedback rows admins triaged.
  *
- *  Why this page exists: trust in a community-moderated safety map
- *  hinges on visibility into *how* moderation happens. Without
- *  numbers, "we delete bad reports" reads as a black-box claim. A
- *  static, public-facing snapshot — even one that admits some
- *  numbers are 0 because the visitor isn't an admin — closes that
- *  gap with very little engineering surface.
+ *  Why this page exists: trust in an automated safety map hinges on
+ *  visibility into *how* moderation happens. Without numbers, "we
+ *  delete bad incidents" reads as a black-box claim. A static,
+ *  public-facing snapshot — even one that admits some numbers are 0
+ *  because the visitor isn't an admin — closes that gap with very
+ *  little engineering surface.
  *
  *  Trade-offs:
  *    - Single-shot fetch on mount instead of a live snapshot. Stats
@@ -29,18 +29,16 @@ import {
   ArrowLeft,
   Loader2,
   AlertTriangle,
-  ShieldCheck,
-  EyeOff,
-  Trash2,
+  Radio,
+  ClipboardCheck,
+  ScrollText,
   RefreshCw,
 } from "lucide-react";
 import {
   fetchTransparencyStats,
   fmtNumber,
-  fmtPct,
   type TransparencyStats,
 } from "@/lib/transparency-stats";
-import { USER_REPORT_CATEGORIES } from "@/lib/user-reports";
 
 const cityName =
   process.env.NEXT_PUBLIC_CITY_NAME?.trim() || "Philadelphia";
@@ -102,16 +100,15 @@ export default function TransparencyClient() {
 
         <header className="mt-4 mb-8">
           <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
-            Community moderation transparency
+            Pipeline transparency
           </h1>
           <p
             className="mt-2 text-sm leading-relaxed"
             style={{ color: "var(--panel-text-secondary)" }}
           >
-            {cityName} Pulse is part scanner-derived data, part community
-            reports. The community half only works if everyone can see how
-            it&rsquo;s moderated. These numbers cover the trailing{" "}
-            <strong>{WINDOW_DAYS} days</strong>.
+            {cityName} Pulse is built from public-safety scanner audio
+            transcribed and structured by an AI pipeline. These numbers
+            cover the trailing <strong>{WINDOW_DAYS} days</strong>.
           </p>
         </header>
 
@@ -142,96 +139,28 @@ export default function TransparencyClient() {
           <>
             <section className="grid sm:grid-cols-3 gap-3">
               <StatCard
-                label="Reports submitted"
-                value={fmtNumber(stats.reportsSubmitted)}
-                tone="neutral"
-                hint={`Crowdsourced pins dropped in the last ${WINDOW_DAYS} d.`}
-              />
-              <StatCard
-                label="Community-verified"
-                value={fmtNumber(stats.reportsVerified)}
-                trail={fmtPct(stats.reportsVerified, stats.reportsSubmitted)}
+                label="Scanner incidents"
+                value={fmtNumber(stats.scannerIncidents)}
                 tone="ok"
-                hint="At least one more confirm than dispute."
-                Icon={ShieldCheck}
-              />
-              <StatCard
-                label="Auto-hidden by votes"
-                value={fmtNumber(stats.reportsAutoHidden)}
-                trail={fmtPct(stats.reportsAutoHidden, stats.reportsSubmitted)}
-                tone="warn"
-                hint="Hidden after net votes fell to −3 or lower."
-                Icon={EyeOff}
-              />
-            </section>
-
-            <section className="mt-3 grid sm:grid-cols-3 gap-3">
-              <StatCard
-                label="Moderator removals"
-                value={fmtNumber(stats.reportsAdminRemoved)}
-                trail={fmtPct(stats.reportsAdminRemoved, stats.reportsSubmitted)}
-                tone="warn"
-                hint="Reports moderators removed from the audit log."
-                Icon={Trash2}
-                adminOnly
+                hint={`Incidents the AI pipeline shipped in the last ${WINDOW_DAYS} d.`}
+                Icon={Radio}
               />
               <StatCard
                 label="Feedback triaged"
                 value={fmtNumber(stats.feedbackTriaged)}
                 tone="neutral"
                 hint="Status changes moderators applied to bug reports / feedback."
+                Icon={ClipboardCheck}
                 adminOnly
               />
               <StatCard
-                label="Scanner incidents"
-                value={fmtNumber(stats.scannerIncidents)}
+                label="Audit-log entries"
+                value={fmtNumber(stats.totalAuditEntries)}
                 tone="neutral"
-                hint="Authoritative incidents the AI pipeline picked up — for context."
+                hint="Every moderator action — appendable, never edited."
+                Icon={ScrollText}
+                adminOnly
               />
-            </section>
-
-            <section className="mt-8">
-              <h2 className="text-sm font-semibold uppercase tracking-wider mb-3"
-                style={{ color: "var(--panel-text-muted)" }}>
-                Reports by category
-              </h2>
-              <div className="space-y-1.5">
-                {USER_REPORT_CATEGORIES.map((c) => {
-                  const count = stats.reportsByCategory[c.severity] ?? 0;
-                  const pct = stats.reportsSubmitted
-                    ? (count / stats.reportsSubmitted) * 100
-                    : 0;
-                  return (
-                    <div
-                      key={c.severity}
-                      className="flex items-center gap-3 text-xs"
-                    >
-                      <span className="text-base shrink-0 w-6 text-center" aria-hidden="true">
-                        {c.glyph}
-                      </span>
-                      <span className="w-32 shrink-0">{c.label}</span>
-                      <div
-                        className="flex-1 h-2 rounded-full overflow-hidden"
-                        style={{ background: "var(--panel-input-bg)" }}
-                      >
-                        <div
-                          className="h-full rounded-full transition-all"
-                          style={{
-                            width: `${Math.min(100, pct)}%`,
-                            background: "rgba(168,85,247,0.55)",
-                          }}
-                        />
-                      </div>
-                      <span
-                        className="w-16 text-right font-mono"
-                        style={{ color: "var(--panel-text-secondary)" }}
-                      >
-                        {fmtNumber(count)} ({fmtPct(count, stats.reportsSubmitted)})
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
             </section>
 
             <section className="mt-10 space-y-3 text-sm leading-relaxed"
@@ -240,39 +169,34 @@ export default function TransparencyClient() {
                 className="text-sm font-semibold uppercase tracking-wider mb-1"
                 style={{ color: "var(--panel-text-muted)" }}
               >
-                How moderation works here
+                How the pipeline works here
               </h2>
               <p>
-                Community reports are <em>public-read</em>: anyone visiting the
-                map sees them. Submitting a report requires a non-anonymous
-                account so we always have an identity to attribute (and ban,
-                if needed). One submission per minute per user, 25 m / 1 h
-                per-category dedupe.
+                Public-safety radio is transcribed by a local Whisper
+                instance, filtered for noise (acknowledgements, beeps,
+                cascades), then passed through a structured-extraction LLM
+                that pulls incident type, location, and severity. An
+                ethical guardrail layer scrubs PII before anything is
+                written to the public collection.
               </p>
               <p>
-                Every signed-in viewer can <strong>confirm</strong> or{" "}
-                <strong>dispute</strong> a report. The math is plain: net
-                votes (confirms minus disputes) drive both the marker
-                weighting and a hide threshold. Reports that fall to −3 net
-                votes are auto-hidden from the map, but stay in the database
-                so moderators can review them.
+                Every signed-in viewer can mark an incident as{" "}
+                <strong>still happening</strong> or{" "}
+                <strong>cleared</strong>. The math is plain: net
+                community votes drive a fade so users can spot scenes
+                that have already wrapped up. Vote streams are
+                anti-spam protected via per-voter document IDs (one
+                vote per user per item).
               </p>
               <p>
-                Scanner incidents have a parallel system —{" "}
-                <strong>&ldquo;still happening&rdquo;</strong> vs.{" "}
-                <strong>&ldquo;cleared&rdquo;</strong> — that drives a
-                community-resolved fade so users can spot scenes that have
-                already wrapped up. Both vote streams are anti-spam protected
-                via per-voter document IDs (one vote per user per item).
-              </p>
-              <p>
-                Moderators can hard-delete reports and update the status of
-                feedback rows. <strong>Every</strong> moderator action writes
-                an append-only audit row capturing the actor, target ID, and a
-                snapshot of the deleted content — so even after a row is gone
-                we can answer &ldquo;why?&rdquo; weeks later. Audit entries
-                are tamper-evident: nobody (not even another moderator) can
-                update or delete them from the app.
+                Moderators can update the status of feedback rows.{" "}
+                <strong>Every</strong> moderator action writes an
+                append-only audit row capturing the actor, target ID,
+                and a snapshot of the affected content — so even after
+                a row changes we can answer &ldquo;why?&rdquo; weeks
+                later. Audit entries are tamper-evident: nobody (not
+                even another moderator) can update or delete them from
+                the app.
               </p>
             </section>
 

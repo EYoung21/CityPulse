@@ -22,7 +22,7 @@ function fmtDistance(m: number): string {
  *  (Food / Coffee / Gas / Hospital / Pharmacy / Parking / ATM). Picking one
  *  fires an Overpass query and shows the closest 6 results inline.
  *
- *  Embedded in SafetyScoreCard and DroppedPinCard so the user can immediately
+ *  Embedded in SafetyScoreCard so the user can immediately
  *  answer "what's around me" after dropping a pin. */
 export default function NearbyPois({ lat, lng, onSelect }: Props) {
   const [active, setActive] = useState<PoiCategory | null>(null);

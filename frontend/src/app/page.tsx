@@ -39,7 +39,6 @@ import IncidentDetail from "@/components/IncidentDetail";
 import ClusterListPanel from "@/components/ClusterListPanel";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
 import DistrictCard from "@/components/DistrictCard";
-import DroppedPinCard from "@/components/DroppedPinCard";
 import AvoidAreasManager from "@/components/AvoidAreasManager";
 import OfflineTilesPanel from "@/components/OfflineTilesPanel";
 import MeasureToolPanel from "@/components/MeasureToolPanel";
@@ -110,13 +109,6 @@ import { useTheme } from "@/lib/theme";
 import AuthBar from "@/components/AuthBar";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { subscribeIncidents } from "@/lib/firestore";
-import {
-  isUserReportIncidentId,
-  subscribeUserReports,
-  userReportIdFromIncidentId,
-  userReportToIncident,
-  type UserReport,
-} from "@/lib/user-reports";
 import { enrichIncidents } from "@/lib/incident-weights";
 import {
   subscribeAllIncidentStatuses,
@@ -260,10 +252,6 @@ function MapHome() {
   }, []);
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
-  // Crowdsourced user reports — merged into the incidents stream
-  // below so the rest of the app (markers, alerts inbox, off-screen
-  // chips, area scoring) sees them without any per-consumer changes.
-  const [userReports, setUserReports] = useState<UserReport[]>([]);
   // Community lifecycle aggregates ("still happening" / "resolved")
   // for any incident that's been voted on in the last ~48h. Fed into
   // `enrichIncidents` so resolved markers fade, the heatmap stops
@@ -288,7 +276,6 @@ function MapHome() {
    *  than ~600m from this point and no overlay card is currently open. */
   const [scoreAnchor, setScoreAnchor] = useState<{ lat: number; lng: number } | null>(null);
   const [pillTarget, setPillTarget] = useState<{ lat: number; lng: number } | null>(null);
-  const [droppedPin, setDroppedPin] = useState<{ lat: number; lng: number } | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   // Resume-trip prompt — populated on mount if there's a < 2h-old trip
   // snapshot in localStorage. The pill stays up until the user either
@@ -411,20 +398,6 @@ function MapHome() {
     setPref("pp:saved-places-overlay", savedPlacesOverlay ? "1" : "0");
   }, [savedPlacesOverlay]);
 
-  // Crowdsourced-report visibility. Two related toggles: a hard
-  // on/off (defaults to on so trust-curious users see the
-  // crowdsourced layer) and a "verified only" filter that requires
-  // at least one net confirm vote — useful for users who want to
-  // dampen the noise floor without losing reports entirely. Both
-  // are persisted via the standard prefs sync allow-list.
-  const [showUserReports, setShowUserReports] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    return window.localStorage.getItem("pp:show-user-reports") !== "0";
-  });
-  const [verifiedReportsOnly, setVerifiedReportsOnly] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem("pp:user-reports-verified-only") === "1";
-  });
   // Companion to the lifecycle voting feature: when enabled,
   // community-resolved scanner incidents disappear from the map +
   // alerts entirely (instead of just being faded). Defaults to OFF
@@ -434,14 +407,6 @@ function MapHome() {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem("pp:hide-resolved-incidents") === "1";
   });
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    setPref("pp:show-user-reports", showUserReports ? "1" : "0");
-  }, [showUserReports]);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    setPref("pp:user-reports-verified-only", verifiedReportsOnly ? "1" : "0");
-  }, [verifiedReportsOnly]);
   useEffect(() => {
     if (typeof window === "undefined") return;
     setPref("pp:hide-resolved-incidents", hideResolved ? "1" : "0");
@@ -673,7 +638,6 @@ function MapHome() {
     function handler() {
       setSidebarOpen(true);
       setMapTap(null);
-      setDroppedPin(null);
     }
     window.addEventListener("pp:plan-route", handler);
     return () => window.removeEventListener("pp:plan-route", handler);
@@ -689,7 +653,6 @@ function MapHome() {
       if (clusterIncidentIds)     { setClusterIncidentIds(null); ev.preventDefault(); return; }
       if (selectedDistrict)       { setSelectedDistrict(null);   ev.preventDefault(); return; }
       if (mapTap)                 { setMapTap(null);             ev.preventDefault(); return; }
-      if (droppedPin)             { setDroppedPin(null);         ev.preventDefault(); return; }
       if (showInbox)              { setShowInbox(false);         ev.preventDefault(); return; }
       if (showLayers)             { setShowLayers(false);        ev.preventDefault(); return; }
       if (showAbout)              { setShowAbout(false);         ev.preventDefault(); return; }
@@ -697,7 +660,7 @@ function MapHome() {
     }
     window.addEventListener("pp:native-back", onBack);
     return () => window.removeEventListener("pp:native-back", onBack);
-  }, [selectedId, clusterIncidentIds, selectedDistrict, mapTap, droppedPin, showLayers, showAbout, showTheme, showInbox, safetyEscapeOpen]);
+  }, [selectedId, clusterIncidentIds, selectedDistrict, mapTap, showLayers, showAbout, showTheme, showInbox, safetyEscapeOpen]);
 
   /** Deep-link bootstrap (read once on mount):
    *   ?incident=<id>            → select that incident when it arrives in the feed
@@ -710,12 +673,6 @@ function MapHome() {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const incidentParam = params.get("incident");
-    // ?userReport=<docId> arrives from Web Push notifications fired
-    // by another nearby user's submission. We translate it to the
-    // synthetic incident id used by `userReportToIncident` so the
-    // existing incident-detail flow lights up without duplicating
-    // selection logic for two near-identical entities.
-    const userReportParam = params.get("userReport");
     const latParam = params.get("lat");
     const lngParam = params.get("lng");
     const zoomParam = params.get("zoom");
@@ -759,12 +716,6 @@ function MapHome() {
 
     if (incidentParam) {
       pendingDeepIncidentRef.current = incidentParam;
-    } else if (userReportParam) {
-      // Re-prefix to match the synthetic id minted by
-      // userReportToIncident; the existing pendingDeepIncidentRef
-      // matcher will then resolve it once the report has loaded
-      // into the merged incidents array.
-      pendingDeepIncidentRef.current = `user-${userReportParam}`;
     } else if (latParam && lngParam) {
       const lat = parseFloat(latParam);
       const lng = parseFloat(lngParam);
@@ -778,9 +729,9 @@ function MapHome() {
       }
     }
 
-    if (incidentParam || userReportParam || latParam || lngParam || zoomParam || tripParam || sourceParam) {
+    if (incidentParam || latParam || lngParam || zoomParam || tripParam || sourceParam) {
       const cleaned = new URL(window.location.href);
-      ["incident", "userReport", "lat", "lng", "zoom", "trip", "source"].forEach((k) => cleaned.searchParams.delete(k));
+      ["incident", "lat", "lng", "zoom", "trip", "source"].forEach((k) => cleaned.searchParams.delete(k));
       window.history.replaceState({}, "", cleaned.toString());
     }
   }, []);
@@ -1021,17 +972,6 @@ function MapHome() {
     return () => clearInterval(id);
   }, []);
 
-  // Live subscription to crowdsourced user reports. Always Firestore-
-  // backed (independent of `useFirestoreData`, which only gates the
-  // scanner-derived incidents stream). The subscriber filters out
-  // expired reports client-side, so we don't need a separate poll.
-  useEffect(() => {
-    const unsub = subscribeUserReports(setUserReports, (e) =>
-      console.warn("User reports subscribe failed:", e)
-    );
-    return unsub;
-  }, []);
-
   // Live subscription to lifecycle aggregates. The query is bounded
   // by `lastVoteAtMs >= now-48h` so the listener stays cheap as the
   // collection grows; older votes naturally fall off the visualisation
@@ -1254,38 +1194,13 @@ function MapHome() {
     });
   }, []);
 
-  // Combine scanner-derived incidents with crowdsourced user reports.
-  // We mint Incident-shaped rows from the reports so every existing
-  // consumer (map markers, alerts inbox, off-screen chips, area
-  // scoring) gets them for free. enrichIncidents recomputes w_eff
-  // for the merged set so heatmap weighting stays consistent.
-  //
-  // Two user-toggleable filters apply here so the noisy-vs-trusted
-  // tradeoff stays in the user's hands without forking the whole
-  // incident pipeline:
-  //   - `showUserReports = false` → reports are skipped entirely.
-  //   - `verifiedReportsOnly = true` → only reports whose net vote
-  //     score is ≥ 1 (more confirms than disputes) are merged.
+  // Apply lifecycle aggregates to the scanner stream so resolved
+  // incidents fade and "still active" votes nudge the heatmap up.
   const mergedIncidents = useMemo(() => {
-    // Even when there are no user reports to merge, we still want to
-    // apply the lifecycle map to the scanner-only stream so resolved
-    // incidents fade and "still active" votes nudge the heatmap up.
-    if (!showUserReports || userReports.length === 0) {
-      return lifecycleStatuses.size === 0
-        ? incidents
-        : enrichIncidents(incidents, lifecycleStatuses);
-    }
-    const filtered = verifiedReportsOnly
-      ? userReports.filter((r) => r.confirmCount - r.disputeCount >= 1)
-      : userReports;
-    if (filtered.length === 0) {
-      return lifecycleStatuses.size === 0
-        ? incidents
-        : enrichIncidents(incidents, lifecycleStatuses);
-    }
-    const reported = filtered.map(userReportToIncident);
-    return enrichIncidents([...incidents, ...reported], lifecycleStatuses);
-  }, [incidents, userReports, showUserReports, verifiedReportsOnly, lifecycleStatuses]);
+    return lifecycleStatuses.size === 0
+      ? incidents
+      : enrichIncidents(incidents, lifecycleStatuses);
+  }, [incidents, lifecycleStatuses]);
 
   const filteredIncidents = mergedIncidents.filter((inc) => {
     if (inc.hidden) return false;
@@ -1408,40 +1323,31 @@ function MapHome() {
         ref={mapRef}
         incidents={filteredIncidents}
         selectedId={selectedId}
-        onSelectIncident={(id) => { setMapTap(null); setDroppedPin(null); setSelectedId(id); setPillTarget(null); if (window.innerWidth < 768) setSidebarOpen(false); }}
+        onSelectIncident={(id) => { setMapTap(null); setSelectedId(id); setPillTarget(null); if (window.innerWidth < 768) setSidebarOpen(false); }}
         routes={routes}
         onMapTap={(lat, lng) => {
           if (measureMode) {
             // Measure mode swallows the tap — append to vertices and
             // skip every other map-tap side effect (SafetyScoreCard,
-            // dropped-pin reset, pill, etc.) so the user can chain
-            // points without losing UI state.
+            // pill, etc.) so the user can chain points without losing
+            // UI state.
             setMeasurePoints((p) => [...p, [lat, lng]]);
             return;
           }
           setSelectedId(null);
-          setDroppedPin(null);
           setMapTap({ lat, lng });
           setScoreAnchor({ lat, lng });
           setPillTarget(null);
         }}
-        onLongPress={(lat, lng) => {
-          // Long-press still drops a sticky pin even in measure mode —
-          // the underlying gesture is too distinct to repurpose, and
-          // having access to "Avoid this area" / "Copy coords" without
-          // exiting measure mode is the right call.
-          setSelectedId(null);
-          setMapTap(null);
-          setDroppedPin({ lat, lng });
-          setScoreAnchor({ lat, lng });
-          setPillTarget(null);
+        onLongPress={() => {
+          // TODO: re-purpose long-press (QuickSavePlace?) — see chat
+          // 2026-04-21. Left wired so the gesture is reserved.
         }}
-        droppedPin={droppedPin}
         measurePoints={measureMode ? measurePoints : null}
         onMapMove={(lat, lng, zoom) => {
           // Pill suppressed while any overlay card is up — they obscure
           // most of the map and the action would feel duplicative.
-          if (mapTap || droppedPin || selectedId || tripGeometry) {
+          if (mapTap || selectedId || tripGeometry) {
             setPillTarget(null);
           } else {
             const anchor = scoreAnchor;
@@ -1822,7 +1728,7 @@ function MapHome() {
 
       {/* "Score this area" pill — appears once the user pans far from the
           last anchor and no overlay card is open. */}
-      {pillTarget && !mapTap && !droppedPin && !selectedId && !tripGeometry && (
+      {pillTarget && !mapTap && !selectedId && !tripGeometry && (
         <SearchAreaPill
           onClick={() => {
             setMapTap(pillTarget);
@@ -2467,53 +2373,6 @@ function MapHome() {
                 )}
 
                 <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
-                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Crowdsourced reports</p>
-                <button
-                  onClick={() => setShowUserReports((v) => !v)}
-                  className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
-                  style={{ color: "var(--panel-text-secondary)" }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                  aria-pressed={showUserReports}
-                >
-                  <span className="flex items-center gap-2">
-                    <span aria-hidden="true">👥</span>
-                    <span>Show user reports{userReports.length > 0 ? ` (${userReports.length})` : ""}</span>
-                  </span>
-                  <div
-                    className={`w-8 h-4 rounded-full transition-colors relative ${showUserReports ? "bg-purple-500" : ""}`}
-                    style={!showUserReports ? { background: "var(--panel-input-bg)" } : {}}
-                  >
-                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${showUserReports ? "left-4" : "left-0.5"}`} />
-                  </div>
-                </button>
-                {/* "Verified only" stays inert when the parent toggle
-                    is off — leaving it visible-but-disabled makes the
-                    relationship between the two settings obvious
-                    without hiding affordances based on state. */}
-                <button
-                  onClick={() => setVerifiedReportsOnly((v) => !v)}
-                  disabled={!showUserReports}
-                  className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs disabled:opacity-50"
-                  style={{ color: "var(--panel-text-secondary)" }}
-                  onMouseEnter={(e) => { if (showUserReports) e.currentTarget.style.background = "var(--panel-hover)"; }}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                  aria-pressed={verifiedReportsOnly}
-                  title="Hide reports that haven't been confirmed by other users yet"
-                >
-                  <span className="flex items-center gap-2">
-                    <span aria-hidden="true">✅</span>
-                    <span>Verified only (≥1 net confirm)</span>
-                  </span>
-                  <div
-                    className={`w-8 h-4 rounded-full transition-colors relative ${verifiedReportsOnly && showUserReports ? "bg-green-500" : ""}`}
-                    style={!(verifiedReportsOnly && showUserReports) ? { background: "var(--panel-input-bg)" } : {}}
-                  >
-                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${verifiedReportsOnly ? "left-4" : "left-0.5"}`} />
-                  </div>
-                </button>
-
-                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
                 <p
                   className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1"
                   style={{ color: "var(--panel-text-muted)" }}
@@ -2849,7 +2708,7 @@ function MapHome() {
 
       {/* Safety Score Card */}
       <AnimatePresence>
-        {mapTap && !selected && !droppedPin && !showAnalytics && (
+        {mapTap && !selected && !showAnalytics && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -2861,24 +2720,6 @@ function MapHome() {
               lng={mapTap.lng}
               incidents={filteredIncidents}
               onClose={() => setMapTap(null)}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Dropped Pin Card (long-press / right-click) */}
-      <AnimatePresence>
-        {droppedPin && !selected && !showAnalytics && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[396px] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
-          >
-            <DroppedPinCard
-              lat={droppedPin.lat}
-              lng={droppedPin.lng}
-              onClose={() => setDroppedPin(null)}
             />
           </motion.div>
         )}
@@ -2961,13 +2802,6 @@ function MapHome() {
             <IncidentDetail
               incident={selected}
               onClose={() => setSelectedId(null)}
-              userReport={
-                isUserReportIncidentId(selected.id)
-                  ? userReports.find(
-                      (r) => r.id === userReportIdFromIncidentId(selected.id)
-                    ) ?? null
-                  : null
-              }
             />
           </motion.div>
         )}

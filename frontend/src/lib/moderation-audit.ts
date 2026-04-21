@@ -16,13 +16,12 @@
  *       done from the Firebase console with explicit intent.
  *
  *  Every action funnels through `recordModerationAction` so we keep
- *  one chokepoint instead of scattering audit writes across feedback.ts
- *  and user-reports.ts. The wrappers below (`auditDeleteUserReport`,
- *  `auditSetFeedbackStatus`, `auditDeleteFeedback`) are the
- *  preferred API for the moderation panel — they perform the action
- *  and then write the audit row in a "best-effort, fail-loud" pattern:
- *  if the action succeeds but audit fails, we surface the audit
- *  failure so the admin knows to retry / investigate.
+ *  one chokepoint instead of scattering audit writes across feedback.ts.
+ *  The wrappers below (`auditSetFeedbackStatus`, `auditDeleteFeedback`)
+ *  are the preferred API for the moderation panel — they perform the
+ *  action and then write the audit row in a "best-effort, fail-loud"
+ *  pattern: if the action succeeds but audit fails, we surface the
+ *  audit failure so the admin knows to retry / investigate.
  */
 
 import {
@@ -43,15 +42,12 @@ import {
   setFeedbackStatus,
   type FeedbackStatus,
 } from "@/lib/feedback";
-import { adminDeleteUserReport } from "@/lib/user-reports";
 
 const COLLECTION = "moderationAudit";
 
 export type ModerationActionKind =
-  | "userReport.delete"
   | "feedback.delete"
-  | "feedback.status"
-  | "push.broadcast";
+  | "feedback.status";
 
 export interface ModerationAuditEntry {
   id: string;
@@ -177,69 +173,6 @@ export function subscribeModerationAudit(
 // surface the error but the underlying action stays applied — better
 // than rolling back a moderation decision over a tail-write failure.
 
-/** Optional pre-delete snapshot of the report. When supplied we
- *  capture lat/lng, vote totals, owner, and age so the audit row
- *  is enough to reconstruct what was removed even after the
- *  source doc is gone. We intentionally avoid storing the full note
- *  body in the payload — `targetSnippet` already carries a 140-char
- *  excerpt, and putting the entire body in two places would just
- *  bloat the audit collection. */
-interface UserReportAuditSnapshot {
-  category: string;
-  ownerUid: string;
-  ownerName: string | null;
-  lat: number;
-  lng: number;
-  confirmCount: number;
-  disputeCount: number;
-  /** Epoch ms the report was created, so a follow-up "how old was
-   *  this when it got deleted" question is one subtraction away. */
-  createdAtMs: number;
-}
-
-export async function auditDeleteUserReport(
-  reportId: string,
-  snippet: string,
-  actor: ActorSnapshot,
-  snapshot?: UserReportAuditSnapshot
-): Promise<void> {
-  await adminDeleteUserReport(reportId);
-  try {
-    await recordModerationAction(
-      {
-        kind: "userReport.delete",
-        targetId: reportId,
-        targetSnippet: snippet,
-        // Pass the snapshot in `payload` rather than `targetSnippet`
-        // so the structured fields are queryable (e.g. "find every
-        // delete in Fishtown last week") without a string parser.
-        payload: snapshot
-          ? {
-              category: snapshot.category,
-              ownerUid: snapshot.ownerUid,
-              ownerName: snapshot.ownerName,
-              lat: snapshot.lat,
-              lng: snapshot.lng,
-              confirmCount: snapshot.confirmCount,
-              disputeCount: snapshot.disputeCount,
-              netVotes: snapshot.confirmCount - snapshot.disputeCount,
-              createdAtMs: snapshot.createdAtMs,
-              ageAtDeleteMs: Date.now() - snapshot.createdAtMs,
-            }
-          : {},
-      },
-      actor
-    );
-  } catch (e) {
-    // Re-throw with a clearer message so the moderator UI can show
-    // "deleted, but audit failed — please retry the audit" instead
-    // of swallowing the error silently.
-    throw new Error(
-      `Report deleted, but audit log write failed: ${e instanceof Error ? e.message : String(e)}`
-    );
-  }
-}
-
 export async function auditDeleteFeedback(
   feedbackId: string,
   snippet: string,
@@ -288,77 +221,9 @@ export async function auditSetFeedbackStatus(
   }
 }
 
-/** Push broadcast snapshot — captured *after* the backend confirms
- *  the broadcast went out, so we record actual delivery counts (not
- *  just intent). Lets a "did this broadcast reach anyone?" audit
- *  question be answered without joining anything else. */
-export interface BroadcastAuditSnapshot {
-  city: string | null;
-  title: string;
-  body: string;
-  url: string | null;
-  requireInteraction: boolean;
-  matched: number;
-  sent: number;
-  failed: number;
-  /** Sum of snoozed + quiet-hours skips. */
-  skipped: number;
-  /** Stable per-broadcast tag the SW used; useful for cross-
-   *  referencing if a user later asks "what was that ping?". */
-  serverTag: string | null;
-}
-
-/** Record an admin broadcast in the audit log. Unlike the other
- *  audit wrappers this does NOT perform the action — the broadcast
- *  is sent by the FastAPI backend, and we just append the audit
- *  entry after. The fail-loud pattern still applies: a broadcast
- *  that ships but fails to audit raises so the admin can retry the
- *  audit write. */
-export async function auditPushBroadcast(
-  snapshot: BroadcastAuditSnapshot,
-  actor: ActorSnapshot
-): Promise<void> {
-  // The "target" of a broadcast is a synthetic id (no underlying
-  // doc); we encode the city + tag so the audit list can render
-  // it as "Broadcast to philly · pp:broadcast:1729...".
-  const targetId = `${snapshot.city ?? "all"}:${snapshot.serverTag ?? "untagged"}`.slice(0, 200);
-  // The snippet shows the title + first chunk of the body so an
-  // admin scrolling the audit list sees the substance, not just
-  // the metadata.
-  const snippet = `${snapshot.title} — ${snapshot.body}`.slice(0, 140);
-  try {
-    await recordModerationAction(
-      {
-        kind: "push.broadcast",
-        targetId,
-        targetSnippet: snippet,
-        payload: {
-          city: snapshot.city,
-          title: snapshot.title,
-          body: snapshot.body,
-          url: snapshot.url,
-          requireInteraction: snapshot.requireInteraction,
-          matched: snapshot.matched,
-          sent: snapshot.sent,
-          failed: snapshot.failed,
-          skipped: snapshot.skipped,
-          serverTag: snapshot.serverTag,
-        },
-      },
-      actor
-    );
-  } catch (e) {
-    throw new Error(
-      `Broadcast sent, but audit log write failed: ${e instanceof Error ? e.message : String(e)}`
-    );
-  }
-}
-
 /** Tiny pretty-printer for audit rows in the UI. */
 export function describeAuditAction(entry: ModerationAuditEntry): string {
   switch (entry.kind) {
-    case "userReport.delete":
-      return "Deleted user report";
     case "feedback.delete":
       return "Deleted feedback";
     case "feedback.status": {
@@ -366,15 +231,6 @@ export function describeAuditAction(entry: ModerationAuditEntry): string {
       const to = entry.payload.to as string | undefined;
       if (from && to) return `Set feedback ${from} → ${to}`;
       return "Updated feedback status";
-    }
-    case "push.broadcast": {
-      const city = (entry.payload.city as string | null) ?? "all cities";
-      const sent = entry.payload.sent as number | undefined;
-      const matched = entry.payload.matched as number | undefined;
-      if (typeof sent === "number" && typeof matched === "number") {
-        return `Broadcast push to ${city} (${sent}/${matched} delivered)`;
-      }
-      return `Broadcast push to ${city}`;
     }
     default:
       return "Moderation action";

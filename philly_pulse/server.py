@@ -1504,7 +1504,7 @@ async def admin_stream(feed_id: str):
 # header (`Bearer …`) so a subscription is always tied to a real user
 # UID. We deliberately don't rely on a session cookie here: the client
 # already speaks Firebase Auth for everything else, and ID tokens are
-# the same trust signal Firestore enforces for `userReports` writes.
+# the same trust signal Firestore enforces for everything else.
 
 def _verify_firebase_token(authorization: Optional[str]) -> dict:
     """Returns the decoded token dict on success, raises 401 otherwise."""
@@ -1593,7 +1593,8 @@ def _verify_firebase_admin(authorization: Optional[str]) -> dict:
     if not decoded.get("email_verified"):
         # We require email verification specifically for admin actions
         # so a stolen-not-yet-verified Google account can't immediately
-        # broadcast to the city. Regular auth doesn't enforce this.
+        # take destructive moderation actions. Regular auth doesn't
+        # enforce this.
         raise HTTPException(status_code=403, detail="Verify email to act as admin")
     return decoded
 
@@ -1680,43 +1681,6 @@ async def push_unsubscribe(
         logger.warning("push subscription delete failed: %s", e)
         raise HTTPException(status_code=500, detail="Failed to remove subscription") from e
     return {"status": "ok" if ok else "not_found"}
-
-
-class PushNotifyUserReportRequest(BaseModel):
-    reportId: str
-
-
-@app.post("/api/push/notify-user-report")
-async def push_notify_user_report(
-    body: PushNotifyUserReportRequest,
-    authorization: Optional[str] = Header(None),
-):
-    """Fan out a freshly-submitted user report to nearby subscribers.
-
-    The backend re-reads the report from Firestore using the
-    Admin SDK and confirms `ownerUid == request uid` before fanning
-    out — this means the client never gets to choose where the push
-    lands. A user submitting a report in their own neighborhood
-    will only ping subscribers whose alert area actually contains
-    that lat/lng."""
-    decoded = _verify_firebase_token(authorization)
-    uid = decoded["uid"]
-    if not push_mod.push_available():
-        # Don't 503 here — the user's report submit succeeded and
-        # the only thing that failed is the optional notification
-        # piggyback. Returning a soft "skipped" lets the caller log
-        # rather than treat it as an error.
-        return {"status": "skipped", "reason": "push_not_configured"}
-
-    try:
-        result = push_mod.notify_nearby_user_report(
-            report_id=body.reportId,
-            requesting_uid=uid,
-        )
-    except Exception as e:  # pragma: no cover — defensive
-        logger.warning("push notify-user-report failed: %s", e)
-        raise HTTPException(status_code=500, detail="Push fan-out failed") from e
-    return {"status": "ok", **result}
 
 
 @app.get("/api/push/devices")
@@ -1972,72 +1936,6 @@ async def push_tick_commutes(authorization: Optional[str] = Header(None)):
     except Exception as e:
         logger.warning("commute tick failed: %s", e)
         raise HTTPException(status_code=500, detail="Commute tick failed") from e
-    return {"status": "ok", **result}
-
-
-class PushBroadcastPreviewRequest(BaseModel):
-    """Recipient count preview for the admin composer. The frontend
-    fires this whenever the admin selects a city so they see the
-    blast radius before they hit Send."""
-    city: Optional[str] = None
-
-
-@app.post("/api/push/broadcast-preview")
-async def push_broadcast_preview(
-    body: PushBroadcastPreviewRequest,
-    authorization: Optional[str] = Header(None),
-):
-    _verify_firebase_admin(authorization)
-    return {"recipients": push_mod.count_subscribers_for_city(body.city)}
-
-
-class PushBroadcastRequest(BaseModel):
-    """Admin city-wide broadcast. `city` is an optional pulse city
-    slug (philly, sf, nyc, …). Pass null/None to broadcast across
-    every pulse city — that's intended for app-wide outage / status
-    messages and should be reserved for genuine emergencies.
-
-    `url` is the deep-link target the SW will open on
-    notificationclick. Defaults to "/" so the user lands on the map
-    if it isn't set. `requireInteraction=true` makes the
-    notification stick until dismissed (use sparingly — it's the
-    "shelter in place" affordance, not the "did you know" one)."""
-    city: Optional[str] = None
-    title: str
-    body: str
-    url: Optional[str] = None
-    requireInteraction: bool = False
-
-
-@app.post("/api/push/broadcast")
-async def push_broadcast(
-    body: PushBroadcastRequest,
-    authorization: Optional[str] = Header(None),
-):
-    decoded = _verify_firebase_admin(authorization)
-    if not push_mod.push_available():
-        raise HTTPException(
-            status_code=503,
-            detail="Server-side push is not configured (missing VAPID env vars).",
-        )
-    try:
-        result = push_mod.broadcast_to_city(
-            city=body.city,
-            title=body.title,
-            body=body.body,
-            url=body.url,
-            require_interaction=body.requireInteraction,
-            actor_uid=decoded["uid"],
-            actor_email=decoded.get("email"),
-        )
-    except Exception as e:
-        logger.warning("admin broadcast failed: %s", e)
-        raise HTTPException(status_code=500, detail="Broadcast failed") from e
-    err = result.pop("error", None) if isinstance(result, dict) else None
-    if err == "title_and_body_required":
-        raise HTTPException(status_code=400, detail="Title and body are required.")
-    if err == "push_not_configured":
-        raise HTTPException(status_code=503, detail="Push not configured.")
     return {"status": "ok", **result}
 
 

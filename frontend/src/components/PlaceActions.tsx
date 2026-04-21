@@ -48,9 +48,9 @@ interface Props {
   incidentTime?: string;
   /** Optional contact info — surfaced as Call / Site CTA buttons at
    *  the head of the action row when present. Populated by callers
-   *  who have OSM tag data on hand (DroppedPinCard does a small
-   *  Overpass lookup; SafetyScoreCard could similarly opt in if we
-   *  ever want phone CTAs on the tap-pulse card). Both are optional
+   *  who have OSM tag data on hand (SafetyScoreCard could opt in
+   *  if we ever want phone CTAs on the tap-pulse card via a small
+   *  Overpass lookup). Both are optional
    *  and independent — websites without phones, phones without
    *  websites, both, or neither all render correctly. */
   phone?: string;
@@ -59,10 +59,10 @@ interface Props {
 
 type ToastKind = "copied-coords" | "copied-pluscode" | "saved" | "parked" | "added-stop" | null;
 
-/** Compact action-button row shared by SafetyScoreCard, IncidentDetail, and
- *  DroppedPinCard. Buttons: Directions to / from, Share, Open in Maps,
- *  Copy coordinates, Copy Plus Code, Save. Each is a 32px hit-target with
- *  ARIA labels and short-lived toasts for copy / save confirmations. */
+/** Compact action-button row shared by SafetyScoreCard and IncidentDetail.
+ *  Buttons: Directions to / from, Share, Open in Maps, Copy coordinates,
+ *  Copy Plus Code, Save. Each is a 32px hit-target with ARIA labels and
+ *  short-lived toasts for copy / save confirmations. */
 const SAVE_OPTIONS: { id: SavedCategory; Icon: LucideIcon; color: string }[] = [
   { id: "home",     Icon: Home,      color: "#22c55e" },
   { id: "work",     Icon: Briefcase, color: "#3b82f6" },

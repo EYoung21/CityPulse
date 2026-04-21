@@ -365,7 +365,7 @@ export interface PlaceAtPoint {
 const placeAtMemCache = new Map<string, { at: number; data: PlaceAtPoint | null }>();
 
 /** Look up the nearest *named* tagged place within `radiusM` meters of
- *  a point. Used by DroppedPinCard so a long-press that lands on (or
+ *  a point. Used by long-press / pin lookups so a tap that lands on (or
  *  next to) a tagged business surfaces the same Call/Site CTAs that
  *  NearbyPois rows offer.
  *
