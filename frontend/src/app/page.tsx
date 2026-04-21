@@ -34,6 +34,7 @@ import { Badge } from "@/components/ui/badge";
 import SearchSidebar from "@/components/SearchSidebar";
 import { type RouteData } from "@/components/RoutePanel";
 import SafetyScoreCard from "@/components/SafetyScoreCard";
+import LocationPeekCard from "@/components/LocationPeekCard";
 import AlertToast from "@/components/AlertToast";
 import IncidentDetail from "@/components/IncidentDetail";
 import ClusterListPanel from "@/components/ClusterListPanel";
@@ -277,6 +278,11 @@ function MapHome() {
    *  than ~600m from this point and no overlay card is currently open. */
   const [scoreAnchor, setScoreAnchor] = useState<{ lat: number; lng: number } | null>(null);
   const [pillTarget, setPillTarget] = useState<{ lat: number; lng: number } | null>(null);
+  // Long-press / right-click anchor for the LocationPeekCard. Cleared
+  // automatically by the useEffect below whenever a competing overlay
+  // takes the bottom-left card slot, so we don't end up with two
+  // panels stacked on top of each other.
+  const [peekAnchor, setPeekAnchor] = useState<{ lat: number; lng: number } | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   // Resume-trip prompt — populated on mount if there's a < 2h-old trip
   // snapshot in localStorage. The pill stays up until the user either
@@ -653,6 +659,7 @@ function MapHome() {
       if (selectedId)             { setSelectedId(null);         ev.preventDefault(); return; }
       if (clusterIncidentIds)     { setClusterIncidentIds(null); ev.preventDefault(); return; }
       if (selectedDistrict)       { setSelectedDistrict(null);   ev.preventDefault(); return; }
+      if (peekAnchor)             { setPeekAnchor(null);         ev.preventDefault(); return; }
       if (mapTap)                 { setMapTap(null);             ev.preventDefault(); return; }
       if (showInbox)              { setShowInbox(false);         ev.preventDefault(); return; }
       if (showLayers)             { setShowLayers(false);        ev.preventDefault(); return; }
@@ -661,7 +668,16 @@ function MapHome() {
     }
     window.addEventListener("pp:native-back", onBack);
     return () => window.removeEventListener("pp:native-back", onBack);
-  }, [selectedId, clusterIncidentIds, selectedDistrict, mapTap, showLayers, showAbout, showTheme, showInbox, safetyEscapeOpen]);
+  }, [selectedId, clusterIncidentIds, selectedDistrict, mapTap, showLayers, showAbout, showTheme, showInbox, safetyEscapeOpen, peekAnchor]);
+
+  // Auto-dismiss the long-press peek when any competing bottom-left
+  // overlay opens. Cheap effect — runs once per state transition.
+  useEffect(() => {
+    if (!peekAnchor) return;
+    if (selectedId || clusterIncidentIds || selectedDistrict || mapTap) {
+      setPeekAnchor(null);
+    }
+  }, [peekAnchor, selectedId, clusterIncidentIds, selectedDistrict, mapTap]);
 
   /** Deep-link bootstrap (read once on mount):
    *   ?incident=<id>            → select that incident when it arrives in the feed
@@ -1340,9 +1356,20 @@ function MapHome() {
           setScoreAnchor({ lat, lng });
           setPillTarget(null);
         }}
-        onLongPress={() => {
-          // TODO: re-purpose long-press (QuickSavePlace?) — see chat
-          // 2026-04-21. Left wired so the gesture is reserved.
+        onLongPress={(lat, lng) => {
+          // Long-press / right-click → "What's happening here?" peek.
+          // Read-only summary; no save state created, so an accidental
+          // press costs the user nothing. Save-place flow is reached
+          // through search results (see SearchSidebar) instead — the
+          // map is too imprecise for thumb-chosen pins. Clear competing
+          // overlays so we don't end up with two cards in the same
+          // bottom-left slot.
+          setMapTap(null);
+          setSelectedId(null);
+          setClusterIncidentIds(null);
+          setSelectedDistrict(null);
+          setPillTarget(null);
+          setPeekAnchor({ lat, lng });
         }}
         measurePoints={measureMode ? measurePoints : null}
         onMapMove={(lat, lng, zoom) => {
@@ -2721,6 +2748,26 @@ function MapHome() {
               lng={mapTap.lng}
               incidents={filteredIncidents}
               onClose={() => setMapTap(null)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Long-press / right-click peek — read-only "what's happening here?" */}
+      <AnimatePresence>
+        {peekAnchor && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[396px] z-[1000] w-72 max-w-[calc(100vw-5rem)]"
+          >
+            <LocationPeekCard
+              lat={peekAnchor.lat}
+              lng={peekAnchor.lng}
+              incidents={incidents}
+              categoryPills={CATEGORY_PILLS}
+              onClose={() => setPeekAnchor(null)}
             />
           </motion.div>
         )}
