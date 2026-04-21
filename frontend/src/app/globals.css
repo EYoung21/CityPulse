@@ -129,6 +129,38 @@
   }
 }
 
+/* === CityPulse Brand Tokens ===
+ * Brand chrome is two colors: navy + teal. Red is reserved for the
+ * violent-incident semantic — it appears on map markers, on unread
+ * alert badges (which are about incidents, so semantically
+ * congruent), and on generic error states (universal web
+ * convention). Do NOT introduce red into chrome (nav, panels,
+ * upgrade CTAs, etc.) or you'll dilute the "red = danger" signal
+ * users already trust.
+ *
+ * The categorical incident palette below mirrors MONO in
+ * IncidentMap.tsx — keep the two in sync if you change either. */
+:root {
+  /* Brand */
+  --cp-navy:        #1f3a5f;
+  --cp-teal:        #2dd4bf;
+
+  /* Semantic — "something is wrong" red, used for violent
+   * incidents, unread badges, and error states. */
+  --cp-danger:      #EF4444;
+  --cp-danger-deep: #991B1B;
+
+  /* Categorical incident palette (mirrors MONO in IncidentMap.tsx) */
+  --cp-incident-violent:  #EF4444;
+  --cp-incident-medical:  #38BDF8;
+  --cp-incident-fire:     #FB923C;
+  --cp-incident-traffic:  #60A5FA;
+  --cp-incident-robbery:  #4ADE80;
+  --cp-incident-burglary: #FACC15;
+  --cp-incident-disorder: #C084FC;
+  --cp-incident-admin:    #94A3B8;
+}
+
 /* === PHLPulse Theme Variables === */
 :root {
   --panel-bg: rgba(255, 255, 255, 0.97);
