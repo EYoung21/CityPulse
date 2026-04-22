@@ -272,7 +272,8 @@ export function SafeRouteCanvas({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
     resize();
-    addEventListener("resize", resize);
+    const ro = new ResizeObserver(resize);
+    if (cvs.parentElement) ro.observe(cvs.parentElement);
 
     const { red: redLngLat, green: greenLngLat } = buildRoutes(pair);
 
@@ -359,7 +360,7 @@ export function SafeRouteCanvas({
     raf = requestAnimationFrame(draw);
 
     return () => {
-      removeEventListener("resize", resize);
+      ro.disconnect();
       cancelAnimationFrame(raf);
     };
   }, [map, city, activePairIndex]);

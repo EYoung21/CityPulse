@@ -134,7 +134,13 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
         onReadyRef.current?.(map);
       });
 
+      const ro = new ResizeObserver(() => {
+        map.resize();
+      });
+      ro.observe(containerRef.current);
+
       return () => {
+        ro.disconnect();
         mapRef.current = null;
         readyPromiseRef.current = null;
         readyResolveRef.current = null;
@@ -151,6 +157,7 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
       if (!map || !bounds) return;
 
       const apply = () => {
+        map.resize();
         // Expand the bbox to match the container's aspect ratio so the
         // data fills the full hero width instead of being squeezed into
         // a narrow central band. Without this, a square ~9×9km incident
