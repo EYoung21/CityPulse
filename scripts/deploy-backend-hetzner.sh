@@ -28,12 +28,23 @@ systemctl is-active philly-pulse-api
 
 # Restart the live transcribers (multi-city or legacy single-city)
 if systemctl list-unit-files 'pulse-live@.service' &>/dev/null; then
-  for city in sf nyc philly chattanooga memphis detroit orlando miami la lasvegas; do
-    if systemctl is-enabled "pulse-live@${city}" &>/dev/null; then
-      systemctl restart "pulse-live@${city}"
-      sleep 1
-      systemctl is-active "pulse-live@${city}" || echo "WARNING: pulse-live@${city} failed to start"
+  # Enable + restart every city that has a config on disk. This is
+  # idempotent so newly-added cities (Memphis, Detroit, Orlando,
+  # Miami, LA, Las Vegas, ...) come up automatically on next deploy
+  # without needing a manual setup-multi-city.sh run.
+  for cfg in cities/*/config.yaml; do
+    [ -f "$cfg" ] || continue
+    city="$(basename "$(dirname "$cfg")")"
+    if ! systemctl is-enabled "pulse-live@${city}" &>/dev/null; then
+      echo "Enabling new city: pulse-live@${city}"
+      systemctl enable "pulse-live@${city}" || {
+        echo "WARNING: failed to enable pulse-live@${city}, skipping"
+        continue
+      }
     fi
+    systemctl restart "pulse-live@${city}"
+    sleep 1
+    systemctl is-active "pulse-live@${city}" || echo "WARNING: pulse-live@${city} failed to start"
   done
 else
   # Legacy single-city service
