@@ -67,7 +67,7 @@ export interface PulseCity {
   areaSqMi: number;
   /** Notable neighborhoods rendered as hero stats. */
   neighborhoods: string[];
-  /** Characteristic grid pattern used by CityWireframeCanvas. */
+  /** Characteristic grid pattern (retained for future procedural visuals). */
   gridStyle: GridStyle;
   /** Characteristic water features (rivers, bays). */
   water: WaterFeature[];

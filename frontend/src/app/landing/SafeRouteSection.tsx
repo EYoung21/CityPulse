@@ -17,6 +17,7 @@
 
 import { useEffect, useState } from "react";
 import type { PulseCity } from "@/lib/pulse-cities";
+import { CityMapCanvas } from "./CityMapCanvas";
 import { SafeRouteCanvas } from "./SafeRouteCanvas";
 import { SafeRoutePicker } from "./SafeRoutePicker";
 
@@ -82,8 +83,15 @@ export function SafeRouteSection({ city }: Props) {
 
         <div className="lp-route-section-grid">
           <div className="lp-route-canvas-wrap">
+            <CityMapCanvas
+              className="lp-route-map"
+              city={city}
+              zoom={13.2}
+              pitch={25}
+              bearing={-12}
+            />
             <SafeRouteCanvas
-              className="lp-route-canvas"
+              className="lp-route-overlay"
               city={city}
               activePairIndex={idx}
             />
