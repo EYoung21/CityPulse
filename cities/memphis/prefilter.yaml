@@ -1,0 +1,12 @@
+# Per-city prefilter overrides for Memphis.
+# Extends philly_pulse/data/prefilter_default.yaml.
+
+noise_patterns:
+  - "(?i)^(unit|car|adam|baker|charlie|david|edward|frank|george|king)\\s*\\d+\\s+(10[- ]?8|10[- ]?7|in service|out of service)[\\s.,!?]*$"
+
+keep_keywords:
+  - signal 47    # Shooting (MPD).
+  - signal 63    # Domestic.
+  - signal 64    # Robbery in progress (MPD).
+  - signal 71    # Burglary in progress.
+  - shots fired

@@ -27,6 +27,14 @@ export default function PulseNetworkNav() {
   const { user } = useAuth();
 
   const navigateToCity = useCallback(async (city: PulseCity) => {
+    // Preview-only cities don't have a real domain yet — view them by
+    // overriding the slug on the current host via `?city=<slug>`.
+    if (city.previewOnly) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("city", city.slug);
+      window.location.href = url.toString();
+      return;
+    }
     let url = `https://${city.domain}`;
     if (user && isFirebaseConfigured()) {
       try {
@@ -126,7 +134,7 @@ export default function PulseNetworkNav() {
             Live Cities
           </div>
 
-          {PULSE_CITIES.map((city) => (
+          {PULSE_CITIES.filter((c) => !c.previewOnly).map((city) => (
             <CityRow
               key={city.slug}
               city={city}
@@ -135,6 +143,38 @@ export default function PulseNetworkNav() {
               onClose={() => setOpen(false)}
             />
           ))}
+
+          {PULSE_CITIES.some((c) => c.previewOnly) && (
+            <>
+              <div
+                style={{
+                  borderTop: "1px solid rgba(255,255,255,0.06)",
+                  margin: "6px 0",
+                }}
+              />
+              <div
+                style={{
+                  padding: "8px 14px 6px",
+                  fontSize: "10px",
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: "1px",
+                  color: "rgba(255,255,255,0.4)",
+                }}
+              >
+                Preview (no domain yet)
+              </div>
+              {PULSE_CITIES.filter((c) => c.previewOnly).map((city) => (
+                <CityRow
+                  key={city.slug}
+                  city={city}
+                  isCurrent={city.slug === current.slug}
+                  onNavigate={navigateToCity}
+                  onClose={() => setOpen(false)}
+                />
+              ))}
+            </>
+          )}
 
           <div
             style={{
@@ -178,7 +218,13 @@ function CityRow({
 }) {
   return (
     <a
-      href={isCurrent ? "#" : `https://${city.domain}`}
+      href={
+        isCurrent
+          ? "#"
+          : city.previewOnly
+            ? `?city=${encodeURIComponent(city.slug)}`
+            : `https://${city.domain}`
+      }
       onClick={(e) => {
         e.preventDefault();
         if (isCurrent) return;
@@ -235,7 +281,22 @@ function CityRow({
           LIVE
         </span>
       )}
-      {!isCurrent && (
+      {!isCurrent && city.previewOnly && (
+        <span
+          style={{
+            fontSize: "9px",
+            padding: "2px 6px",
+            borderRadius: "4px",
+            background: "rgba(255,255,255,0.08)",
+            color: "rgba(255,255,255,0.5)",
+            fontWeight: 600,
+            letterSpacing: "0.5px",
+          }}
+        >
+          PREVIEW
+        </span>
+      )}
+      {!isCurrent && !city.previewOnly && (
         <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.25)" }}>↗</span>
       )}
     </a>

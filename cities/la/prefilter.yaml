@@ -1,0 +1,24 @@
+# Per-city prefilter overrides for Los Angeles.
+# Extends philly_pulse/data/prefilter_default.yaml.
+
+noise_patterns:
+  # LAPD unit check-ins like "1-Adam-12 clear" / "code 4".
+  - "(?i)^\\d+[- ]?(adam|boy|charlie|david|edward|frank|george|henry|john|king|lincoln|mary|nora|ocean|paul|queen|robert|sam|tom|union|victor|william|x[- ]?ray|young|zebra)[- ]?\\d+\\s*(clear|code\\s*4|10[- ]?8|10[- ]?98|out of service)[\\s.,!?]*$"
+  # LAFD/LACoFD apparatus acks.
+  - "(?i)^(engine|truck|light force|rescue|squad|battalion|task force)\\s*\\d+\\s*(in service|10[- ]?8|out of service|available)[\\s.,!?]*$"
+  # "Roll call" / "all units" without an actual incident.
+  - "(?i)^all units[, ]+stand by[\\s.,!?]*$"
+
+keep_keywords:
+  - shots fired
+  - 211          # Robbery (CA penal code).
+  - 187          # Homicide.
+  - 245          # ADW.
+  - 273.5        # Domestic violence.
+  - 415          # Disturbance / fight.
+  - 459          # Burglary.
+  - 11-99        # Officer needs help.
+  - code 3
+  - code 30      # Burglar alarm.
+  - GTA          # Grand theft auto.
+  - ADW          # Assault with deadly weapon.

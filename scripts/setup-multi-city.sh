@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-CITIES=(sf nyc philly chattanooga)
+CITIES=(sf nyc philly chattanooga memphis detroit orlando miami la lasvegas)
 
 echo "=== Pulse Multi-City Setup ==="
 echo ""

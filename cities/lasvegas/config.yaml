@@ -1,0 +1,53 @@
+# LasVegasPulse — Las Vegas, NV
+
+city:
+  name: "Las Vegas"
+  short: "LV"
+  slug: "lasvegas"
+  domain: "lasvegaspulse.com"   # placeholder; not registered yet
+  region: "Las Vegas / Clark County, NV"
+  tagline: "Real-time safety intelligence for the Entertainment Capital."
+
+map:
+  center_lat: 36.1699
+  center_lng: -115.1398
+  default_zoom: 11
+
+geocode:
+  viewbox: "-115.40,35.95,-114.85,36.35"
+  bounds:
+    lat_min: 35.90
+    lat_max: 36.40
+    lng_min: -115.45
+    lng_max: -114.80
+  suffix: ", Las Vegas, NV"
+
+# IMPORTANT: Las Vegas Metropolitan Police Department (LVMPD) has been
+# fully encrypted since 2019 — there is no public scanner feed for city
+# police. Coverage here is limited to fire/EMS (Las Vegas Fire + Clark
+# County Fire combined), Henderson Fire, and Nevada Highway Patrol for
+# Clark County. Crime incidents will be sparse compared to other cities.
+feeds:
+  - { feed_id: "26400", label: "Las Vegas + Clark County Fire" }
+  - { feed_id: "30507", label: "Henderson Fire Dispatch" }
+  - { feed_id: "44271", label: "Nevada Highway Patrol - Clark County" }
+
+tuning:
+  initial_prompt: >-
+    Las Vegas Nevada fire and EMS radio dispatch. Las Vegas Fire and
+    Rescue LVFR. Clark County Fire CCFD. Henderson Fire. Nevada Highway
+    Patrol NHP. Locations: Las Vegas Strip, Las Vegas Boulevard, Sahara
+    Avenue, Tropicana Avenue, Flamingo Road, Charleston Boulevard,
+    Spring Mountain Road, Sands Avenue, Maryland Parkway, Eastern Avenue,
+    Pecos Road, Fremont Street, Boulder Highway, Rainbow Boulevard, Decatur
+    Boulevard, Jones Boulevard, Buffalo Drive, Durango Drive, Tenaya Way,
+    Cheyenne Avenue, Lake Mead Boulevard, Craig Road, Ann Road. Hotels and
+    casinos: MGM, Bellagio, Caesars, Wynn, Venetian, Mandalay Bay, Aria,
+    Cosmopolitan, Paris, Planet Hollywood, Stratosphere, Circus Circus,
+    Westgate. Neighborhoods: Downtown, Arts District, Summerlin, Spring
+    Valley, Enterprise, Paradise, Henderson, North Las Vegas, Boulder
+    City. Freeways: I-15, I-215 Beltway, US-95, US-93, SR 159 Red Rock.
+    Hospitals: UMC, Sunrise, Spring Valley, Mountain View, Centennial Hills,
+    Henderson, St Rose. Phrases: dispatch, en route, on scene, working
+    fire, structure fire, MVA, rollover, code 3, medical, trauma alert.
+    Short dispatch. Numbers spoken separately.

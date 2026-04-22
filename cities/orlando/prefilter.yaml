@@ -1,0 +1,13 @@
+# Per-city prefilter overrides for Orlando.
+# Extends philly_pulse/data/prefilter_default.yaml.
+
+noise_patterns:
+  # Engine/rescue/tower acks (OFD/OCFR).
+  - "(?i)^(engine|rescue|tower|ladder|squad|battalion|chief)\\s*\\d+\\s*(in service|in quarters|10[- ]?8|out of service|available)[\\s.,!?]*$"
+
+keep_keywords:
+  - working fire
+  - structure fire
+  - trauma alert
+  - signal 7     # Sick person (OFD common usage varies).
+  - signal 11    # MVA with injuries.

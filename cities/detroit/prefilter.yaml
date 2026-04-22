@@ -1,0 +1,15 @@
+# Per-city prefilter overrides for Detroit.
+# Extends philly_pulse/data/prefilter_default.yaml.
+
+noise_patterns:
+  # DPD scout-car check-ins like "Scout 8-1 in service".
+  - "(?i)^(scout|car|unit)\\s*\\d+[- ]?\\d*\\s+(10[- ]?8|10[- ]?7|in service|out of service|clear)[\\s.,!?]*$"
+  # Engine/Ladder/Squad acks (DFD).
+  - "(?i)^(engine|ladder|squad|chief|medic)\\s*\\d+\\s*(in service|10[- ]?8|out of service|in quarters)[\\s.,!?]*$"
+
+keep_keywords:
+  - shots fired
+  - holdup alarm
+  - signal 6     # Officer in trouble (DPD).
+  - code 1       # Priority response.
+  - working fire

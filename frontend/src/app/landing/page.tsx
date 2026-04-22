@@ -586,7 +586,7 @@ export default function LandingPage() {
           </a>
         </div>
         <div className="lp-cta-row" style={{ marginTop: "2rem" }}>
-          {PULSE_CITIES.map((c) => {
+          {PULSE_CITIES.filter((c) => !c.previewOnly).map((c) => {
             const isCurrent = c.slug === city.slug;
             return (
               <a

@@ -28,7 +28,7 @@ systemctl is-active philly-pulse-api
 
 # Restart the live transcribers (multi-city or legacy single-city)
 if systemctl list-unit-files 'pulse-live@.service' &>/dev/null; then
-  for city in sf nyc philly chattanooga; do
+  for city in sf nyc philly chattanooga memphis detroit orlando miami la lasvegas; do
     if systemctl is-enabled "pulse-live@${city}" &>/dev/null; then
       systemctl restart "pulse-live@${city}"
       sleep 1

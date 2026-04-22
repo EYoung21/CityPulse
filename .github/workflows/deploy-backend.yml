@@ -9,8 +9,11 @@ on:
       - "radiotranscriber.py"
       - "multi_transcriber.py"
       - "config.yaml"
+      - "cities/**"
       - "requirements-philly-pulse.txt"
       - "scripts/deploy-backend-hetzner.sh"
+      - "scripts/setup-multi-city.sh"
+      - "systemd/**"
       - ".github/workflows/deploy-backend.yml"
 
 jobs:

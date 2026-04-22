@@ -1,0 +1,57 @@
+# LAPulse — Los Angeles, CA
+
+city:
+  name: "Los Angeles"
+  short: "LA"
+  slug: "la"
+  domain: "lapulse.com"   # placeholder; not registered yet
+  region: "Los Angeles, CA"
+  tagline: "Real-time safety intelligence for the City of Angels."
+
+map:
+  center_lat: 34.0522
+  center_lng: -118.2437
+  default_zoom: 10
+
+geocode:
+  viewbox: "-118.70,33.70,-118.10,34.35"
+  bounds:
+    lat_min: 33.68
+    lat_max: 34.40
+    lng_min: -118.75
+    lng_max: -118.05
+  suffix: ", Los Angeles, CA"
+
+feeds:
+  - { feed_id: "26569", label: "LAPD Dispatch - Valley Bureau" }
+  - { feed_id: "33623", label: "LAPD Dispatch - West Divisions (Hollywood/Wilshire/West LA)" }
+  - { feed_id: "20296", label: "LAPD - South Bureau (Southwest/Harbor/77th/Southeast)" }
+  - { feed_id: "20274", label: "LAPD Dispatch - Pacific Division (Venice)" }
+  - { feed_id: "38639", label: "LA County Fire - Countywide Dispatch" }
+
+tuning:
+  initial_prompt: >-
+    Los Angeles California police radio dispatch. LAPD Los Angeles Police
+    Department. LASD Los Angeles County Sheriff. LAFD Los Angeles Fire.
+    Bureaus and divisions: Central, Rampart, Southwest, Hollenbeck, Harbor,
+    Hollywood, Wilshire, West LA, Van Nuys, West Valley, Northeast, 77th
+    Street, Newton, Pacific, North Hollywood, Foothill, Devonshire, Southeast,
+    Mission, Olympic, Topanga. Locations: Sunset Boulevard, Hollywood
+    Boulevard, Wilshire Boulevard, Santa Monica Boulevard, Vermont Avenue,
+    Western Avenue, Crenshaw Boulevard, La Brea, Fairfax, La Cienega, La
+    Tijera, Sepulveda, Vine, Highland, Cahuenga, Mulholland, Ventura
+    Boulevard, Olympic, Pico, Manchester, Slauson, Florence, Imperial
+    Highway, Rosecrans, Alameda, Figueroa, Broadway, Spring, Main, Grand,
+    Olive, Hill, Hope, Flower. Neighborhoods: Hollywood, Koreatown, Echo
+    Park, Silver Lake, Los Feliz, DTLA, Downtown, Skid Row, Boyle Heights,
+    East LA, South Central, Watts, Compton, Inglewood, Crenshaw, Leimert
+    Park, Baldwin Hills, Culver City, Mar Vista, Venice, Westwood, Brentwood,
+    Pacific Palisades, Beverly Hills, West Hollywood, Studio City, Sherman
+    Oaks, Encino, Tarzana, Reseda, Northridge, Van Nuys, North Hollywood,
+    Burbank, Glendale, Pasadena, Highland Park, Eagle Rock. Freeways: 101,
+    405, 5, 10, 110, 134, 170, 210, PCH. Hospitals: LAC+USC, Cedars-Sinai,
+    UCLA, Kaiser, Good Samaritan, MLK Community, Harbor-UCLA, Northridge,
+    St Francis. Phrases: code 3, code 4, code 6, 211 in progress, 459, 415,
+    187, 245, 273, ADW, GTA, GTAW, AOA, shots fired, suspect, code 30
+    ringer, dispatch, en route, on scene, broadcast. Short dispatch.
+    Numbers spoken separately.

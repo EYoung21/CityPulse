@@ -1,0 +1,43 @@
+# MemphisPulse — Memphis, TN
+
+city:
+  name: "Memphis"
+  short: "MEM"
+  slug: "memphis"
+  domain: "memphispulse.com"   # placeholder; not registered yet
+  region: "Memphis / Shelby County, TN"
+  tagline: "Real-time safety intelligence for the Bluff City."
+
+map:
+  center_lat: 35.1495
+  center_lng: -90.0490
+  default_zoom: 11
+
+geocode:
+  viewbox: "-90.20,35.00,-89.85,35.30"
+  bounds:
+    lat_min: 34.95
+    lat_max: 35.32
+    lng_min: -90.25
+    lng_max: -89.80
+  suffix: ", Memphis, TN"
+
+# Memphis is thin on Broadcastify: the dedicated MPD/Fire feeds are
+# offline, so this combined feed is the only reliable public source.
+feeds:
+  - { feed_id: "215", label: "Memphis Police + Shelby County Sheriff Dispatch" }
+
+tuning:
+  initial_prompt: >-
+    Memphis Tennessee police radio dispatch. Memphis Police Department.
+    Shelby County Sheriff. Stations and precincts: Austin Peay, Raines,
+    Mt Moriah, Crump, Tillman, North Main, Airways, Appling Farms,
+    Ridgeway. Locations: Beale Street, Union Avenue, Poplar Avenue,
+    Madison Avenue, Lamar Avenue, Elvis Presley Boulevard, Summer
+    Avenue, Winchester Road, Getwell Road, Riverside Drive, Mud Island,
+    Downtown, Midtown, South Memphis, North Memphis, Frayser, Whitehaven,
+    Hickory Hill, Cordova, Bartlett, Germantown, Collierville, Millington.
+    Hospitals: Regional One, Methodist, Baptist, Le Bonheur, St. Jude.
+    Phrases: signal 47, signal 63, signal 64, shots fired, in pursuit,
+    code 3, 10-50, 10-71, 10-32, dispatch, responding, en route, on
+    scene. Short dispatch. Numbers spoken separately.

@@ -1,0 +1,46 @@
+# OrlandoPulse — Orlando, FL
+
+city:
+  name: "Orlando"
+  short: "ORL"
+  slug: "orlando"
+  domain: "orlandopulse.com"   # placeholder; not registered yet
+  region: "Orlando / Orange County, FL"
+  tagline: "Real-time safety intelligence for the City Beautiful."
+
+map:
+  center_lat: 28.5383
+  center_lng: -81.3792
+  default_zoom: 11
+
+geocode:
+  viewbox: "-81.55,28.40,-81.20,28.70"
+  bounds:
+    lat_min: 28.37
+    lat_max: 28.74
+    lng_min: -81.58
+    lng_max: -81.18
+  suffix: ", Orlando, FL"
+
+# Orlando PD runs on the Greater Orlando Public Safety Cooperative
+# trunked system without a clean public feed; we cover Orlando Fire +
+# the Orange County Fire/EMS combined feed (which captures most fire
+# and medical dispatches across the metro).
+feeds:
+  - { feed_id: "41064", label: "Orange County and Orlando Fire and EMS" }
+  - { feed_id: "41882", label: "City of Orlando Fire - Tac 1 and Tac 3" }
+
+tuning:
+  initial_prompt: >-
+    Orlando Florida fire and EMS radio dispatch. Orlando Fire Department.
+    Orange County Fire Rescue. Winter Park Fire. Maitland Fire. Locations:
+    International Drive, Orange Blossom Trail, Colonial Drive, Mills
+    Avenue, Orange Avenue, Bumby, Conway, Semoran, Sand Lake Road, John
+    Young Parkway, Kirkman, Pine Hills, Parramore, Lake Eola, Thornton
+    Park, College Park, Baldwin Park, Mills 50, Audubon Park, Winter Park,
+    Maitland, Apopka, Pine Castle, Belle Isle, Edgewood. I-4, SR 408
+    East-West, SR 417 GreeneWay, SR 528 Beachline, Florida's Turnpike.
+    Hospitals: Orlando Health, ORMC, Arnold Palmer, Winnie Palmer, AdventHealth,
+    Nemours. Phrases: dispatch, en route, on scene, signal 7, signal 11,
+    code 3, structure fire, working fire, medical, MVA, rollover, trauma
+    alert. Short dispatch. Numbers spoken separately.
