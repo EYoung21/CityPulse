@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Search, MapPin, Loader2, X, Navigation, Mic, Clock, Trash2, Home, Briefcase, Star, Radio, Lock } from "lucide-react";
+import { Search, MapPin, Loader2, X, Navigation, Mic, Clock, Trash2, Home, Briefcase, Star, Radio, Lock, Bookmark } from "lucide-react";
 import { geocodePhilly } from "@/lib/search";
 import { isVoiceSearchSupported, startVoiceSearch } from "@/lib/voice";
 import { clearRecent, loadRecent, pushRecent, removeRecent, subscribeRecent, type RecentSearch } from "@/lib/recent-searches";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
+import QuickSavePlace from "@/components/QuickSavePlace";
 import CommutePredictionPill from "@/components/CommutePredictionPill";
 import { predictNextCommute } from "@/lib/commute-patterns";
 import { subscribeTripHistory } from "@/lib/trip-history";
@@ -47,6 +48,12 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
   const [open, setOpen] = useState(false);
   const [voiceActive, setVoiceActive] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
+  // Key of the result row whose inline QuickSavePlace form is open.
+  // `null` = no save form expanded. Shape: "suggest-<idx>" | "recent-<lat>,<lng>"
+  // so we can key cleanly across both result buckets without caring
+  // about ordering. Clicking the bookmark again on the same row
+  // collapses the form; clicking a different row's bookmark swaps.
+  const [saveTarget, setSaveTarget] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const incidentDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const incidentAbortRef = useRef<AbortController | null>(null);
@@ -209,6 +216,18 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
   const { destinations } = useSavedDestinations();
   const homePlace = destinations.find((d) => d.category === "home") || null;
   const workPlace = destinations.find((d) => d.category === "work") || null;
+
+  /** O(n) duplicate lookup: a coord within ~1m of any existing save
+   *  is treated as already-saved, which gets the bookmark a "filled"
+   *  look instead of the empty outline. Tolerance matches the one in
+   *  QuickSavePlace so the two components agree. */
+  const isAlreadySaved = useCallback(
+    (lat: number, lng: number) =>
+      destinations.some(
+        (d) => Math.abs(d.lat - lat) < 1e-5 && Math.abs(d.lng - lng) < 1e-5
+      ),
+    [destinations]
+  );
   // Peek at the commute prediction so we don't render an empty
   // shortcuts strip when neither Home/Work nor a pattern match is
   // available. Recomputes on a 1-min interval and on history change.
@@ -449,52 +468,82 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
             const parts = r.display_name.split(",");
             const primary = parts[0].trim();
             const secondary = parts.slice(1, 3).map((p) => p.trim()).join(", ");
+            const key = `recent-${r.lat},${r.lng}`;
+            const expanded = saveTarget === key;
+            const saved = isAlreadySaved(r.lat, r.lng);
             return (
-              <div
-                key={`${r.lat},${r.lng},${i}`}
-                onClick={() => handleSelect(r)}
-                className="w-full text-left px-4 py-2.5 flex items-start gap-3 last:border-0 transition-colors cursor-pointer"
-                style={{ borderBottom: "1px solid var(--panel-border)" }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-              >
+              <div key={`${r.lat},${r.lng},${i}`} style={{ borderBottom: "1px solid var(--panel-border)" }}>
                 <div
-                  className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-                  style={{ background: "var(--panel-input-bg)" }}
+                  onClick={() => handleSelect(r)}
+                  className="w-full text-left px-4 py-2.5 flex items-start gap-3 transition-colors cursor-pointer"
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
-                  <Clock className="w-3.5 h-3.5" style={{ color: "var(--panel-text-muted)" }} />
+                  <div
+                    className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+                    style={{ background: "var(--panel-input-bg)" }}
+                  >
+                    <Clock className="w-3.5 h-3.5" style={{ color: "var(--panel-text-muted)" }} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm truncate" style={{ color: "var(--panel-text)" }}>{primary}</p>
+                    {secondary && (
+                      <p className="text-xs truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                        {secondary}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSaveTarget(expanded ? null : key);
+                    }}
+                    className="shrink-0 mt-1 transition-colors"
+                    style={{ color: saved ? "#a855f7" : "var(--panel-text-muted)" }}
+                    title={saved ? "Already saved" : "Save place"}
+                    aria-label={saved ? `Already saved ${primary}` : `Save ${primary}`}
+                    aria-pressed={expanded}
+                  >
+                    <Bookmark
+                      className="w-3.5 h-3.5"
+                      {...(saved ? { fill: "currentColor" } : {})}
+                    />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDirections(primary, { lat: r.lat, lng: r.lng });
+                      remember({ display_name: r.display_name, lat: r.lat, lng: r.lng });
+                    }}
+                    className="text-blue-500/50 hover:text-blue-500 shrink-0 mt-1"
+                    title="Get directions"
+                    aria-label={`Get directions to ${primary}`}
+                  >
+                    <Navigation className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRecents(removeRecent(r.lat, r.lng));
+                    }}
+                    className="text-slate-500 hover:text-rose-400 shrink-0 mt-1 opacity-50 hover:opacity-100 transition-opacity"
+                    title="Forget this destination"
+                    aria-label={`Remove ${primary} from recents`}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm truncate" style={{ color: "var(--panel-text)" }}>{primary}</p>
-                  {secondary && (
-                    <p className="text-xs truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
-                      {secondary}
-                    </p>
-                  )}
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDirections(primary, { lat: r.lat, lng: r.lng });
-                    remember({ display_name: r.display_name, lat: r.lat, lng: r.lng });
-                  }}
-                  className="ml-auto text-blue-500/50 hover:text-blue-500 shrink-0 mt-1"
-                  title="Get directions"
-                  aria-label={`Get directions to ${primary}`}
-                >
-                  <Navigation className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setRecents(removeRecent(r.lat, r.lng));
-                  }}
-                  className="text-slate-500 hover:text-rose-400 shrink-0 mt-1 opacity-50 hover:opacity-100 transition-opacity"
-                  title="Forget this destination"
-                  aria-label={`Remove ${primary} from recents`}
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
+                {expanded && (
+                  <div className="px-4 pb-2.5">
+                    <QuickSavePlace
+                      lat={r.lat}
+                      lng={r.lng}
+                      suggestedName={primary}
+                      autoFocus
+                    />
+                  </div>
+                )}
               </div>
             );
           })}
@@ -608,43 +657,73 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
             const parts = s.display_name.split(",");
             const primary = parts[0].trim();
             const secondary = parts.slice(1, 3).map((p) => p.trim()).join(", ");
+            const key = `suggest-${i}`;
+            const expanded = saveTarget === key;
+            const saved = isAlreadySaved(s.lat, s.lng);
             return (
-              <div
-                key={i}
-                onClick={() => handleSelect(s)}
-                className="w-full text-left px-4 py-3 flex items-start gap-3 last:border-0 transition-colors cursor-pointer"
-                style={{ borderBottom: "1px solid var(--panel-border)" }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-              >
+              <div key={i} style={{ borderBottom: "1px solid var(--panel-border)" }}>
                 <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-                  style={{ background: "var(--panel-input-bg)" }}
+                  onClick={() => handleSelect(s)}
+                  className="w-full text-left px-4 py-3 flex items-start gap-3 transition-colors cursor-pointer"
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
-                  <MapPin className="w-4 h-4" style={{ color: "var(--panel-text-muted)" }} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate" style={{ color: "var(--panel-text)" }}>
-                    {primary}
-                  </p>
-                  {secondary && (
-                    <p className="text-xs truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
-                      {secondary}
+                  <div
+                    className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+                    style={{ background: "var(--panel-input-bg)" }}
+                  >
+                    <MapPin className="w-4 h-4" style={{ color: "var(--panel-text-muted)" }} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate" style={{ color: "var(--panel-text)" }}>
+                      {primary}
                     </p>
-                  )}
+                    {secondary && (
+                      <p className="text-xs truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                        {secondary}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSaveTarget(expanded ? null : key);
+                    }}
+                    className="shrink-0 mt-1 transition-colors"
+                    style={{ color: saved ? "#a855f7" : "var(--panel-text-muted)" }}
+                    title={saved ? "Already saved" : "Save place"}
+                    aria-label={saved ? `Already saved ${primary}` : `Save ${primary}`}
+                    aria-pressed={expanded}
+                  >
+                    <Bookmark
+                      className="w-4 h-4"
+                      {...(saved ? { fill: "currentColor" } : {})}
+                    />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDirections(primary, s);
+                      remember(s);
+                    }}
+                    className="text-blue-500/50 hover:text-blue-500 shrink-0 mt-1"
+                    title="Get directions"
+                    aria-label={`Get directions to ${primary}`}
+                  >
+                    <Navigation className="w-4 h-4" />
+                  </button>
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDirections(primary, s);
-                    remember(s);
-                  }}
-                  className="ml-auto text-blue-500/50 hover:text-blue-500 shrink-0 mt-1"
-                  title="Get directions"
-                  aria-label={`Get directions to ${primary}`}
-                >
-                  <Navigation className="w-4 h-4" />
-                </button>
+                {expanded && (
+                  <div className="px-4 pb-3">
+                    <QuickSavePlace
+                      lat={s.lat}
+                      lng={s.lng}
+                      suggestedName={primary}
+                      autoFocus
+                    />
+                  </div>
+                )}
               </div>
             );
           })}
