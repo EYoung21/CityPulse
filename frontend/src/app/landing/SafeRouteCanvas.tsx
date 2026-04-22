@@ -106,13 +106,13 @@ function midpointsLngLat(pair: RouteDemoPair): {
   const midAx = (fx + tx) / 2;
   const midAy = (fy + ty) / 2;
   const sign = (hx - midAx) * nx + (hy - midAy) * ny > 0 ? -1 : 1;
-  const offMag = len * 0.55 * sign;
+  const offMag = len * 0.22 * sign;
   const offX = nx * offMag;
   const offY = ny * offMag;
   const greenMid = cubicAt(
     pair.fromLngLat,
-    [fx + dx * 0.25 + offX, fy + dy * 0.25 + offY],
-    [fx + dx * 0.75 + offX, fy + dy * 0.75 + offY],
+    [fx + dx * 0.3 + offX, fy + dy * 0.3 + offY],
+    [fx + dx * 0.7 + offX, fy + dy * 0.7 + offY],
     pair.toLngLat,
     0.5,
   );
@@ -139,8 +139,12 @@ function buildRoutes(pair: RouteDemoPair): {
     80,
   );
 
-  // Green "safer" — detour perpendicular to the from→to axis, pushed
-  // *away* from the hot-zone center.
+  // Green "safer" — gentle detour that bows perpendicular to the
+  // from→to axis, just enough to *step around* the hot zone instead of
+  // crossing it. The previous 55% offset turned a 3.6km Fishtown→
+  // Center City trip into a ~2km swing into Camden, which read as "go
+  // to a different city" rather than "route around the bad block".
+  // 22% feels like the cab driver who knows the back streets.
   const dx = tx - fx;
   const dy = ty - fy;
   const len = Math.hypot(dx, dy) || 1;
@@ -149,15 +153,13 @@ function buildRoutes(pair: RouteDemoPair): {
   const midAx = (fx + tx) / 2;
   const midAy = (fy + ty) / 2;
   const sign = (hx - midAx) * nx + (hy - midAy) * ny > 0 ? -1 : 1;
-  // Perpendicular offset in degrees. Scaled to the route length so the
-  // detour reads as ~25% of the diagonal.
-  const offMag = len * 0.55 * sign;
+  const offMag = len * 0.22 * sign;
   const offX = nx * offMag;
   const offY = ny * offMag;
   const green = sampleCubicLngLat(
     pair.fromLngLat,
-    [fx + dx * 0.25 + offX, fy + dy * 0.25 + offY],
-    [fx + dx * 0.75 + offX, fy + dy * 0.75 + offY],
+    [fx + dx * 0.3 + offX, fy + dy * 0.3 + offY],
+    [fx + dx * 0.7 + offX, fy + dy * 0.7 + offY],
     pair.toLngLat,
     80,
   );
