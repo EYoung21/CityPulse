@@ -7,6 +7,11 @@
 *.pem
 .secrets/
 *-firebase-adminsdk-*.json
+# Filled-in Stripe env-push script (set-stripe-env.sh in repo is a template
+# with REPLACE_ME placeholders; copy it to the .local.sh variant, fill in
+# your real keys, and run the .local.sh — never commit that copy).
+scripts/set-stripe-env.local.sh
+scripts/set-firebase-admin-env.local.sh
 
 # Output directories (transcription logs may contain sensitive content)
 46018_Belchertown/
