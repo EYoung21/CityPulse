@@ -1234,6 +1234,51 @@ async def stats():
     }
 
 
+@app.get("/api/city-stats/{slug}")
+async def city_stats(slug: str):
+    """Landing-page numbers for a single city.
+
+    Returns scanner feed count (from that city's config.yaml), incident
+    counts (total + last 24h), and the city display name. Negative counts
+    signal "unavailable" — the frontend falls back to static metadata.
+    """
+    cities_dir = Path(__file__).resolve().parent.parent / "cities"
+    cfg_path = cities_dir / slug / "config.yaml"
+    if not cfg_path.exists():
+        raise HTTPException(status_code=404, detail=f"Unknown city: {slug}")
+
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.warning("Failed to read city config %s: %s", cfg_path, e)
+        cfg = {}
+
+    feeds = cfg.get("feeds", []) or []
+    city_name = cfg.get("city", {}).get("name", slug)
+
+    # Last-24h incident count (Firestore supports city filter; SQLite
+    # dev returns -1).
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    try:
+        incidents_24h = store.count_city_incidents(slug, since_iso=since)
+    except Exception:
+        incidents_24h = -1
+    try:
+        incidents_total = store.count_city_incidents(slug)
+    except Exception:
+        incidents_total = -1
+
+    return {
+        "slug": slug,
+        "city_name": city_name,
+        "scanner_feeds": len(feeds),
+        "incidents_24h": incidents_24h,
+        "incidents_total": incidents_total,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 # ── Admin endpoints ─────────────────────────────────────────────────
 
 @app.websocket("/ws/admin")

@@ -24,6 +24,7 @@ def _should_use_firestore() -> bool:
 if _should_use_firestore():
     from .firestore_store import (
         append_mention,
+        count_city_incidents,
         delete_incident,
         find_recent_duplicate,
         get_conn,
@@ -42,6 +43,7 @@ if _should_use_firestore():
 else:
     from .store import (
         append_mention,
+        count_city_incidents,
         find_recent_duplicate,
         get_conn,
         get_extraction,

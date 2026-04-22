@@ -73,31 +73,32 @@ export default function ModerationPanel({ onBack }: Props) {
   return (
     <div
       className="h-screen flex flex-col overflow-hidden"
-      style={{ background: "var(--map-bg, #0a0a14)" }}
+      style={{ background: "linear-gradient(to bottom right, #060611, #0a0a16, #060a16)" }}
     >
       <div
-        className="flex items-center gap-3 px-4 py-2.5 shrink-0"
+        className="flex items-center gap-3 px-4 py-2.5 shrink-0 relative z-10"
         style={{
-          background: "var(--panel-bg, rgba(15,15,25,0.95))",
-          borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.08))",
+          background: "rgba(255,255,255,0.02)",
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          backdropFilter: "blur(12px)",
         }}
       >
         <button
           onClick={onBack}
           className="p-1.5 rounded-lg transition-colors hover:bg-white/5"
-          style={{ color: "var(--panel-text-secondary)" }}
+          style={{ color: "rgba(255,255,255,0.7)" }}
           aria-label="Back to launcher"
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
         <Users className="w-5 h-5 text-purple-400" />
-        <span className="text-sm font-semibold" style={{ color: "var(--panel-text)" }}>
+        <span className="text-sm font-semibold" style={{ color: "#fff" }}>
           Moderation
         </span>
 
         <div
           className="ml-4 flex items-center gap-1 p-0.5 rounded-lg"
-          style={{ background: "var(--panel-input-bg, rgba(255,255,255,0.04))" }}
+          style={{ background: "rgba(255,255,255,0.04)" }}
         >
           <button
             type="button"
@@ -105,7 +106,7 @@ export default function ModerationPanel({ onBack }: Props) {
             className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
               tab === "feedback" ? "bg-purple-500 text-white" : ""
             }`}
-            style={tab === "feedback" ? {} : { color: "var(--panel-text-secondary)" }}
+            style={tab === "feedback" ? {} : { color: "rgba(255,255,255,0.7)" }}
           >
             <span className="inline-flex items-center gap-1.5">
               <MessageSquare className="w-3 h-3" />
@@ -118,7 +119,7 @@ export default function ModerationPanel({ onBack }: Props) {
             className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
               tab === "audit" ? "bg-purple-500 text-white" : ""
             }`}
-            style={tab === "audit" ? {} : { color: "var(--panel-text-secondary)" }}
+            style={tab === "audit" ? {} : { color: "rgba(255,255,255,0.7)" }}
           >
             <span className="inline-flex items-center gap-1.5">
               <ClipboardList className="w-3 h-3" />
@@ -212,13 +213,14 @@ function FeedbackTab() {
   return (
     <div className="h-full flex flex-col">
       <div
-        className="flex items-center gap-2 px-4 py-2 shrink-0 text-[11px] overflow-x-auto"
+        className="flex items-center gap-2 px-4 py-2 shrink-0 text-[11px] overflow-x-auto relative z-10"
         style={{
-          background: "var(--panel-bg, rgba(15,15,25,0.85))",
-          borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.06))",
+          background: "rgba(255,255,255,0.02)",
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          backdropFilter: "blur(12px)",
         }}
       >
-        <span style={{ color: "var(--panel-text-muted)" }}>Status:</span>
+        <span style={{ color: "rgba(255,255,255,0.5)" }}>Status:</span>
         {(["all", ...FEEDBACK_STATUSES.map((s) => s.value)] as const).map((s) => {
           const meta = FEEDBACK_STATUSES.find((m) => m.value === s);
           const label = s === "all" ? "All" : meta?.label ?? s;
@@ -231,16 +233,16 @@ function FeedbackTab() {
               onClick={() => setStatusFilter(s)}
               className="px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition-colors"
               style={{
-                background: active ? `${color}22` : "var(--panel-input-bg)",
-                color: active ? color : "var(--panel-text-secondary)",
-                border: `1px solid ${active ? `${color}55` : "var(--panel-border)"}`,
+                background: active ? `${color}22` : "rgba(255,255,255,0.04)",
+                color: active ? color : "rgba(255,255,255,0.7)",
+                border: `1px solid ${active ? `${color}55` : "rgba(255,255,255,0.06)"}`,
               }}
             >
               {label}
             </button>
           );
         })}
-        <span className="ml-auto" style={{ color: "var(--panel-text-muted)" }}>
+        <span className="ml-auto" style={{ color: "rgba(255,255,255,0.5)" }}>
           {rows.length} row{rows.length === 1 ? "" : "s"}
         </span>
       </div>
@@ -249,7 +251,7 @@ function FeedbackTab() {
         {loading && (
           <div
             className="flex items-center justify-center gap-2 py-12 text-xs"
-            style={{ color: "var(--panel-text-muted)" }}
+            style={{ color: "rgba(255,255,255,0.5)" }}
           >
             <Loader2 className="w-4 h-4 animate-spin" />
             Loading feedback…
@@ -273,7 +275,7 @@ function FeedbackTab() {
         {!loading && !error && rows.length === 0 && (
           <div
             className="text-center py-12 text-xs"
-            style={{ color: "var(--panel-text-muted)" }}
+            style={{ color: "rgba(255,255,255,0.5)" }}
           >
             Nothing in this bucket.
           </div>
@@ -285,7 +287,7 @@ function FeedbackTab() {
             <div
               key={row.id}
               className="px-4 py-3"
-              style={{ borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.05))" }}
+              style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
             >
               <div className="flex items-center gap-2 flex-wrap text-[11px]">
                 <span
@@ -297,16 +299,16 @@ function FeedbackTab() {
                 >
                   {kindMeta?.label ?? row.kind}
                 </span>
-                <span style={{ color: "var(--panel-text)" }} className="font-medium">
+                <span style={{ color: "#fff" }} className="font-medium">
                   {row.ownerDisplayName || row.ownerEmail || "Anonymous"}
                 </span>
                 {row.contactEmail && row.contactEmail !== row.ownerEmail && (
-                  <span style={{ color: "var(--panel-text-muted)" }}>
+                  <span style={{ color: "rgba(255,255,255,0.5)" }}>
                     contact: {row.contactEmail}
                   </span>
                 )}
-                <span style={{ color: "var(--panel-text-muted)" }}>·</span>
-                <span style={{ color: "var(--panel-text-muted)" }} title={new Date(row.createdAtMs).toString()}>
+                <span style={{ color: "rgba(255,255,255,0.5)" }}>·</span>
+                <span style={{ color: "rgba(255,255,255,0.5)" }} title={new Date(row.createdAtMs).toString()}>
                   {fmtAgo(row.createdAtMs)}
                 </span>
                 <span
@@ -321,13 +323,13 @@ function FeedbackTab() {
               </div>
               <p
                 className="mt-1.5 text-[12px] leading-snug whitespace-pre-wrap"
-                style={{ color: "var(--panel-text)" }}
+                style={{ color: "#fff" }}
               >
                 {row.message}
               </p>
               <div
                 className="mt-1.5 flex items-center gap-2 flex-wrap text-[10px] font-mono"
-                style={{ color: "var(--panel-text-muted)" }}
+                style={{ color: "rgba(255,255,255,0.5)" }}
               >
                 <span>v{row.appVersion}</span>
                 {(row.context.viewport as string | undefined) && (
@@ -356,9 +358,9 @@ function FeedbackTab() {
                   disabled={busyIds.has(row.id)}
                   className="px-2 py-1 rounded text-[11px] disabled:opacity-50"
                   style={{
-                    background: "var(--panel-input-bg)",
-                    color: "var(--panel-text)",
-                    border: "1px solid var(--panel-border)",
+                    background: "rgba(255,255,255,0.02)",
+                    color: "#fff",
+                    border: "1px solid rgba(255,255,255,0.06)",
                   }}
                 >
                   {FEEDBACK_STATUSES.map((s) => (
@@ -366,7 +368,7 @@ function FeedbackTab() {
                   ))}
                 </select>
                 {busyIds.has(row.id) && (
-                  <RefreshCw className="w-3 h-3 animate-spin" style={{ color: "var(--panel-text-muted)" }} />
+                  <RefreshCw className="w-3 h-3 animate-spin" style={{ color: "rgba(255,255,255,0.5)" }} />
                 )}
                 <button
                   type="button"
@@ -424,13 +426,14 @@ function AuditTab() {
   return (
     <div className="h-full flex flex-col">
       <div
-        className="flex items-center gap-2 px-4 py-2 shrink-0 text-[11px] overflow-x-auto"
+        className="flex items-center gap-2 px-4 py-2 shrink-0 text-[11px] overflow-x-auto relative z-10"
         style={{
-          background: "var(--panel-bg, rgba(15,15,25,0.85))",
-          borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.06))",
+          background: "rgba(255,255,255,0.02)",
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          backdropFilter: "blur(12px)",
         }}
       >
-        <span style={{ color: "var(--panel-text-muted)" }}>Filter:</span>
+        <span style={{ color: "rgba(255,255,255,0.5)" }}>Filter:</span>
         {KINDS.map((k) => {
           const active = kindFilter === k.value;
           return (
@@ -440,16 +443,16 @@ function AuditTab() {
               onClick={() => setKindFilter(k.value)}
               className="px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition-colors"
               style={{
-                background: active ? `${k.color}22` : "var(--panel-input-bg)",
-                color: active ? k.color : "var(--panel-text-secondary)",
-                border: `1px solid ${active ? `${k.color}55` : "var(--panel-border)"}`,
+                background: active ? `${k.color}22` : "rgba(255,255,255,0.04)",
+                color: active ? k.color : "rgba(255,255,255,0.7)",
+                border: `1px solid ${active ? `${k.color}55` : "rgba(255,255,255,0.06)"}`,
               }}
             >
               {k.label}
             </button>
           );
         })}
-        <span className="ml-auto" style={{ color: "var(--panel-text-muted)" }}>
+        <span className="ml-auto" style={{ color: "rgba(255,255,255,0.5)" }}>
           {rows.length} entr{rows.length === 1 ? "y" : "ies"}
         </span>
       </div>
@@ -458,7 +461,7 @@ function AuditTab() {
         {loading && (
           <div
             className="flex items-center justify-center gap-2 py-12 text-xs"
-            style={{ color: "var(--panel-text-muted)" }}
+            style={{ color: "rgba(255,255,255,0.5)" }}
           >
             <Loader2 className="w-4 h-4 animate-spin" />
             Loading audit log…
@@ -483,7 +486,7 @@ function AuditTab() {
         {!loading && !error && rows.length === 0 && (
           <div
             className="text-center py-12 text-xs"
-            style={{ color: "var(--panel-text-muted)" }}
+            style={{ color: "rgba(255,255,255,0.5)" }}
           >
             No audit entries yet. Moderation actions you take will appear here.
           </div>
@@ -492,7 +495,7 @@ function AuditTab() {
           <div
             key={entry.id}
             className="px-4 py-2.5"
-            style={{ borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.05))" }}
+            style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
           >
             <div className="flex items-center gap-2 flex-wrap text-[11px]">
               <span
@@ -506,24 +509,24 @@ function AuditTab() {
               >
                 {describeAuditAction(entry)}
               </span>
-              <span style={{ color: "var(--panel-text)" }} className="font-medium">
+              <span style={{ color: "#fff" }} className="font-medium">
                 {entry.actorDisplayName || entry.actorEmail || entry.actorUid.slice(0, 8) + "…"}
               </span>
-              <span style={{ color: "var(--panel-text-muted)" }} title={new Date(entry.createdAtMs).toString()}>
+              <span style={{ color: "rgba(255,255,255,0.5)" }} title={new Date(entry.createdAtMs).toString()}>
                 · {fmtAgo(entry.createdAtMs)}
               </span>
             </div>
             {entry.targetSnippet && (
               <p
                 className="mt-1 text-[12px] leading-snug whitespace-pre-wrap"
-                style={{ color: "var(--panel-text-secondary)" }}
+                style={{ color: "rgba(255,255,255,0.7)" }}
               >
                 &ldquo;{entry.targetSnippet}&rdquo;
               </p>
             )}
             <div
               className="mt-1 flex items-center gap-3 text-[10px] font-mono flex-wrap"
-              style={{ color: "var(--panel-text-muted)" }}
+              style={{ color: "rgba(255,255,255,0.5)" }}
             >
               <span>target: {entry.targetId.slice(0, 16)}…</span>
               <span>actor: {entry.actorUid.slice(0, 8)}…</span>

@@ -1407,7 +1407,7 @@ export default function AdminPanel({ onBack }: Props) {
   return (
     <div
       className="h-screen flex flex-col overflow-hidden"
-      style={{ background: "var(--map-bg, #0a0a14)" }}
+      style={{ background: "linear-gradient(to bottom right, #060611, #0a0a16, #060a16)" }}
     >
       {/* Top bar */}
       <div
