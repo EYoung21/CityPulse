@@ -1,0 +1,18 @@
+# Per-city prefilter overrides for Miami.
+# Extends philly_pulse/data/prefilter_default.yaml.
+
+noise_patterns:
+  # Generic Miami PD/MDPD unit check-ins.
+  - "(?i)^(unit|alpha|bravo|charlie|delta|echo|foxtrot|golf)\\s*\\d+\\s+(10[- ]?8|10[- ]?7|in service|out of service|clear)[\\s.,!?]*$"
+  # Fire-rescue acks.
+  - "(?i)^(rescue|engine|ladder|squad|tower|chief)\\s*\\d+\\s*(in service|in quarters|out of service|available)[\\s.,!?]*$"
+
+keep_keywords:
+  - shots fired
+  - signal 4     # Auto crash (some FL agencies).
+  - signal 11    # MVA with injuries.
+  - signal 13    # Officer needs help.
+  - signal 20    # Mental subject.
+  - signal 21    # Disturbance.
+  - signal 31    # Homicide.
+  - 211          # Robbery (uncommon in FL but radioed sometimes).

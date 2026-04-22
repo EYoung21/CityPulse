@@ -1,0 +1,49 @@
+# MiamiPulse — Miami, FL
+
+city:
+  name: "Miami"
+  short: "MIA"
+  slug: "miami"
+  domain: "miamipulse.com"   # placeholder; not registered yet
+  region: "Miami / Miami-Dade County, FL"
+  tagline: "Real-time safety intelligence for the Magic City."
+
+map:
+  center_lat: 25.7617
+  center_lng: -80.1918
+  default_zoom: 11
+
+geocode:
+  viewbox: "-80.40,25.60,-80.10,25.95"
+  bounds:
+    lat_min: 25.55
+    lat_max: 26.00
+    lng_min: -80.45
+    lng_max: -80.08
+  suffix: ", Miami, FL"
+
+feeds:
+  - { feed_id: "45596", label: "City of Miami Police Dispatch - Central" }
+  - { feed_id: "45635", label: "City of Miami Police Dispatch - North" }
+  - { feed_id: "45585", label: "City of Miami Police Dispatch - South" }
+  - { feed_id: "30508", label: "Miami Fire Rescue (City + Coral Gables)" }
+  - { feed_id: "34119", label: "Miami-Dade PD + Fire Hammocks/Central" }
+  - { feed_id: "45029", label: "Miami-Dade Fire Rescue North & East" }
+
+tuning:
+  initial_prompt: >-
+    Miami Florida police radio dispatch. City of Miami Police Department
+    MPD. Miami-Dade Police MDPD. Miami Fire Rescue. Coral Gables Fire.
+    Districts: Central (Downtown, Overtown, Wynwood, Allapattah, Edgewater),
+    North (Model City, Upper Eastside, Little Haiti), South (Brickell,
+    Coconut Grove, Coral Way, Flagami, Little Havana). Locations: Biscayne
+    Boulevard, Flagler Street, Calle Ocho, SW 8th Street, NW 7th Avenue,
+    NW 27th Avenue, NW 36th Street, Miami Avenue, Brickell Avenue,
+    Bayshore Drive, Collins Avenue, MacArthur Causeway, Rickenbacker
+    Causeway, Julia Tuttle. Neighborhoods: Liberty City, Little Havana,
+    Little Haiti, Wynwood, Brickell, Downtown, Overtown, Coconut Grove,
+    Coral Gables, Hialeah, Doral. I-95, I-195, I-395, US-1, SR 836 Dolphin,
+    SR 826 Palmetto. Hospitals: Jackson Memorial, Mercy, Mount Sinai, UM
+    Hospital, Baptist. Phrases: signal 4, signal 5, signal 7, signal 11,
+    signal 13, signal 20, signal 21, code 3, shots fired, dispatch, en
+    route, on scene. Short dispatch. Numbers spoken separately.

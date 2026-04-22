@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { PULSE_CITIES, type PulseCity } from "@/lib/pulse-cities";
+import { getLaunchedCities, type PulseCity } from "@/lib/pulse-cities";
 import { navigateToCity } from "@/lib/pulse-navigate";
 
 export function CitySwitcher({ current }: { current: PulseCity }) {
@@ -62,10 +62,12 @@ export function CitySwitcher({ current }: { current: PulseCity }) {
         <span className="lp-switcher-name">{current.brand}</span>
         <span className={`lp-switcher-caret ${open ? "open" : ""}`} aria-hidden>▾</span>
       </button>
-      {open && (
+      {open && (() => {
+        const launched = getLaunchedCities();
+        return (
         <div className="lp-switcher-menu" role="menu">
-          <div className="lp-switcher-menu-label">Pulse Network · {PULSE_CITIES.length} cities</div>
-          {PULSE_CITIES.map((c) => {
+          <div className="lp-switcher-menu-label">Pulse Network · {launched.length} cities</div>
+          {launched.map((c) => {
             const isCurrent = c.slug === current.slug;
             return (
               <a
@@ -89,7 +91,8 @@ export function CitySwitcher({ current }: { current: PulseCity }) {
             );
           })}
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

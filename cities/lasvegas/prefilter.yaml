@@ -1,0 +1,19 @@
+# Per-city prefilter overrides for Las Vegas.
+# Extends philly_pulse/data/prefilter_default.yaml.
+#
+# NOTE: LVMPD is fully encrypted; this only filters fire/EMS + NHP traffic.
+
+noise_patterns:
+  # Engine/rescue/tower acks (LVFR/CCFD/Henderson FR).
+  - "(?i)^(engine|rescue|tower|ladder|squad|battalion|chief|medic)\\s*\\d+\\s*(in service|in quarters|10[- ]?8|out of service|available)[\\s.,!?]*$"
+  # NHP unit check-ins.
+  - "(?i)^(unit|trooper|nhp)\\s*\\d+\\s+(10[- ]?8|10[- ]?7|in service|out of service|clear)[\\s.,!?]*$"
+
+keep_keywords:
+  - working fire
+  - structure fire
+  - trauma alert
+  - rollover
+  - vehicle fire
+  - mass casualty
+  - mci

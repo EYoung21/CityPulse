@@ -80,33 +80,43 @@ export interface PulseCity {
   /** Appended to address searches, e.g. ", San Francisco, CA" */
   geocodeSuffix: string;
 
-  /* ── Landing-page metadata ─────────────────────────────── */
+  /**
+   * Preview-only cities have backend ingest + Firestore data but no
+   * registered domain or polished landing page yet. They appear in the
+   * Pulse Network nav with a "preview" tag and route via
+   * `?city=<slug>` on the current host instead of `https://<domain>`.
+   * Landing-page-only fields (heroIncidents, routeDemoPairs, water,
+   * gridStyle, accentRgb, population, etc.) are optional for these.
+   */
+  previewOnly?: boolean;
+
+  /* ── Landing-page metadata (optional for previewOnly cities) ───── */
   /** City-specific brand name (e.g. "PhillyPulse"). */
-  brand: string;
+  brand?: string;
   /** Tagline shown under the hero title. */
-  tagline: string;
+  tagline?: string;
   /** Accent color in "r, g, b" format (used in rgba()). */
-  accentRgb: string;
+  accentRgb?: string;
   /** Secondary accent for two-tone gradients, "r, g, b". */
-  accentRgb2: string;
+  accentRgb2?: string;
   /** Human population string ("1.58M", "8.3M"). */
-  population: string;
+  population?: string;
   /** Approximate land area in square miles. */
-  areaSqMi: number;
+  areaSqMi?: number;
   /** Notable neighborhoods rendered as hero stats. */
-  neighborhoods: string[];
+  neighborhoods?: string[];
   /** Characteristic grid pattern (retained for future procedural visuals). */
-  gridStyle: GridStyle;
+  gridStyle?: GridStyle;
   /** Characteristic water features (rivers, bays). */
-  water: WaterFeature[];
+  water?: WaterFeature[];
   /** Number of police-radio / scanner feeds we listen to here. */
-  scannerFeeds: number;
+  scannerFeeds?: number;
   /** Example origin→destination pairs cycled through the landing-page
    *  SafeRouteSection to demo the safer-routing pitch. 2–3 per city. */
-  routeDemoPairs: RouteDemoPair[];
+  routeDemoPairs?: RouteDemoPair[];
   /** Demo blips painted on top of the hero map background, anchored
    *  to real lng/lat so they follow the map's slow drift. */
-  heroIncidents: HeroIncident[];
+  heroIncidents?: HeroIncident[];
 }
 
 export const PULSE_CITIES: PulseCity[] = [
@@ -557,6 +567,78 @@ export const PULSE_CITIES: PulseCity[] = [
       { lng: -85.2980, lat: 34.9810, kind: "gun" },           // Tiftonia (S)
     ],
   },
+
+  /* ────────────────────────────────────────────────────────────────
+   * Preview-only cities (backend ingest + Firestore live, no polished
+   * landing page yet, no registered domain). Visit any deployed Pulse
+   * site with `?city=<slug>` to view their data.
+   * ──────────────────────────────────────────────────────────────── */
+  {
+    slug: "memphis",
+    name: "Memphis",
+    domain: "memphispulse.com",
+    emoji: "🎷",
+    lat: 35.1495,
+    lng: -90.0490,
+    nominatimViewbox: "-90.20,35.30,-89.85,35.00",
+    geocodeSuffix: ", Memphis, TN",
+    previewOnly: true,
+  },
+  {
+    slug: "detroit",
+    name: "Detroit",
+    domain: "detroitpulse.com",
+    emoji: "🚗",
+    lat: 42.3314,
+    lng: -83.0458,
+    nominatimViewbox: "-83.30,42.45,-82.90,42.25",
+    geocodeSuffix: ", Detroit, MI",
+    previewOnly: true,
+  },
+  {
+    slug: "orlando",
+    name: "Orlando",
+    domain: "orlandopulse.com",
+    emoji: "🎢",
+    lat: 28.5383,
+    lng: -81.3792,
+    nominatimViewbox: "-81.55,28.70,-81.20,28.40",
+    geocodeSuffix: ", Orlando, FL",
+    previewOnly: true,
+  },
+  {
+    slug: "miami",
+    name: "Miami",
+    domain: "miamipulse.com",
+    emoji: "🌴",
+    lat: 25.7617,
+    lng: -80.1918,
+    nominatimViewbox: "-80.40,25.95,-80.10,25.60",
+    geocodeSuffix: ", Miami, FL",
+    previewOnly: true,
+  },
+  {
+    slug: "la",
+    name: "Los Angeles",
+    domain: "lapulse.com",
+    emoji: "🌅",
+    lat: 34.0522,
+    lng: -118.2437,
+    nominatimViewbox: "-118.70,34.35,-118.10,33.70",
+    geocodeSuffix: ", Los Angeles, CA",
+    previewOnly: true,
+  },
+  {
+    slug: "lasvegas",
+    name: "Las Vegas",
+    domain: "lasvegaspulse.com",
+    emoji: "🎰",
+    lat: 36.1699,
+    lng: -115.1398,
+    nominatimViewbox: "-115.40,36.35,-114.85,35.95",
+    geocodeSuffix: ", Las Vegas, NV",
+    previewOnly: true,
+  },
 ];
 
 /**
@@ -592,8 +674,9 @@ export function cityBounds(
 export function heroIncidentBounds(
   city: PulseCity,
 ): [[number, number], [number, number]] {
-  const lngs = [city.lng, ...city.heroIncidents.map((i) => i.lng)];
-  const lats = [city.lat, ...city.heroIncidents.map((i) => i.lat)];
+  const hero = city.heroIncidents ?? [];
+  const lngs = [city.lng, ...hero.map((i) => i.lng)];
+  const lats = [city.lat, ...hero.map((i) => i.lat)];
   const minLng = Math.min(...lngs);
   const maxLng = Math.max(...lngs);
   const minLat = Math.min(...lats);
@@ -609,10 +692,31 @@ export function heroIncidentBounds(
 }
 
 /**
- * Resolve deploy target: env slug first, then production hostname (when env is missing),
- * then Philadelphia as default for local dev.
+ * Resolve deploy target. Resolution order:
+ *   1. `?city=<slug>` query param (lets you preview any Pulse city
+ *      from any deployed domain — primarily for previewOnly cities
+ *      that don't have their own domain yet).
+ *   2. NEXT_PUBLIC_CITY_SLUG env var (build-time per deployment).
+ *   3. Production hostname match against `domain`.
+ *   4. Philadelphia as the local-dev default.
  */
 export function getCurrentCity(): PulseCity {
+  if (typeof window !== "undefined") {
+    try {
+      const onLanding = window.location.pathname.startsWith("/landing");
+      const qs = new URLSearchParams(window.location.search);
+      const querySlug = qs.get("city")?.trim();
+      // Only honor ?city= on in-app routes; the marketing landing
+      // page requires hand-curated metadata that previewOnly cities
+      // intentionally don't have.
+      if (querySlug && !onLanding) {
+        const byQuery = PULSE_CITIES.find((c) => c.slug === querySlug);
+        if (byQuery) return byQuery;
+      }
+    } catch {
+      // ignore — fall through to other resolution paths
+    }
+  }
   const slug = process.env.NEXT_PUBLIC_CITY_SLUG?.trim();
   if (slug) {
     const bySlug = PULSE_CITIES.find((c) => c.slug === slug);
@@ -630,4 +734,13 @@ export function getCurrentCity(): PulseCity {
 export function getOtherCities(): PulseCity[] {
   const current = getCurrentCity();
   return PULSE_CITIES.filter((c) => c.slug !== current.slug);
+}
+
+/**
+ * Cities with a real production domain (i.e. not previewOnly).
+ * Used by surfaces that should never link to a placeholder host
+ * such as the marketing landing-page nav and city switcher.
+ */
+export function getLaunchedCities(): PulseCity[] {
+  return PULSE_CITIES.filter((c) => !c.previewOnly);
 }

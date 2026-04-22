@@ -1,0 +1,44 @@
+# DetroitPulse — Detroit, MI
+
+city:
+  name: "Detroit"
+  short: "DET"
+  slug: "detroit"
+  domain: "detroitpulse.com"   # placeholder; not registered yet
+  region: "Detroit / Wayne County, MI"
+  tagline: "Real-time safety intelligence for the Motor City."
+
+map:
+  center_lat: 42.3314
+  center_lng: -83.0458
+  default_zoom: 11
+
+geocode:
+  viewbox: "-83.30,42.25,-82.90,42.45"
+  bounds:
+    lat_min: 42.22
+    lat_max: 42.47
+    lng_min: -83.32
+    lng_max: -82.88
+  suffix: ", Detroit, MI"
+
+feeds:
+  - { feed_id: "13671", label: "Detroit Police Dispatch (all 6 precinct dispatches)" }
+  - { feed_id: "41763", label: "Detroit Police and Fire (P25 / MPSCS)" }
+  - { feed_id: "18629", label: "Detroit Fire Department" }
+  - { feed_id: "29497", label: "Detroit EMS Dispatch" }
+
+tuning:
+  initial_prompt: >-
+    Detroit Michigan police radio dispatch. Detroit Police Department
+    DPD. Districts: Central, Southwestern, Northeastern, Northwestern,
+    Western, Eastern. Precincts 1 through 13. Locations: Woodward Avenue,
+    Gratiot Avenue, Michigan Avenue, Grand River Avenue, Jefferson Avenue,
+    Mack Avenue, Van Dyke, Livernois, Telegraph Road, 8 Mile Road, 7 Mile,
+    Outer Drive, Belle Isle, Greektown, Corktown, Midtown, Eastern Market,
+    Mexicantown, Southwest Detroit, North End, Hamtramck, Highland Park,
+    Dearborn. Freeways: I-75, I-94, I-96, M-10 Lodge, Southfield, Davison,
+    Chrysler. Hospitals: DMC, Henry Ford, Detroit Receiving, Sinai-Grace,
+    St. John. Phrases: dispatch, responding, en route, on scene, shots
+    fired, holdup alarm, code 1, code 3, signal 6, 10-4, 10-32, 10-50.
+    Short dispatch. Numbers spoken separately.
