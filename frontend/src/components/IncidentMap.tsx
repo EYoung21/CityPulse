@@ -332,13 +332,11 @@ interface Props {
   districtsEnabled?: boolean;
   onDistrictClick?: (neighborhood: Neighborhood, incidents: Incident[]) => void;
   onClusterClick?: (incidentIds: string[]) => void;
-  /** Long-press / right-click on the map drops a sticky pin. */
+  /** Long-press / right-click on the map. Currently wired to the
+   *  LocationPeekCard; no sticky marker is rendered here. */
   onLongPress?: (lat: number, lng: number) => void;
-  /** When set, renders a sticky red dropped-pin marker. Cleared on close. */
-  droppedPin?: { lat: number; lng: number } | null;
   /** Sticky purple "Parked here" pin from the parked-pin store. Persists
-   *  across reloads (24h TTL) and gets its own visual language to stand
-   *  apart from the red exploratory dropped-pin. */
+   *  across reloads (24h TTL). */
   parkedPin?: { lat: number; lng: number } | null;
   /** Debounced (~250ms) callback fired after pan/zoom with the current map
    *  center + zoom. Used by the "Score this area" pill in `page.tsx`. */
@@ -920,7 +918,6 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     onDistrictClick,
     onClusterClick,
     onLongPress,
-    droppedPin,
     parkedPin = null,
     onMapMove,
     userHeading,
@@ -967,7 +964,6 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const { version: neighborhoodsVersion } = useCityNeighborhoods();
   const trailLayerRef = useRef<L.LayerGroup | null>(null);
   const districtsLayerRef = useRef<L.LayerGroup | null>(null);
-  const droppedPinMarkerRef = useRef<L.Marker | null>(null);
   const parkedPinMarkerRef = useRef<L.Marker | null>(null);
   const selectedHighlightRef = useRef<L.LayerGroup | null>(null);
   /** Avoid map.fitBounds on every live GPS tick when only the origin (A) moves. */
@@ -1789,57 +1785,9 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     return () => { highlight?.clearLayers(); };
   }, [selectedId, incidents, flyToOffset]);
 
-  // Sticky dropped-pin marker (long-press / right-click)
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-
-    if (!droppedPin) {
-      if (droppedPinMarkerRef.current) {
-        map.removeLayer(droppedPinMarkerRef.current);
-        droppedPinMarkerRef.current = null;
-      }
-      return;
-    }
-
-    const pinIcon = L.divIcon({
-      className: "",
-      iconSize: [36, 46],
-      iconAnchor: [18, 44],
-      html: `<div class="dropped-pin-marker" aria-hidden="true">
-        <svg viewBox="0 0 36 46" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <radialGradient id="pp-drop-pin-grad" cx="50%" cy="35%" r="60%">
-              <stop offset="0" stop-color="#fecaca"/>
-              <stop offset="0.55" stop-color="#ef4444"/>
-              <stop offset="1" stop-color="#7f1d1d"/>
-            </radialGradient>
-          </defs>
-          <path d="M18 1 C8 1 2 8 2 16 C2 28 18 44 18 44 C18 44 34 28 34 16 C34 8 28 1 18 1 Z"
-            fill="url(#pp-drop-pin-grad)" stroke="#7f1d1d" stroke-width="1.4"/>
-          <circle cx="18" cy="16" r="5.5" fill="#fff" opacity="0.92"/>
-          <circle cx="18" cy="16" r="2.5" fill="#7f1d1d"/>
-        </svg>
-      </div>`,
-    });
-
-    if (droppedPinMarkerRef.current) {
-      droppedPinMarkerRef.current.setLatLng([droppedPin.lat, droppedPin.lng]);
-      droppedPinMarkerRef.current.setIcon(pinIcon);
-    } else {
-      droppedPinMarkerRef.current = L.marker([droppedPin.lat, droppedPin.lng], {
-        icon: pinIcon,
-        zIndexOffset: 5000,
-        interactive: false,
-      }).addTo(map);
-    }
-  }, [droppedPin]);
-
   // "Parked here" sticky marker — distinct purple car badge so it
-  // doesn't get confused with the red dropped-pin or the user's
-  // location dot. Sits at a slightly lower z than the dropped-pin
-  // since the latter is the user's *current* exploratory action,
-  // while the parked pin is passive context.
+  // doesn't get confused with the user's location dot. Passive
+  // context; persists across reloads via the parked-pin store.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
