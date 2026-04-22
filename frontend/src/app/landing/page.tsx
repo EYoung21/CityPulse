@@ -7,7 +7,8 @@ import {
   getCurrentCity,
   type PulseCity,
 } from "@/lib/pulse-cities";
-import { CityWireframeCanvas } from "./CityWireframeCanvas";
+import { CityMapCanvas } from "./CityMapCanvas";
+import { CitySkylineSvg } from "./CitySkylineSvg";
 import { CitySwitcher } from "./CitySwitcher";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { SafeRouteSection } from "./SafeRouteSection";
@@ -256,6 +257,7 @@ function SisterCityCard({ city, i }: { city: PulseCity; i: number }) {
       style={
         {
           "--card-accent": `rgb(${city.accentRgb})`,
+          "--card-accent-rgb": city.accentRgb,
         } as React.CSSProperties
       }
       initial={{ opacity: 0, y: 24 }}
@@ -271,6 +273,13 @@ function SisterCityCard({ city, i }: { city: PulseCity; i: number }) {
         e.currentTarget.style.setProperty("--my", `${((e.clientY - r.top) / r.height) * 100}%`);
       }}
     >
+      <div className="lp-card-skyline-wrap">
+        <CitySkylineSvg
+          city={city}
+          variant="card"
+          accentRgbVar="var(--card-accent-rgb)"
+        />
+      </div>
       <div className="lp-card-top">
         <div className="lp-card-emoji">{city.emoji}</div>
         <div>
@@ -424,6 +433,11 @@ export default function LandingPage() {
     >
       {/* ═══ Header ═══ */}
       <header className="lp-header">
+        <a href="/" className="lp-header-brand" aria-label="CityPulse home">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="" className="lp-header-logo" />
+          <span className="lp-header-wordmark">CityPulse</span>
+        </a>
         <CitySwitcher current={city} />
         <div className="lp-header-actions">
           <a href="/login" className="lp-header-cta">
@@ -432,9 +446,20 @@ export default function LandingPage() {
         </div>
       </header>
 
-      {/* ═══ Hero — city-specific wireframe ═══ */}
+      {/* ═══ Hero — real dark map + city skyline ribbon ═══ */}
       <section className="lp-hero">
-        <CityWireframeCanvas className="lp-hero-canvas" city={city} />
+        <div className="lp-hero-bg">
+          <CityMapCanvas
+            className="lp-hero-map"
+            city={city}
+            zoom={11.3}
+            pitch={35}
+            bearing={-17}
+          />
+          <div className="lp-skyline-ribbon">
+            <CitySkylineSvg city={city} variant="hero" />
+          </div>
+        </div>
         <div className="lp-hero-content">
           <motion.div
             className="lp-hero-eyebrow"
@@ -443,7 +468,11 @@ export default function LandingPage() {
             transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
           >
             <span className="lp-hero-live-dot" />
-            Now live in {city.name}
+            <span>{city.name}</span>
+            <span className="lp-hero-sep" aria-hidden="true">·</span>
+            <span className="lp-hero-domain">{city.domain}</span>
+            <span className="lp-hero-sep" aria-hidden="true">·</span>
+            <span className="lp-hero-live">LIVE</span>
           </motion.div>
           <motion.h1
             className="lp-hero-title"
