@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { motion, useScroll, useTransform, useInView } from "framer-motion";
 import {
   PULSE_CITIES,
+  cityBounds,
   getCurrentCity,
   type PulseCity,
 } from "@/lib/pulse-cities";
@@ -452,9 +453,10 @@ export default function LandingPage() {
           <CityMapCanvas
             className="lp-hero-map"
             city={city}
-            zoom={11.3}
             pitch={35}
             bearing={-17}
+            bounds={cityBounds(city)}
+            boundsPadding={48}
             incidents={city.heroIncidents}
           />
           <div className="lp-skyline-ribbon">
