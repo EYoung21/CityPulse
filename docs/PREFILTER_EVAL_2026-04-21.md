@@ -46,7 +46,7 @@ best signal we have without paying a human to label.
 ## Run command (verbatim)
 
 ```bash
-GOOGLE_APPLICATION_CREDENTIALS=/Users/eliyoung/PhillyPulse/.secrets/firebase-service-account.json \
+GOOGLE_APPLICATION_CREDENTIALS=$(git rev-parse --show-toplevel)/.secrets/firebase-service-account.json \
   python3 scripts/eval_prefilter.py --days 7 \
   --false-drops-out /tmp/pp_false_drops.jsonl
 ```
