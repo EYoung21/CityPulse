@@ -15,7 +15,8 @@
  * the first pair with the safer row already selected).
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type maplibregl from "maplibre-gl";
 import type { PulseCity } from "@/lib/pulse-cities";
 import { CityMapCanvas } from "./CityMapCanvas";
 import { SafeRouteCanvas } from "./SafeRouteCanvas";
@@ -32,6 +33,11 @@ export function SafeRouteSection({ city }: Props) {
   const pairs = city.routeDemoPairs;
   const [idx, setIdx] = useState(0);
   const [selected, setSelected] = useState<"fast" | "safer">("fast");
+  const [map, setMap] = useState<maplibregl.Map | null>(null);
+
+  const handleMapReady = useCallback((m: maplibregl.Map) => {
+    setMap(m);
+  }, []);
 
   useEffect(() => {
     if (pairs.length === 0) return;
@@ -89,10 +95,12 @@ export function SafeRouteSection({ city }: Props) {
               zoom={13.2}
               pitch={25}
               bearing={-12}
+              onReady={handleMapReady}
             />
             <SafeRouteCanvas
               className="lp-route-overlay"
               city={city}
+              map={map}
               activePairIndex={idx}
             />
             <div className="lp-route-canvas-legend">

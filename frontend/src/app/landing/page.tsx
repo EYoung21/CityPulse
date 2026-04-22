@@ -455,6 +455,7 @@ export default function LandingPage() {
             zoom={11.3}
             pitch={35}
             bearing={-17}
+            incidents={city.heroIncidents}
           />
           <div className="lp-skyline-ribbon">
             <CitySkylineSvg city={city} variant="hero" />

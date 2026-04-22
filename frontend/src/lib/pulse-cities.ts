@@ -25,6 +25,27 @@ export interface WaterFeature {
   width?: number;
 }
 
+/** A geographic point, [lng, lat]. */
+export type LngLat = [number, number];
+
+/** Categories of "violent" landing-page demo blip we render on the map. */
+export type LandingBlipKind = "gun" | "knife";
+
+/**
+ * One pulsing scanner-incident shown in the hero map background. We
+ * intentionally hand-pick (lng, lat) per city so they always sit on
+ * land near the camera center and match the in-app marker symbology.
+ */
+export interface HeroIncident {
+  lng: number;
+  lat: number;
+  /** Single-glyph kinds use a violent-crime icon; "cluster" renders the
+   *  same number-bubble used by the in-app marker-cluster. */
+  kind: LandingBlipKind | "cluster";
+  /** Number rendered inside the bubble when kind === "cluster". */
+  count?: number;
+}
+
 /** A demo origin→destination pair shown on the SafeRouteSection. */
 export interface RouteDemoPair {
   /** "Fishtown", "Mission" — short neighborhood-y name. */
@@ -36,6 +57,13 @@ export interface RouteDemoPair {
   saferMin: number;
   /** Number of nearby incidents on the fastest route corridor. */
   hotCount: number;
+  /** Real-world geo anchors so the demo overlay stays glued to streets
+   *  even while the MapLibre camera drifts/rotates underneath. */
+  fromLngLat: LngLat;
+  toLngLat: LngLat;
+  hotLngLat: LngLat;
+  /** 2–4 violent-crime blips clustered near the hot zone. */
+  blips: { lng: number; lat: number; kind: LandingBlipKind }[];
 }
 
 export interface PulseCity {
@@ -76,6 +104,9 @@ export interface PulseCity {
   /** Example origin→destination pairs cycled through the landing-page
    *  SafeRouteSection to demo the safer-routing pitch. 2–3 per city. */
   routeDemoPairs: RouteDemoPair[];
+  /** Demo blips painted on top of the hero map background, anchored
+   *  to real lng/lat so they follow the map's slow drift. */
+  heroIncidents: HeroIncident[];
 }
 
 export const PULSE_CITIES: PulseCity[] = [
@@ -90,7 +121,6 @@ export const PULSE_CITIES: PulseCity[] = [
     geocodeSuffix: ", San Francisco, CA",
     brand: "SFPulse",
     tagline: "Real-time safety intelligence for the Bay.",
-    // Golden Gate orange-red
     accentRgb: "255, 128, 70",
     accentRgb2: "255, 184, 110",
     population: "808K",
@@ -107,7 +137,6 @@ export const PULSE_CITIES: PulseCity[] = [
     ],
     gridStyle: "sf-diagonal",
     water: [
-      // Bay (northeast fill) — rough polygon hugging the coast
       {
         kind: "bay",
         filled: true,
@@ -124,9 +153,60 @@ export const PULSE_CITIES: PulseCity[] = [
     ],
     scannerFeeds: 14,
     routeDemoPairs: [
-      { from: "Mission", to: "SoMa", fastestMin: 14, saferMin: 17, hotCount: 3 },
-      { from: "Castro", to: "Financial District", fastestMin: 18, saferMin: 21, hotCount: 2 },
-      { from: "Richmond", to: "North Beach", fastestMin: 22, saferMin: 25, hotCount: 4 },
+      {
+        from: "Mission",
+        to: "SoMa",
+        fastestMin: 14,
+        saferMin: 17,
+        hotCount: 3,
+        fromLngLat: [-122.4180, 37.7600],
+        toLngLat: [-122.4020, 37.7780],
+        hotLngLat: [-122.4115, 37.7700],
+        blips: [
+          { lng: -122.4150, lat: 37.7680, kind: "gun" },
+          { lng: -122.4090, lat: 37.7720, kind: "knife" },
+          { lng: -122.4120, lat: 37.7660, kind: "gun" },
+        ],
+      },
+      {
+        from: "Castro",
+        to: "Financial District",
+        fastestMin: 18,
+        saferMin: 21,
+        hotCount: 2,
+        fromLngLat: [-122.4350, 37.7620],
+        toLngLat: [-122.4000, 37.7950],
+        hotLngLat: [-122.4180, 37.7800],
+        blips: [
+          { lng: -122.4220, lat: 37.7770, kind: "knife" },
+          { lng: -122.4140, lat: 37.7820, kind: "gun" },
+        ],
+      },
+      {
+        from: "Richmond",
+        to: "North Beach",
+        fastestMin: 22,
+        saferMin: 25,
+        hotCount: 4,
+        fromLngLat: [-122.4700, 37.7760],
+        toLngLat: [-122.4100, 37.8060],
+        hotLngLat: [-122.4400, 37.7910],
+        blips: [
+          { lng: -122.4440, lat: 37.7900, kind: "gun" },
+          { lng: -122.4360, lat: 37.7930, kind: "knife" },
+          { lng: -122.4400, lat: 37.7870, kind: "gun" },
+        ],
+      },
+    ],
+    heroIncidents: [
+      { lng: -122.4140, lat: 37.7700, kind: "gun" },
+      { lng: -122.4090, lat: 37.7820, kind: "knife" },
+      { lng: -122.4250, lat: 37.7880, kind: "gun" },
+      { lng: -122.4050, lat: 37.7740, kind: "cluster", count: 6 },
+      { lng: -122.4180, lat: 37.7560, kind: "knife" },
+      { lng: -122.4310, lat: 37.7650, kind: "gun" },
+      { lng: -122.4200, lat: 37.7960, kind: "cluster", count: 3 },
+      { lng: -122.4130, lat: 37.7900, kind: "gun" },
     ],
   },
   {
@@ -140,7 +220,6 @@ export const PULSE_CITIES: PulseCity[] = [
     geocodeSuffix: ", New York, NY",
     brand: "NYCPulse",
     tagline: "Real-time safety intelligence for the five boroughs.",
-    // Taxi yellow
     accentRgb: "255, 204, 0",
     accentRgb2: "255, 232, 120",
     population: "8.3M",
@@ -157,7 +236,6 @@ export const PULSE_CITIES: PulseCity[] = [
     ],
     gridStyle: "nyc-manhattan",
     water: [
-      // Hudson (left)
       {
         kind: "river",
         path: [
@@ -168,7 +246,6 @@ export const PULSE_CITIES: PulseCity[] = [
         ],
         width: 0.04,
       },
-      // East River (right)
       {
         kind: "river",
         path: [
@@ -182,9 +259,62 @@ export const PULSE_CITIES: PulseCity[] = [
     ],
     scannerFeeds: 42,
     routeDemoPairs: [
-      { from: "Williamsburg", to: "Midtown", fastestMin: 28, saferMin: 31, hotCount: 4 },
-      { from: "Harlem", to: "Times Square", fastestMin: 24, saferMin: 27, hotCount: 3 },
-      { from: "SoHo", to: "Astoria", fastestMin: 32, saferMin: 35, hotCount: 2 },
+      {
+        from: "Williamsburg",
+        to: "Midtown",
+        fastestMin: 28,
+        saferMin: 31,
+        hotCount: 4,
+        fromLngLat: [-73.9570, 40.7170],
+        toLngLat: [-73.9850, 40.7550],
+        hotLngLat: [-73.9750, 40.7350],
+        blips: [
+          { lng: -73.9780, lat: 40.7320, kind: "gun" },
+          { lng: -73.9720, lat: 40.7380, kind: "knife" },
+          { lng: -73.9700, lat: 40.7340, kind: "gun" },
+          { lng: -73.9790, lat: 40.7360, kind: "knife" },
+        ],
+      },
+      {
+        from: "Harlem",
+        to: "Times Square",
+        fastestMin: 24,
+        saferMin: 27,
+        hotCount: 3,
+        fromLngLat: [-73.9460, 40.8110],
+        toLngLat: [-73.9855, 40.7580],
+        hotLngLat: [-73.9650, 40.7850],
+        blips: [
+          { lng: -73.9680, lat: 40.7830, kind: "gun" },
+          { lng: -73.9620, lat: 40.7870, kind: "knife" },
+          { lng: -73.9640, lat: 40.7820, kind: "gun" },
+        ],
+      },
+      {
+        from: "SoHo",
+        to: "Astoria",
+        fastestMin: 32,
+        saferMin: 35,
+        hotCount: 2,
+        fromLngLat: [-74.0000, 40.7230],
+        toLngLat: [-73.9230, 40.7640],
+        hotLngLat: [-73.9650, 40.7430],
+        blips: [
+          { lng: -73.9680, lat: 40.7400, kind: "knife" },
+          { lng: -73.9620, lat: 40.7460, kind: "gun" },
+        ],
+      },
+    ],
+    heroIncidents: [
+      { lng: -73.9810, lat: 40.7480, kind: "gun" },
+      { lng: -73.9750, lat: 40.7560, kind: "knife" },
+      { lng: -73.9870, lat: 40.7620, kind: "cluster", count: 8 },
+      { lng: -73.9920, lat: 40.7390, kind: "gun" },
+      { lng: -73.9690, lat: 40.7700, kind: "knife" },
+      { lng: -73.9880, lat: 40.7280, kind: "gun" },
+      { lng: -73.9810, lat: 40.7180, kind: "cluster", count: 4 },
+      { lng: -73.9530, lat: 40.7680, kind: "knife" },
+      { lng: -73.9700, lat: 40.7530, kind: "gun" },
     ],
   },
   {
@@ -198,7 +328,6 @@ export const PULSE_CITIES: PulseCity[] = [
     geocodeSuffix: ", Philadelphia, PA",
     brand: "PhillyPulse",
     tagline: "Real-time safety intelligence for the City of Brotherly Love.",
-    // Liberty-Bell bronze-red
     accentRgb: "232, 93, 60",
     accentRgb2: "245, 166, 100",
     population: "1.58M",
@@ -215,7 +344,6 @@ export const PULSE_CITIES: PulseCity[] = [
     ],
     gridStyle: "philly-penn",
     water: [
-      // Schuylkill (west)
       {
         kind: "river",
         path: [
@@ -227,7 +355,6 @@ export const PULSE_CITIES: PulseCity[] = [
         ],
         width: 0.025,
       },
-      // Delaware (east)
       {
         kind: "river",
         path: [
@@ -241,9 +368,62 @@ export const PULSE_CITIES: PulseCity[] = [
     ],
     scannerFeeds: 18,
     routeDemoPairs: [
-      { from: "Fishtown", to: "Center City", fastestMin: 16, saferMin: 19, hotCount: 3 },
-      { from: "University City", to: "Old City", fastestMin: 14, saferMin: 17, hotCount: 2 },
-      { from: "South Philly", to: "Kensington", fastestMin: 20, saferMin: 23, hotCount: 4 },
+      {
+        from: "Fishtown",
+        to: "Center City",
+        fastestMin: 16,
+        saferMin: 19,
+        hotCount: 3,
+        fromLngLat: [-75.1300, 39.9710],
+        toLngLat: [-75.1650, 39.9540],
+        hotLngLat: [-75.1480, 39.9620],
+        blips: [
+          { lng: -75.1510, lat: 39.9605, kind: "gun" },
+          { lng: -75.1450, lat: 39.9640, kind: "knife" },
+          { lng: -75.1470, lat: 39.9595, kind: "gun" },
+        ],
+      },
+      {
+        from: "University City",
+        to: "Old City",
+        fastestMin: 14,
+        saferMin: 17,
+        hotCount: 2,
+        fromLngLat: [-75.1980, 39.9510],
+        toLngLat: [-75.1440, 39.9530],
+        hotLngLat: [-75.1700, 39.9520],
+        blips: [
+          { lng: -75.1730, lat: 39.9530, kind: "knife" },
+          { lng: -75.1670, lat: 39.9510, kind: "gun" },
+        ],
+      },
+      {
+        from: "South Philly",
+        to: "Kensington",
+        fastestMin: 20,
+        saferMin: 23,
+        hotCount: 4,
+        fromLngLat: [-75.1700, 39.9260],
+        toLngLat: [-75.1300, 39.9870],
+        hotLngLat: [-75.1500, 39.9570],
+        blips: [
+          { lng: -75.1530, lat: 39.9550, kind: "gun" },
+          { lng: -75.1470, lat: 39.9600, kind: "knife" },
+          { lng: -75.1500, lat: 39.9540, kind: "gun" },
+          { lng: -75.1490, lat: 39.9590, kind: "knife" },
+        ],
+      },
+    ],
+    heroIncidents: [
+      { lng: -75.1620, lat: 39.9530, kind: "gun" },
+      { lng: -75.1480, lat: 39.9610, kind: "knife" },
+      { lng: -75.1700, lat: 39.9450, kind: "cluster", count: 5 },
+      { lng: -75.1550, lat: 39.9700, kind: "gun" },
+      { lng: -75.1380, lat: 39.9750, kind: "knife" },
+      { lng: -75.1820, lat: 39.9550, kind: "gun" },
+      { lng: -75.1610, lat: 39.9320, kind: "cluster", count: 3 },
+      { lng: -75.1450, lat: 39.9500, kind: "knife" },
+      { lng: -75.1730, lat: 39.9650, kind: "gun" },
     ],
   },
   {
@@ -255,9 +435,8 @@ export const PULSE_CITIES: PulseCity[] = [
     lng: -85.3097,
     nominatimViewbox: "-85.50,35.20,-85.10,34.90",
     geocodeSuffix: ", Chattanooga, TN",
-    brand: "ChattaPulse",
+    brand: "423Pulse",
     tagline: "Real-time safety intelligence for the Scenic City.",
-    // Mountain / river green
     accentRgb: "95, 200, 120",
     accentRgb2: "140, 220, 160",
     population: "180K",
@@ -274,7 +453,6 @@ export const PULSE_CITIES: PulseCity[] = [
     ],
     gridStyle: "chattanooga-bend",
     water: [
-      // Tennessee River — distinctive bend (Moccasin Bend)
       {
         kind: "river",
         path: [
@@ -294,9 +472,59 @@ export const PULSE_CITIES: PulseCity[] = [
     ],
     scannerFeeds: 6,
     routeDemoPairs: [
-      { from: "Southside", to: "Downtown", fastestMin: 11, saferMin: 14, hotCount: 2 },
-      { from: "North Shore", to: "St. Elmo", fastestMin: 18, saferMin: 21, hotCount: 3 },
-      { from: "Brainerd", to: "Highland Park", fastestMin: 15, saferMin: 18, hotCount: 2 },
+      {
+        from: "Southside",
+        to: "Downtown",
+        fastestMin: 11,
+        saferMin: 14,
+        hotCount: 2,
+        fromLngLat: [-85.3050, 35.0300],
+        toLngLat: [-85.3100, 35.0500],
+        hotLngLat: [-85.3075, 35.0400],
+        blips: [
+          { lng: -85.3090, lat: 35.0395, kind: "gun" },
+          { lng: -85.3060, lat: 35.0410, kind: "knife" },
+        ],
+      },
+      {
+        from: "North Shore",
+        to: "St. Elmo",
+        fastestMin: 18,
+        saferMin: 21,
+        hotCount: 3,
+        fromLngLat: [-85.3000, 35.0630],
+        toLngLat: [-85.3430, 35.0000],
+        hotLngLat: [-85.3200, 35.0300],
+        blips: [
+          { lng: -85.3220, lat: 35.0290, kind: "gun" },
+          { lng: -85.3180, lat: 35.0310, kind: "knife" },
+          { lng: -85.3200, lat: 35.0270, kind: "gun" },
+        ],
+      },
+      {
+        from: "Brainerd",
+        to: "Highland Park",
+        fastestMin: 15,
+        saferMin: 18,
+        hotCount: 2,
+        fromLngLat: [-85.2350, 35.0220],
+        toLngLat: [-85.2860, 35.0450],
+        hotLngLat: [-85.2600, 35.0340],
+        blips: [
+          { lng: -85.2620, lat: 35.0330, kind: "knife" },
+          { lng: -85.2580, lat: 35.0350, kind: "gun" },
+        ],
+      },
+    ],
+    heroIncidents: [
+      { lng: -85.3100, lat: 35.0420, kind: "gun" },
+      { lng: -85.3050, lat: 35.0480, kind: "knife" },
+      { lng: -85.3200, lat: 35.0350, kind: "cluster", count: 4 },
+      { lng: -85.2950, lat: 35.0510, kind: "gun" },
+      { lng: -85.3150, lat: 35.0540, kind: "knife" },
+      { lng: -85.2880, lat: 35.0430, kind: "gun" },
+      { lng: -85.3030, lat: 35.0380, kind: "cluster", count: 2 },
+      { lng: -85.3120, lat: 35.0290, kind: "knife" },
     ],
   },
 ];

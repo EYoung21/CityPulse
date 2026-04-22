@@ -3,32 +3,38 @@
 /**
  * SafeRouteCanvas
  *
- * Overlay canvas layered on top of a CityMapCanvas in the safer-routing
- * demo. Draws only the route geometry — no basemap, no grid, no
- * isometric projection. For each active origin/destination pair we
- * procedurally build two routes:
+ * Overlay layered on top of the safer-route minimap. All geometry is
+ * authored in lng/lat (see RouteDemoPair in pulse-cities.ts), then
+ * projected through the live MapLibre instance every frame so the red
+ * "fastest" route, the green "safer" detour, the hot-zone disc, and
+ * the gun/knife blips stay glued to actual streets even while the
+ * camera drifts and rotates underneath.
  *
- *   - a red "fastest" route that cuts straight through a hot-zone
- *   - a green "safer" detour that arcs around it
- *
- * Both routes animate in (stroke-dash reveal), the hot-zone pulses with
- * 3 blinking incident blips, and endpoints are drawn on top. When
- * `activePairIndex` changes, the scene resets and re-animates.
+ * Composition:
+ *   - <canvas> for the routes + hot-zone gradient (procedural geometry,
+ *     re-projected on every map render).
+ *   - maplibregl.Marker DOM elements for the from/to endpoints and
+ *     each gun/knife blip (anchored automatically).
  */
 
 import { useEffect, useRef } from "react";
-import type { PulseCity } from "@/lib/pulse-cities";
+import maplibregl from "maplibre-gl";
+import type { PulseCity, RouteDemoPair } from "@/lib/pulse-cities";
+import {
+  createBlipElement,
+  createEndpointElement,
+} from "./landing-glyphs";
 
 const RED = "239, 68, 68";
 const GREEN = "34, 197, 94";
 
-/** Sample a cubic bezier into N points. Points are in normalized [0..1] space. */
-function sampleCubic(
+/** Sample a cubic bezier defined in lng/lat into N points (still lng/lat). */
+function sampleCubicLngLat(
   p0: [number, number],
   p1: [number, number],
   p2: [number, number],
   p3: [number, number],
-  n = 60,
+  n = 80,
 ): [number, number][] {
   const pts: [number, number][] = [];
   for (let i = 0; i <= n; i++) {
@@ -49,38 +55,116 @@ function sampleCubic(
   return pts;
 }
 
-interface Pair {
-  from: [number, number];
-  to: [number, number];
-  hot: [number, number];
-}
+/** Build the two route polylines (in lng/lat) for one demo pair. */
+function buildRoutes(pair: RouteDemoPair): {
+  red: [number, number][];
+  green: [number, number][];
+} {
+  const [fx, fy] = pair.fromLngLat;
+  const [tx, ty] = pair.toLngLat;
+  const [hx, hy] = pair.hotLngLat;
 
-/**
- * Deterministic per-pair endpoint layout. Keeps origin/destination in
- * the lower-left → upper-right band while rotating the exact positions
- * so each cycled pair feels distinct.
- */
-function layoutForPair(idx: number): Pair {
-  const variants: Pair[] = [
-    { from: [0.14, 0.80], to: [0.82, 0.22], hot: [0.48, 0.54] },
-    { from: [0.18, 0.28], to: [0.78, 0.80], hot: [0.52, 0.50] },
-    { from: [0.20, 0.76], to: [0.80, 0.34], hot: [0.56, 0.58] },
-  ];
-  return variants[((idx % variants.length) + variants.length) % variants.length];
+  // Red "fastest" — bows slightly toward the hot zone so it visually
+  // crosses through the violent-crime cluster.
+  const red = sampleCubicLngLat(
+    pair.fromLngLat,
+    [hx + (fx - hx) * 0.4, hy + (fy - hy) * 0.4],
+    [hx + (tx - hx) * 0.4, hy + (ty - hy) * 0.4],
+    pair.toLngLat,
+    80,
+  );
+
+  // Green "safer" — detour perpendicular to the from→to axis, pushed
+  // *away* from the hot-zone center.
+  const dx = tx - fx;
+  const dy = ty - fy;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len;
+  const ny = dx / len;
+  const midAx = (fx + tx) / 2;
+  const midAy = (fy + ty) / 2;
+  const sign = (hx - midAx) * nx + (hy - midAy) * ny > 0 ? -1 : 1;
+  // Perpendicular offset in degrees. Scaled to the route length so the
+  // detour reads as ~25% of the diagonal.
+  const offMag = len * 0.55 * sign;
+  const offX = nx * offMag;
+  const offY = ny * offMag;
+  const green = sampleCubicLngLat(
+    pair.fromLngLat,
+    [fx + dx * 0.25 + offX, fy + dy * 0.25 + offY],
+    [fx + dx * 0.75 + offX, fy + dy * 0.75 + offY],
+    pair.toLngLat,
+    80,
+  );
+
+  return { red, green };
 }
 
 interface Props {
   className?: string;
   city: PulseCity;
-  /** Index into city.routeDemoPairs; changes trigger a redraw animation. */
+  /** The MapLibre map instance to project through. */
+  map: maplibregl.Map | null;
+  /** Index into city.routeDemoPairs. */
   activePairIndex: number;
 }
 
-export function SafeRouteCanvas({ className, city, activePairIndex }: Props) {
-  const ref = useRef<HTMLCanvasElement>(null);
+export function SafeRouteCanvas({
+  className,
+  city,
+  map,
+  activePairIndex,
+}: Props) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  /* ── Endpoint + blip markers (anchored, follow the map) ────────── */
   useEffect(() => {
-    const cvs = ref.current!;
+    if (!map) return;
+    const pair = city.routeDemoPairs[activePairIndex];
+    if (!pair) return;
+
+    const markers: maplibregl.Marker[] = [];
+
+    const fromEl = createEndpointElement("start");
+    markers.push(
+      new maplibregl.Marker({ element: fromEl, anchor: "center" })
+        .setLngLat(pair.fromLngLat)
+        .addTo(map),
+    );
+
+    const toEl = createEndpointElement("end");
+    markers.push(
+      new maplibregl.Marker({ element: toEl, anchor: "center" })
+        .setLngLat(pair.toLngLat)
+        .addTo(map),
+    );
+
+    for (const b of pair.blips) {
+      const el = createBlipElement({
+        kind: b.kind,
+        size: 22,
+        extraClassName: "lp-blip--route",
+      });
+      el.style.animationDelay = `${(Math.random() * 1.6).toFixed(2)}s`;
+      markers.push(
+        new maplibregl.Marker({ element: el, anchor: "center" })
+          .setLngLat([b.lng, b.lat])
+          .addTo(map),
+      );
+    }
+
+    return () => {
+      for (const m of markers) m.remove();
+    };
+  }, [map, city, activePairIndex]);
+
+  /* ── Routes + hot-zone canvas (re-projected every frame) ───────── */
+  useEffect(() => {
+    if (!map) return;
+    const pair = city.routeDemoPairs[activePairIndex];
+    if (!pair) return;
+
+    const cvs = canvasRef.current!;
     const ctx = cvs.getContext("2d")!;
     const dpr = devicePixelRatio || 1;
     let w = 0;
@@ -100,55 +184,14 @@ export function SafeRouteCanvas({ className, city, activePairIndex }: Props) {
     resize();
     addEventListener("resize", resize);
 
-    const pair = layoutForPair(activePairIndex);
-    const [fx, fy] = pair.from;
-    const [tx, ty] = pair.to;
-    const [hx, hy] = pair.hot;
+    const { red: redLngLat, green: greenLngLat } = buildRoutes(pair);
 
-    // Flat normalized → canvas-pixel projection. A little inset so routes
-    // don't kiss the edges of the map behind us.
-    const project = (x: number, y: number): [number, number] => {
-      const inset = 0.06;
-      const px = (inset + x * (1 - inset * 2)) * w;
-      const py = (inset + y * (1 - inset * 2)) * h;
-      return [px, py];
-    };
-
-    // Red "fastest" route bows slightly so it clearly passes *through*
-    // the hot-zone.
-    const redPath = sampleCubic(
-      pair.from,
-      [hx - 0.02, hy + 0.06],
-      [hx + 0.02, hy - 0.06],
-      pair.to,
-      80,
-    );
-
-    // Green "safer" route: detours perpendicular to the from→to axis,
-    // pushing the midpoint away from the hot-zone.
-    const dx = tx - fx;
-    const dy = ty - fy;
-    const len = Math.hypot(dx, dy) || 1;
-    const nx = -dy / len;
-    const ny = dx / len;
-    const midAx = (fx + tx) / 2;
-    const midAy = (fy + ty) / 2;
-    const sign = (hx - midAx) * nx + (hy - midAy) * ny > 0 ? -1 : 1;
-    const offX = nx * 0.22 * sign;
-    const offY = ny * 0.22 * sign;
-    const greenPath = sampleCubic(
-      pair.from,
-      [fx + dx * 0.25 + offX, fy + dy * 0.25 + offY],
-      [fx + dx * 0.75 + offX, fy + dy * 0.75 + offY],
-      pair.to,
-      80,
-    );
-
-    const blips = [
-      { x: hx - 0.05, y: hy + 0.02, phase: 0.0 },
-      { x: hx + 0.04, y: hy - 0.03, phase: 1.7 },
-      { x: hx + 0.01, y: hy + 0.05, phase: 3.1 },
-    ];
+    function projectAll(pts: [number, number][]): [number, number][] {
+      return pts.map((p) => {
+        const px = map!.project(p as maplibregl.LngLatLike);
+        return [px.x, px.y];
+      });
+    }
 
     function drawPath(
       pts: [number, number][],
@@ -160,7 +203,7 @@ export function SafeRouteCanvas({ className, city, activePairIndex }: Props) {
       if (progress <= 0) return;
       const count = Math.max(2, Math.floor(pts.length * progress));
 
-      // Glow pass first (underneath the crisp stroke).
+      // Glow underlay.
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
       ctx.lineWidth = width + 6;
@@ -168,34 +211,20 @@ export function SafeRouteCanvas({ className, city, activePairIndex }: Props) {
       ctx.beginPath();
       for (let i = 0; i < count; i++) {
         const [x, y] = pts[i];
-        const [px, py] = project(x, y);
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
       }
       ctx.stroke();
 
-      // Crisp stroke on top.
+      // Crisp stroke.
       ctx.lineWidth = width;
       ctx.strokeStyle = `rgba(${rgb}, ${alpha})`;
       ctx.beginPath();
       for (let i = 0; i < count; i++) {
         const [x, y] = pts[i];
-        const [px, py] = project(x, y);
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
       }
-      ctx.stroke();
-      ctx.lineWidth = 1;
-    }
-
-    function drawEndpoint(pt: [number, number], rgb: string) {
-      const [px, py] = project(pt[0], pt[1]);
-      ctx.strokeStyle = `rgba(${rgb}, 0.95)`;
-      ctx.fillStyle = "rgba(10, 10, 20, 0.95)";
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.arc(px, py, 6, 0, Math.PI * 2);
-      ctx.fill();
       ctx.stroke();
       ctx.lineWidth = 1;
     }
@@ -205,52 +234,35 @@ export function SafeRouteCanvas({ className, city, activePairIndex }: Props) {
       const elapsed = (t - startTs) / 1000;
       ctx.clearRect(0, 0, w, h);
 
+      const redPx = projectAll(redLngLat);
+      const greenPx = projectAll(greenLngLat);
+      const hotPx = map!.project(pair!.hotLngLat as maplibregl.LngLatLike);
+
       // ── Hot-zone disc (pulsing) ──
       const hotPulse = (Math.sin(t * 0.0032) + 1) / 2;
-      const [hcx, hcy] = project(hx, hy);
       const hr = Math.min(w, h) * (0.16 + hotPulse * 0.02);
-      const hotGrad = ctx.createRadialGradient(hcx, hcy, 0, hcx, hcy, hr);
+      const hotGrad = ctx.createRadialGradient(hotPx.x, hotPx.y, 0, hotPx.x, hotPx.y, hr);
       hotGrad.addColorStop(0, `rgba(${RED}, ${0.3 + hotPulse * 0.1})`);
       hotGrad.addColorStop(0.6, `rgba(${RED}, ${0.12 + hotPulse * 0.05})`);
       hotGrad.addColorStop(1, `rgba(${RED}, 0)`);
       ctx.fillStyle = hotGrad;
       ctx.beginPath();
-      ctx.arc(hcx, hcy, hr, 0, Math.PI * 2);
+      ctx.arc(hotPx.x, hotPx.y, hr, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.strokeStyle = `rgba(${RED}, ${0.38 + hotPulse * 0.22})`;
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 6]);
       ctx.beginPath();
-      ctx.arc(hcx, hcy, hr * 0.55, 0, Math.PI * 2);
+      ctx.arc(hotPx.x, hotPx.y, hr * 0.55, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
 
       // ── Routes ──
       const redProg = Math.max(0, Math.min(1, elapsed / 1.6));
       const greenProg = Math.max(0, Math.min(1, (elapsed - 0.6) / 1.8));
-      drawPath(redPath, redProg, RED, 0.8, 3.25);
-      drawPath(greenPath, greenProg, GREEN, 0.92, 3.75);
-
-      // ── Endpoints (on top of routes) ──
-      drawEndpoint(pair.from, "255, 255, 255");
-      drawEndpoint(pair.to, city.accentRgb);
-
-      // ── Incident blips ──
-      for (const b of blips) {
-        const [px, py] = project(b.x, b.y);
-        const p = (Math.sin(t * 0.004 + b.phase) + 1) / 2;
-        const r = 3 + p * 3;
-        ctx.strokeStyle = `rgba(${RED}, ${0.4 * (1 - p)})`;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(px, py, r * 2.6, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.fillStyle = `rgba(${RED}, ${0.8 + p * 0.2})`;
-        ctx.beginPath();
-        ctx.arc(px, py, r, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      drawPath(redPx, redProg, RED, 0.85, 3.5);
+      drawPath(greenPx, greenProg, GREEN, 0.95, 4);
 
       raf = requestAnimationFrame(draw);
     }
@@ -260,7 +272,7 @@ export function SafeRouteCanvas({ className, city, activePairIndex }: Props) {
       removeEventListener("resize", resize);
       cancelAnimationFrame(raf);
     };
-  }, [city, activePairIndex]);
+  }, [map, city, activePairIndex]);
 
-  return <canvas ref={ref} className={className} aria-hidden="true" />;
+  return <canvas ref={canvasRef} className={className} aria-hidden="true" />;
 }
