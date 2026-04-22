@@ -536,6 +536,28 @@ export const PULSE_CITIES: PulseCity[] = [
 ];
 
 /**
+ * Geographic bounds for a city, derived from its `nominatimViewbox`
+ * field. Returned as a MapLibre-friendly [[minLng, minLat], [maxLng,
+ * maxLat]] tuple so it can be passed straight into `map.fitBounds()`
+ * or the CityMapCanvas `bounds` prop. This is what makes both the
+ * hero map and the safer-route minimap auto-frame each city to its
+ * actual extent instead of using a hard-coded zoom that's too tight
+ * for NYC and too loose for Chattanooga.
+ */
+export function cityBounds(
+  city: PulseCity,
+): [[number, number], [number, number]] {
+  // nominatimViewbox = "left,top,right,bottom" = minLng,maxLat,maxLng,minLat
+  const [minLng, maxLat, maxLng, minLat] = city.nominatimViewbox
+    .split(",")
+    .map(Number);
+  return [
+    [minLng, minLat],
+    [maxLng, maxLat],
+  ];
+}
+
+/**
  * Resolve deploy target: env slug first, then production hostname (when env is missing),
  * then Philadelphia as default for local dev.
  */
