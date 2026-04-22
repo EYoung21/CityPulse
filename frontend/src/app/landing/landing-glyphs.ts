@@ -64,12 +64,31 @@ export function createBlipElement(opts: BlipElementOptions): HTMLDivElement {
   el.className = `lp-blip lp-blip--${opts.kind} ${opts.extraClassName ?? ""}`.trim();
   el.style.width = `${size}px`;
   el.style.height = `${size}px`;
-  el.innerHTML = `
-    <span class="lp-blip-ring" aria-hidden="true"></span>
-    <span class="lp-blip-disc" aria-hidden="true">
-      <span class="lp-blip-glyph">${landingGlyphSvg(opts.kind)}</span>
-    </span>
-  `;
+  // Match the in-app IncidentMap: pure monochrome glyph with a drop
+  // shadow, no surrounding disc or ping ring. The CSS handles a slow
+  // breath / scale pulse so it still reads as "live".
+  el.innerHTML = `<span class="lp-blip-glyph">${landingGlyphSvg(opts.kind)}</span>`;
+  return el;
+}
+
+/**
+ * Verdict badge dropped at the midpoint of each route on the safer-
+ * route minimap: a small red ✕ on the fastest route and a small green
+ * ✓ on the safer detour. The label drives the affordance home for
+ * viewers who don't immediately decode the red/green color story.
+ */
+export function createRouteVerdictElement(
+  variant: "bad" | "good",
+): HTMLDivElement {
+  const el = document.createElement("div");
+  el.className = `lp-route-verdict lp-route-verdict--${variant}`;
+  const path =
+    variant === "bad"
+      ? // Crisp X
+        `<path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/>`
+      : // Heavy check
+        `<path d="M5 12.5 L10 17.5 L19 7.5" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>`;
+  el.innerHTML = `<svg viewBox="0 0 24 24" width="100%" height="100%" aria-hidden="true">${path}</svg>`;
   return el;
 }
 

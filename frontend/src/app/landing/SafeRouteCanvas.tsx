@@ -23,6 +23,7 @@ import type { PulseCity, RouteDemoPair } from "@/lib/pulse-cities";
 import {
   createBlipElement,
   createEndpointElement,
+  createRouteVerdictElement,
 } from "./landing-glyphs";
 
 const RED = "239, 68, 68";
@@ -53,6 +54,70 @@ function sampleCubicLngLat(
     pts.push([x, y]);
   }
   return pts;
+}
+
+/**
+ * Analytical midpoints (t=0.5) of the same red/green bezier curves
+ * built by buildRoutes(). We compute these instead of pulling pts[40]
+ * from the sampled polyline so the verdict markers can be positioned
+ * before the canvas effect runs.
+ */
+function midpointsLngLat(pair: RouteDemoPair): {
+  redMid: [number, number];
+  greenMid: [number, number];
+} {
+  const [fx, fy] = pair.fromLngLat;
+  const [tx, ty] = pair.toLngLat;
+  const [hx, hy] = pair.hotLngLat;
+
+  const cubicAt = (
+    p0: [number, number],
+    p1: [number, number],
+    p2: [number, number],
+    p3: [number, number],
+    t: number,
+  ): [number, number] => {
+    const q = 1 - t;
+    return [
+      q * q * q * p0[0] +
+        3 * q * q * t * p1[0] +
+        3 * q * t * t * p2[0] +
+        t * t * t * p3[0],
+      q * q * q * p0[1] +
+        3 * q * q * t * p1[1] +
+        3 * q * t * t * p2[1] +
+        t * t * t * p3[1],
+    ];
+  };
+
+  const redMid = cubicAt(
+    pair.fromLngLat,
+    [hx + (fx - hx) * 0.4, hy + (fy - hy) * 0.4],
+    [hx + (tx - hx) * 0.4, hy + (ty - hy) * 0.4],
+    pair.toLngLat,
+    0.5,
+  );
+
+  const dx = tx - fx;
+  const dy = ty - fy;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len;
+  const ny = dx / len;
+  const midAx = (fx + tx) / 2;
+  const midAy = (fy + ty) / 2;
+  const sign = (hx - midAx) * nx + (hy - midAy) * ny > 0 ? -1 : 1;
+  const offMag = len * 0.55 * sign;
+  const offX = nx * offMag;
+  const offY = ny * offMag;
+  const greenMid = cubicAt(
+    pair.fromLngLat,
+    [fx + dx * 0.25 + offX, fy + dy * 0.25 + offY],
+    [fx + dx * 0.75 + offX, fy + dy * 0.75 + offY],
+    pair.toLngLat,
+    0.5,
+  );
+
+  return { redMid, greenMid };
 }
 
 /** Build the two route polylines (in lng/lat) for one demo pair. */
@@ -152,6 +217,29 @@ export function SafeRouteCanvas({
           .addTo(map),
       );
     }
+
+    // Verdict badges at each route's midpoint. We use the lng/lat
+    // bezier midpoint (computed analytically at t=0.5 from the same
+    // control points used in buildRoutes) so the badge sits exactly on
+    // the drawn line. Fade-in delays are tuned to match the canvas
+    // route animation so the badge appears as the line finishes.
+    const { redMid, greenMid } = midpointsLngLat(pair);
+
+    const xEl = createRouteVerdictElement("bad");
+    xEl.style.setProperty("--lp-verdict-delay", "1.55s");
+    markers.push(
+      new maplibregl.Marker({ element: xEl, anchor: "center" })
+        .setLngLat(redMid)
+        .addTo(map),
+    );
+
+    const checkEl = createRouteVerdictElement("good");
+    checkEl.style.setProperty("--lp-verdict-delay", "2.5s");
+    markers.push(
+      new maplibregl.Marker({ element: checkEl, anchor: "center" })
+        .setLngLat(greenMid)
+        .addTo(map),
+    );
 
     return () => {
       for (const m of markers) m.remove();

@@ -1063,61 +1063,50 @@
 
 /* ─── Anchored map markers (used on hero map AND safer-route minimap) ─── */
 
-/* Violent-crime blip: small red disc with a single ping ring and a
-   monochrome SVG glyph (gun / knife) inside. */
+/* Violent-crime blip: matches the in-app IncidentMap exactly — a pure
+   monochrome SVG glyph (gun / knife) in the brand red, with a soft
+   drop-shadow halo and a slow scale-breath. NO surrounding disc and NO
+   ping ring; those reads as "marketing noise" and don't appear in the
+   product. Cluster bubbles (below) are the only landing-page markers
+   that get a circle, and only because they're number-bubbles. */
 .lp-blip {
   position: relative;
   display: inline-block;
-  color: #fef2f2;
+  color: #ef4444;
   pointer-events: none;
-  animation: lp-blip-breath 4s ease-in-out infinite;
-}
-
-.lp-blip-disc {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #f87171, #b91c1c 75%);
-  box-shadow:
-    0 0 0 1.5px rgba(239, 68, 68, 0.95),
-    0 0 14px rgba(239, 68, 68, 0.55),
-    inset 0 0 4px rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  animation: lp-blip-breath 3.6s ease-in-out infinite;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55));
 }
 
 .lp-blip-glyph {
-  width: 70%;
-  height: 70%;
-  color: #fff5f5;
+  display: block;
+  width: 100%;
+  height: 100%;
+  color: inherit;
+}
+
+.lp-blip-glyph svg {
+  width: 100%;
+  height: 100%;
   display: block;
 }
 
-.lp-blip-ring {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 1.5px solid rgba(239, 68, 68, 0.65);
-  animation: lp-blip-ping 2.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
-}
-
-@keyframes lp-blip-ping {
-  0%   { transform: scale(0.9); opacity: 0.85; }
-  70%  { transform: scale(2.2); opacity: 0; }
-  100% { transform: scale(2.2); opacity: 0; }
-}
-
 @keyframes lp-blip-breath {
-  0%, 100% { filter: drop-shadow(0 0 6px rgba(239, 68, 68, 0.45)); }
-  50%      { filter: drop-shadow(0 0 14px rgba(239, 68, 68, 0.85)); }
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.92;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
 }
 
-/* Route-blip marker tweaks: slightly bigger ring so it reads against
-   the bright red "fastest" path on the minimap. */
-.lp-blip--route .lp-blip-ring {
-  border-color: rgba(239, 68, 68, 0.85);
-  animation-duration: 2s;
+/* Route-blip tweak: a touch brighter & a touch bigger pulse so the
+   gun/knife icons sit cleanly on top of the red "fastest" path. */
+.lp-blip--route {
+  filter: drop-shadow(0 0 6px rgba(239, 68, 68, 0.55))
+          drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
 }
 
 /* Cluster bubble: matches in-app marker-cluster look (count + ring). */
@@ -1172,6 +1161,66 @@
   box-shadow:
     0 0 0 1.5px rgba(10, 10, 20, 0.85),
     0 0 16px rgba(var(--accent-rgb), 0.7);
+}
+
+/* Verdict badge dropped at the midpoint of each route. Fades in just
+   after the canvas finishes drawing the corresponding line so it
+   "lands" on the route rather than racing it. The fade-in delay is
+   set per-instance via --lp-verdict-delay. */
+.lp-route-verdict {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.7);
+  animation: lp-verdict-pop 600ms cubic-bezier(0.2, 1.4, 0.4, 1) forwards;
+  animation-delay: var(--lp-verdict-delay, 1.5s);
+  border: 1.5px solid rgba(10, 10, 20, 0.85);
+}
+
+.lp-route-verdict svg {
+  width: 70%;
+  height: 70%;
+  display: block;
+}
+
+.lp-route-verdict--bad {
+  background: rgba(239, 68, 68, 0.95);
+  color: #fff;
+  box-shadow:
+    0 0 0 1.5px rgba(239, 68, 68, 0.5),
+    0 0 14px rgba(239, 68, 68, 0.6),
+    0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.lp-route-verdict--good {
+  background: rgba(34, 197, 94, 0.95);
+  color: #052e16;
+  box-shadow:
+    0 0 0 1.5px rgba(34, 197, 94, 0.55),
+    0 0 16px rgba(34, 197, 94, 0.65),
+    0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+@keyframes lp-verdict-pop {
+  0%   { opacity: 0; transform: scale(0.4); }
+  60%  { opacity: 1; transform: scale(1.15); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-route-verdict {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  .lp-blip {
+    animation: none;
+  }
 }
 
 .lp-route-canvas-legend {
