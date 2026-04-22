@@ -379,6 +379,16 @@ def incident_count() -> int:
     return row["cnt"]
 
 
+def count_city_incidents(slug: str, since_iso: Optional[str] = None) -> int:
+    """SQLite schema does not carry a city column (dev-only), so we report
+    -1 to let the caller fall back to static metadata.
+
+    The Firestore implementation does the real per-city count in production.
+    """
+    _ = slug, since_iso
+    return -1
+
+
 def inhibitor_stats() -> dict:
     """Return counts by inhibitor_status for the transparency page."""
     conn = get_conn()

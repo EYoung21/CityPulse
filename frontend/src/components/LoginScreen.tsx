@@ -32,17 +32,17 @@ export default function LoginScreen() {
 
   if (needsVerification) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4" style={{ background: "var(--map-bg, #0a0a14)" }}>
+      <div className="min-h-screen flex flex-col items-center justify-center p-4" style={{ background: "linear-gradient(180deg, #0a0a1a 0%, #060611 50%, #0d0d1f 100%)" }}>
         <div
           className="w-full max-w-sm rounded-2xl p-8 space-y-6 backdrop-blur-xl shadow-2xl"
-          style={{ background: "var(--panel-bg, rgba(255,255,255,0.05))", border: "1px solid var(--panel-border, rgba(255,255,255,0.1))" }}
+          style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}
         >
           <div className="text-center space-y-2">
             <div className="flex justify-center">
-              <Mail className="w-12 h-12 text-blue-500" />
+              <Mail className="w-12 h-12" style={{ color: "#abff02" }} />
             </div>
-            <h1 className="text-xl font-bold" style={{ color: "var(--panel-text, white)" }}>Check your email</h1>
-            <p className="text-sm" style={{ color: "var(--panel-text-secondary, #999)" }}>
+            <h1 className="text-xl font-bold" style={{ color: "white" }}>Check your email</h1>
+            <p className="text-sm" style={{ color: "rgba(255,255,255,0.45)" }}>
               We sent a verification link to <strong>{user.email}</strong>. Click it to activate your account.
             </p>
           </div>
@@ -55,7 +55,7 @@ export default function LoginScreen() {
                 } catch { setError("Failed to resend."); }
               }}
               className="w-full py-2.5 rounded-lg text-sm font-medium transition-colors"
-              style={{ background: "var(--panel-input-bg, rgba(255,255,255,0.05))", color: "var(--panel-text, white)", border: "1px solid var(--panel-border, rgba(255,255,255,0.1))" }}
+              style={{ background: "rgba(255,255,255,0.03)", color: "white", border: "1px solid rgba(255,255,255,0.1)" }}
             >
               Resend verification email
             </button>
@@ -67,7 +67,8 @@ export default function LoginScreen() {
             )}
             <button
               onClick={() => window.location.reload()}
-              className="w-full py-2.5 rounded-lg text-sm font-medium text-blue-500 transition-colors hover:bg-blue-500/10"
+              className="w-full py-2.5 rounded-lg text-sm font-medium transition-colors hover:brightness-110"
+              style={{ color: "#abff02" }}
             >
               I&apos;ve verified — refresh
             </button>
@@ -102,22 +103,26 @@ export default function LoginScreen() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: "var(--map-bg, #0a0a14)" }}>
+    <div className="min-h-screen flex flex-col items-center justify-center p-4" style={{ background: "linear-gradient(180deg, #0a0a1a 0%, #060611 50%, #0d0d1f 100%)", color: "#fff" }}>
       <div
-        className="w-full max-w-sm rounded-2xl p-8 space-y-6 backdrop-blur-xl shadow-2xl"
-        style={{ background: "var(--panel-bg, rgba(255,255,255,0.05))", border: "1px solid var(--panel-border, rgba(255,255,255,0.1))" }}
+        className="w-full max-w-sm rounded-2xl p-8 space-y-6 backdrop-blur-xl shadow-2xl relative overflow-hidden"
+        style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}
       >
+        <div
+          className="absolute inset-0 pointer-events-none opacity-0 hover:opacity-100 transition-opacity duration-300"
+          style={{ background: "radial-gradient(circle at 50% 50%, rgba(96,165,250,0.08) 0%, transparent 60%)" }}
+        />
         {/* Logo */}
-        <div className="text-center space-y-3">
+        <div className="text-center space-y-3 relative z-10">
           <div className="flex items-center justify-center gap-3">
             <img src="/logo.png" alt="CityPulse" className="w-12 h-12" />
-            <span className="text-2xl font-bold tracking-tight" style={{ color: "var(--panel-text, white)" }}>CityPulse</span>
+            <span className="text-2xl font-bold tracking-tight text-white">CityPulse</span>
           </div>
           <div className="space-y-0.5">
-            <p className="text-sm font-medium" style={{ color: "var(--panel-text-secondary, #999)" }}>
+            <p className="text-sm font-medium" style={{ color: "rgba(255,255,255,0.45)" }}>
               {siteName} &middot; {cityName}
             </p>
-            <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--panel-text-muted, #666)" }}>
+            <p className="text-[10px] uppercase tracking-widest" style={{ color: "rgba(255,255,255,0.25)" }}>
               AI-Powered Community Safety
             </p>
           </div>
@@ -131,8 +136,8 @@ export default function LoginScreen() {
               if (err instanceof Error && !err.message.includes("popup-closed")) setError("Google sign-in failed.");
             }
           }}
-          className="w-full flex items-center justify-center gap-3 py-2.5 rounded-lg text-sm font-medium transition-all hover:brightness-110"
-          style={{ background: "var(--panel-input-bg, rgba(255,255,255,0.05))", color: "var(--panel-text, white)", border: "1px solid var(--panel-border, rgba(255,255,255,0.1))" }}
+          className="relative z-10 w-full flex items-center justify-center gap-3 py-2.5 rounded-lg text-sm font-medium transition-all hover:brightness-110"
+          style={{ background: "rgba(255,255,255,0.03)", color: "white", border: "1px solid rgba(255,255,255,0.1)" }}
         >
           <svg viewBox="0 0 24 24" width="18" height="18">
             <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4" />
@@ -163,8 +168,8 @@ export default function LoginScreen() {
           className="w-full py-2.5 rounded-lg text-sm font-medium transition-all hover:brightness-110 disabled:opacity-50"
           style={{
             background: "transparent",
-            color: "var(--panel-text-secondary, #aaa)",
-            border: "1px solid var(--panel-border, rgba(255,255,255,0.15))",
+            color: "rgba(255,255,255,0.45)",
+            border: "1px solid rgba(255,255,255,0.15)",
           }}
         >
           Continue as guest
@@ -172,9 +177,9 @@ export default function LoginScreen() {
 
         {/* Divider */}
         <div className="flex items-center gap-3">
-          <div className="flex-1 h-px" style={{ background: "var(--panel-border, rgba(255,255,255,0.1))" }} />
-          <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--panel-text-muted, #666)" }}>or</span>
-          <div className="flex-1 h-px" style={{ background: "var(--panel-border, rgba(255,255,255,0.1))" }} />
+          <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.1)" }} />
+          <span className="text-[10px] uppercase tracking-widest" style={{ color: "rgba(255,255,255,0.25)" }}>or</span>
+          <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.1)" }} />
         </div>
 
         {/* Email form */}
@@ -188,9 +193,9 @@ export default function LoginScreen() {
               required
               className="w-full px-4 py-2.5 rounded-lg text-sm outline-none transition-colors placeholder:opacity-40"
               style={{
-                background: "var(--panel-input-bg, rgba(255,255,255,0.05))",
-                color: "var(--panel-text, white)",
-                border: "1px solid var(--panel-border, rgba(255,255,255,0.1))",
+                background: "rgba(255,255,255,0.03)",
+                color: "white",
+                border: "1px solid rgba(255,255,255,0.1)",
               }}
             />
           </div>
@@ -204,16 +209,16 @@ export default function LoginScreen() {
               minLength={6}
               className="w-full px-4 py-2.5 rounded-lg text-sm outline-none transition-colors pr-10 placeholder:opacity-40"
               style={{
-                background: "var(--panel-input-bg, rgba(255,255,255,0.05))",
-                color: "var(--panel-text, white)",
-                border: "1px solid var(--panel-border, rgba(255,255,255,0.1))",
+                background: "rgba(255,255,255,0.03)",
+                color: "white",
+                border: "1px solid rgba(255,255,255,0.1)",
               }}
             />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
               className="absolute right-3 top-1/2 -translate-y-1/2 opacity-40 hover:opacity-70 transition-opacity"
-              style={{ color: "var(--panel-text, white)" }}
+              style={{ color: "white" }}
             >
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
@@ -230,25 +235,25 @@ export default function LoginScreen() {
             type="submit"
             disabled={busy}
             className="w-full py-2.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
-            style={{ background: "#3b82f6", color: "white" }}
+            style={{ background: "#abff02", color: "#052424" }}
           >
             {busy ? "…" : mode === "signup" ? "Create account" : "Sign in"}
           </button>
         </form>
 
         {/* Toggle login/signup */}
-        <p className="text-center text-xs" style={{ color: "var(--panel-text-muted, #666)" }}>
+        <p className="text-center text-xs" style={{ color: "rgba(255,255,255,0.45)" }}>
           {mode === "login" ? (
             <>
               Don&apos;t have an account?{" "}
-              <button onClick={() => { setMode("signup"); setError(""); }} className="text-blue-500 font-medium hover:underline">
+              <button onClick={() => { setMode("signup"); setError(""); }} className="font-medium hover:underline" style={{ color: "#abff02" }}>
                 Sign up
               </button>
             </>
           ) : (
             <>
               Already have an account?{" "}
-              <button onClick={() => { setMode("login"); setError(""); }} className="text-blue-500 font-medium hover:underline">
+              <button onClick={() => { setMode("login"); setError(""); }} className="font-medium hover:underline" style={{ color: "#abff02" }}>
                 Sign in
               </button>
             </>

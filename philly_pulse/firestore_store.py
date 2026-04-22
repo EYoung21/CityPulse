@@ -436,6 +436,23 @@ def incident_count() -> int:
         return -1
 
 
+def count_city_incidents(slug: str, since_iso: Optional[str] = None) -> int:
+    """Count incidents for a single city, optionally since an ISO timestamp.
+
+    Used by the landing-page `/api/city-stats/:slug` endpoint. Returns -1
+    on error so the caller can fall back gracefully.
+    """
+    db = _ensure_client()
+    try:
+        query = db.collection("incidents").where("city", "==", slug)
+        if since_iso:
+            query = query.where("reported_at", ">=", since_iso)
+        agg = query.count().get()
+        return agg[0][0].value
+    except Exception:
+        return -1
+
+
 def inhibitor_stats() -> dict:
     db = _ensure_client()
     stats: dict[str, int] = {}

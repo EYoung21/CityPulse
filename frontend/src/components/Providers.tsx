@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { usePrefsSync } from "@/lib/prefs-sync";
@@ -10,13 +11,30 @@ import AdminPanel from "@/app/admin/AdminPanel";
 import ModerationPanel from "@/app/admin/ModerationPanel";
 import type { ReactNode } from "react";
 
+/** Routes that skip the auth gate entirely */
+const PUBLIC_ROUTES = ["/landing", "/login"];
+
+function RedirectTo({ to }: { to: string }) {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace(to);
+  }, [router, to]);
+  return null;
+}
+
 function AuthGate({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const { user, loading, isAdmin } = useAuth();
   // Mirror the small allow-list of synced preferences (theme, units,
   // basemap, POI overlays, avoidance prefs, etc.) to/from Firestore so
   // they roam across the user's devices.
   usePrefsSync();
   const [adminMode, setAdminMode] = useState<"launcher" | "dashboard" | "admin" | "moderation" | null>(null);
+
+  // Skip auth for public routes (e.g. /landing)
+  if (PUBLIC_ROUTES.includes(pathname)) {
+    return <>{children}</>;
+  }
 
   if (!isFirebaseConfigured()) {
     return <>{children}</>;
@@ -31,6 +49,9 @@ function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (!user) {
+    if (pathname === "/") {
+      return <RedirectTo to="/landing" />;
+    }
     return <LoginScreen />;
   }
 
