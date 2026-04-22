@@ -1070,7 +1070,7 @@
    product. Cluster bubbles (below) are the only landing-page markers
    that get a circle, and only because they're number-bubbles. */
 .lp-blip {
-  position: relative;
+  position: absolute;
   display: inline-block;
   color: #f87171;
   pointer-events: none;
@@ -1116,7 +1116,7 @@
 
 /* Cluster bubble: matches in-app marker-cluster look (count + ring). */
 .lp-cluster {
-  position: relative;
+  position: absolute;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1145,6 +1145,7 @@
 
 /* Endpoint dots for the safer-route demo. */
 .lp-endpoint {
+  position: absolute;
   width: 14px;
   height: 14px;
   border-radius: 50%;
@@ -1173,6 +1174,7 @@
    "lands" on the route rather than racing it. The fade-in delay is
    set per-instance via --lp-verdict-delay. */
 .lp-route-verdict {
+  position: absolute;
   width: 22px;
   height: 22px;
   border-radius: 50%;
