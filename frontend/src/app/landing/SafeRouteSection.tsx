@@ -15,10 +15,10 @@
  * the first pair with the safer row already selected).
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type maplibregl from "maplibre-gl";
 import type { PulseCity } from "@/lib/pulse-cities";
-import { CityMapCanvas } from "./CityMapCanvas";
+import { CityMapCanvas, type LngLatBounds } from "./CityMapCanvas";
 import { SafeRouteCanvas } from "./SafeRouteCanvas";
 import { SafeRoutePicker } from "./SafeRoutePicker";
 
@@ -68,6 +68,39 @@ export function SafeRouteSection({ city }: Props) {
     // fires once per cycle, not only on mount.
   }, [idx, pairs.length]);
 
+  // Per-pair camera bounds: the bbox of from/to/hot + all blips,
+  // expanded a hair so endpoints don't sit on the canvas edge. This is
+  // what fixes the "route runs off the map" framing the screenshot
+  // showed for the long Chattanooga pair.
+  const bounds = useMemo<LngLatBounds | undefined>(() => {
+    if (pairs.length === 0) return undefined;
+    const p = pairs[idx];
+    const lngs = [
+      p.fromLngLat[0],
+      p.toLngLat[0],
+      p.hotLngLat[0],
+      ...p.blips.map((b) => b.lng),
+    ];
+    const lats = [
+      p.fromLngLat[1],
+      p.toLngLat[1],
+      p.hotLngLat[1],
+      ...p.blips.map((b) => b.lat),
+    ];
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    // Pad ~12% on each side so the curved bezier control points and
+    // verdict badges have breathing room.
+    const padLng = Math.max((maxLng - minLng) * 0.18, 0.004);
+    const padLat = Math.max((maxLat - minLat) * 0.18, 0.003);
+    return [
+      [minLng - padLng, minLat - padLat],
+      [maxLng + padLng, maxLat + padLat],
+    ];
+  }, [pairs, idx]);
+
   if (pairs.length === 0) return null;
 
   const pair = pairs[idx];
@@ -95,6 +128,9 @@ export function SafeRouteSection({ city }: Props) {
               zoom={13.2}
               pitch={25}
               bearing={-12}
+              drift={false}
+              bounds={bounds}
+              boundsPadding={64}
               onReady={handleMapReady}
             />
             <SafeRouteCanvas

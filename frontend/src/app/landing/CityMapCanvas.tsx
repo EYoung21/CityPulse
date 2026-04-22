@@ -9,17 +9,10 @@
  * (see frontend/src/lib/vector-basemap.ts), so the landing page reads as
  * a continuation of the product — not a separate marketing surface.
  *
- * Responsibilities:
- *   - Fixed, non-interactive camera (no zoom/pan by the user).
- *   - Slow decorative bearing + pan drift so the background feels alive.
- *   - Accent-tinted vignette overlay so the map stays on-brand per city
- *     and doesn't look like a generic Carto dark map.
- *   - Optional hero-incident markers anchored to lng/lat — they follow
- *     the camera drift "for free" via maplibregl.Marker.
- *   - Imperative handle so siblings (e.g. SafeRouteCanvas) can grab the
- *     same map instance for `map.project(lngLat)` projection.
- *   - Respects prefers-reduced-motion (freezes the drift).
- *   - Releases its GL context on unmount.
+ * Effects are split so the GL context is created once per city and
+ * subsequent prop changes (bounds, drift toggle, incident set) just
+ * mutate the live map. That keeps the route minimap from flashing on
+ * every 6-second pair cycle.
  */
 
 import {
@@ -46,10 +39,12 @@ export interface CityMapCanvasHandle {
   ready: () => Promise<maplibregl.Map>;
 }
 
+export type LngLatBounds = [[number, number], [number, number]];
+
 interface Props {
   className?: string;
   city: PulseCity;
-  /** Initial zoom; hero ~11.3, safe-route ~13.2. */
+  /** Initial zoom; ignored when `bounds` is supplied. */
   zoom?: number;
   /** Pitched camera, 0..60. Slight pitch gives the map a 3D feel. */
   pitch?: number;
@@ -59,6 +54,11 @@ interface Props {
   drift?: boolean;
   /** Optional anchored markers painted on top of the map. */
   incidents?: HeroIncident[];
+  /** When provided, the camera fits to these bounds (and refits when
+   *  they change). Drift is implicitly disabled. */
+  bounds?: LngLatBounds;
+  /** Padding (px) used when fitting bounds. */
+  boundsPadding?: number;
   /** Fired once the map's style finished loading. */
   onReady?: (map: maplibregl.Map) => void;
 }
@@ -73,6 +73,8 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
       bearing = -17,
       drift = true,
       incidents,
+      bounds,
+      boundsPadding = 60,
       onReady,
     },
     ref,
@@ -81,6 +83,10 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
     const mapRef = useRef<maplibregl.Map | null>(null);
     const readyPromiseRef = useRef<Promise<maplibregl.Map> | null>(null);
     const readyResolveRef = useRef<((m: maplibregl.Map) => void) | null>(null);
+    // Hold the latest onReady in a ref so we don't tear down the map
+    // every time the parent re-renders with a new closure.
+    const onReadyRef = useRef(onReady);
+    onReadyRef.current = onReady;
 
     useImperativeHandle(
       ref,
@@ -88,14 +94,13 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
         getMap: () => mapRef.current,
         ready: () => {
           if (readyPromiseRef.current) return readyPromiseRef.current;
-          // No map yet — return a never-resolving promise; callers should
-          // also pass `onReady` for the typical case.
           return new Promise<maplibregl.Map>(() => {});
         },
       }),
       [],
     );
 
+    /* ── Init: create the map once per city ──────────────────────── */
     useEffect(() => {
       if (!containerRef.current) return;
 
@@ -126,15 +131,57 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
           "bottom-right",
         );
         readyResolveRef.current?.(map);
-        onReady?.(map);
+        onReadyRef.current?.(map);
       });
 
-      // Drift: slowly pan + rotate so the map feels alive. We use
-      // jumpTo() inside a rAF loop instead of easeTo() — easeTo()
-      // queues animations and ours is meant to be perpetually moving.
+      return () => {
+        mapRef.current = null;
+        readyPromiseRef.current = null;
+        readyResolveRef.current = null;
+        map.remove();
+      };
+      // Intentionally only re-init when the city changes. Camera/drift
+      // changes are applied by the effects below, in-place.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [city]);
+
+    /* ── Bounds: fit when set, refit on change ───────────────────── */
+    useEffect(() => {
+      const map = mapRef.current;
+      if (!map || !bounds) return;
+
+      const apply = () => {
+        map.fitBounds(bounds, {
+          padding: boundsPadding,
+          duration: 1200,
+          pitch,
+          bearing,
+          essential: true,
+        });
+      };
+
+      if (map.isStyleLoaded()) {
+        apply();
+      } else {
+        let cancelled = false;
+        readyPromiseRef.current?.then(() => {
+          if (!cancelled) apply();
+        });
+        return () => {
+          cancelled = true;
+        };
+      }
+    }, [bounds, boundsPadding, pitch, bearing]);
+
+    /* ── Drift: slowly orbit + rotate (skipped when bounds is set) ─ */
+    useEffect(() => {
+      const map = mapRef.current;
+      if (!map || !drift || bounds) return;
+
       const reduce =
         typeof window !== "undefined" &&
         window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      if (reduce) return;
 
       let raf = 0;
       let startTs: number | null = null;
@@ -143,31 +190,25 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
       function animate(ts: number) {
         if (startTs === null) startTs = ts;
         const elapsed = (ts - startTs) / 1000;
-        // Full 60-second loop: bearing drifts +30°, center nudges by
-        // a few thousandths of a degree in a circle.
+        // Full 60-second loop.
         const p = (elapsed / 60) % 1;
         const theta = p * Math.PI * 2;
         const dLng = Math.cos(theta) * 0.006;
         const dLat = Math.sin(theta) * 0.004;
-        map.jumpTo({
+        map!.jumpTo({
           center: [city.lng + dLng, city.lat + dLat],
           bearing: startBearing + p * 30,
         });
         raf = requestAnimationFrame(animate);
       }
-
-      if (drift && !reduce) raf = requestAnimationFrame(animate);
+      raf = requestAnimationFrame(animate);
 
       return () => {
         if (raf) cancelAnimationFrame(raf);
-        mapRef.current = null;
-        readyPromiseRef.current = null;
-        readyResolveRef.current = null;
-        map.remove();
       };
-    }, [city, zoom, pitch, bearing, drift, onReady]);
+    }, [drift, bounds, city, bearing]);
 
-    /* ── Hero incident markers (anchored) ─────────────────────────── */
+    /* ── Incident markers (anchored) ─────────────────────────────── */
     useEffect(() => {
       const map = mapRef.current;
       if (!map || !incidents || incidents.length === 0) return;
@@ -190,8 +231,6 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
         }
       };
 
-      // If style is already loaded we can mount immediately, otherwise
-      // wait for the readiness promise.
       if (map.isStyleLoaded()) {
         mount();
       } else {
