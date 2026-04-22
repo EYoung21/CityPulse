@@ -151,7 +151,44 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
       if (!map || !bounds) return;
 
       const apply = () => {
-        map.fitBounds(bounds, {
+        // Expand the bbox to match the container's aspect ratio so the
+        // data fills the full hero width instead of being squeezed into
+        // a narrow central band. Without this, a square ~9×9km incident
+        // bbox in a 1440×600 hero (2.4:1) ends up using only the middle
+        // ~30% of the width, with empty metro on each side. We pad the
+        // shorter axis (in earth-surface units, accounting for the
+        // latitude lng-compression) until aspect matches, then fitBounds.
+        const container = map.getContainer();
+        const cw = container.clientWidth;
+        const ch = container.clientHeight;
+        let fitTarget: LngLatBounds = bounds;
+        if (cw > 0 && ch > 0) {
+          const [[minLng, minLat], [maxLng, maxLat]] = bounds;
+          const midLat = (minLat + maxLat) / 2;
+          const cosLat = Math.cos((midLat * Math.PI) / 180) || 1;
+          const bboxLngM = (maxLng - minLng) * cosLat;
+          const bboxLatM = maxLat - minLat;
+          const containerAspect = cw / ch;
+          const bboxAspect = bboxLngM / bboxLatM;
+          if (containerAspect > bboxAspect) {
+            // Container wider — expand lng so bbox aspect matches.
+            const targetLngM = bboxLatM * containerAspect;
+            const extraLng = (targetLngM - bboxLngM) / cosLat;
+            fitTarget = [
+              [minLng - extraLng / 2, minLat],
+              [maxLng + extraLng / 2, maxLat],
+            ];
+          } else {
+            // Container taller — expand lat instead.
+            const targetLatM = bboxLngM / containerAspect;
+            const extraLat = targetLatM - bboxLatM;
+            fitTarget = [
+              [minLng, minLat - extraLat / 2],
+              [maxLng, maxLat + extraLat / 2],
+            ];
+          }
+        }
+        map.fitBounds(fitTarget, {
           padding: boundsPadding,
           duration: 1200,
           pitch,
@@ -160,17 +197,26 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
         });
       };
 
+      let cancelled = false;
       if (map.isStyleLoaded()) {
         apply();
       } else {
-        let cancelled = false;
         readyPromiseRef.current?.then(() => {
           if (!cancelled) apply();
         });
-        return () => {
-          cancelled = true;
-        };
       }
+
+      // Refit on container resize (mobile rotation, sidebar collapse,
+      // etc.) so the aspect-matched bbox stays correct.
+      const ro = new ResizeObserver(() => {
+        if (!cancelled && map.isStyleLoaded()) apply();
+      });
+      ro.observe(map.getContainer());
+
+      return () => {
+        cancelled = true;
+        ro.disconnect();
+      };
     }, [bounds, boundsPadding, pitch, bearing]);
 
     /* ── Drift: slowly orbit + rotate (skipped when bounds is set) ─ */
@@ -220,7 +266,7 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
           const el =
             inc.kind === "cluster"
               ? createClusterElement(inc.count ?? 2)
-              : createBlipElement({ kind: inc.kind, size: 22 });
+              : createBlipElement({ kind: inc.kind, size: 30 });
           // Stagger pulse phase per marker so they don't pulse in
           // lockstep — feels like independent live events.
           el.style.animationDelay = `${(Math.random() * 1.8).toFixed(2)}s`;

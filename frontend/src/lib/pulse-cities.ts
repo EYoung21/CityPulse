@@ -204,16 +204,19 @@ export const PULSE_CITIES: PulseCity[] = [
       },
     ],
     heroIncidents: [
-      { lng: -122.4830, lat: 37.7820, kind: "gun" },          // Outer Richmond
-      { lng: -122.4640, lat: 37.7480, kind: "knife" },        // Sunset
+      { lng: -122.5050, lat: 37.7790, kind: "gun" },          // Ocean Beach (W edge)
+      { lng: -122.4830, lat: 37.7820, kind: "knife" },        // Outer Richmond
+      { lng: -122.4640, lat: 37.7480, kind: "gun" },          // Sunset
+      { lng: -122.4480, lat: 37.7920, kind: "cluster", count: 5 }, // Pac Heights
       { lng: -122.4380, lat: 37.7340, kind: "gun" },          // Glen Park
+      { lng: -122.4310, lat: 37.7650, kind: "knife" },        // Castro
       { lng: -122.4180, lat: 37.7250, kind: "cluster", count: 6 }, // Bernal
+      { lng: -122.4140, lat: 37.8030, kind: "gun" },          // North Beach
       { lng: -122.4090, lat: 37.7560, kind: "knife" },        // Mission
       { lng: -122.4030, lat: 37.7780, kind: "gun" },          // SoMa
       { lng: -122.3990, lat: 37.7910, kind: "cluster", count: 3 }, // FiDi
-      { lng: -122.4140, lat: 37.8030, kind: "gun" },          // North Beach / Wharf
-      { lng: -122.4480, lat: 37.7920, kind: "knife" },        // Pac Heights / Western Add.
-      { lng: -122.4310, lat: 37.7650, kind: "gun" },          // Castro / Mission edge
+      { lng: -122.3870, lat: 37.7350, kind: "knife" },        // Bayview (E edge)
+      { lng: -122.4910, lat: 37.7340, kind: "gun" },          // Lake Merced (SW)
     ],
   },
   {
@@ -315,16 +318,19 @@ export const PULSE_CITIES: PulseCity[] = [
       },
     ],
     heroIncidents: [
-      { lng: -74.0150, lat: 40.7050, kind: "gun" },           // Battery / FiDi
-      { lng: -73.9970, lat: 40.7180, kind: "knife" },         // LES
+      { lng: -74.0420, lat: 40.6890, kind: "gun" },           // Red Hook (W edge)
+      { lng: -74.0150, lat: 40.7050, kind: "knife" },         // Battery / FiDi
       { lng: -74.0090, lat: 40.7390, kind: "cluster", count: 8 }, // West Village
+      { lng: -73.9970, lat: 40.7180, kind: "gun" },           // LES
+      { lng: -73.9890, lat: 40.6920, kind: "knife" },         // Downtown Bklyn
       { lng: -73.9870, lat: 40.7620, kind: "gun" },           // Midtown East
+      { lng: -73.9670, lat: 40.8030, kind: "cluster", count: 5 }, // Harlem
       { lng: -73.9550, lat: 40.7790, kind: "knife" },         // UES
-      { lng: -73.9670, lat: 40.8030, kind: "gun" },           // Harlem
-      { lng: -73.9320, lat: 40.7320, kind: "cluster", count: 4 }, // Greenpoint / N. Brooklyn
-      { lng: -73.9450, lat: 40.6810, kind: "knife" },         // Bed-Stuy
-      { lng: -73.9890, lat: 40.6920, kind: "gun" },           // Downtown Bklyn
+      { lng: -73.9450, lat: 40.6810, kind: "gun" },           // Bed-Stuy
+      { lng: -73.9320, lat: 40.7320, kind: "cluster", count: 4 }, // Greenpoint
       { lng: -73.9210, lat: 40.7660, kind: "knife" },         // Astoria
+      { lng: -73.8920, lat: 40.7480, kind: "gun" },           // Jackson Heights (E edge)
+      { lng: -73.9100, lat: 40.8290, kind: "knife" },         // South Bronx (N)
     ],
   },
   {
@@ -427,16 +433,19 @@ export const PULSE_CITIES: PulseCity[] = [
       },
     ],
     heroIncidents: [
-      { lng: -75.2210, lat: 39.9620, kind: "gun" },           // West Philly
-      { lng: -75.1980, lat: 39.9460, kind: "knife" },         // University City
-      { lng: -75.1820, lat: 39.9210, kind: "cluster", count: 5 }, // Grays Ferry
-      { lng: -75.1640, lat: 39.9180, kind: "gun" },           // South Philly
+      { lng: -75.2480, lat: 39.9510, kind: "gun" },           // Cobbs Creek (W edge)
+      { lng: -75.2210, lat: 39.9620, kind: "knife" },         // West Philly
+      { lng: -75.1980, lat: 39.9460, kind: "cluster", count: 6 }, // University City
+      { lng: -75.1820, lat: 39.9210, kind: "gun" },           // Grays Ferry
+      { lng: -75.1640, lat: 39.9180, kind: "knife" },         // South Philly
+      { lng: -75.1530, lat: 39.9510, kind: "gun" },           // Center City East
       { lng: -75.1450, lat: 39.9320, kind: "knife" },         // Pennsport
-      { lng: -75.1380, lat: 39.9590, kind: "gun" },           // Northern Liberties
-      { lng: -75.1240, lat: 39.9740, kind: "cluster", count: 3 }, // Fishtown
+      { lng: -75.1380, lat: 39.9590, kind: "cluster", count: 4 }, // Northern Liberties
+      { lng: -75.1240, lat: 39.9740, kind: "gun" },           // Fishtown
       { lng: -75.1330, lat: 40.0010, kind: "knife" },         // Kensington
       { lng: -75.1700, lat: 39.9920, kind: "gun" },           // North Philly
-      { lng: -75.1530, lat: 39.9510, kind: "knife" },         // Center City East
+      { lng: -75.0830, lat: 39.9970, kind: "cluster", count: 3 }, // Frankford (E edge)
+      { lng: -75.0900, lat: 39.9610, kind: "knife" },         // Port Richmond
     ],
   },
   {
@@ -533,16 +542,19 @@ export const PULSE_CITIES: PulseCity[] = [
       },
     ],
     heroIncidents: [
-      { lng: -85.3460, lat: 35.0080, kind: "gun" },           // St. Elmo
-      { lng: -85.3210, lat: 35.0250, kind: "knife" },         // Southside
+      { lng: -85.3680, lat: 35.0030, kind: "gun" },           // Lookout Mtn (W edge)
+      { lng: -85.3460, lat: 35.0080, kind: "knife" },         // St. Elmo
+      { lng: -85.3300, lat: 35.0830, kind: "cluster", count: 3 }, // Red Bank (N)
+      { lng: -85.3210, lat: 35.0250, kind: "gun" },           // Southside
+      { lng: -85.3160, lat: 34.9930, kind: "knife" },         // Lookout Valley
       { lng: -85.3080, lat: 35.0400, kind: "cluster", count: 4 }, // Downtown
-      { lng: -85.2860, lat: 35.0540, kind: "gun" },           // Highland Park
+      { lng: -85.2920, lat: 35.0710, kind: "gun" },           // North Shore
+      { lng: -85.2860, lat: 35.0540, kind: "knife" },         // Highland Park
+      { lng: -85.2750, lat: 35.0860, kind: "cluster", count: 2 }, // Hixson
       { lng: -85.2640, lat: 35.0320, kind: "knife" },         // Brainerd
       { lng: -85.2420, lat: 35.0450, kind: "gun" },           // East Ridge
-      { lng: -85.2920, lat: 35.0710, kind: "cluster", count: 2 }, // North Shore
-      { lng: -85.3300, lat: 35.0830, kind: "knife" },         // Red Bank
-      { lng: -85.3160, lat: 34.9930, kind: "gun" },           // Lookout Valley
-      { lng: -85.2750, lat: 35.0860, kind: "knife" },         // Hixson
+      { lng: -85.2150, lat: 35.0240, kind: "knife" },         // E. Brainerd (E edge)
+      { lng: -85.2980, lat: 34.9810, kind: "gun" },           // Tiftonia (S)
     ],
   },
 ];
