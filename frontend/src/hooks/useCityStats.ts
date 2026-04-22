@@ -15,6 +15,11 @@
 
 import { useEffect, useRef, useState } from "react";
 
+// Mirror the rest of the app: backend lives at NEXT_PUBLIC_API_URL.
+// Empty string falls back to a same-origin relative path (works in
+// dev when Next is proxied to the FastAPI server).
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+
 export interface CityStats {
   slug: string;
   cityName: string;
@@ -82,10 +87,20 @@ export function useCityStats(
       abortRef.current = ctrl;
       try {
         const r = await fetch(
-          `/api/city-stats/${encodeURIComponent(slug!)}`,
+          `${API_BASE}/api/city-stats/${encodeURIComponent(slug!)}`,
           { headers: { Accept: "application/json" }, signal: ctrl.signal },
         );
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        if (!r.ok) {
+          // 404 just means the deploy doesn't expose this endpoint yet
+          // (e.g. backend not wired up on this domain). Fall back to
+          // the static numbers in pulse-cities.ts without console spam.
+          if (r.status === 404) {
+            setStats(null);
+            setError(null);
+            return;
+          }
+          throw new Error(`HTTP ${r.status}`);
+        }
         const payload = (await r.json()) as ApiPayload;
         if (cancelled) return;
         setStats(mapPayload(payload));

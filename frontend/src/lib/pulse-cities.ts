@@ -539,10 +539,10 @@ export const PULSE_CITIES: PulseCity[] = [
  * Geographic bounds for a city, derived from its `nominatimViewbox`
  * field. Returned as a MapLibre-friendly [[minLng, minLat], [maxLng,
  * maxLat]] tuple so it can be passed straight into `map.fitBounds()`
- * or the CityMapCanvas `bounds` prop. This is what makes both the
- * hero map and the safer-route minimap auto-frame each city to its
- * actual extent instead of using a hard-coded zoom that's too tight
- * for NYC and too loose for Chattanooga.
+ * or the CityMapCanvas `bounds` prop. NOTE: this is the geocoder
+ * search hint, which covers the wider metro region. For framing the
+ * hero map prefer `heroIncidentBounds(city)` so markers don't end up
+ * crushed against the viewport edges.
  */
 export function cityBounds(
   city: PulseCity,
@@ -554,6 +554,33 @@ export function cityBounds(
   return [
     [minLng, minLat],
     [maxLng, maxLat],
+  ];
+}
+
+/**
+ * Tight bounds for the hero map: the bbox of all hero incidents (plus
+ * the city's nominal center as an anchor) padded by ~22% on each side.
+ * Using the marker bbox — instead of the geocoder viewbox — guarantees
+ * every blip sits well inside the visible frame regardless of city
+ * size, so SF doesn't show the South Bay and Chattanooga doesn't show
+ * empty Tennessee farmland around the urban core.
+ */
+export function heroIncidentBounds(
+  city: PulseCity,
+): [[number, number], [number, number]] {
+  const lngs = [city.lng, ...city.heroIncidents.map((i) => i.lng)];
+  const lats = [city.lat, ...city.heroIncidents.map((i) => i.lat)];
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  // 22% padding gives the markers visual breathing room at the edges
+  // without showing too much surrounding emptiness.
+  const padLng = Math.max((maxLng - minLng) * 0.22, 0.01);
+  const padLat = Math.max((maxLat - minLat) * 0.22, 0.008);
+  return [
+    [minLng - padLng, minLat - padLat],
+    [maxLng + padLng, maxLat + padLat],
   ];
 }
 
