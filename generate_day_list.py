@@ -1,24 +1,30 @@
-"""Generate an exponential-decay day list for backfill.
+"""Generate the day list used by the archive backfill.
 
-Recent dates are sampled densely, older dates are sampled sparsely.
-
-Window          Range             Sampling         ~Days
-Recent          1-14 days ago     Every day        14
-Medium          15-30 days ago    Every other day  8
-Older           31-60 days ago    Every 3rd day    10
-Historical      61-150 days ago   Every 5th day    18
-                                                   ----
-                                            Total: ~50
+By default emits **every** date going back `--days` (default 150 = ~5 months),
+sorted most-recent-first so the backfill prioritizes recent dispatches.
+Pass `--decay` to fall back to the original exponential-decay sampling
+(~50 dates over 150 days, with recent days dense and older days sparse).
 
 Usage:
-    python generate_day_list.py                # prints to stdout
-    python generate_day_list.py -o days.txt    # writes to file
+    python generate_day_list.py                # 150 dates, recent-first
+    python generate_day_list.py --days 30      # 30 dates, recent-first
+    python generate_day_list.py --decay        # legacy ~50-date sampling
+    python generate_day_list.py -o days.txt    # write to file
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime
+
+
+def all_dates_recent_first(total_days: int = 150) -> list[str]:
+    """Every date from yesterday back `total_days` days, most-recent-first."""
+    today = datetime.date.today()
+    return [
+        (today - datetime.timedelta(days=d)).isoformat()
+        for d in range(1, total_days + 1)
+    ]
 
 
 def exponential_decay_dates(total_days: int = 150) -> list[str]:
@@ -41,14 +47,23 @@ def exponential_decay_dates(total_days: int = 150) -> list[str]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate exponential-decay day list")
+    parser = argparse.ArgumentParser(description="Generate backfill day list")
     parser.add_argument("-o", "--output", type=str, default=None, help="Output file (default: stdout)")
     parser.add_argument("--days", type=int, default=150, help="Max days back (default: 150)")
+    parser.add_argument(
+        "--decay",
+        action="store_true",
+        help="Use legacy exponential-decay sampling (~50 dates) instead of full coverage",
+    )
     args = parser.parse_args()
 
-    dates = exponential_decay_dates(args.days)
+    if args.decay:
+        dates = exponential_decay_dates(args.days)
+        header = f"# Exponential decay day list: {len(dates)} dates over {args.days} days"
+    else:
+        dates = all_dates_recent_first(args.days)
+        header = f"# Full day list (recent-first): {len(dates)} dates over {args.days} days"
 
-    header = f"# Exponential decay day list: {len(dates)} dates over {args.days} days"
     lines = [header] + dates
 
     if args.output:
