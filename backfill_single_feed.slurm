@@ -22,10 +22,20 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 echo "Start: $(date)"
 echo ""
 
+CONFIG_ARG=""
+if [ -n "${CITY_CONFIG}" ]; then
+    if [ -f "${CITY_CONFIG}" ]; then
+        CONFIG_ARG="--config ${CITY_CONFIG}"
+        echo "Using city config: ${CITY_CONFIG}"
+    else
+        echo "WARNING: CITY_CONFIG=${CITY_CONFIG} not found on disk; falling back to default Philly feed registry (this will fail for non-Philly feed IDs)"
+    fi
+fi
+
 IFS=',' read -ra FEED_ARRAY <<< "${FEEDS}"
 for fid in "${FEED_ARRAY[@]}"; do
     echo "--- Starting feed ${fid} at $(date) ---"
-    python3 backfill_archives.py --day-list "${DAY_LIST}" --feed "${fid}"
+    python3 backfill_archives.py ${CONFIG_ARG} --day-list "${DAY_LIST}" --feed "${fid}"
     echo "--- Finished feed ${fid} at $(date) ---"
     echo ""
 done

@@ -1,0 +1,24 @@
+# Per-city prefilter overrides for Seattle (SPD + SFD).
+# Extends philly_pulse/data/prefilter_default.yaml.
+
+noise_patterns:
+  - "(?i)^(unit|car|adam|baker|charlie|david|edward|frank|george|king)\\s*\\d+\\s+(10[- ]?8|10[- ]?7|in service|out of service)[\\s.,!?]*$"
+
+keep_keywords:
+  # SPD common dispatch language is plain English (no signal codes), so
+  # the default keep_keywords already cover most of it. Add SFD/MIH calls.
+  - shots fired
+  - person with a gun
+  - weapons offense
+  - assault in progress
+  - robbery in progress
+  - burglary in progress
+  - residential burglary
+  - prowler
+  - dv assault                # SPD shorthand for domestic violence assault
+  - mvc with injuries         # SFD MVA / motor-vehicle collision
+  - rescue extrication
+  - structure fire
+  - working fire
+  - aid response
+  - medic response
