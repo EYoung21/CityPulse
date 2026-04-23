@@ -137,7 +137,7 @@ export async function fetchTransparencyStats(
 /** Format helpers used by the page so we don't sprinkle the same
  *  Intl plumbing through the JSX. */
 export const fmtPct = (numerator: number, denominator: number): string => {
-  if (!denominator) return "—";
+  if (!denominator) return "-";
   const pct = (numerator / denominator) * 100;
   // Show whole percent below 10 to avoid jittery decimal noise; show
   // one decimal for low-share categories so they don't all read 0%.

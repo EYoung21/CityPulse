@@ -574,7 +574,7 @@ async def ingest(req: IngestRequest):
             variants=req.variants,
             city=city,
         )
-        return {"status": "collected", "reason": "LLM auto-processing paused; raw transcript stored"}
+        return {"status": "collected", "reason": "LLM auto-processing paused, raw transcript stored"}
 
     # ── Cheap regex prefilter (saves LLM $$$) ──────────────────────
     # Drop confirmed-junk lines (acks, hallucinated prompt fragments,

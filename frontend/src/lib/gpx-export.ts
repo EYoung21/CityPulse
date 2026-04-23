@@ -58,7 +58,7 @@ export function tripToGpx(entry: TripHistoryEntry): string | null {
   const trackName = `${originLabel} → ${destLabel}`;
   const description =
     `${entry.traveledKm.toFixed(2)} km / ${entry.mode}` +
-    (entry.notes ? ` — ${entry.notes}` : "");
+    (entry.notes ? ` · ${entry.notes}` : "");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx

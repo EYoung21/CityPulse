@@ -706,6 +706,72 @@
   margin-right: 0.25em;
 }
 
+/* ─── Network Roster (under the scroll-animated statement) ─── */
+/* Two micro-rows that name the cities the headline counts refer to.
+   Visually quiet on purpose: the scroll-revealed sentence above is
+   the hero copy; this strip is the receipt. */
+.lp-roster {
+  margin-top: 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+}
+
+.lp-roster-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 14px 18px;
+  max-width: 760px;
+}
+
+.lp-roster-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-geist-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+}
+
+.lp-roster-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+/* Live = solid accent dot with a soft glow — same green-light language
+   as the LIVE badge in the hero eyebrow. Coming soon = hollow ring so
+   it reads as "queued" rather than "active". */
+.lp-roster-dot--live {
+  background: rgb(var(--accent-rgb));
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.18);
+}
+
+.lp-roster-dot--soon {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.45);
+}
+
+.lp-roster-cities {
+  font-size: 14px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.78);
+  letter-spacing: -0.005em;
+}
+
+@media (max-width: 640px) {
+  .lp-roster { margin-top: 40px; gap: 18px; }
+  .lp-roster-row { flex-direction: column; gap: 6px; text-align: center; }
+  .lp-roster-cities { font-size: 13px; }
+}
+
 /* ─── City Grid (Sister Cities) ─── */
 .lp-cities {
   padding: 80px 24px 120px;

@@ -51,8 +51,8 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
   const origin = await originFromHeaders();
   const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
   const title = sp.t
-    ? `${sp.t} — ${cityName} Pulse`
-    : `${cityName} Pulse — Real-time Safety Map`;
+    ? `${sp.t} · ${cityName} Pulse`
+    : `${cityName} Pulse · Real-time Safety Map`;
   const description = sp.c
     ? `${sp.c.replace(/_/g, " ")} reported${sp.loc ? ` near ${sp.loc}` : ""}. Tap to open the live community-safety map.`
     : `Real-time AI-powered community safety map for ${cityName}.`;

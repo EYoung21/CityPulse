@@ -30,8 +30,8 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
   const listName = decoded?.listName || "Saved places";
 
   const title = decoded
-    ? `${senderLabel} shared "${listName}" — ${itemCount} ${itemCount === 1 ? "place" : "places"}`
-    : `Shared list — ${cityName} Pulse`;
+    ? `${senderLabel} shared "${listName}" · ${itemCount} ${itemCount === 1 ? "place" : "places"}`
+    : `Shared list · ${cityName} Pulse`;
   const description = decoded
     ? `View ${itemCount} saved ${itemCount === 1 ? "place" : "places"} on the ${cityName} Pulse safety map.`
     : `Real-time AI-powered community safety map for ${cityName}.`;

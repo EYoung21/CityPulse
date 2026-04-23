@@ -19,7 +19,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     title: `${name} Safety Profile | CityPulse`,
     description: `Real-time safety data for ${name}. Crime trends, peak hours, and incident history powered by AI scanner analysis.`,
     openGraph: {
-      title: `${name} — CityPulse Safety Profile`,
+      title: `${name} · CityPulse Safety Profile`,
       description: `Live safety analytics for ${name}, Philadelphia.`,
     },
   };

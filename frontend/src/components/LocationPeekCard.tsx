@@ -63,7 +63,7 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
 
 function formatRelative(iso: string): string {
   const then = Date.parse(iso);
-  if (!Number.isFinite(then)) return "—";
+  if (!Number.isFinite(then)) return "-";
   const sec = Math.max(0, Math.round((Date.now() - then) / 1000));
   if (sec < 60) return `${sec}s ago`;
   const min = Math.round(sec / 60);
@@ -215,7 +215,7 @@ export default function LocationPeekCard({
               <Clock className="w-3 h-3" />
               <span>
                 Most recent: {formatRelative(mostRecent.reported_at)}
-                {mostRecentPill ? ` — ${mostRecentPill.label.toLowerCase()}` : ""}
+                {mostRecentPill ? ` · ${mostRecentPill.label.toLowerCase()}` : ""}
               </span>
             </div>
           )}

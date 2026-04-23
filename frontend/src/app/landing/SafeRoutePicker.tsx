@@ -99,7 +99,7 @@ export function SafeRoutePicker({ pair, selected, accentRgb }: Props) {
       </div>
 
       <div className="lp-route-picker-footer">
-        <span className="lp-route-picker-cta">Start — Safer</span>
+        <span className="lp-route-picker-cta">Start · Safer</span>
       </div>
     </div>
   );

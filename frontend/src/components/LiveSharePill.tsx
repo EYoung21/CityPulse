@@ -116,7 +116,7 @@ export default function LiveSharePill({
       if (typeof navigator !== "undefined" && navigator.share) {
         try {
           await navigator.share({
-            title: `Live ETA — heading to ${dest.name}`,
+            title: `Live ETA · heading to ${dest.name}`,
             text: `Watch me arrive: ${h.url}`,
             url: h.url,
           });
@@ -152,7 +152,7 @@ export default function LiveSharePill({
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       // Clipboard denied — show the URL inline so the user can long-press.
-      setError("Copy blocked — long-press the link to share manually.");
+      setError("Copy blocked. Long-press the link to share manually.");
     }
   }, [handle]);
 
@@ -231,7 +231,7 @@ export default function LiveSharePill({
                     <button
                       onClick={() => {
                         navigator.share?.({
-                          title: `Live ETA${dest ? ` — heading to ${dest.name}` : ""}`,
+                          title: `Live ETA${dest ? ` · heading to ${dest.name}` : ""}`,
                           text: `Watch me arrive: ${handle.url}`,
                           url: handle.url,
                         }).catch(() => { /* user cancelled */ });

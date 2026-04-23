@@ -6,6 +6,13 @@ regex prefilter introduced in commit `bff3c6e` and tuned in commit
 before touching `philly_pulse/data/prefilter_default.yaml` or any
 `cities/<slug>/prefilter.yaml`.
 
+> **Note (post-eval):** Dallas, Frisco, and Seattle were dropped from
+> the project after this eval ran. Their rows below are preserved as
+> historical record (per the "Do not rewrite history" rule at the
+> bottom of this file); the relevant active cities going forward are
+> philly, sf, nyc, chattanooga, and the announced "coming soon" set
+> (memphis, detroit, orlando, miami, la, lasvegas).
+
 ## TL;DR
 
 | | Value |

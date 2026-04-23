@@ -444,11 +444,20 @@ export default function LandingPage() {
 
   const headlineWords =
     `We listen to every police scanner in ${city.name}. That\u2019s how we know which routes to avoid.`.split(" ");
-  const statWords =
-    `Real-time safety intelligence across ${PULSE_CITIES.length} cities — built locally for ${city.name}.`.split(" ");
 
-  const sisterCities = PULSE_CITIES
-    .filter((c) => !c.previewOnly && c.slug !== city.slug)
+  // Two distinct rosters drive the network section copy. The headline
+  // counts come from the data so this stays correct as we promote
+  // cities (flip `previewOnly` off) or announce new ones (flip
+  // `comingSoon` on) — no more hand-edited "13 cities" strings.
+  const liveCities = PULSE_CITIES.filter((c) => !c.previewOnly);
+  const comingCities = PULSE_CITIES.filter((c) => c.comingSoon);
+  const liveCount = liveCities.length;
+  const comingCount = comingCities.length;
+  const statWords =
+    `Real-time safety intelligence across ${liveCount} cities, with ${comingCount} more coming soon.`.split(" ");
+
+  const sisterCities = liveCities
+    .filter((c) => c.slug !== city.slug)
     .map(toLandingCity);
 
   return (
@@ -586,6 +595,33 @@ export default function LandingPage() {
               </Word>
             ))}
           </p>
+          {/* Roster strip — two micro-rows under the scroll-animated
+              sentence, so visitors see exactly which cities the
+              counts refer to instead of having to scroll all the way
+              down to the sister-cities grid. Names are joined by
+              middle dots and break naturally on narrow screens. */}
+          <div className="lp-roster">
+            <div className="lp-roster-row">
+              <span className="lp-roster-label">
+                <span className="lp-roster-dot lp-roster-dot--live" aria-hidden="true" />
+                Live now
+              </span>
+              <span className="lp-roster-cities">
+                {liveCities.map((c) => c.name).join("  ·  ")}
+              </span>
+            </div>
+            {comingCount > 0 && (
+              <div className="lp-roster-row">
+                <span className="lp-roster-label">
+                  <span className="lp-roster-dot lp-roster-dot--soon" aria-hidden="true" />
+                  Coming soon
+                </span>
+                <span className="lp-roster-cities">
+                  {comingCities.map((c) => c.name).join("  ·  ")}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
       </section>
 
@@ -596,7 +632,7 @@ export default function LandingPage() {
             <div className="lp-cities-label">Sister Cities</div>
             <h2 className="lp-cities-title">Pulse in other cities</h2>
             <p className="lp-cities-sub">
-              {city.name} is one of {PULSE_CITIES.length} Pulse cities. Jump to another live map.
+              {city.name} is one of {liveCount} live Pulse cities. Jump to another live map.
             </p>
           </div>
           <div className="lp-city-grid">

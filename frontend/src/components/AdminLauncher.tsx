@@ -21,7 +21,7 @@ export default function AdminLauncher({ onChoose }: Props) {
           style={{ color: "var(--panel-text, #e5e7eb)" }}
         >
           CityPulse
-          <span className="font-normal" style={{ color: "var(--panel-text-muted, #6b7280)" }}> — </span>
+          <span className="font-normal" style={{ color: "var(--panel-text-muted, #6b7280)" }}> · </span>
           <span className="text-xl">{siteName}</span>
         </h1>
       </div>

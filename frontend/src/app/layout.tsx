@@ -33,7 +33,7 @@ const metadataBaseUrl = (() => {
 
 export const metadata: Metadata = {
   metadataBase: metadataBaseUrl,
-  title: `CityPulse — ${siteName} · ${cityName}`,
+  title: `CityPulse · ${siteName} · ${cityName}`,
   description:
     `CityPulse: Real-time AI-powered community safety for ${cityName}. Live police scanner transcription, incident mapping, and safe routing.`,
   manifest: "/manifest.json",
@@ -52,15 +52,15 @@ export const metadata: Metadata = {
   },
   formatDetection: { telephone: false },
   openGraph: {
-    title: `CityPulse — ${siteName} · ${cityName}`,
+    title: `CityPulse · ${siteName} · ${cityName}`,
     description: `Real-time AI-powered community safety map for ${cityName}.`,
     type: "website",
     siteName: "PhillyPulse",
-    images: [{ url: "/api/og", width: 1200, height: 630, alt: "PhillyPulse — live safety map" }],
+    images: [{ url: "/api/og", width: 1200, height: 630, alt: "PhillyPulse · live safety map" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: `CityPulse — ${siteName} · ${cityName}`,
+    title: `CityPulse · ${siteName} · ${cityName}`,
     description: `Real-time AI-powered community safety map for ${cityName}.`,
     images: ["/api/og"],
   },

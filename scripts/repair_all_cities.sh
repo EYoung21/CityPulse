@@ -39,7 +39,7 @@ if [[ -n "${WAIT_FOR_PID:-}" ]]; then
 fi
 
 # Default order: largest cities first (counts as of repair start).
-DEFAULT_CITIES=(chattanooga sf seattle dallas frisco nyc)
+DEFAULT_CITIES=(chattanooga sf nyc)
 CITIES=("${@:-${DEFAULT_CITIES[@]}}")
 
 for city in "${CITIES[@]}"; do

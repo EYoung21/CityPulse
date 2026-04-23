@@ -327,7 +327,7 @@ The new cities use the same API at `api.phlpulse.com` — there is no per-city A
 
 ## Adding More Cities in the Future
 
-To add a new city (e.g., `seattlepulse.com`):
+To add a new city (e.g., `memphispulse.com`):
 
 1. Ensure the city has a config at `cities/<slug>/config.yaml` with feeds
 2. Ensure the transcriber is running for that city on Lambda

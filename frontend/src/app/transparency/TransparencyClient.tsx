@@ -157,7 +157,7 @@ export default function TransparencyClient() {
                 label="Audit-log entries"
                 value={fmtNumber(stats.totalAuditEntries)}
                 tone="neutral"
-                hint="Every moderator action — appendable, never edited."
+                hint="Every moderator action is appendable, never edited."
                 Icon={ScrollText}
                 adminOnly
               />

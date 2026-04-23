@@ -61,7 +61,7 @@ export default function CompassIndicator({ heading, onClick }: Props) {
                   ? "W"
                   : "NW";
 
-  const ariaLabel = `Compass — facing ${cardinal} (${arrowRotation}°)`;
+  const ariaLabel = `Compass · facing ${cardinal} (${arrowRotation}°)`;
 
   const Inner = (
     <div

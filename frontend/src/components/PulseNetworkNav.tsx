@@ -64,8 +64,8 @@ export default function PulseNetworkNav() {
       {/* Trigger button */}
       <button
         onClick={() => setOpen((o) => !o)}
-        aria-label="Pulse Network — Switch cities"
-        title="Pulse Network — Switch cities"
+        aria-label="Pulse Network · Switch cities"
+        title="Pulse Network · Switch cities"
         style={{
           display: "flex",
           alignItems: "center",
