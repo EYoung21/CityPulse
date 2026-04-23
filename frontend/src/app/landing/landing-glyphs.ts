@@ -60,14 +60,15 @@ export interface BlipElementOptions {
 
 export function createBlipElement(opts: BlipElementOptions): HTMLDivElement {
   const size = opts.size ?? 22;
+  const className = `lp-blip lp-blip--${opts.kind} ${opts.extraClassName ?? ""}`.trim();
   const el = document.createElement("div");
-  el.className = `lp-blip lp-blip--${opts.kind} ${opts.extraClassName ?? ""}`.trim();
+  el.className = "lp-map-marker-shell";
   el.style.width = `${size}px`;
   el.style.height = `${size}px`;
   // Match the in-app IncidentMap: pure monochrome glyph with a drop
   // shadow, no surrounding disc or ping ring. The CSS handles a slow
   // breath / scale pulse so it still reads as "live".
-  el.innerHTML = `<span class="lp-blip-glyph">${landingGlyphSvg(opts.kind)}</span>`;
+  el.innerHTML = `<span class="${className}"><span class="lp-blip-glyph">${landingGlyphSvg(opts.kind)}</span></span>`;
   return el;
 }
 
@@ -81,14 +82,16 @@ export function createRouteVerdictElement(
   variant: "bad" | "good",
 ): HTMLDivElement {
   const el = document.createElement("div");
-  el.className = `lp-route-verdict lp-route-verdict--${variant}`;
+  el.className = "lp-map-marker-shell";
+  el.style.width = "22px";
+  el.style.height = "22px";
   const path =
     variant === "bad"
       ? // Crisp X
         `<path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/>`
       : // Heavy check
         `<path d="M5 12.5 L10 17.5 L19 7.5" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>`;
-  el.innerHTML = `<svg viewBox="0 0 24 24" width="100%" height="100%" aria-hidden="true">${path}</svg>`;
+  el.innerHTML = `<span class="lp-route-verdict lp-route-verdict--${variant}"><svg viewBox="0 0 24 24" width="100%" height="100%" aria-hidden="true">${path}</svg></span>`;
   return el;
 }
 
@@ -107,10 +110,10 @@ export function createClusterElement(count: number): HTMLDivElement {
     size = 38;
     cls = "lp-cluster--medium";
   }
-  el.className = `lp-cluster ${cls}`;
+  el.className = "lp-map-marker-shell";
   el.style.width = `${size}px`;
   el.style.height = `${size}px`;
-  el.innerHTML = `<span>${count}</span>`;
+  el.innerHTML = `<span class="lp-cluster ${cls}"><span>${count}</span></span>`;
   return el;
 }
 
@@ -120,6 +123,9 @@ export function createClusterElement(count: number): HTMLDivElement {
  */
 export function createEndpointElement(variant: "start" | "end"): HTMLDivElement {
   const el = document.createElement("div");
-  el.className = `lp-endpoint lp-endpoint--${variant}`;
+  el.className = "lp-map-marker-shell";
+  el.style.width = "14px";
+  el.style.height = "14px";
+  el.innerHTML = `<span class="lp-endpoint lp-endpoint--${variant}"></span>`;
   return el;
 }

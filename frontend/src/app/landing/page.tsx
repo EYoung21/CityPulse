@@ -17,6 +17,35 @@ import { navigateToCity } from "@/lib/pulse-navigate";
 import { useCityStats } from "@/hooks/useCityStats";
 import "./landing.css";
 
+type LandingCity = PulseCity & {
+  brand: string;
+  tagline: string;
+  accentRgb: string;
+  accentRgb2: string;
+  population: string;
+  areaSqMi: number;
+  neighborhoods: string[];
+  scannerFeeds: number;
+  routeDemoPairs: NonNullable<PulseCity["routeDemoPairs"]>;
+  heroIncidents: NonNullable<PulseCity["heroIncidents"]>;
+};
+
+function toLandingCity(city: PulseCity): LandingCity {
+  return {
+    ...city,
+    brand: city.brand ?? `${city.name}Pulse`,
+    tagline: city.tagline ?? `Real-time safety intelligence for ${city.name}.`,
+    accentRgb: city.accentRgb ?? "171, 255, 2",
+    accentRgb2: city.accentRgb2 ?? "224, 255, 160",
+    population: city.population ?? "N/A",
+    areaSqMi: city.areaSqMi ?? 0,
+    neighborhoods: city.neighborhoods ?? [],
+    scannerFeeds: city.scannerFeeds ?? 0,
+    routeDemoPairs: city.routeDemoPairs ?? [],
+    heroIncidents: city.heroIncidents ?? [],
+  };
+}
+
 /* ═══════════════════════════════════════════════════
    ScrollSceneCanvas — scroll-driven wireframe city
    Uses the current city's accent color, generic 3D skyline.
@@ -24,7 +53,7 @@ import "./landing.css";
 function ScrollSceneCanvas({
   className,
   city,
-}: { className: string; city: PulseCity }) {
+}: { className: string; city: LandingCity }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const scrollRef = useRef(0);
 
@@ -246,7 +275,7 @@ function Word({ children, progress, range }: {
 /* ═══════════════════════════════════════════════════
    Sister CityCard — links out to another city's domain
    ═══════════════════════════════════════════════════ */
-function SisterCityCard({ city, i }: { city: PulseCity; i: number }) {
+function SisterCityCard({ city, i }: { city: LandingCity; i: number }) {
   const ref = useRef(null);
   const inView = useInView(ref, { once: true, margin: "-80px" });
 
@@ -315,7 +344,7 @@ type StatCell =
   | { kind: "numeric"; label: string; value: number; live?: boolean }
   | { kind: "string"; label: string; value: string; live?: boolean };
 
-function StatsStrip({ city }: { city: PulseCity }) {
+function StatsStrip({ city }: { city: LandingCity }) {
   const { stats: live } = useCityStats(city.slug, { refreshMs: 30_000 });
 
   // Prefer live numbers when available (>= 0); otherwise fall back to
@@ -372,7 +401,7 @@ function StatsStrip({ city }: { city: PulseCity }) {
 /* ═══════════════════════════════════════════════════
    NeighborhoodMarquee — scrolling list of covered hoods
    ═══════════════════════════════════════════════════ */
-function NeighborhoodMarquee({ city }: { city: PulseCity }) {
+function NeighborhoodMarquee({ city }: { city: LandingCity }) {
   const doubled = [...city.neighborhoods, ...city.neighborhoods];
   return (
     <div className="lp-marquee">
@@ -394,9 +423,9 @@ function NeighborhoodMarquee({ city }: { city: PulseCity }) {
 export default function LandingPage() {
   // Hydration-safe city resolution: start with SSR-known (env slug or Philly default),
   // then re-resolve client-side in case we're on a production domain without env.
-  const [city, setCity] = useState<PulseCity>(() => getCurrentCity());
+  const [city, setCity] = useState<LandingCity>(() => toLandingCity(getCurrentCity()));
   useEffect(() => {
-    const c = getCurrentCity();
+    const c = toLandingCity(getCurrentCity());
     if (c.slug !== city.slug) setCity(c);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -418,7 +447,9 @@ export default function LandingPage() {
   const statWords =
     `Real-time safety intelligence across ${PULSE_CITIES.length} cities — built locally for ${city.name}.`.split(" ");
 
-  const sisterCities = PULSE_CITIES.filter((c) => c.slug !== city.slug);
+  const sisterCities = PULSE_CITIES
+    .filter((c) => !c.previewOnly && c.slug !== city.slug)
+    .map(toLandingCity);
 
   return (
     <div

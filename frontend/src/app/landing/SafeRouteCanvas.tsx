@@ -187,7 +187,7 @@ export function SafeRouteCanvas({
   /* ── Endpoint + blip markers (anchored, follow the map) ────────── */
   useEffect(() => {
     if (!map) return;
-    const pair = city.routeDemoPairs[activePairIndex];
+    const pair = city.routeDemoPairs?.[activePairIndex];
     if (!pair) return;
 
     const markers: maplibregl.Marker[] = [];
@@ -251,7 +251,7 @@ export function SafeRouteCanvas({
   /* ── Routes + hot-zone canvas (re-projected every frame) ───────── */
   useEffect(() => {
     if (!map) return;
-    const pair = city.routeDemoPairs[activePairIndex];
+    const pair = city.routeDemoPairs?.[activePairIndex];
     if (!pair) return;
 
     const cvs = canvasRef.current!;
