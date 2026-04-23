@@ -35,12 +35,6 @@ FEED_TO_CITY: dict[str, str] = {
     "45708": "chattanooga", "34716": "chattanooga", "45709": "chattanooga",
     "45707": "chattanooga", "44571": "chattanooga", "21572": "chattanooga",
     "45601": "chattanooga", "45706": "chattanooga", "29255": "chattanooga",
-    # Seattle
-    "40168": "seattle", "20365": "seattle", "45933": "seattle",
-    # Dallas
-    "46336": "dallas", "2681": "dallas",
-    # Frisco
-    "40227": "frisco",
 }
 
 

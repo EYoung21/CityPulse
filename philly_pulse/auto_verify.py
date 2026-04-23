@@ -187,7 +187,7 @@ def run_rules(incident: dict[str, Any]) -> AutoVerifyResult:
                 AutoFlag(
                     "possible_category_mismatch",
                     "warn",
-                    f"Weak match for '{cat}'; '{alt_cat}' also fits (score={alt_score})",
+                    f"Weak match for '{cat}', '{alt_cat}' also fits (score={alt_score})",
                 )
             )
 

@@ -1684,7 +1684,7 @@ function MapHome() {
                     timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
                   } ${locked ? "opacity-50" : ""}`}
                   style={timeFilter !== tf.hours ? { color: locked ? "var(--panel-text-muted)" : "var(--pill-text)" } : {}}
-                  title={locked ? "Pro feature — upgrade to unlock" : undefined}
+                  title={locked ? "Pro feature · upgrade to unlock" : undefined}
                 >
                   {tf.label}
                   {locked && <Lock className="w-2.5 h-2.5 absolute -top-0.5 -right-0.5 text-purple-400" />}
@@ -2559,7 +2559,7 @@ function MapHome() {
                   style={{ color: "var(--panel-text-secondary)" }}
                   onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
                   onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                  title="Render the basemap with MapLibre WebGL for sharper labels and smoother zoom. Beta — markers and overlays are unaffected."
+                  title="Render the basemap with MapLibre WebGL for sharper labels and smoother zoom. Beta: markers and overlays are unaffected."
                 >
                   <span className="flex items-center gap-2">
                     <span>Vector tiles</span>

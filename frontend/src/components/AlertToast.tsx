@@ -77,7 +77,7 @@ export default function AlertToast({ incidents }: Props) {
                 <span style={{ color: getSeverity(toast.severity_category).markerColor }} className="font-medium">
                   {getSeverity(toast.severity_category).label}
                 </span>
-                {" — "}
+                {" · "}
                 {toast.location_text?.split(",")[0] || "Unknown location"}
               </p>
             </div>

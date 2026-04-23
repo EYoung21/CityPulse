@@ -3,8 +3,8 @@
 # Reads feeds from the config and submits one SLURM job per feed.
 #
 # Usage:
-#   ./launch_city_backfill.sh cities/dallas/config.yaml
-#   ./launch_city_backfill.sh cities/sf/config.yaml --days 90
+#   ./launch_city_backfill.sh cities/sf/config.yaml
+#   ./launch_city_backfill.sh cities/nyc/config.yaml --days 90
 
 set -e
 
@@ -13,7 +13,7 @@ shift || true
 
 if [ -z "$CONFIG" ] || [ ! -f "$CONFIG" ]; then
     echo "Usage: $0 <city-config.yaml> [extra backfill_archives.py args]"
-    echo "Example: $0 cities/dallas/config.yaml --days 90"
+    echo "Example: $0 cities/sf/config.yaml --days 90"
     exit 1
 fi
 

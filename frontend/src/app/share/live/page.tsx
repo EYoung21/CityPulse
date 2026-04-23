@@ -20,12 +20,12 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
 
   if (!sp.id) {
     return {
-      title: `${cityName} Pulse — Live ETA`,
+      title: `${cityName} Pulse · Live ETA`,
       description: `Watch a friend arrive in real time on the ${cityName} Pulse safety map.`,
     };
   }
 
-  const title = `Live ETA — someone is on their way`;
+  const title = `Live ETA · someone is on their way`;
   const description = `Watch their position update in real time on the ${cityName} Pulse safety map.`;
   const ogParams = new URLSearchParams();
   ogParams.set("title", title);

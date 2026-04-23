@@ -44,8 +44,8 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
   const verb = decoded ? (MODE_VERB[decoded.mode] || "heading") : "heading";
   const remaining = decoded ? fmtRemaining(decoded.etaEpochMs - Date.now()) : "";
   const title = decoded
-    ? `${senderLabel} is ${verb} — ETA ${remaining}`
-    : `Live ETA — ${cityName} Pulse`;
+    ? `${senderLabel} is ${verb} · ETA ${remaining}`
+    : `Live ETA · ${cityName} Pulse`;
   const description = decoded
     ? `Track ${senderLabel}'s live ETA on the ${cityName} Pulse safety map.`
     : `Real-time AI-powered community safety map for ${cityName}.`;

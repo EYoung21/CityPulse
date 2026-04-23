@@ -83,7 +83,7 @@ export default function TimeGrid({
             fill={lerp(val / max)}
             opacity={0.9}
           >
-            <title>{DAY_LABELS[rowIdx]} {colIdx}:00 — {val} incident{val !== 1 ? "s" : ""}</title>
+            <title>{DAY_LABELS[rowIdx]} {colIdx}:00 · {val} incident{val !== 1 ? "s" : ""}</title>
           </rect>
         ))
       )}

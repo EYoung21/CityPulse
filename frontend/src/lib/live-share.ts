@@ -124,7 +124,7 @@ export interface LiveShareHandle {
  *  `update()` whenever the user's position / ETA changes. */
 export async function startLiveShare(initial: LiveShareSnapshot): Promise<LiveShareHandle> {
   if (!isFirebaseConfigured()) {
-    throw new Error("Firebase isn't configured — live share unavailable.");
+    throw new Error("Firebase isn't configured. Live share unavailable.");
   }
   const db = getFirestore(getFirebaseApp());
   const shareId = generateShareId();

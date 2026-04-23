@@ -147,7 +147,7 @@ export function parseAccountExport(raw: string): AccountExport {
   }
   const o = obj as Record<string, unknown>;
   if (typeof o.version !== "number") {
-    throw new Error("Missing version field — not a PhillyPulse export.");
+    throw new Error("Missing version field. Not a PhillyPulse export.");
   }
   if (o.version > EXPORT_VERSION) {
     throw new Error(
@@ -155,7 +155,7 @@ export function parseAccountExport(raw: string): AccountExport {
     );
   }
   if (typeof o.data !== "object" || o.data === null) {
-    throw new Error("Missing data section — file may be corrupt.");
+    throw new Error("Missing data section. File may be corrupt.");
   }
   return obj as AccountExport;
 }

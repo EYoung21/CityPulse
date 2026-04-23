@@ -79,7 +79,7 @@ export default function OfflineTilesPanel({ getBounds, tileTemplate }: Props) {
       setStatus({
         kind: "err",
         text: e instanceof Error && e.message === "no-active-service-worker"
-          ? "Service worker not active yet — refresh the page and try again."
+          ? "Service worker not active yet. Refresh the page and try again."
           : "Couldn't save offline tiles.",
       });
     } finally {

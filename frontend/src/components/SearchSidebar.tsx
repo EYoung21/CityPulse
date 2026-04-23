@@ -529,7 +529,7 @@ export default function SearchSidebar({
 
     if (!originLoc || !destLoc) return;
     rerouteInFlightRef.current = true;
-    setRerouteAlert(`New incident detected nearby — rerouting...`);
+    setRerouteAlert(`New incident detected nearby. Rerouting...`);
 
     const waypoints: [number, number][] = [
       [originLoc.lat, originLoc.lng],
@@ -576,7 +576,7 @@ export default function SearchSidebar({
           origin: originLoc ? { display_name: originLoc.display_name, lat: originLoc.lat, lng: originLoc.lng } : undefined,
           dest: destLoc ? { display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng } : undefined,
         });
-        setRerouteAlert(`Route updated — avoiding ${newNearby.length} new incident${newNearby.length > 1 ? "s" : ""}`);
+        setRerouteAlert(`Route updated · avoiding ${newNearby.length} new incident${newNearby.length > 1 ? "s" : ""}`);
         setTimeout(() => setRerouteAlert(null), 5000);
       } catch {
         setRerouteAlert(null);
@@ -783,7 +783,7 @@ export default function SearchSidebar({
                   className="text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1.5"
                   style={{ color: "var(--panel-text-muted)" }}
                 >
-                  <Radio className="w-3 h-3" /> {timeFilterLabel ? `Incidents — ${timeFilterLabel}` : "Recent Incidents"}
+                  <Radio className="w-3 h-3" /> {timeFilterLabel ? `Incidents · ${timeFilterLabel}` : "Recent Incidents"}
                 </h3>
               </div>
               <IncidentFeed
@@ -887,7 +887,7 @@ export default function SearchSidebar({
             });
             const ok = await nativeShare({
               title: "Live ETA",
-              text: `On my way — ETA ${remainingMin} min`,
+              text: `On my way · ETA ${remainingMin} min`,
               url,
               dialogTitle: "Share live ETA",
             });

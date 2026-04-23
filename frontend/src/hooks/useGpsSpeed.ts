@@ -91,7 +91,7 @@ export function preferredSpeedUnit(): "mph" | "kmh" {
 }
 
 export function formatSpeed(mps: number | null, unit: "mph" | "kmh" = preferredSpeedUnit()): string {
-  if (mps === null) return "—";
+  if (mps === null) return "-";
   const v = unit === "mph" ? mps * 2.23694 : mps * 3.6;
   return `${Math.round(v)}`;
 }

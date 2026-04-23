@@ -118,7 +118,7 @@ export function SafeRouteSection({ city }: Props) {
           <h2 className="lp-route-section-title">Routed around, not through.</h2>
           <p className="lp-route-section-sub">
             Two routes, same destination. One crosses an active incident
-            corridor — {brand} routes you through the other.
+            corridor. {brand} routes you through the other.
           </p>
         </header>
 

@@ -84,7 +84,7 @@ async def _check_philly_911(
             source="Philadelphia 911 Data",
             passed=False,
             score=0,
-            detail="No coordinates available — cannot cross-reference",
+            detail="No coordinates available, can't cross-reference",
         )
 
     try:
@@ -135,14 +135,14 @@ async def _check_philly_911(
                 source="Philadelphia 911 Data",
                 passed=True,
                 score=40,
-                detail=f"Matching 911 dispatch found {best_dist:.0f}m away — \"{best_row.get('text_general_code', 'N/A')}\"",
+                detail=f"Matching 911 dispatch found {best_dist:.0f}m away: \"{best_row.get('text_general_code', 'N/A')}\"",
             )
         elif best_dist <= 1.5:
             return VerificationCheck(
                 source="Philadelphia 911 Data",
                 passed=True,
                 score=20,
-                detail=f"Similar 911 dispatch {best_dist:.1f}km away — \"{best_row.get('text_general_code', 'N/A')}\"",
+                detail=f"Similar 911 dispatch {best_dist:.1f}km away: \"{best_row.get('text_general_code', 'N/A')}\"",
             )
         else:
             return VerificationCheck(
@@ -179,7 +179,7 @@ async def _check_ai_plausibility(
             source="AI Plausibility",
             passed=confidence >= 0.6,
             score=base,
-            detail=f"LLM not configured — using extraction confidence ({confidence:.0%})",
+            detail=f"LLM not configured, using extraction confidence ({confidence:.0%})",
         )
 
     prompt = f"""You are a verification analyst for a community safety platform.
@@ -239,7 +239,7 @@ Output ONLY valid JSON."""
             source="AI Plausibility",
             passed=criteria_met >= 3,
             score=score,
-            detail=f"{criteria_met}/4 criteria met — {reasoning}",
+            detail=f"{criteria_met}/4 criteria met: {reasoning}",
         )
 
     except Exception as e:
@@ -265,7 +265,7 @@ def _check_corroboration(
             source="Internal Corroboration",
             passed=False,
             score=0,
-            detail="No coordinates — cannot check for corroborating reports",
+            detail="No coordinates, can't check for corroborating reports",
         )
 
     try:
@@ -303,7 +303,7 @@ def _check_corroboration(
             source="Internal Corroboration",
             passed=True,
             score=15,
-            detail="1 other scanner report nearby — partial corroboration",
+            detail="1 other scanner report nearby, partial corroboration",
         )
     else:
         return VerificationCheck(
@@ -362,7 +362,7 @@ async def verify_incident(
     if passed_sources:
         summary = f"Corroborated by: {', '.join(passed_sources)}"
     else:
-        summary = "No external corroboration found — treat as unverified"
+        summary = "No external corroboration found, treat as unverified"
 
     return VerificationResult(
         score=total_score,

@@ -119,26 +119,26 @@ police/fire/EMS radio scanner transcripts.
 
 Given a raw transcript line, output ONLY a JSON object with these fields:
 
-- "is_dispatch_relevant": boolean — true if this describes an actual dispatch-worthy \
+- "is_dispatch_relevant": boolean. true if this describes an actual dispatch-worthy \
 incident (crime, medical, fire, crash). false for administrative chatter, test tones, \
 unit check-ins, or ambiguous fragments.
-- "severity_category": one of {json.dumps(SEVERITY_CATEGORIES)} — pick the single \
+- "severity_category": one of {json.dumps(SEVERITY_CATEGORIES)}. Pick the single \
 best match. Use "admin_or_noise" for non-dispatch content.
-- "location_text": string or null — the most specific location mentioned in direct \
+- "location_text": string or null. The most specific location mentioned in direct \
 connection to the incident (intersection, block, address, landmark). Include \
 "{suffix}" for geocoding. null if no location is directly associated with the incident.
-- "context_location_text": string or null — if "location_text" is null, look for \
+- "context_location_text": string or null. If "location_text" is null, look for \
 ANY location mentioned elsewhere in the transcript, even if it is not in the same \
 sentence as the incident. Officers often state their position before reporting an \
 event. Extract the most recent/relevant location from the full transcript. null only \
 if truly no location appears anywhere.
-- "location_confidence": one of "direct", "context", "none" — "direct" if \
+- "location_confidence": one of "direct", "context", "none". "direct" if \
 location_text is set (location explicitly tied to the incident), "context" if only \
 context_location_text is available, "none" if no location at all.
-- "description": string — one plain-English sentence summarizing the incident \
-for a civilian reader. No jargon, no police codes. Decode any radio codes into \
-plain language.
-- "confidence": float 0.0-1.0 — your confidence that the extraction is accurate. \
+- "description": string. One plain-English sentence summarizing the incident \
+for a civilian reader. No jargon, no police codes. No em dashes and no semicolons. \
+Decode any radio codes into plain language.
+- "confidence": float 0.0-1.0. Your confidence that the extraction is accurate. \
 Lower if the transcript is garbled, ambiguous, or partially inaudible.
 
 ## Common Radio Codes

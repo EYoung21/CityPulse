@@ -865,7 +865,7 @@ export default function DirectionsPanel({
               <div className="flex items-center gap-2 px-3 py-2 text-xs text-amber-600 dark:text-amber-400/80 bg-amber-500/5">
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                 {previewRoute.nearbyCount} incident
-                {previewRoute.nearbyCount > 1 ? "s" : ""} near route — pick "Safer" to route around
+                {previewRoute.nearbyCount > 1 ? "s" : ""} near route. Pick "Safer" to route around
               </div>
             )}
             {previewRoute.nearbyCount === 0 && (

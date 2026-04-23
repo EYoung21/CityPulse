@@ -133,7 +133,7 @@ export default function SavedPlaces({ onFlyTo, onDirections, userPos }: Props) {
 
   const handleShareList = async (list: SavedList, items: SavedDestination[]) => {
     if (items.length === 0) {
-      setShareToast({ id: list.id, msg: "Empty list — nothing to share" });
+      setShareToast({ id: list.id, msg: "Empty list, nothing to share" });
       window.setTimeout(() => setShareToast((s) => (s?.id === list.id ? null : s)), 2000);
       return;
     }
@@ -151,7 +151,7 @@ export default function SavedPlaces({ onFlyTo, onDirections, userPos }: Props) {
       const navAny = navigator as Navigator & { share?: (data: ShareData) => Promise<void> };
       if (typeof navAny.share === "function") {
         await navAny.share({
-          title: `${list.name} — PhillyPulse`,
+          title: `${list.name} · PhillyPulse`,
           text: `${items.length} saved ${items.length === 1 ? "place" : "places"} on PhillyPulse`,
           url,
         });

@@ -907,7 +907,7 @@ function ExtractionCard({
             }`}
           >
             {hiddenOnMap ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-            {togglingVis ? "..." : hiddenOnMap ? "Hidden — Show on Map" : "Visible on Map"}
+            {togglingVis ? "..." : hiddenOnMap ? "Hidden · Show on Map" : "Visible on Map"}
           </button>
 
           <button

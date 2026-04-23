@@ -64,9 +64,9 @@ const STEPS: Step[] = [
     icon: Hand,
     title: "Long-press for live activity",
     bodyTouch:
-      "Press and hold anywhere to peek at what's happening right now — a quick read of incidents reported in the last hour within a block or so. Read-only, dismisses with a tap.",
+      "Press and hold anywhere to peek at what's happening right now: a quick read of incidents reported in the last hour within a block or so. Read-only, dismisses with a tap.",
     bodyMouse:
-      "Right-click (or hold the mouse down for half a second) to peek at what's happening right now — a quick read of incidents reported in the last hour within a block or so. Read-only, dismisses with a click.",
+      "Right-click (or hold the mouse down for half a second) to peek at what's happening right now: a quick read of incidents reported in the last hour within a block or so. Read-only, dismisses with a click.",
     accent: "#a855f7",
   },
   {
@@ -91,9 +91,9 @@ const STEPS: Step[] = [
     icon: Search,
     title: "Search anything in Philly",
     bodyTouch:
-      "Tap the search bar to look up an address, intersection, or business — or hit the mic for hands-free voice search.",
+      "Tap the search bar to look up an address, intersection, or business, or hit the mic for hands-free voice search.",
     bodyMouse:
-      "Press / or Cmd/Ctrl+K to jump to the search box. Type an address, intersection, or business — or use the mic for voice search.",
+      "Press / or Cmd/Ctrl+K to jump to the search box. Type an address, intersection, or business, or use the mic for voice search.",
     accent: "#ec4899",
   },
 ];

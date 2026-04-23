@@ -126,7 +126,7 @@ export default function CommutePredictionPill({ onPlan }: Props) {
           onPlan(prediction.destLabel, { lat: prediction.destLat, lng: prediction.destLng })
         }
         className="inline-flex items-center gap-2 pl-3 pr-2 py-1.5 transition-colors active:scale-[0.98]"
-        title={`Plan ${label.toLowerCase()} — ${subtitle} · based on ${prediction.sampleSize} trips`}
+        title={`Plan ${label.toLowerCase()} · ${subtitle} · based on ${prediction.sampleSize} trips`}
         aria-label={`Plan ${label}, typical departure ${formatDepartureTime(prediction.typicalDepartureMinute)}, ${lead}`}
       >
         <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />

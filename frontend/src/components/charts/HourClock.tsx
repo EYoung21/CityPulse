@@ -49,7 +49,7 @@ export default function HourClock({
         fill={color}
         opacity={0.85}
       >
-        <title>{hour}:00 — {count} incident{count !== 1 ? "s" : ""}</title>
+        <title>{hour}:00 · {count} incident{count !== 1 ? "s" : ""}</title>
       </path>
     );
   });

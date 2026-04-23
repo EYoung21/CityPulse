@@ -77,7 +77,7 @@ export default function OptimizeOrderButton({
     if (!proposal) return;
     onApply(proposal.order);
     setProposal(null);
-    setFeedback("Applied — refreshing route…");
+    setFeedback("Applied. Refreshing route…");
     setTimeout(() => setFeedback(null), 2200);
   };
 

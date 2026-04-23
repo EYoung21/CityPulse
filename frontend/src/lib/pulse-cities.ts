@@ -90,6 +90,14 @@ export interface PulseCity {
    */
   previewOnly?: boolean;
 
+  /**
+   * Subset of `previewOnly` cities that we *publicly announce* as
+   * "coming soon" on the landing page. Only cities flagged
+   * `comingSoon: true` appear in the Pulse Network "coming soon"
+   * roster on the marketing page. Implies `previewOnly: true`.
+   */
+  comingSoon?: boolean;
+
   /* ── Landing-page metadata (optional for previewOnly cities) ───── */
   /** City-specific brand name (e.g. "PhillyPulse"). */
   brand?: string;
@@ -583,6 +591,7 @@ export const PULSE_CITIES: PulseCity[] = [
     nominatimViewbox: "-90.20,35.30,-89.85,35.00",
     geocodeSuffix: ", Memphis, TN",
     previewOnly: true,
+    comingSoon: true,
   },
   {
     slug: "detroit",
@@ -594,6 +603,7 @@ export const PULSE_CITIES: PulseCity[] = [
     nominatimViewbox: "-83.30,42.45,-82.90,42.25",
     geocodeSuffix: ", Detroit, MI",
     previewOnly: true,
+    comingSoon: true,
   },
   {
     slug: "orlando",
@@ -605,6 +615,7 @@ export const PULSE_CITIES: PulseCity[] = [
     nominatimViewbox: "-81.55,28.70,-81.20,28.40",
     geocodeSuffix: ", Orlando, FL",
     previewOnly: true,
+    comingSoon: true,
   },
   {
     slug: "miami",
@@ -616,6 +627,7 @@ export const PULSE_CITIES: PulseCity[] = [
     nominatimViewbox: "-80.40,25.95,-80.10,25.60",
     geocodeSuffix: ", Miami, FL",
     previewOnly: true,
+    comingSoon: true,
   },
   {
     slug: "la",
@@ -627,6 +639,7 @@ export const PULSE_CITIES: PulseCity[] = [
     nominatimViewbox: "-118.70,34.35,-118.10,33.70",
     geocodeSuffix: ", Los Angeles, CA",
     previewOnly: true,
+    comingSoon: true,
   },
   {
     slug: "lasvegas",
@@ -638,39 +651,7 @@ export const PULSE_CITIES: PulseCity[] = [
     nominatimViewbox: "-115.40,36.35,-114.85,35.95",
     geocodeSuffix: ", Las Vegas, NV",
     previewOnly: true,
-  },
-  {
-    slug: "dallas",
-    name: "Dallas",
-    domain: "dallaspulse.com",
-    emoji: "🤠",
-    lat: 32.7767,
-    lng: -96.7970,
-    nominatimViewbox: "-97.00,33.02,-96.56,32.62",
-    geocodeSuffix: ", Dallas, TX",
-    previewOnly: true,
-  },
-  {
-    slug: "frisco",
-    name: "Frisco",
-    domain: "friscopulse.com",
-    emoji: "🏟️",
-    lat: 33.1507,
-    lng: -96.8236,
-    nominatimViewbox: "-96.92,33.23,-96.73,33.09",
-    geocodeSuffix: ", Frisco, TX",
-    previewOnly: true,
-  },
-  {
-    slug: "seattle",
-    name: "Seattle",
-    domain: "seattlepulse.com",
-    emoji: "☕",
-    lat: 47.6062,
-    lng: -122.3321,
-    nominatimViewbox: "-122.44,47.73,-122.24,47.49",
-    geocodeSuffix: ", Seattle, WA",
-    previewOnly: true,
+    comingSoon: true,
   },
 ];
 

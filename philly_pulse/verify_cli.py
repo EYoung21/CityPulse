@@ -166,7 +166,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         print("-" * 82)
         for r in rows:
             loc = (r.get("location_text") or "")[:28]
-            v = r.get("human_verdict") or "—"
+            v = r.get("human_verdict") or "-"
             print(f"{r['id']:<14} {v:<16} {(r.get('severity_category') or '')[:20]:<22} {loc:<30}")
     else:
         rows = store.list_incidents_pending_human_review(
