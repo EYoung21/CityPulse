@@ -45,9 +45,10 @@ export function requestInstallPrompt(): void {
   window.dispatchEvent(new Event(INSTALL_PROMPT_EVENT));
 }
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Download, X, Share2 } from "lucide-react";
+import { getCurrentCity } from "@/lib/pulse-cities";
 
 type DismissState = "snoozed" | "never" | null;
 
@@ -104,6 +105,16 @@ export default function InstallPrompt() {
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [iosHint, setIosHint] = useState(false);
   const [visible, setVisible] = useState(false);
+  // Per-deployment brand (e.g. "423Pulse", "PhillyPulse") — falls back
+  // to "CityPulse" during SSR / when running on a non-mapped host.
+  const brand = useMemo<string>(() => {
+    if (typeof window === "undefined") return "CityPulse";
+    try {
+      return getCurrentCity().brand ?? "CityPulse";
+    } catch {
+      return "CityPulse";
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -208,7 +219,7 @@ export default function InstallPrompt() {
         // (KeyboardShortcutsHelp uses z-1100; UndoToastHost ~ 1095).
         style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }}
         role="dialog"
-        aria-label="Install CityPulse"
+        aria-label={`Install ${brand}`}
       >
         <div
           className="pointer-events-auto w-full max-w-sm rounded-2xl shadow-2xl backdrop-blur-xl overflow-hidden"
@@ -233,16 +244,16 @@ export default function InstallPrompt() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold" style={{ color: "var(--panel-text)" }}>
-                {iosHint && !deferred ? "Get safety alerts on iOS" : "Install CityPulse"}
+                {iosHint && !deferred ? "Get safety alerts on iOS" : `Install ${brand}`}
               </p>
               {deferred ? (
                 <p className="text-[11px] mt-0.5 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
                   Get instant launches, an app icon, offline support, and
-                  push alerts when CityPulse isn&rsquo;t open.
+                  push alerts when {brand} isn&rsquo;t open.
                 </p>
               ) : (
                 <p className="text-[11px] mt-0.5 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
-                  Apple requires installing CityPulse to your home screen
+                  Apple requires installing {brand} to your home screen
                   before it can send alerts. Tap{" "}
                   <Share2 className="inline w-3 h-3 align-text-top mx-0.5" />{" "}
                   Share, then <span className="font-medium">&ldquo;Add to Home Screen&rdquo;</span>.
