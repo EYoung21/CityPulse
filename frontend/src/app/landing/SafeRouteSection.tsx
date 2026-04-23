@@ -30,7 +30,9 @@ interface Props {
 }
 
 export function SafeRouteSection({ city }: Props) {
-  const pairs = city.routeDemoPairs;
+  const pairs = city.routeDemoPairs ?? [];
+  const brand = city.brand ?? city.name;
+  const accentRgb = city.accentRgb ?? "171, 255, 2";
   const [idx, setIdx] = useState(0);
   const [selected, setSelected] = useState<"fast" | "safer">("fast");
   const [map, setMap] = useState<maplibregl.Map | null>(null);
@@ -116,7 +118,7 @@ export function SafeRouteSection({ city }: Props) {
           <h2 className="lp-route-section-title">Routed around, not through.</h2>
           <p className="lp-route-section-sub">
             Two routes, same destination. One crosses an active incident
-            corridor — {city.brand} routes you through the other.
+            corridor — {brand} routes you through the other.
           </p>
         </header>
 
@@ -159,7 +161,7 @@ export function SafeRouteSection({ city }: Props) {
             <SafeRoutePicker
               pair={pair}
               selected={selected}
-              accentRgb={city.accentRgb}
+              accentRgb={accentRgb}
             />
           </div>
         </div>

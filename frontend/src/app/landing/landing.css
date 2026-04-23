@@ -1063,6 +1063,11 @@
 
 /* ─── Anchored map markers (used on hero map AND safer-route minimap) ─── */
 
+.lp-map-marker-shell {
+  display: block;
+  pointer-events: none;
+}
+
 /* Violent-crime blip: matches the in-app IncidentMap exactly — a pure
    monochrome SVG glyph (gun / knife) in the brand red, with a soft
    drop-shadow halo and a slow scale-breath. NO surrounding disc and NO
@@ -1070,8 +1075,9 @@
    product. Cluster bubbles (below) are the only landing-page markers
    that get a circle, and only because they're number-bubbles. */
 .lp-blip {
-  position: absolute;
   display: inline-block;
+  width: 100%;
+  height: 100%;
   color: #f87171;
   pointer-events: none;
   animation: lp-blip-breath 3.6s ease-in-out infinite;
@@ -1116,8 +1122,9 @@
 
 /* Cluster bubble: matches in-app marker-cluster look (count + ring). */
 .lp-cluster {
-  position: absolute;
   display: flex;
+  width: 100%;
+  height: 100%;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
@@ -1145,9 +1152,9 @@
 
 /* Endpoint dots for the safer-route demo. */
 .lp-endpoint {
-  position: absolute;
-  width: 14px;
-  height: 14px;
+  display: block;
+  width: 100%;
+  height: 100%;
   border-radius: 50%;
   pointer-events: none;
   box-sizing: border-box;
@@ -1174,11 +1181,10 @@
    "lands" on the route rather than racing it. The fade-in delay is
    set per-instance via --lp-verdict-delay. */
 .lp-route-verdict {
-  position: absolute;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
   display: flex;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
   align-items: center;
   justify-content: center;
   pointer-events: none;
