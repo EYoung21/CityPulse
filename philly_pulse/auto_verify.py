@@ -2,13 +2,13 @@
 
 Cannot prove an event "really happened" (no ground-truth feed), but can flag:
 pipeline bugs (s_base vs YAML), low confidence, geocode gaps, and keyword/category mismatches.
-Optional second opinion via OpenAI when OPENAI_API_KEY is set and use_llm=True.
+Optional second opinion via the configured LLM provider (Lambda Inference
+or OpenAI) when ``use_llm=True``; see :mod:`philly_pulse.llm_client`.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,12 +16,10 @@ from typing import Any
 
 import yaml
 
+from . import llm_client
+
 YAML_PATH = Path(__file__).resolve().parent / "data" / "severity_categories.yaml"
 ENGINE_VERSION = "auto-verify-v2"
-
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
 # Lowercase substrings → signal strength for that category (heuristic).
 CATEGORY_SIGNALS: dict[str, list[str]] = {
@@ -236,13 +234,8 @@ def run_rules(incident: dict[str, Any]) -> AutoVerifyResult:
 
 def run_llm_audit(incident: dict[str, Any], timeout: float = 25.0) -> dict[str, Any | None]:
     """Returns agrees: 'yes'|'no'|'uncertain', suggested_category, reason, or error keys."""
-    if not OPENAI_API_KEY:
-        return {"llm_agrees": "skipped", "llm_reason": "OPENAI_API_KEY not set"}
-
-    try:
-        import httpx
-    except ImportError:
-        return {"llm_agrees": "error", "llm_reason": "httpx not installed"}
+    if not llm_client.is_configured():
+        return {"llm_agrees": "skipped", "llm_reason": "no LLM provider configured"}
 
     from philly_pulse.llm import SEVERITY_CATEGORIES
 
@@ -257,44 +250,38 @@ Reply with ONLY valid JSON (no markdown):
 {{"agrees": true or false, "suggested_category": one of {json.dumps(SEVERITY_CATEGORIES)} or null, "confidence": 0.0-1.0, "reason": "one short sentence"}}"""
 
     try:
-        with httpx.Client(timeout=timeout) as client:
-            r = client.post(
-                OPENAI_URL,
-                headers={
-                    "Authorization": f"Bearer {OPENAI_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": OPENAI_MODEL,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": "You verify whether a scanner transcript supports the given incident category. Be conservative; use null suggested_category if unsure.",
-                        },
-                        {"role": "user", "content": user},
-                    ],
-                    "temperature": 0.1,
-                    "max_tokens": 200,
-                },
+        try:
+            raw = llm_client.chat_completion_sync(
+                [
+                    {
+                        "role": "system",
+                        "content": "You verify whether a scanner transcript supports the given incident category. Be conservative; use null suggested_category if unsure.",
+                    },
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.1,
+                max_tokens=200,
+                timeout=timeout,
             )
-            r.raise_for_status()
-            data = r.json()
-            raw = data["choices"][0]["message"]["content"].strip()
-            raw = re.sub(r"^```(?:json)?\s*", "", raw)
-            raw = re.sub(r"\s*```$", "", raw)
-            parsed = json.loads(raw)
-            agrees = parsed.get("agrees")
-            if agrees is True:
-                llm_agrees = "yes"
-            elif agrees is False:
-                llm_agrees = "no"
-            else:
-                llm_agrees = "uncertain"
-            return {
-                "llm_agrees": llm_agrees,
-                "llm_suggested_category": parsed.get("suggested_category"),
-                "llm_reason": (parsed.get("reason") or "")[:500],
-            }
+        except llm_client.LLMHTTPError as http_err:
+            return {"llm_agrees": "error", "llm_reason": f"HTTP {http_err.status_code}"}
+
+        raw = raw.strip()
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+        parsed = json.loads(raw)
+        agrees = parsed.get("agrees")
+        if agrees is True:
+            llm_agrees = "yes"
+        elif agrees is False:
+            llm_agrees = "no"
+        else:
+            llm_agrees = "uncertain"
+        return {
+            "llm_agrees": llm_agrees,
+            "llm_suggested_category": parsed.get("suggested_category"),
+            "llm_reason": (parsed.get("reason") or "")[:500],
+        }
     except Exception as e:
         return {"llm_agrees": "error", "llm_reason": str(e)[:300]}
 

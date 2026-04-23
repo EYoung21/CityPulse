@@ -1,0 +1,268 @@
+"""Provider-agnostic OpenAI-compatible chat-completion client.
+
+This is the *only* place in the codebase that should construct the
+HTTP request to a chat-completion API. Everything else — incident
+extraction (``llm.py``), AI plausibility check (``verifier.py``),
+auto-verify second opinion (``auto_verify.py``), and the
+``/api/summary`` endpoint — calls :func:`chat_completion` here.
+
+Provider resolution (highest priority first, evaluated at call time
+so env edits don't require a process restart):
+
+    1. ``LLM_BASE_URL`` + ``LLM_API_KEY`` + ``LLM_MODEL`` (explicit override)
+    2. Lambda Inference API — when ``LAMBDA_API_KEY`` is set
+       - base URL: ``LAMBDA_BASE_URL`` env or ``https://api.lambda.ai/v1``
+       - model:    ``LAMBDA_MODEL`` env or ``llama3.3-70b-instruct-fp8``
+    3. OpenAI — when ``OPENAI_API_KEY`` is set
+       - base URL: ``OPENAI_BASE_URL`` env or ``https://api.openai.com/v1``
+       - model:    ``OPENAI_MODEL`` env or ``gpt-4o-mini``
+
+If none of the above is configured, :func:`chat_completion` raises
+:class:`LLMConfigError`. The wrapper at each call site then translates
+that into its own domain-specific error (e.g. ``LLMError`` in ``llm.py``).
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass
+from typing import Any, Optional
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+
+# Defaults that callers can override via env vars. Kept as module-level
+# constants so they're discoverable in one place.
+DEFAULT_LAMBDA_BASE_URL = "https://api.lambda.ai/v1"
+DEFAULT_LAMBDA_MODEL = "llama3.3-70b-instruct-fp8"
+DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+
+
+class LLMConfigError(RuntimeError):
+    """Raised when no LLM provider is configured."""
+
+
+class LLMHTTPError(RuntimeError):
+    """Raised when the upstream chat-completion call returns non-200."""
+
+    def __init__(self, status_code: int, body: str, *, provider: str):
+        super().__init__(f"{provider} returned {status_code}: {body}")
+        self.status_code = status_code
+        self.body = body
+        self.provider = provider
+
+
+@dataclass(frozen=True)
+class ProviderConfig:
+    """Resolved (provider, base_url, api_key, default_model) tuple."""
+
+    name: str
+    base_url: str  # Always ends without trailing slash.
+    api_key: str
+    default_model: str
+
+    @property
+    def chat_completions_url(self) -> str:
+        return f"{self.base_url.rstrip('/')}/chat/completions"
+
+
+def _resolve_provider() -> Optional[ProviderConfig]:
+    """Resolve the active provider from environment variables.
+
+    Returns ``None`` if nothing is configured. The caller decides
+    whether that's fatal (most callers raise) or fall-throughable
+    (e.g. ``/api/summary`` degrades to a static summary).
+    """
+
+    # 1. Explicit override — useful for self-hosted vLLM / TGI / Ollama.
+    explicit_key = os.environ.get("LLM_API_KEY", "").strip()
+    explicit_url = os.environ.get("LLM_BASE_URL", "").strip()
+    if explicit_key and explicit_url:
+        return ProviderConfig(
+            name=os.environ.get("LLM_PROVIDER_NAME", "custom"),
+            base_url=explicit_url,
+            api_key=explicit_key,
+            default_model=os.environ.get("LLM_MODEL", DEFAULT_LAMBDA_MODEL),
+        )
+
+    # 2. Lambda Inference API — preferred when a Lambda key is present.
+    lambda_key = os.environ.get("LAMBDA_API_KEY", "").strip()
+    if lambda_key:
+        return ProviderConfig(
+            name="lambda",
+            base_url=os.environ.get("LAMBDA_BASE_URL", DEFAULT_LAMBDA_BASE_URL).strip(),
+            api_key=lambda_key,
+            default_model=os.environ.get("LAMBDA_MODEL", DEFAULT_LAMBDA_MODEL).strip(),
+        )
+
+    # 3. OpenAI — legacy fallback. Kept so old deployments keep working
+    #    while the env is being migrated.
+    openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if openai_key:
+        return ProviderConfig(
+            name="openai",
+            base_url=os.environ.get("OPENAI_BASE_URL", DEFAULT_OPENAI_BASE_URL).strip(),
+            api_key=openai_key,
+            default_model=os.environ.get("OPENAI_MODEL", DEFAULT_OPENAI_MODEL).strip(),
+        )
+
+    return None
+
+
+def is_configured() -> bool:
+    """Cheap check for the health endpoint and graceful-degrade paths."""
+    return _resolve_provider() is not None
+
+
+def active_provider_name() -> str:
+    """``"lambda"`` / ``"openai"`` / ``"custom"`` / ``"none"``."""
+    cfg = _resolve_provider()
+    return cfg.name if cfg else "none"
+
+
+def active_model() -> str:
+    """The model id that ``chat_completion`` will hit when invoked
+    without an explicit ``model`` argument. Returns empty string when
+    nothing is configured."""
+    cfg = _resolve_provider()
+    return cfg.default_model if cfg else ""
+
+
+async def chat_completion(
+    messages: list[dict[str, Any]],
+    *,
+    model: Optional[str] = None,
+    temperature: float = 0.0,
+    max_tokens: int = 300,
+    response_format: Optional[dict[str, Any]] = None,
+    timeout: float = 30.0,
+    extra_payload: Optional[dict[str, Any]] = None,
+) -> str:
+    """POST a chat-completion request and return the assistant's text content.
+
+    Raises :class:`LLMConfigError` if no provider env is set and
+    :class:`LLMHTTPError` for non-200 responses. Network/decoding failures
+    propagate as the underlying ``httpx`` / ``ValueError`` exception so
+    the caller can decide what's fatal vs retryable.
+    """
+
+    cfg = _resolve_provider()
+    if cfg is None:
+        raise LLMConfigError(
+            "No LLM provider configured. Set LAMBDA_API_KEY (preferred) "
+            "or OPENAI_API_KEY in the environment."
+        )
+
+    payload: dict[str, Any] = {
+        "model": model or cfg.default_model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if response_format is not None:
+        # Both OpenAI and Lambda accept this; some open-weights models
+        # silently ignore it — that's fine, callers already strip
+        # markdown fences and json.loads() the body defensively.
+        payload["response_format"] = response_format
+    if extra_payload:
+        payload.update(extra_payload)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(
+            cfg.chat_completions_url,
+            headers={
+                "Authorization": f"Bearer {cfg.api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+
+    if resp.status_code != 200:
+        # Truncate noisy upstream error bodies in the log; full body is
+        # still attached to the exception for the caller.
+        body = resp.text
+        snippet = body[:400] + ("…" if len(body) > 400 else "")
+        logger.warning(
+            "LLM call to %s (%s) failed: HTTP %d — %s",
+            cfg.name, payload["model"], resp.status_code, snippet,
+        )
+        raise LLMHTTPError(resp.status_code, body, provider=cfg.name)
+
+    body = resp.json()
+    try:
+        return body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as e:
+        raise LLMHTTPError(
+            200,
+            f"unexpected response shape: {body!r}",
+            provider=cfg.name,
+        ) from e
+
+
+def chat_completion_sync(
+    messages: list[dict[str, Any]],
+    *,
+    model: Optional[str] = None,
+    temperature: float = 0.0,
+    max_tokens: int = 300,
+    response_format: Optional[dict[str, Any]] = None,
+    timeout: float = 30.0,
+    extra_payload: Optional[dict[str, Any]] = None,
+) -> str:
+    """Synchronous twin of :func:`chat_completion`.
+
+    Used by code paths that aren't (yet) async — currently the
+    ``auto_verify.run_llm_audit`` second-opinion check, which is invoked
+    from CLI scripts where adding an event loop would be over-engineering.
+    """
+
+    cfg = _resolve_provider()
+    if cfg is None:
+        raise LLMConfigError(
+            "No LLM provider configured. Set LAMBDA_API_KEY (preferred) "
+            "or OPENAI_API_KEY in the environment."
+        )
+
+    payload: dict[str, Any] = {
+        "model": model or cfg.default_model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if response_format is not None:
+        payload["response_format"] = response_format
+    if extra_payload:
+        payload.update(extra_payload)
+
+    with httpx.Client(timeout=timeout) as client:
+        resp = client.post(
+            cfg.chat_completions_url,
+            headers={
+                "Authorization": f"Bearer {cfg.api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+
+    if resp.status_code != 200:
+        body = resp.text
+        snippet = body[:400] + ("…" if len(body) > 400 else "")
+        logger.warning(
+            "LLM call to %s (%s) failed: HTTP %d — %s",
+            cfg.name, payload["model"], resp.status_code, snippet,
+        )
+        raise LLMHTTPError(resp.status_code, body, provider=cfg.name)
+
+    body = resp.json()
+    try:
+        return body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as e:
+        raise LLMHTTPError(
+            200,
+            f"unexpected response shape: {body!r}",
+            provider=cfg.name,
+        ) from e

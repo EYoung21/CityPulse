@@ -12,17 +12,14 @@ Sources:
 
 import logging
 import math
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 import httpx
 
-logger = logging.getLogger(__name__)
+from . import llm_client
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+logger = logging.getLogger(__name__)
 
 # Philadelphia 911 calls public API (CARTO / OpenDataPhilly)
 PHILLY_911_URL = "https://phl.carto.com/api/v2/sql"
@@ -176,13 +173,13 @@ async def _check_ai_plausibility(
     does it sound like real dispatcher language, is the location real,
     does the category match the description?"""
 
-    if not OPENAI_API_KEY:
+    if not llm_client.is_configured():
         base = int(confidence * 20)
         return VerificationCheck(
             source="AI Plausibility",
             passed=confidence >= 0.6,
             score=base,
-            detail=f"OpenAI not configured — using extraction confidence ({confidence:.0%})",
+            detail=f"LLM not configured — using extraction confidence ({confidence:.0%})",
         )
 
     prompt = f"""You are a verification analyst for a community safety platform.
@@ -205,23 +202,23 @@ Evaluate on these criteria and return ONLY a JSON object:
 Output ONLY valid JSON."""
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                OPENAI_URL,
-                headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": OPENAI_MODEL,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.0,
-                    "max_tokens": 300,
-                },
+        try:
+            content = await llm_client.chat_completion(
+                [{"role": "user", "content": prompt}],
+                temperature=0.0,
+                max_tokens=300,
+                timeout=15.0,
+            )
+        except llm_client.LLMHTTPError as http_err:
+            return VerificationCheck(
+                source="AI Plausibility",
+                passed=False,
+                score=0,
+                detail=f"LLM returned {http_err.status_code}",
             )
 
-        if resp.status_code != 200:
-            return VerificationCheck(source="AI Plausibility", passed=False, score=0, detail=f"LLM returned {resp.status_code}")
-
         import json
-        content = resp.json()["choices"][0]["message"]["content"].strip()
+        content = content.strip()
         if content.startswith("```"):
             lines = content.split("\n")
             lines = [l for l in lines if not l.startswith("```")]

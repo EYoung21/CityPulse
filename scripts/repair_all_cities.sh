@@ -16,8 +16,9 @@
 #                                                          repair (eg.
 #                                                          philly) exits
 #
-# Requires: .env with OPENAI_API_KEY, .secrets/firebase-service-account.json,
-# .venv/ activated venv with project deps installed.
+# Requires: .env with LAMBDA_API_KEY (preferred) or OPENAI_API_KEY,
+# .secrets/firebase-service-account.json, .venv/ activated venv with
+# project deps installed. The active LLM provider is logged at startup.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
