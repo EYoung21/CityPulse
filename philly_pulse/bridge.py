@@ -1,4 +1,4 @@
-"""Non-blocking bridge from radiotranscriber.py to the PhillyPulse ingest API.
+"""Non-blocking bridge from radiotranscriber.py to the CityPulse ingest API.
 
 Sends transcripts + audio clip data to the ingest endpoint. Audio files
 are base64-encoded and included in the JSON payload so they arrive on the

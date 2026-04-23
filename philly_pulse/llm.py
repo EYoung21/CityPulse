@@ -1,10 +1,14 @@
-"""OpenAI LLM structured extraction for CityPulse.
+"""LLM structured extraction for CityPulse.
 
 Takes a raw scanner transcript line and returns structured incident data
 with a closed severity enum, location text, and confidence score.
 
 Supports multi-city operation: call configure_llm() at startup or pass
 city_context to extract_incident() for per-request city awareness.
+
+The actual HTTP call goes through :mod:`philly_pulse.llm_client`, which
+routes to Lambda Inference (preferred) or OpenAI (fallback) based on
+env vars. This module only knows about the *prompt* and the *schema*.
 """
 
 import json
@@ -12,13 +16,50 @@ import logging
 import os
 from typing import Optional
 
-import httpx
+from . import llm_client
 
 logger = logging.getLogger(__name__)
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+# ── Backwards-compat shims ──────────────────────────────────────────
+# Older code (and external scripts) read these module-level constants
+# directly to gate behavior. They stay here so nothing else needs to
+# change, but they now reflect the *active* provider rather than always
+# being OpenAI-specific.
+#
+# `OPENAI_API_KEY` in particular is used as a truthy "is some LLM
+# configured?" check throughout the codebase. We make it return the
+# active provider's key so legacy `if llm.OPENAI_API_KEY:` blocks light
+# up correctly under Lambda too.
+
+def __getattr__(name: str):
+    # Lazy attribute lookup so env changes after import are honored
+    # (matches the call-time resolution used inside llm_client).
+    if name == "OPENAI_API_KEY":
+        # Truthy whenever ANY provider is configured. Preserves the
+        # old "is the LLM available?" semantic at every existing call site.
+        return _active_api_key()
+    if name == "OPENAI_MODEL":
+        return llm_client.active_model() or os.environ.get("OPENAI_MODEL", llm_client.DEFAULT_OPENAI_MODEL)
+    if name == "OPENAI_URL":
+        # Kept for the small handful of places that still reference it
+        # directly; they should migrate to llm_client.chat_completion.
+        return f"{llm_client.DEFAULT_OPENAI_BASE_URL}/chat/completions"
+    raise AttributeError(name)
+
+
+def _active_api_key() -> str:
+    """Return the active provider's API key (Lambda > OpenAI > '')."""
+    return (
+        os.environ.get("LAMBDA_API_KEY", "")
+        or os.environ.get("LLM_API_KEY", "")
+        or os.environ.get("OPENAI_API_KEY", "")
+    )
+
+
+def is_configured() -> bool:
+    """True if any LLM provider is reachable. Prefer this over the
+    legacy ``OPENAI_API_KEY`` truthiness check in new code."""
+    return llm_client.is_configured()
 
 SEVERITY_CATEGORIES = [
     "violent_weapon",
@@ -184,8 +225,11 @@ async def extract_incident(
 
     Raises LLMError if the API key is missing or the call fails.
     """
-    if not OPENAI_API_KEY:
-        raise LLMError("OPENAI_API_KEY is not set. LLM extraction is required.")
+    if not llm_client.is_configured():
+        raise LLMError(
+            "No LLM provider configured. Set LAMBDA_API_KEY (preferred) "
+            "or OPENAI_API_KEY in the environment."
+        )
 
     ctx = city_context or _default_city_context
     prompt = _build_system_prompt(ctx)
@@ -196,26 +240,19 @@ async def extract_incident(
         messages.append({"role": "system", "content": prior_block})
     messages.append({"role": "user", "content": raw_text})
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            OPENAI_URL,
-            headers={
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": OPENAI_MODEL,
-                "messages": messages,
-                "temperature": 0.0,
-                "max_tokens": 300,
-            },
+    try:
+        content = await llm_client.chat_completion(
+            messages,
+            temperature=0.0,
+            max_tokens=300,
+            timeout=30.0,
         )
+    except llm_client.LLMHTTPError as e:
+        raise LLMError(str(e)) from e
+    except llm_client.LLMConfigError as e:
+        raise LLMError(str(e)) from e
 
-    if resp.status_code != 200:
-        raise LLMError(f"OpenAI API returned {resp.status_code}: {resp.text}")
-
-    body = resp.json()
-    content = body["choices"][0]["message"]["content"].strip()
+    content = content.strip()
 
     # Strip markdown fences if present
     if content.startswith("```"):

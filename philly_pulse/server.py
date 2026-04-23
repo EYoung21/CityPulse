@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import admin_events, geocode, inhibitor, llm, persistence as store, prefilter, push as push_mod, weights
+from . import admin_events, geocode, inhibitor, llm, llm_client, persistence as store, prefilter, push as push_mod, weights
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -239,7 +239,9 @@ async def health():
         count = -1
     return {
         "status": "ok",
-        "llm_configured": bool(llm.OPENAI_API_KEY),
+        "llm_configured": llm.is_configured(),
+        "llm_provider": llm_client.active_provider_name(),
+        "llm_model": llm_client.active_model(),
         "inhibitor_configured": bool(inhibitor.INHIBITOR_API_KEY),
         "incident_count": count,
     }
@@ -1170,7 +1172,7 @@ async def summary():
     if not recent:
         return {"summary": "No recent incidents to summarize.", "incident_count": 0}
 
-    if not llm.OPENAI_API_KEY:
+    if not llm.is_configured():
         lines = [
             f"- {inc['severity_category'].replace('_', ' ').title()}: "
             f"{inc.get('location_text', 'Unknown location')}"
@@ -1197,25 +1199,14 @@ async def summary():
         "Recent incidents:\n" + "\n".join(incident_lines)
     )
 
-    import httpx
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.post(
-                llm.OPENAI_URL,
-                headers={
-                    "Authorization": f"Bearer {llm.OPENAI_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": llm.OPENAI_MODEL,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.3,
-                    "max_tokens": 200,
-                },
-            )
-        if resp.status_code == 200:
-            text = resp.json()["choices"][0]["message"]["content"].strip()
-            return {"summary": text, "incident_count": len(recent)}
+        text = await llm_client.chat_completion(
+            [{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=200,
+            timeout=20.0,
+        )
+        return {"summary": text.strip(), "incident_count": len(recent)}
     except Exception as e:
         logger.warning("Summary LLM call failed: %s", e)
 

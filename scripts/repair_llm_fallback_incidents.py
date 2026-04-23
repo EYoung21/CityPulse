@@ -336,9 +336,19 @@ def _write_unmapped_row(
 
 
 async def _run(args: argparse.Namespace) -> None:
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("[FATAL] OPENAI_API_KEY is not set.", file=sys.stderr)
+    from philly_pulse import llm_client
+
+    if not llm_client.is_configured():
+        print(
+            "[FATAL] No LLM provider configured. Set LAMBDA_API_KEY (preferred) "
+            "or OPENAI_API_KEY in the environment.",
+            file=sys.stderr,
+        )
         sys.exit(2)
+    print(
+        f"[INFO] LLM provider: {llm_client.active_provider_name()} "
+        f"(model: {llm_client.active_model()})"
+    )
 
     _load_city_registry()
     if not CITY_REGISTRY:
