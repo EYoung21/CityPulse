@@ -37,23 +37,72 @@ from faster_whisper import WhisperModel
 from philly_pulse.preprocess import PIPELINE_VARIANTS, preprocess_audio
 
 # ── Config ──────────────────────────────────────────────────────────
+# Two ways to configure the backfill:
+#   1. Local dev / Firebird-era flow: drop a config.yaml next to this
+#      script with credentials, tuning, and post-generation-cleanup.
+#   2. Lambda flow (what scripts/install_lambda_backfill.sh sets up):
+#      no config.yaml on disk; credentials and bridge URL come from env
+#      (BROADCASTIFY_USERNAME / BROADCASTIFY_PASSWORD / PP_BRIDGE_URL),
+#      and the per-city YAML in cities/<slug>/config.yaml supplies the
+#      `feeds` list + tuning.initial_prompt. The tuning/cleanup defaults
+#      below replace the heavyweight root config.yaml so this script no
+#      longer requires it to import.
 
-with open("config.yaml", "r", encoding="utf-8") as f:
-    config = yaml.safe_load(f)
+if os.path.exists("config.yaml"):
+    with open("config.yaml", "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f) or {}
+else:
+    config = {}
 
-USERNAME = config["credentials"]["username"]
-PASSWORD = config["credentials"]["password"]
+_creds = config.get("credentials", {})
+USERNAME = os.environ.get("BROADCASTIFY_USERNAME") or _creds.get("username", "")
+PASSWORD = os.environ.get("BROADCASTIFY_PASSWORD") or _creds.get("password", "")
 
-MODEL_SIZE = config["tuning"].get("model_size", "base")
-LANGUAGE = config["tuning"]["language"]
-INITIAL_PROMPT = config["tuning"]["initial_prompt"]
-BEAM_SIZE = config["tuning"].get("beam_size", 5)
-NO_SPEECH_THRESHOLD = config["tuning"]["no_speech_threshold"]
-FULL_BLOCK_PHRASES = config["post_generation_cleanup"]["full_block_phrases"]
-CUTOFF_PHRASES = config["post_generation_cleanup"]["cutoff_phrases"]
+_tuning = config.get("tuning", {})
+MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE") or _tuning.get(
+    "model_size", "large-v3-turbo"
+)
+LANGUAGE = _tuning.get("language", "en")
+INITIAL_PROMPT = _tuning.get(
+    "initial_prompt",
+    # Generic fallback. Per-city configs override via _load_city_config.
+    "Police, fire, and EMS radio dispatch. Short clipped phrases. "
+    "Numbers spoken separately.",
+)
+BEAM_SIZE = int(_tuning.get("beam_size", 5))
+NO_SPEECH_THRESHOLD = float(_tuning.get("no_speech_threshold", 0.75))
+
+_cleanup = config.get("post_generation_cleanup", {})
+# Whisper hallucination boilerplate that shows up across feeds when audio
+# is silent or near-silent; safe defaults so this script no longer needs
+# the giant root config.yaml just to start.
+FULL_BLOCK_PHRASES = _cleanup.get(
+    "full_block_phrases",
+    [
+        "CastingWords", "ESO", "Rev.com", "amara.org", "amara",
+        "ESA, Inc.", "U.S. Department of", "Transcripts translated by",
+        "Transcription Outsourcing",
+    ],
+)
+CUTOFF_PHRASES = _cleanup.get(
+    "cutoff_phrases",
+    [
+        "We'll be right back", "We will be right back",
+        "Thank you for watching", "Thanks for watching",
+        "Stay tuned", "Commercial break",
+        "Transcription by", "Translation by", "Captions by",
+        "Subtitle", "Subtitles",
+        "the following is a", "this is a test",
+        "end of transmission", "end of message",
+    ],
+)
 
 PP_CFG = config.get("philly_pulse", {})
-BRIDGE_URL = PP_CFG.get("bridge_url", "http://127.0.0.1:8765/api/ingest")
+BRIDGE_URL = (
+    os.environ.get("PP_BRIDGE_URL")
+    or PP_CFG.get("bridge_url")
+    or "https://api.phlpulse.com/api/ingest"
+)
 
 SAMPLE_RATE = 16000
 AUDIO_CLIPS_FOLDER = "audio_clips/"
@@ -69,14 +118,18 @@ os.makedirs(PROGRESS_DIR, exist_ok=True)
 # Once hit, every request returns 429 "Download limit exceeded" until
 # the quota resets (likely midnight US-Eastern).
 
-DOWNLOAD_DELAY_BASE = 45          # seconds between successful downloads
-DOWNLOAD_DELAY_JITTER = 15        # ± random jitter added to base delay
-BACKOFF_BASE = 120                # initial backoff on 429 (seconds)
-BACKOFF_MULTIPLIER = 2            # exponential multiplier
-BACKOFF_MAX = 3600                # cap: 1 hour
-BACKOFF_JITTER_FRAC = 0.25        # ±25% jitter on backoff delays
-MAX_RETRIES_PER_REQUEST = 6       # per-request retry limit
-CONSECUTIVE_429_ABORT = 8         # stop the whole run after this many in a row
+# Defaults are tuned for the Premium account flow on Lambda: Premium has
+# a much higher per-account quota, so we drop the per-segment cooldown
+# from 45s → 8s. All knobs are env-overridable so a free-tier user can
+# still slow it back down.
+DOWNLOAD_DELAY_BASE = float(os.environ.get("BACKFILL_DELAY_BASE", "8"))
+DOWNLOAD_DELAY_JITTER = float(os.environ.get("BACKFILL_DELAY_JITTER", "3"))
+BACKOFF_BASE = float(os.environ.get("BACKFILL_BACKOFF_BASE", "60"))
+BACKOFF_MULTIPLIER = float(os.environ.get("BACKFILL_BACKOFF_MULT", "2"))
+BACKOFF_MAX = float(os.environ.get("BACKFILL_BACKOFF_MAX", "1800"))
+BACKOFF_JITTER_FRAC = 0.25
+MAX_RETRIES_PER_REQUEST = int(os.environ.get("BACKFILL_MAX_RETRIES", "6"))
+CONSECUTIVE_429_ABORT = int(os.environ.get("BACKFILL_429_ABORT", "8"))
 
 _consecutive_429_count = 0
 
