@@ -1,37 +1,23 @@
 "use client";
 
-/** Moderation surface for in-app feedback + admin audit trail.
+/** Admin inbox for **user-submitted reports** (Firestore `feedback` rows).
  *
- *  Two tabs:
- *    1. **Feedback** — every `feedback` row, grouped by triage state
- *       (new / triaged / resolved / wontfix). Each row exposes a
- *       status dropdown and a delete button. This is the only
- *       channel users have to talk to the maintainers from inside
- *       the app, so it's the daily-driver inbox.
- *    2. **Audit log** — append-only ledger of every moderator action
- *       (status changes, deletions). Useful for accountability and
- *       for answering "why did this row change?" weeks later.
+ *  The former two-tab layout (feedback + moderation audit log) is
+ *  archived at `admin/_moderation_audit_tab.archive.tsx` for easy
+ *  restoration — product request: this surface only intakes user
+ *  reports; no other moderation tooling is shown here.
  *
- *  The view is gated on the launcher level (Providers.tsx only
- *  renders ModerationPanel for admin users). Firestore rules are the
- *  real source of truth — non-admins that hit the page directly
- *  would still get permission errors on every read.
- *
- *  Performance: the feedback subscription caps at a few hundred rows
- *  so a large backlog doesn't melt the browser. If the inbox ever
- *  exceeds that we'll add server-side pagination instead of bumping
- *  the cap. */
+ *  Gated in `Providers.tsx` for admin accounts. Firestore rules are
+ *  the real source of truth for who can read/write. */
 
 import { useEffect, useState } from "react";
 import {
   ArrowLeft,
   AlertTriangle,
-  ClipboardList,
   Loader2,
   MessageSquare,
   RefreshCw,
   Trash2,
-  Users,
 } from "lucide-react";
 import {
   FEEDBACK_KINDS,
@@ -40,20 +26,12 @@ import {
   type FeedbackEntry,
   type FeedbackStatus,
 } from "@/lib/feedback";
-import {
-  auditDeleteFeedback,
-  auditSetFeedbackStatus,
-  describeAuditAction,
-  subscribeModerationAudit,
-  type ModerationAuditEntry,
-} from "@/lib/moderation-audit";
+import { auditDeleteFeedback, auditSetFeedbackStatus } from "@/lib/moderation-audit";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface Props {
   onBack: () => void;
 }
-
-type Tab = "feedback" | "audit";
 
 function fmtAgo(ms: number): string {
   const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
@@ -66,10 +44,6 @@ function fmtAgo(ms: number): string {
 }
 
 export default function ModerationPanel({ onBack }: Props) {
-  // Default to the feedback tab — that's the only channel users
-  // have to reach us once they're in the app, so admins should land
-  // on the inbox without an extra click.
-  const [tab, setTab] = useState<Tab>("feedback");
   return (
     <div
       className="h-screen flex flex-col overflow-hidden"
@@ -91,46 +65,19 @@ export default function ModerationPanel({ onBack }: Props) {
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
-        <Users className="w-5 h-5 text-purple-400" />
-        <span className="text-sm font-semibold" style={{ color: "#fff" }}>
-          Moderation
-        </span>
-
-        <div
-          className="ml-4 flex items-center gap-1 p-0.5 rounded-lg"
-          style={{ background: "rgba(255,255,255,0.04)" }}
-        >
-          <button
-            type="button"
-            onClick={() => setTab("feedback")}
-            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-              tab === "feedback" ? "bg-purple-500 text-white" : ""
-            }`}
-            style={tab === "feedback" ? {} : { color: "rgba(255,255,255,0.7)" }}
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <MessageSquare className="w-3 h-3" />
-              Feedback
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab("audit")}
-            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-              tab === "audit" ? "bg-purple-500 text-white" : ""
-            }`}
-            style={tab === "audit" ? {} : { color: "rgba(255,255,255,0.7)" }}
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <ClipboardList className="w-3 h-3" />
-              Audit log
-            </span>
-          </button>
+        <MessageSquare className="w-5 h-5 text-purple-400" />
+        <div className="flex flex-col min-w-0">
+          <span className="text-sm font-semibold" style={{ color: "#fff" }}>
+            User reports
+          </span>
+          <span className="text-[10px] truncate" style={{ color: "rgba(255,255,255,0.45)" }}>
+            In-app feedback & bug reports only
+          </span>
         </div>
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === "feedback" ? <FeedbackTab /> : <AuditTab />}
+        <FeedbackTab />
       </div>
     </div>
   );
@@ -254,7 +201,7 @@ function FeedbackTab() {
             style={{ color: "rgba(255,255,255,0.5)" }}
           >
             <Loader2 className="w-4 h-4 animate-spin" />
-            Loading feedback…
+            Loading reports…
           </div>
         )}
         {!loading && error && (
@@ -393,147 +340,3 @@ function FeedbackTab() {
   );
 }
 
-// ── Audit log tab ────────────────────────────────────────────────────
-
-function AuditTab() {
-  const [rows, setRows] = useState<ModerationAuditEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [kindFilter, setKindFilter] = useState<
-    "all" | ModerationAuditEntry["kind"]
-  >("all");
-
-  useEffect(() => {
-    setLoading(true);
-    const unsub = subscribeModerationAudit(
-      kindFilter === "all" ? {} : { kind: kindFilter },
-      (data) => { setRows(data); setLoading(false); setError(null); },
-      (err) => { setError(err.message); setLoading(false); }
-    );
-    return unsub;
-  }, [kindFilter]);
-
-  const KINDS: {
-    value: "all" | ModerationAuditEntry["kind"];
-    label: string;
-    color: string;
-  }[] = [
-    { value: "all",                 label: "All",        color: "#a855f7" },
-    { value: "feedback.delete",     label: "Feedback deletes", color: "#ef4444" },
-    { value: "feedback.status",     label: "Status changes", color: "#3b82f6" },
-  ];
-
-  return (
-    <div className="h-full flex flex-col">
-      <div
-        className="flex items-center gap-2 px-4 py-2 shrink-0 text-[11px] overflow-x-auto relative z-10"
-        style={{
-          background: "rgba(255,255,255,0.02)",
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
-          backdropFilter: "blur(12px)",
-        }}
-      >
-        <span style={{ color: "rgba(255,255,255,0.5)" }}>Filter:</span>
-        {KINDS.map((k) => {
-          const active = kindFilter === k.value;
-          return (
-            <button
-              key={k.value}
-              type="button"
-              onClick={() => setKindFilter(k.value)}
-              className="px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition-colors"
-              style={{
-                background: active ? `${k.color}22` : "rgba(255,255,255,0.04)",
-                color: active ? k.color : "rgba(255,255,255,0.7)",
-                border: `1px solid ${active ? `${k.color}55` : "rgba(255,255,255,0.06)"}`,
-              }}
-            >
-              {k.label}
-            </button>
-          );
-        })}
-        <span className="ml-auto" style={{ color: "rgba(255,255,255,0.5)" }}>
-          {rows.length} entr{rows.length === 1 ? "y" : "ies"}
-        </span>
-      </div>
-
-      <div className="flex-1 overflow-y-auto">
-        {loading && (
-          <div
-            className="flex items-center justify-center gap-2 py-12 text-xs"
-            style={{ color: "rgba(255,255,255,0.5)" }}
-          >
-            <Loader2 className="w-4 h-4 animate-spin" />
-            Loading audit log…
-          </div>
-        )}
-        {!loading && error && (
-          <div
-            className="flex items-start gap-2 mx-4 my-4 p-3 rounded-lg text-xs"
-            style={{ background: "rgba(239,68,68,0.10)", color: "#ef4444" }}
-          >
-            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-            <div>
-              {error}
-              <p className="mt-1 text-[11px] opacity-80">
-                The audit feed requires the deployed firestore.rules to grant
-                <code> read </code> on <code>moderationAudit/&#123;id&#125;</code>
-                to your admin email.
-              </p>
-            </div>
-          </div>
-        )}
-        {!loading && !error && rows.length === 0 && (
-          <div
-            className="text-center py-12 text-xs"
-            style={{ color: "rgba(255,255,255,0.5)" }}
-          >
-            No audit entries yet. Moderation actions you take will appear here.
-          </div>
-        )}
-        {rows.map((entry) => (
-          <div
-            key={entry.id}
-            className="px-4 py-2.5"
-            style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
-          >
-            <div className="flex items-center gap-2 flex-wrap text-[11px]">
-              <span
-                className="px-1.5 py-0.5 rounded font-mono uppercase"
-                style={{
-                  background: entry.kind.endsWith(".delete")
-                    ? "rgba(239,68,68,0.15)"
-                    : "rgba(59,130,246,0.15)",
-                  color: entry.kind.endsWith(".delete") ? "#ef4444" : "#3b82f6",
-                }}
-              >
-                {describeAuditAction(entry)}
-              </span>
-              <span style={{ color: "#fff" }} className="font-medium">
-                {entry.actorDisplayName || entry.actorEmail || entry.actorUid.slice(0, 8) + "…"}
-              </span>
-              <span style={{ color: "rgba(255,255,255,0.5)" }} title={new Date(entry.createdAtMs).toString()}>
-                · {fmtAgo(entry.createdAtMs)}
-              </span>
-            </div>
-            {entry.targetSnippet && (
-              <p
-                className="mt-1 text-[12px] leading-snug whitespace-pre-wrap"
-                style={{ color: "rgba(255,255,255,0.7)" }}
-              >
-                &ldquo;{entry.targetSnippet}&rdquo;
-              </p>
-            )}
-            <div
-              className="mt-1 flex items-center gap-3 text-[10px] font-mono flex-wrap"
-              style={{ color: "rgba(255,255,255,0.5)" }}
-            >
-              <span>target: {entry.targetId.slice(0, 16)}…</span>
-              <span>actor: {entry.actorUid.slice(0, 8)}…</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}

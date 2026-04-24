@@ -57,6 +57,11 @@ export default function FeedPage() {
     setIncidents([]);
     setCursor(null);
     setHasMore(true);
+    let timedOut = false;
+    const slow = window.setTimeout(() => {
+      timedOut = true;
+      ctrl.abort();
+    }, 25_000);
     try {
       const page = await fetchIncidentPage({
         limit: mode === "near" ? 40 : PAGE_SIZE,
@@ -71,10 +76,14 @@ export default function FeedPage() {
         setHasMore(Boolean(page.next_cursor));
       }
     } catch (err) {
-      if ((err as { name?: string })?.name !== "AbortError") {
+      const aborted = (err as { name?: string })?.name === "AbortError";
+      if (aborted && timedOut) {
+        setError("Request timed out. Check your connection and NEXT_PUBLIC_API_URL.");
+      } else if (!aborted) {
         setError(err instanceof Error ? err.message : "Failed to load feed");
       }
     } finally {
+      window.clearTimeout(slow);
       setLoading(false);
     }
   }, [mode, city.slug, userLoc?.lat, userLoc?.lng]);
@@ -279,12 +288,6 @@ export default function FeedPage() {
             }}
           >
             {error}
-          </div>
-        )}
-
-        {!loading && incidents.length === 0 && !error && (
-          <div className="px-6 py-12 text-center text-sm" style={{ color: "var(--panel-text-muted)" }}>
-            No incidents yet in this view.
           </div>
         )}
 

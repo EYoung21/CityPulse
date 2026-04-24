@@ -25,8 +25,7 @@
  * full real estate.
  */
 
-import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { Map as MapIcon, List, Bell, Settings as SettingsIcon } from "lucide-react";
 import { subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
@@ -58,6 +57,7 @@ export const MOBILE_NAV_HEIGHT_PX = 56;
 // Router; the boundary is what lets the rest of the page keep
 // rendering even when the search params haven't been hydrated yet.
 function MobileBottomNavInner() {
+  const router = useRouter();
   const [show, setShow] = useState(false);
   const [unread, setUnread] = useState(0);
   const pathname = usePathname();
@@ -102,7 +102,7 @@ function MobileBottomNavInner() {
         left: 0,
         right: 0,
         bottom: 0,
-        zIndex: 1000,
+        zIndex: 10050,
         display: "flex",
         alignItems: "stretch",
         justifyContent: "space-around",
@@ -113,21 +113,19 @@ function MobileBottomNavInner() {
         WebkitBackdropFilter: "blur(12px)",
         borderTop: "1px solid rgba(148,163,184,0.18)",
         boxShadow: "0 -2px 12px rgba(0,0,0,0.35)",
+        pointerEvents: "auto",
+        touchAction: "manipulation",
       }}
     >
       {TABS.map((tab) => {
         const active = activeId === tab.id;
         return (
-          <Link
+          <button
             key={tab.id}
-            href={tab.href}
+            type="button"
+            onClick={() => router.replace(tab.href)}
             aria-label={tab.label}
             aria-current={active ? "page" : undefined}
-            // Replace history rather than pushing a new entry every
-            // time the user pings between tabs — keeps the back
-            // button useful (always returns to the prior in-app
-            // surface, not to a chain of nav-tap entries).
-            replace
             style={{
               flex: 1,
               display: "flex",
@@ -139,9 +137,10 @@ function MobileBottomNavInner() {
               color: active ? "#60a5fa" : "#94a3b8",
               transition: "color 120ms ease",
               position: "relative",
-              // Comfortable tap target on phones; the icon+label
-              // already eat ~40px so this padding mostly buys
-              // accidental-tap forgiveness around the edges.
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              WebkitTapHighlightColor: "transparent",
               paddingTop: 4,
               paddingBottom: 2,
             }}
@@ -181,7 +180,7 @@ function MobileBottomNavInner() {
             >
               {tab.label}
             </span>
-          </Link>
+          </button>
         );
       })}
     </nav>

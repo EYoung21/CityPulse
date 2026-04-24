@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Shield,
@@ -20,6 +22,8 @@ import {
   Monitor,
   BarChart3,
   Menu,
+  List,
+  Map as MapIcon,
   LocateFixed,
   House,
   TrendingUp,
@@ -40,7 +44,6 @@ import IncidentDetail from "@/components/IncidentDetail";
 import ClusterListPanel from "@/components/ClusterListPanel";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
 import DistrictCard from "@/components/DistrictCard";
-import AvoidAreasManager from "@/components/AvoidAreasManager";
 import OfflineTilesPanel from "@/components/OfflineTilesPanel";
 import MeasureToolPanel from "@/components/MeasureToolPanel";
 import MapSnapshotButton from "@/components/MapSnapshotButton";
@@ -230,13 +233,23 @@ function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): nu
  *   - eagerly subscribing to Firestore / spinning up Leaflet on a
  *     visit that is about to leave the route anyway
  */
-export default function Home() {
+function HomeInner() {
   const decision = useMobileHomeRedirect();
   if (decision !== "stay") return null;
   return <MapHome />;
 }
 
+export default function Home() {
+  return (
+    <Suspense fallback={null}>
+      <HomeInner />
+    </Suspense>
+  );
+}
+
 function MapHome() {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { mode, resolved, setMode, colorBlindSafe, setColorBlindSafe } = useTheme();
   const { destinations: savedDestinations, lists: savedLists } = useSavedDestinations();
   const isDark = resolved === "dark";
@@ -244,14 +257,16 @@ function MapHome() {
   const useFirestoreData = firestoreAvailable;
   const { isPro } = useAuth();
 
-  const [cityDisplayName, setCityDisplayName] = useState(() =>
-    process.env.NEXT_PUBLIC_CITY_NAME?.trim() || "Philadelphia"
-  );
+  const cityFromEnv = process.env.NEXT_PUBLIC_CITY_NAME?.trim();
+  const [cityDisplayName, setCityDisplayName] = useState(() => {
+    if (cityFromEnv) return cityFromEnv;
+    if (typeof window !== "undefined") return getCurrentCity().name;
+    return "";
+  });
   useEffect(() => {
-    if (!process.env.NEXT_PUBLIC_CITY_NAME?.trim()) {
-      setCityDisplayName(getCurrentCity().name);
-    }
-  }, []);
+    if (cityFromEnv) setCityDisplayName(cityFromEnv);
+    else setCityDisplayName(getCurrentCity().name);
+  }, [cityFromEnv, pathname, searchParams]);
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
   // Community lifecycle aggregates ("still happening" / "resolved")
@@ -2099,6 +2114,38 @@ function MapHome() {
         <AuthBar />
         <PulseNetworkNav />
 
+        {/* Desktop: explicit Feed / Map — mobile uses `MobileBottomNav`. */}
+        <div className="hidden md:flex flex-col gap-2" style={{ pointerEvents: "auto" }}>
+          <Link
+            href="/feed"
+            className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
+            style={{
+              background: pathname.startsWith("/feed") ? "rgba(59,130,246,0.15)" : "var(--pill-bg)",
+              border: `1px solid ${pathname.startsWith("/feed") ? "rgba(59,130,246,0.3)" : "var(--pill-border)"}`,
+              color: pathname.startsWith("/feed") ? "#3b82f6" : "var(--pill-text)",
+            }}
+            title="Incident feed"
+            aria-label="Open full-screen incident feed"
+            aria-current={pathname.startsWith("/feed") ? "page" : undefined}
+          >
+            <List className="w-4 h-4" />
+          </Link>
+          <Link
+            href="/?view=map"
+            replace
+            className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
+            style={{
+              background: pathname === "/" ? "rgba(59,130,246,0.15)" : "var(--pill-bg)",
+              border: `1px solid ${pathname === "/" ? "rgba(59,130,246,0.3)" : "var(--pill-border)"}`,
+              color: pathname === "/" ? "#3b82f6" : "var(--pill-text)",
+            }}
+            title="Safety map"
+            aria-label="Open safety map"
+          >
+            <MapIcon className="w-4 h-4" />
+          </Link>
+        </div>
+
         {/* Analytics toggle */}
         <div className="relative">
           <button
@@ -2432,14 +2479,9 @@ function MapHome() {
                   On: they disappear from the map, list, and heatmap.
                 </p>
 
-                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
-                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Avoid in routing</p>
-                <AvoidAreasManager
-                  onJump={(a) => {
-                    setShowLayers(false);
-                    mapRef.current?.flyTo(a.lat, a.lng, 16);
-                  }}
-                />
+                {/* Personal avoid-area UI lives in `AvoidAreasManager.tsx`;
+                    routing merge is gated by USER_DRAWN_AVOID_AREAS_ENABLED in
+                    `lib/avoid-areas.ts` (currently off). */}
 
                 <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
                 <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Offline tiles</p>

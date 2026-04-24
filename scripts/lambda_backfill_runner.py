@@ -52,6 +52,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -87,7 +88,16 @@ def discover_cities() -> list[Path]:
 def run_one_city(cfg: Path) -> tuple[int, int]:
     """Return (exit_code, transcripts_observed). transcripts_observed
     is parsed best-effort from the child's stdout 'Total: N transcripts'
-    summary line so the heartbeat reflects real progress."""
+    summary line so the heartbeat reflects real progress.
+
+    Heartbeat strategy: a daemon thread ticks every HEARTBEAT_INTERVAL_S
+    seconds with the most recent state, INDEPENDENTLY of child stdout
+    activity. This matters because backfill_archives.py spends long
+    stretches sleeping inside requests.get / time.sleep (Broadcastify
+    backoff can be 60-1800s) without writing to stdout. Without the
+    timer, the auto-terminator would see a stale heartbeat and kill the
+    GPU even though the child is healthy and waiting on the network.
+    """
     print(f"\n{'='*60}\n=== City: {cfg.parent.name}  ({cfg})\n{'='*60}", flush=True)
     heartbeat({"city": cfg.parent.name, "phase": "starting", "feed": None})
 
@@ -101,9 +111,39 @@ def run_one_city(cfg: Path) -> tuple[int, int]:
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
 
-    transcripts = 0
-    last_feed = None
-    quota_exhausted = False
+    # Mutable state shared with the heartbeat thread. Updated by the
+    # stdout reader in this same thread (no lock needed: dict mutations
+    # in CPython are atomic at the slot granularity, and we only read
+    # whole values from the heartbeat thread).
+    state = {
+        "city": cfg.parent.name,
+        "phase": "starting",
+        "feed": None,
+        "transcripts_so_far": 0,
+        "quota_exhausted": False,
+        "last_stdout_at": time.time(),
+    }
+    stop_heartbeat = threading.Event()
+
+    def _heartbeat_ticker():
+        # Ticks roughly every 20s regardless of child stdout activity.
+        # 20s is well below the auto-terminator's default
+        # max-heartbeat-age-minutes=15 so we have huge headroom even if
+        # the box is briefly swapped out under load.
+        while not stop_heartbeat.is_set():
+            silent_for = int(time.time() - state["last_stdout_at"])
+            heartbeat({
+                "city": state["city"],
+                "phase": state["phase"],
+                "feed": state["feed"],
+                "transcripts_so_far": state["transcripts_so_far"],
+                "quota_exhausted": state["quota_exhausted"],
+                "stdout_silent_for_s": silent_for,
+            })
+            stop_heartbeat.wait(20)
+
+    hb_thread = threading.Thread(target=_heartbeat_ticker, daemon=True)
+    hb_thread.start()
 
     proc = subprocess.Popen(
         cmd, cwd=REPO_ROOT, env=env,
@@ -111,12 +151,13 @@ def run_one_city(cfg: Path) -> tuple[int, int]:
         bufsize=1,
     )
     assert proc.stdout is not None
+    state["phase"] = "running"
 
-    last_heartbeat = 0.0
     try:
         for line in proc.stdout:
             sys.stdout.write(line)
             sys.stdout.flush()
+            state["last_stdout_at"] = time.time()
             stripped = line.strip()
 
             # Parse interesting markers from backfill_archives.py output.
@@ -124,40 +165,32 @@ def run_one_city(cfg: Path) -> tuple[int, int]:
                 # "[2026-04-22] [PPD Citywide] Fetching archives..."
                 bracket_parts = stripped.split("]")
                 if len(bracket_parts) >= 3:
-                    last_feed = bracket_parts[1].strip(" [")
+                    state["feed"] = bracket_parts[1].strip(" [")
             elif "QUOTA EXHAUSTED" in stripped:
-                quota_exhausted = True
+                state["quota_exhausted"] = True
             elif stripped.startswith("Total:"):
                 # "Total: 123 transcripts from 45 archive segments"
                 tokens = stripped.split()
                 if len(tokens) >= 2 and tokens[1].isdigit():
-                    transcripts = int(tokens[1])
-
-            # Throttle heartbeat writes to once every 30s.
-            now = time.monotonic()
-            if now - last_heartbeat > 30:
-                heartbeat({
-                    "city": cfg.parent.name,
-                    "phase": "running",
-                    "feed": last_feed,
-                    "transcripts_so_far": transcripts,
-                    "quota_exhausted": quota_exhausted,
-                })
-                last_heartbeat = now
+                    state["transcripts_so_far"] = int(tokens[1])
     except KeyboardInterrupt:
+        stop_heartbeat.set()
         proc.terminate()
         raise
 
     rc = proc.wait()
+    stop_heartbeat.set()
+    hb_thread.join(timeout=2)
+
     heartbeat({
         "city": cfg.parent.name,
         "phase": "done",
-        "feed": last_feed,
-        "transcripts_total": transcripts,
-        "quota_exhausted": quota_exhausted,
+        "feed": state["feed"],
+        "transcripts_total": state["transcripts_so_far"],
+        "quota_exhausted": state["quota_exhausted"],
         "exit_code": rc,
     })
-    return rc, transcripts
+    return rc, state["transcripts_so_far"]
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -30,12 +30,14 @@ import {
   getRouteOptions,
   buildAvoidZones,
   buildAvoidPolygons,
+  filterRouteOptionsForSafestOnlyUi,
+  SAFEST_ROUTE_ONLY_UI,
   type TransportMode,
   type AvoidancePrefs,
   type RouteOption,
 } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
-import { userAvoidZones } from "@/lib/avoid-areas";
+import { userAvoidZonesForRouting } from "@/lib/avoid-areas";
 import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
 import RouteOptionPicker from "@/components/RouteOptionPicker";
@@ -217,6 +219,8 @@ export default function DirectionsPanel({
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [routeOptions, setRouteOptions] = useState<RouteOption[]>([]);
+  /** Full ORS variant list (incl. fastest) — kept for RouteData + map layers while UI may be filtered. */
+  const rawRouteOptionsRef = useRef<RouteOption[]>([]);
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
   // Per-route incident-density scores. Recomputed whenever the option
   // set changes _or_ the incident stream updates — both are cheap (few
@@ -361,11 +365,11 @@ export default function DirectionsPanel({
       try {
         const zones = [
           ...buildAvoidZones(incSnap, avoidPrefs),
-          ...userAvoidZones(),
+          ...userAvoidZonesForRouting(),
         ];
         const avoidPolygons = zones.length > 0 ? buildAvoidPolygons(zones) : null;
 
-        const opts = await getRouteOptions({
+        const rawOpts = await getRouteOptions({
           apiKey: ORS_API_KEY,
           mode: activeMode,
           waypoints,
@@ -374,25 +378,31 @@ export default function DirectionsPanel({
         });
         if (controller.signal.aborted) return;
 
-        if (opts.length === 0) {
+        if (rawOpts.length === 0) {
           onRoutesChange(null);
           setRouteOptions([]);
+          rawRouteOptionsRef.current = [];
           setSelectedOptionId(null);
           setPreviewRoute(null);
           setRouteError("Could not load a street route. Check your network or try another mode.");
           return;
         }
 
+        rawRouteOptionsRef.current = rawOpts;
+        const uiOpts = filterRouteOptionsForSafestOnlyUi(rawOpts);
+
         // Default selection: keep prior choice if still present, otherwise
         // pick whatever sorted to the top (safer, then fastest).
         const keepPrior =
-          selectedOptionId && opts.find((o) => o.id === selectedOptionId);
-        const chosen = keepPrior || opts[0];
-        setRouteOptions(opts);
+          selectedOptionId && uiOpts.find((o) => o.id === selectedOptionId);
+        const chosen = keepPrior || uiOpts[0];
+        setRouteOptions(uiOpts);
         setSelectedOptionId(chosen.id);
 
-        const directRoute = opts.find((o) => !o.isSafer && o.avoidedFeatures.length === 0)?.route ?? opts[0].route;
-        const saferRoute = opts.find((o) => o.isSafer)?.route ?? null;
+        const directRoute =
+          rawOpts.find((o) => !o.isSafer && o.avoidedFeatures.length === 0)?.route ??
+          rawOpts[0].route;
+        const saferRoute = rawOpts.find((o) => o.isSafer)?.route ?? null;
 
         onRoutesChange({
           normal: directRoute,
@@ -410,6 +420,7 @@ export default function DirectionsPanel({
         setRouteError(null);
       } catch {
         if (!controller.signal.aborted) {
+          rawRouteOptionsRef.current = [];
           setPreviewRoute(null);
           setRouteOptions([]);
           setSelectedOptionId(null);
@@ -450,13 +461,15 @@ export default function DirectionsPanel({
       const opt = routeOptions.find((o) => o.id === id);
       if (!opt) return;
       setSelectedOptionId(id);
+      const raw = rawRouteOptionsRef.current;
       const direct =
-        routeOptions.find((o) => !o.isSafer && o.avoidedFeatures.length === 0)?.route ??
-        routeOptions[0].route;
-      const safer = routeOptions.find((o) => o.isSafer)?.route ?? null;
+        raw.find((o) => !o.isSafer && o.avoidedFeatures.length === 0)?.route ??
+        raw[0]?.route ??
+        routeOptions[0]?.route;
+      const safer = raw.find((o) => o.isSafer)?.route ?? routeOptions.find((o) => o.isSafer)?.route ?? null;
       const zones = [
         ...buildAvoidZones(incidentsRef.current, avoidPrefs),
-        ...userAvoidZones(),
+        ...userAvoidZonesForRouting(),
       ];
       onRoutesChange({
         normal: direct,
@@ -838,7 +851,7 @@ export default function DirectionsPanel({
           </div>
         )}
 
-        {!previewLoading && routeOptions.length > 0 && (
+        {!previewLoading && routeOptions.length > 1 && (
           <div className="mt-3">
             <RouteOptionPicker
               options={routeOptions}
@@ -865,7 +878,10 @@ export default function DirectionsPanel({
               <div className="flex items-center gap-2 px-3 py-2 text-xs text-amber-600 dark:text-amber-400/80 bg-amber-500/5">
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                 {previewRoute.nearbyCount} incident
-                {previewRoute.nearbyCount > 1 ? "s" : ""} near route. Pick "Safer" to route around
+                {previewRoute.nearbyCount > 1 ? "s" : ""} near route.
+                {SAFEST_ROUTE_ONLY_UI
+                  ? " A detour that fully avoids them was not returned — showing the best available path."
+                  : ' Pick "Safer" to route around'}
               </div>
             )}
             {previewRoute.nearbyCount === 0 && (

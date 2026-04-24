@@ -9,13 +9,14 @@ import {
   buildAvoidPolygons,
   isNearRoute,
   defaultAvoidancePrefs,
+  SAFEST_ROUTE_ONLY_UI,
   type TransportMode,
   type AvoidancePrefs,
   type SeverityFloor,
   type ManeuverStep,
 } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
-import { userAvoidZones } from "@/lib/avoid-areas";
+import { userAvoidZonesForRouting } from "@/lib/avoid-areas";
 import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
 import SearchInput from "@/components/SearchInput";
@@ -445,10 +446,16 @@ export default function SearchSidebar({
       const incidentZones = buildAvoidZones(incSnap, avoidPrefsRef.current);
       // Personal "avoid this area" pins from the user's blocklist —
       // routed identically to incident-driven zones.
-      const userZones = userAvoidZones();
+      const userZones = userAvoidZonesForRouting();
       const zones = [...incidentZones, ...userZones];
       if (zones.length === 0) {
-        routeData = { normal: directRoute, safe: null, avoidZones: [], chosen: directRoute, chosenLabel: "Fastest" };
+        routeData = {
+          normal: directRoute,
+          safe: null,
+          avoidZones: [],
+          chosen: directRoute,
+          chosenLabel: SAFEST_ROUTE_ONLY_UI ? "Route" : "Fastest",
+        };
         meta = { distanceKm: directRoute.distanceKm, durationMin: directRoute.durationMin, isSafe: false, nearbyCount: 0 };
       } else {
         const safeRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints, buildAvoidPolygons(zones));
@@ -458,7 +465,7 @@ export default function SearchSidebar({
           safe: safeRoute,
           avoidZones: zones,
           chosen: best,
-          chosenLabel: safeRoute ? "Safer" : "Fastest",
+          chosenLabel: safeRoute ? "Safer" : SAFEST_ROUTE_ONLY_UI ? "Route" : "Fastest",
         };
         meta = { distanceKm: best.distanceKm, durationMin: best.durationMin, isSafe: !!safeRoute, nearbyCount: zones.length };
       }
@@ -541,7 +548,7 @@ export default function SearchSidebar({
       try {
         const zones = [
           ...buildAvoidZones(incidents, avoidPrefsRef.current),
-          ...userAvoidZones(),
+          ...userAvoidZonesForRouting(),
         ];
         const directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
         if (!directRoute) return;
@@ -554,7 +561,7 @@ export default function SearchSidebar({
           safe: safeRoute,
           avoidZones: zones,
           chosen: best,
-          chosenLabel: safeRoute ? "Safer" : "Fastest",
+          chosenLabel: safeRoute ? "Safer" : SAFEST_ROUTE_ONLY_UI ? "Route" : "Fastest",
         };
         handleRoutesChange(routeData);
         setRouteInfo({

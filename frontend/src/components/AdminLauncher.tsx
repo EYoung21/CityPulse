@@ -118,7 +118,7 @@ export default function AdminLauncher({ onChoose }: Props) {
             <p
               className="text-xs mt-1 text-gray-400"
             >
-              User reports + in-app feedback triage
+              User-submitted reports inbox only
             </p>
           </div>
           <ChevronRight
