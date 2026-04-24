@@ -320,9 +320,13 @@ function MapHome() {
     bearingDeg: number;
   } | null>(null);
   // "Follow-me" mode keeps the map centered on the user's GPS during an
-  // active trip. Default ON when a trip starts; turned OFF when the user
-  // drags the map; re-enabled by tapping the floating Re-center pill.
-  const [followMe, setFollowMe] = useState(true);
+  // active trip. Default OFF on cold load — otherwise the map snaps from
+  // the city center to the user's actual GPS the moment SearchBar's
+  // watchPosition fires its first fix, which surprises users who landed
+  // on (e.g.) sfopulse.com from outside SF and expect to see SF, not
+  // their own house. Auto-flipped ON when a trip starts (so the map
+  // tracks the driver), and re-enabled by tapping the Re-center pill.
+  const [followMe, setFollowMe] = useState(false);
   // Auto-pan the map to the user when their GPS updates *and* a trip is
   // active *and* follow-me hasn't been turned off by manual drag. We use
   // the cheap panTo (no zoom change) instead of flyTo to avoid fighting
