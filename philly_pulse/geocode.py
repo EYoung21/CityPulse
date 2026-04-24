@@ -92,6 +92,35 @@ def _make_queries(loc: str, suffix: str | None = None) -> list[str]:
     return queries
 
 
+# Nominatim result classes that are too coarse to count as a real
+# incident location. When the LLM extracts a vague string like
+# "Philadelphia, PA", "highway", "downtown", or "Walmart", Nominatim
+# happily resolves it to the city centroid / a single arbitrary POI —
+# and then *every* unrelated incident with that same vague text ends
+# up stacked at one pin. We saw this in production: 154 incidents
+# clustered at Philly City Hall, 104 at a single Chattanooga point,
+# all with location_text values like "Philadelphia, PA" or
+# "Walmart, Chattanooga, TN".
+#
+# Reject anything whose Nominatim "type"/"class" indicates it's
+# city/state/region/POI-only rather than a street segment or
+# specific address. A street with `class=highway` (residential,
+# primary, etc.) or a structured address (`class=place,
+# type=house`) is what we want.
+_BAD_NOMINATIM_TYPES = {
+    "city", "town", "village", "hamlet",
+    "county", "state", "country", "region",
+    "administrative",
+    "suburb", "neighbourhood", "quarter", "district", "borough",
+    "locality", "city_district", "subdistrict",
+}
+_BAD_NOMINATIM_CLASSES = {
+    "boundary",
+    "amenity", "shop", "tourism", "leisure",
+    "office", "craft", "historic", "landuse", "natural",
+}
+
+
 async def _try_nominatim(
     client: httpx.AsyncClient,
     query: str,
@@ -107,6 +136,9 @@ async def _try_nominatim(
         "q": query,
         "format": "json",
         "limit": "1",
+        # We need addressdetails to distinguish a real street from a
+        # city/POI hit (see _BAD_NOMINATIM_* above).
+        "addressdetails": "1",
     }
     if bounded:
         params["viewbox"] = vb
@@ -118,11 +150,72 @@ async def _try_nominatim(
     results = resp.json()
     if not results:
         return None
-    lat = float(results[0]["lat"])
-    lng = float(results[0]["lon"])
+
+    top = results[0]
+    osm_type = (top.get("type") or "").lower()
+    osm_class = (top.get("class") or "").lower()
+    if osm_type in _BAD_NOMINATIM_TYPES or osm_class in _BAD_NOMINATIM_CLASSES:
+        logger.info(
+            "Nominatim hit rejected (too coarse) for %r: class=%s type=%s",
+            query, osm_class, osm_type,
+        )
+        return None
+
+    lat = float(top["lat"])
+    lng = float(top["lon"])
     if not (bd["lat_min"] <= lat <= bd["lat_max"] and bd["lng_min"] <= lng <= bd["lng_max"]):
         return None
     return (lat, lng)
+
+
+# Strings the LLM emits when it has no real address but felt obliged to
+# fill the field anyway. Geocoding any of these returns the city centroid
+# (or a single random hit), so we drop them before they cluster on one pin.
+_VAGUE_LOCATIONS = {
+    "highway", "freeway", "expressway", "interstate",
+    "downtown", "uptown", "midtown",
+    "north", "south", "east", "west",
+    "north side", "south side", "east side", "west side",
+    "outside", "inside", "nearby", "downtown area",
+    "the area", "this area", "the neighborhood", "the block",
+    "unknown", "unspecified", "n/a", "none", "tbd",
+}
+
+
+def _is_too_vague(loc: str, suffix: str) -> bool:
+    """True if loc is clearly not a real address (just a city, a single
+    digit, a generic word, etc.). Suffix is ", City, ST" so we strip
+    it before classifying."""
+    if not loc:
+        return True
+    s = loc.strip().lower()
+    # Drop the city suffix if the LLM appended it.
+    suf = suffix.strip(", ").lower()
+    for piece in (suf, suf.split(",")[0].strip()):
+        if piece and s.endswith(piece):
+            s = s[: -len(piece)].rstrip(" ,").strip()
+    s = s.strip(" ,.")
+    if not s:
+        # All that was left was the city name → vague.
+        return True
+    if s in _VAGUE_LOCATIONS:
+        return True
+    # Pure numerals or "12-34" / "1-100" range strings — meaningless to geocode.
+    if re.fullmatch(r"[\d\-\s]+", s):
+        return True
+    # Single short token (≤3 chars) like "BQE", "I-75", "38" — too ambiguous.
+    if len(s) <= 3 and " " not in s:
+        return True
+    # Just a quoted business name with no street ("Walmart", "McDonald's",
+    # "CVS") — we already strip these brands as prefixes in _clean_location;
+    # if nothing else is left, drop it.
+    if re.fullmatch(
+        r"(?:walmart|mcdonald'?s|cvs|wawa|7-?eleven|dunkin|target|"
+        r"starbucks|whole\s*foods|home\s*depot)",
+        s,
+    ):
+        return True
+    return False
 
 
 async def geocode(
@@ -140,6 +233,10 @@ async def geocode(
     ctx_suffix = geo_ctx.get("suffix", _SUFFIX) if geo_ctx else _SUFFIX
     ctx_viewbox = geo_ctx.get("viewbox", _VIEWBOX) if geo_ctx else _VIEWBOX
     ctx_bounds = geo_ctx.get("bounds", _BOUNDS) if geo_ctx else _BOUNDS
+
+    if _is_too_vague(location_text, ctx_suffix):
+        logger.info("Skipping vague location_text %r (would resolve to city center)", location_text)
+        return None
 
     key = f"{ctx_suffix}:{location_text.strip().lower()}"
     if key in _cache:
