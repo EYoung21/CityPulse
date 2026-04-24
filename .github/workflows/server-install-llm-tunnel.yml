@@ -1,0 +1,112 @@
+name: Server Install LLM Tunnel
+
+# One-shot installer that runs scripts/prod_setup_lambda_ollama.sh on
+# Hetzner. Stages the prod->Lambda private key from the LAMBDA_TUNNEL_KEY
+# secret first (since that key intentionally never lives in the repo),
+# then drops the LLM_BASE_URL/LLM_API_KEY/LLM_MODEL block into
+# /etc/philly-pulse.env, installs the systemd tunnel unit, and verifies
+# end-to-end with a real chat completion through the new tunnel.
+#
+# Re-runnable. Idempotent. Doesn't print or echo the key.
+#
+# Trigger via:
+#   gh workflow run "Server Install LLM Tunnel" --repo EYoung21/CityPulse
+
+on:
+  workflow_dispatch:
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo (need scripts/prod_setup_lambda_ollama.sh)
+        uses: actions/checkout@v4
+
+      - name: Stage Lambda private key (secret -> Hetzner /root)
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: scripts/prod_setup_lambda_ollama.sh
+          target: /root/
+
+      - name: Write Lambda tunnel key + run installer
+        uses: appleboy/ssh-action@v1
+        env:
+          LAMBDA_TUNNEL_KEY: ${{ secrets.LAMBDA_TUNNEL_KEY }}
+          LAMBDA_OLLAMA_IP: ${{ secrets.LAMBDA_OLLAMA_IP }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: LAMBDA_TUNNEL_KEY,LAMBDA_OLLAMA_IP
+          command_timeout: 5m
+          script: |
+            set -u
+
+            echo "######################################################"
+            echo "# 1. Stage tunnel key at /root/.ssh/lambda_tunnel_key"
+            echo "######################################################"
+            mkdir -p /root/.ssh
+            chmod 700 /root/.ssh
+            # Write secret to the canonical location used by
+            # prod_setup_lambda_ollama.sh. Use printf to preserve the
+            # trailing newline that ssh-keygen requires.
+            printf '%s\n' "$LAMBDA_TUNNEL_KEY" > /root/.ssh/lambda_tunnel_key
+            chmod 600 /root/.ssh/lambda_tunnel_key
+            ls -la /root/.ssh/lambda_tunnel_key
+            # Sanity check that we got an actual private key blob, not
+            # an accidentally empty/garbled secret. We never echo the key.
+            if ! head -1 /root/.ssh/lambda_tunnel_key | grep -q 'BEGIN OPENSSH PRIVATE KEY\|BEGIN RSA PRIVATE KEY\|BEGIN EC PRIVATE KEY\|BEGIN PRIVATE KEY'; then
+              echo "ERROR: LAMBDA_TUNNEL_KEY secret doesn't look like a private key"
+              exit 1
+            fi
+
+            echo ""
+            echo "######################################################"
+            echo "# 2. Sanity: can we even reach the Lambda box on :22?"
+            echo "######################################################"
+            timeout 5 bash -c "cat </dev/tcp/${LAMBDA_OLLAMA_IP}/22 >/dev/null 2>&1 && echo 'SSH port OPEN' || echo 'SSH port CLOSED/FILTERED — abort'"
+
+            echo ""
+            echo "######################################################"
+            echo "# 3. Run prod_setup_lambda_ollama.sh"
+            echo "######################################################"
+            chmod +x /root/scripts/prod_setup_lambda_ollama.sh
+            bash /root/scripts/prod_setup_lambda_ollama.sh 2>&1 | tail -80
+            echo "(installer exit: $?)"
+
+            echo ""
+            echo "######################################################"
+            echo "# 4. Post-install verification"
+            echo "######################################################"
+            echo "  -- tunnel state --"
+            systemctl is-active lambda-ollama-tunnel.service && echo "TUNNEL: active" || echo "TUNNEL: NOT ACTIVE"
+            ss -tln 2>/dev/null | grep ':11435' || echo "(nothing listening on :11435)"
+            echo "  -- /api/tags via tunnel --"
+            timeout 8 curl -sS http://127.0.0.1:11435/api/tags | head -c 600 || echo "(no Ollama via tunnel)"
+            echo ""
+            echo "  -- chat completion 'OK' via tunnel --"
+            timeout 30 curl -sS http://127.0.0.1:11435/v1/chat/completions \
+              -H 'Authorization: Bearer ollama' \
+              -H 'Content-Type: application/json' \
+              -d '{"model":"qwen2.5:7b-instruct-q5_K_M","messages":[{"role":"user","content":"Reply with the single word OK"}],"max_tokens":4}' \
+              | head -c 600 || echo "(LLM smoke TIMED OUT)"
+            echo ""
+
+            echo ""
+            echo "######################################################"
+            echo "# 5. Final: env file + watch /api/ingest for 90s"
+            echo "######################################################"
+            grep -E '^(LLM_|LAMBDA_|OPENAI_)' /etc/philly-pulse.env 2>/dev/null \
+              | sed -E 's|(KEY=).+|\1<set>|; s|(API_KEY=).+|\1<set>|'
+            echo "  -- waiting 90s for transcribers to retry... --"
+            sleep 90
+            echo "  -- POST /api/ingest by status code (last 90s) --"
+            journalctl -u philly-pulse-api --no-pager --since "90 sec ago" 2>/dev/null \
+              | grep -E 'POST /api/ingest' | awk '{print $(NF-1), $NF}' | sort | uniq -c | sort -rn | head -10
+            echo "  -- recent errors (should be empty if fix worked) --"
+            journalctl -u philly-pulse-api --no-pager --since "90 sec ago" 2>/dev/null \
+              | grep -iE 'ConnectTimeout|ConnectionRefused|read timed out|httpx\.|exception' \
+              | tail -10 || echo "(no LLM errors in last 90s — fix successful)"
