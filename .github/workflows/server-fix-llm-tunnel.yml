@@ -1,0 +1,121 @@
+name: Server Fix LLM Tunnel
+
+# Restart the prod→Lambda Ollama SSH tunnel and the FastAPI service on Hetzner.
+# When the tunnel dies, every POST /api/ingest blocks on `llm_client.chat_completion`
+# until httpx.ConnectTimeout fires (~30s), which makes the whole API look dead
+# from the outside (502 / read timeout). The fix is just:
+#
+#   1. systemctl restart lambda-ollama-tunnel.service
+#   2. wait for it to actually establish (curl http://127.0.0.1:11435/api/tags)
+#   3. systemctl restart philly-pulse-api  (clears stuck httpx pool)
+#   4. verify /api/health and a sample LLM call both come back fast
+#
+# Trigger via:
+#   gh workflow run "Server Fix LLM Tunnel" --repo EYoung21/CityPulse
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restart tunnel + API and verify
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 5m
+          script: |
+            set -u
+
+            echo "######################################################"
+            echo "# 1. Pre-fix state"
+            echo "######################################################"
+            echo "tunnel: $(systemctl is-active lambda-ollama-tunnel.service 2>/dev/null || echo missing)"
+            echo "api:    $(systemctl is-active philly-pulse-api 2>/dev/null || echo missing)"
+            ss -tlnp 2>/dev/null | grep -E ':11435|:8765' || echo "(no relevant listeners)"
+
+            echo ""
+            echo "######################################################"
+            echo "# 2. Restart Lambda Ollama tunnel"
+            echo "######################################################"
+            if systemctl list-unit-files lambda-ollama-tunnel.service >/dev/null 2>&1; then
+              systemctl restart lambda-ollama-tunnel.service || echo "(tunnel restart returned non-zero)"
+              # Tunnel needs a beat to handshake + start listening.
+              for i in 1 2 3 4 5 6 7 8 9 10; do
+                if ss -tln 2>/dev/null | grep -q ':11435'; then
+                  echo "tunnel listening on :11435 after ${i}s"
+                  break
+                fi
+                sleep 1
+              done
+            else
+              echo "WARN: lambda-ollama-tunnel.service not installed on this host"
+            fi
+            systemctl status lambda-ollama-tunnel.service --no-pager -l 2>&1 | head -15 || true
+
+            echo ""
+            echo "######################################################"
+            echo "# 3. Smoke-test the tunnel directly"
+            echo "######################################################"
+            echo "  -- /api/tags (instant if tunnel is healthy) --"
+            timeout 8 curl -sS http://127.0.0.1:11435/api/tags | head -c 400 || echo "(no Ollama via tunnel)"
+            echo ""
+            echo "  -- one-token chat completion --"
+            timeout 25 curl -sS http://127.0.0.1:11435/v1/chat/completions \
+              -H 'Authorization: Bearer ollama' \
+              -H 'Content-Type: application/json' \
+              -d '{"model":"qwen2.5:7b-instruct-q5_K_M","messages":[{"role":"user","content":"Reply with the single word OK"}],"max_tokens":4}' \
+              | head -c 400 || echo "(LLM smoke TIMED OUT — tunnel may need re-keying or the Lambda box is offline)"
+            echo ""
+
+            echo ""
+            echo "######################################################"
+            echo "# 4. Restart FastAPI (clears stuck httpx connection pool)"
+            echo "######################################################"
+            systemctl restart philly-pulse-api
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              if ss -tln 2>/dev/null | grep -q ':8765'; then
+                echo "uvicorn listening on :8765 after ${i}s"
+                break
+              fi
+              sleep 1
+            done
+            systemctl status philly-pulse-api --no-pager -l 2>&1 | head -10 || true
+
+            echo ""
+            echo "######################################################"
+            echo "# 5. Verify the public ingest path is healthy end-to-end"
+            echo "######################################################"
+            echo "  -- local /api/health --"
+            timeout 8 curl -sS http://127.0.0.1:8765/api/health | head -c 600 || echo "(local health failed)"
+            echo ""
+            echo "  -- public /api/health (via nginx) --"
+            timeout 12 curl -sS -o /tmp/h.txt -w "HTTP %{http_code} time=%{time_total}s size=%{size_download}B\n" \
+              https://api.phlpulse.com/api/health || echo "(public health TIMED OUT)"
+            head -c 600 /tmp/h.txt 2>/dev/null
+            echo ""
+
+            echo ""
+            echo "######################################################"
+            echo "# 6. Post-fix state (snapshot for the audit log)"
+            echo "######################################################"
+            echo "tunnel: $(systemctl is-active lambda-ollama-tunnel.service 2>/dev/null || echo missing)"
+            echo "api:    $(systemctl is-active philly-pulse-api 2>/dev/null || echo missing)"
+            ss -tlnp 2>/dev/null | grep -E ':11435|:8765' | head -6 || echo "(nothing listening)"
+
+            echo ""
+            echo "######################################################"
+            echo "# 7. Watch /api/ingest for 60s and report counts"
+            echo "######################################################"
+            sleep 60
+            echo "  -- ingest activity in the last 60 seconds --"
+            journalctl -u philly-pulse-api --no-pager --since "60 sec ago" 2>/dev/null \
+              | grep -E 'POST /api/ingest' \
+              | awk '{print $NF}' | sort | uniq -c | sort -rn | head -10
+            echo "  -- recent errors (should be empty if fix worked) --"
+            journalctl -u philly-pulse-api --no-pager --since "60 sec ago" 2>/dev/null \
+              | grep -iE 'ConnectTimeout|ConnectionRefused|read timed out|httpx\.|exception' \
+              | tail -10 || echo "(no errors in last 60s)"

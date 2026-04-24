@@ -46,10 +46,15 @@ pip install -q --upgrade pip
 # faster-whisper bundles ctranslate2 with CUDA support; the rest are
 # pinned loosely (any recent version works). nvidia-cudnn-cu12 is what
 # faster-whisper needs at runtime; on Lambda's stock image it's missing.
+# webrtcvad is required by philly_pulse.preprocess._vad_segment; without
+# it, every chunk in backfill_archives.py raises
+# "No module named 'webrtcvad'" and produces 0 transcripts (the box
+# burns $1.29/hr doing nothing, and Firestore stops getting incidents).
 pip install -q \
     "faster-whisper>=1.0.3" \
     "ctranslate2>=4.4.0" \
     requests pyyaml numpy scipy \
+    webrtcvad \
     "nvidia-cudnn-cu12==9.*"
 
 # faster-whisper looks for libcudnn at runtime; symlink it onto the

@@ -1195,26 +1195,51 @@ function MapHome() {
     }
   }, [tripGeometry, userLocation, incidents, aheadAlert]);
 
+  // API-backed summary + stats poll. Self-degrades when the Python
+  // backend is unreachable: after the first failure we stop polling
+  // and let the Firestore-derived effect below take over, so a hung
+  // /api/summary endpoint doesn't spam the console with a failure
+  // every POLL_INTERVAL ms forever.
+  const [apiSummaryDown, setApiSummaryDown] = useState(false);
   useEffect(() => {
-    if (!API_BASE) return;
+    if (!API_BASE || apiSummaryDown) return;
     let cancelled = false;
+    let consecutiveFailures = 0;
     const pull = async () => {
       try {
         const [sum, st] = await Promise.all([fetchSummary(), fetchStats()]);
-        if (!cancelled) { setSummary(sum.summary); setStats(st); }
-      } catch (e) { console.error("Summary/stats:", e); }
+        if (!cancelled) {
+          setSummary(sum.summary);
+          setStats(st);
+          consecutiveFailures = 0;
+        }
+      } catch (e) {
+        consecutiveFailures += 1;
+        // Log once on the first failure, then stop polling. The
+        // Firestore-derived fallback effect below will take it from
+        // here so the UI keeps showing fresh stats from local data.
+        if (consecutiveFailures === 1) {
+          console.warn("[summary/stats] API unavailable, falling back to client-derived stats", e);
+        }
+        if (consecutiveFailures >= 2 && !cancelled) {
+          setApiSummaryDown(true);
+        }
+      }
     };
     void pull();
     const t = setInterval(pull, POLL_INTERVAL);
     return () => { cancelled = true; clearInterval(t); };
-  }, []);
+  }, [apiSummaryDown]);
 
   useEffect(() => {
-    if (API_BASE) return;
+    // Use client-side derivation when either (a) we never had an API
+    // configured, or (b) the API is configured but currently down.
+    // Either way, Firestore incidents are the source of truth.
+    if (API_BASE && !apiSummaryDown) return;
     if (!useFirestoreData) return;
     setSummary(buildLocalSummary(incidents));
     setStats(statsFromIncidents(incidents));
-  }, [useFirestoreData, incidents]);
+  }, [useFirestoreData, incidents, apiSummaryDown]);
 
   const toggleCat = useCallback((cats: readonly string[]) => {
     setActiveCats((prev) => {

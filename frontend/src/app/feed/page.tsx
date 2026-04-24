@@ -27,7 +27,34 @@ import IncidentFeed from "@/components/IncidentFeed";
 import MobileBottomNav, { MOBILE_NAV_HEIGHT_PX } from "@/components/MobileBottomNav";
 import InstallPrompt from "@/components/InstallPrompt";
 import { fetchIncidentPage, type Incident } from "@/lib/api";
+import { fetchIncidentPageFromFirestore } from "@/lib/firestore";
 import { getCurrentCity } from "@/lib/pulse-cities";
+
+/**
+ * Read-path resolver for the feed: Firestore first (resilient to the
+ * Python API being down), API as a fallback (covers the case where
+ * Firestore is misconfigured locally but the dev server is fine).
+ *
+ * The Python `/api/incidents/page` endpoint and the Firestore query
+ * return the same shape, so the caller can't tell them apart. The
+ * fallback mostly matters for local dev with `NEXT_PUBLIC_FIREBASE_*`
+ * unset; in prod, Firestore should always succeed.
+ */
+async function loadIncidentPage(opts: {
+  cursor?: string | null;
+  limit?: number;
+  city?: string;
+  nearLat?: number | null;
+  nearLng?: number | null;
+  signal?: AbortSignal;
+}) {
+  try {
+    return await fetchIncidentPageFromFirestore(opts);
+  } catch (firestoreErr) {
+    console.warn("[feed] Firestore page failed, falling back to API", firestoreErr);
+    return fetchIncidentPage(opts);
+  }
+}
 
 type FeedMode = "recent" | "near";
 
@@ -63,7 +90,7 @@ export default function FeedPage() {
       ctrl.abort();
     }, 25_000);
     try {
-      const page = await fetchIncidentPage({
+      const page = await loadIncidentPage({
         limit: mode === "near" ? 40 : PAGE_SIZE,
         city: city.slug,
         nearLat: mode === "near" ? userLoc?.lat ?? null : null,
@@ -78,7 +105,7 @@ export default function FeedPage() {
     } catch (err) {
       const aborted = (err as { name?: string })?.name === "AbortError";
       if (aborted && timedOut) {
-        setError("Request timed out. Check your connection and NEXT_PUBLIC_API_URL.");
+        setError("Request timed out — check your connection and try again.");
       } else if (!aborted) {
         setError(err instanceof Error ? err.message : "Failed to load feed");
       }
@@ -97,7 +124,7 @@ export default function FeedPage() {
     if (!cursor || loading || !hasMore || mode !== "recent") return;
     setLoading(true);
     try {
-      const page = await fetchIncidentPage({
+      const page = await loadIncidentPage({
         cursor,
         limit: PAGE_SIZE,
         city: city.slug,

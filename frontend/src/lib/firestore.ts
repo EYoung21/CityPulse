@@ -1,14 +1,16 @@
 import {
   collection,
+  getDocs,
   getFirestore,
   limit as limitFn,
   onSnapshot,
   orderBy,
   query,
+  startAfter,
   where,
 } from "firebase/firestore";
 import { getFirebaseApp } from "@/lib/firebase";
-import type { Incident, Extraction, PreprocessMeta, VariantResult, WhisperMeta } from "@/lib/api";
+import type { Incident, Extraction, IncidentPageResponse, PreprocessMeta, VariantResult, WhisperMeta } from "@/lib/api";
 import { enrichIncidents } from "@/lib/incident-weights";
 import { getCurrentCity } from "@/lib/pulse-cities";
 
@@ -103,9 +105,7 @@ export function subscribeIncidents(
       const list: Incident[] = [];
       snap.forEach((doc) => {
         const row = mapDoc(doc.id, doc.data());
-        if (row.inhibitor_status !== "blocked") {
-          list.push(row);
-        }
+        if (shouldRenderIncident(row)) list.push(row);
       });
       onData(enrichIncidents(list));
     },
@@ -113,6 +113,139 @@ export function subscribeIncidents(
       onError?.(err instanceof Error ? err : new Error(String(err)));
     }
   );
+}
+
+/**
+ * Centralised render gate for incidents pulled from Firestore.
+ *
+ * Filters out three classes of "we shouldn't be drawing this":
+ *   1. Inhibitor blocked (ethics/abuse policy hit).
+ *   2. Soft-hidden by the LLM-fallback repair script
+ *      (`hidden === true`, `geocode_status === "unmapped_repaired"`).
+ *   3. The original tainted rows from before the
+ *      `incident_geocode_hallucination` fix — `geocode_status` starts
+ *      with `llm_fallback`. The LLM was hallucinating the city
+ *      centroid for any address Nominatim couldn't resolve, which
+ *      caused thousands of unrelated incidents to pile on the same
+ *      pin (the giant 1064/1498/276/71 clusters the user reported).
+ *      The new ingest path no longer does this, but old data is
+ *      still in Firestore. Hiding client-side is the cheapest fix
+ *      while the backend repair pass is offline (see
+ *      scripts/repair_llm_fallback_incidents.py).
+ */
+export function shouldRenderIncident(inc: Incident): boolean {
+  if (inc.inhibitor_status === "blocked") return false;
+  if (inc.hidden === true) return false;
+  const gs = inc.geocode_status || "";
+  if (gs.startsWith("llm_fallback")) return false;
+  return true;
+}
+
+/**
+ * Cursor-paginated incidents read directly from Firestore. Mirrors the
+ * shape of `lib/api.ts > fetchIncidentPage` so the `/feed` route can
+ * swap between API-backed and Firestore-backed fetches without
+ * touching its render logic.
+ *
+ * Why duplicate the API: when the Python backend's `/api/incidents/page`
+ * is unreachable (e.g. the prod uvicorn is hung on a slow LLM call),
+ * the feed used to render an empty list even though the same data is
+ * sitting in Firestore — which the map view reads directly via
+ * `subscribeIncidents`. This keeps the feed alive end-to-end as long
+ * as Firestore is reachable.
+ *
+ * Modes:
+ *   - "recent": orderBy(reported_at desc) with cursor pagination.
+ *     Cursor is the ISO timestamp of the last incident in the previous
+ *     page (we use Firestore's `startAfter(value)` since we already
+ *     have the doc value, no extra read).
+ *   - "near": fetches a single 7-day window of recent incidents with
+ *     valid coords, sorts client-side by haversine distance, returns
+ *     the closest `limit`. No cursor (matches the Python endpoint's
+ *     behavior; the page caller already disables infinite scroll in
+ *     "near" mode).
+ */
+export async function fetchIncidentPageFromFirestore(opts: {
+  cursor?: string | null;
+  limit?: number;
+  city?: string;
+  nearLat?: number | null;
+  nearLng?: number | null;
+}): Promise<IncidentPageResponse> {
+  const db = getFirestore(getFirebaseApp());
+  const limit = opts.limit ?? 20;
+  const citySlug = opts.city || getCurrentCity().slug;
+  const isNear = opts.nearLat != null && opts.nearLng != null;
+
+  if (isNear) {
+    // Pull up to 500 recent incidents in the city, then haversine-sort.
+    // 7 days window keeps payload bounded; matches the server's
+    // `mode=near` heuristic of "recent enough to still be useful".
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+    const q = query(
+      collection(db, COLLECTION),
+      where("city", "==", citySlug),
+      where("reported_at", ">=", sevenDaysAgo),
+      orderBy("reported_at", "desc"),
+      limitFn(500),
+    );
+    const snap = await getDocs(q);
+    const list: (Incident & { distance_km?: number })[] = [];
+    snap.forEach((doc) => {
+      const inc = mapDoc(doc.id, doc.data());
+      if (!shouldRenderIncident(inc)) return;
+      if (inc.lat == null || inc.lng == null) return;
+      list.push(inc);
+    });
+    const enriched = enrichIncidents(list) as (Incident & { distance_km?: number })[];
+    const lat0 = opts.nearLat as number;
+    const lng0 = opts.nearLng as number;
+    for (const inc of enriched) {
+      inc.distance_km = haversineKm(lat0, lng0, inc.lat as number, inc.lng as number);
+    }
+    enriched.sort((a, b) => (a.distance_km ?? Infinity) - (b.distance_km ?? Infinity));
+    return {
+      incidents: enriched.slice(0, limit),
+      next_cursor: null,
+      mode: "near",
+    };
+  }
+
+  // "recent" mode: cursor is the previous page's last `reported_at`.
+  const baseConstraints = [
+    where("city", "==", citySlug),
+    orderBy("reported_at", "desc"),
+  ];
+  const q = opts.cursor
+    ? query(collection(db, COLLECTION), ...baseConstraints, startAfter(opts.cursor), limitFn(limit + 1))
+    : query(collection(db, COLLECTION), ...baseConstraints, limitFn(limit + 1));
+  const snap = await getDocs(q);
+  const rows: Incident[] = [];
+  snap.forEach((doc) => {
+    const inc = mapDoc(doc.id, doc.data());
+    if (shouldRenderIncident(inc)) rows.push(inc);
+  });
+  // Over-fetch by one so we know whether to advertise a next cursor.
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const enriched = enrichIncidents(page);
+  const last = enriched[enriched.length - 1];
+  return {
+    incidents: enriched,
+    next_cursor: hasMore && last ? last.reported_at : null,
+    mode: "recent",
+  };
+}
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371; // km
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
 function mapVariant(v: Record<string, unknown>): VariantResult {
