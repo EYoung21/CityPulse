@@ -32,6 +32,19 @@ service cloud.firestore {
           && request.auth.uid == userId
           && request.auth.token.firebase.sign_in_provider != 'anonymous';
       }
+
+      // Cross-device user preferences synced by frontend/src/lib/prefs-sync.ts.
+      // Stored at users/{uid}/userPrefs/{docId} (currently a single
+      // doc id "v1"). Owner-only read/write; non-anonymous required so
+      // we always have a stable account to mirror the prefs against.
+      // Without this rule the prefs sync silently fails with
+      // "Missing or insufficient permissions" for every signed-in
+      // user, leaving prefs un-syncable across devices.
+      match /userPrefs/{prefDocId} {
+        allow read, write: if request.auth != null
+          && request.auth.uid == userId
+          && request.auth.token.firebase.sign_in_provider != 'anonymous';
+      }
     }
 
     // Live ETA share: a sender publishes their position + ETA so a

@@ -7,46 +7,108 @@ jobs:
   debug:
     runs-on: ubuntu-latest
     steps:
-      - name: Check ingest sources
+      - name: Diagnose ingest pipeline + LLM tunnel
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: root
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 5m
           script: |
-            echo "=== Recent ingest IPs from API logs ==="
-            journalctl -u philly-pulse-api --no-pager -n 500 --since "10 minutes ago" 2>/dev/null \
-              | grep 'POST /api/ingest' | awk '{print $NF}' | sort | uniq -c | sort -rn || echo "(none)"
+            echo "######################################################"
+            echo "# 1. philly-pulse-api service health"
+            echo "######################################################"
+            systemctl is-active philly-pulse-api && echo "SERVICE: active" || echo "SERVICE: NOT ACTIVE"
+            systemctl status philly-pulse-api --no-pager -l 2>&1 | head -20
 
             echo ""
-            echo "=== Sample ingest log lines ==="
-            journalctl -u philly-pulse-api --no-pager -n 500 --since "10 minutes ago" 2>/dev/null \
-              | grep 'POST /api/ingest' | tail -10
+            echo "######################################################"
+            echo "# 2. /api/health (uvicorn on :8765 directly, no nginx)"
+            echo "######################################################"
+            timeout 8 curl -sS http://127.0.0.1:8765/api/health \
+              | head -c 1500 || echo "(local /api/health TIMED OUT or failed)"
+            echo ""
 
             echo ""
-            echo "=== All recent POST requests by source IP ==="
-            journalctl -u philly-pulse-api --no-pager -n 1000 --since "10 minutes ago" 2>/dev/null \
-              | grep '"POST' | sed 's/.*INFO: *//' | awk -F' - ' '{print $1}' | sort | uniq -c | sort -rn
+            echo "######################################################"
+            echo "# 3. nginx -> uvicorn flow (the path Lambda backfill uses)"
+            echo "######################################################"
+            timeout 12 curl -sS -o /tmp/h.txt -w "HTTP %{http_code} time=%{time_total}s size=%{size_download}B\n" \
+              https://api.phlpulse.com/api/health || echo "(public /api/health TIMED OUT)"
+            head -c 800 /tmp/h.txt 2>/dev/null
+            echo ""
 
             echo ""
-            echo "=== Netstat: who's connected to port 8765 ==="
-            ss -tn state established '( dport = :8765 or sport = :8765 )' 2>/dev/null | head -20
+            echo "######################################################"
+            echo "# 4. Lambda Ollama tunnel (lambda-ollama-tunnel.service)"
+            echo "######################################################"
+            systemctl is-active lambda-ollama-tunnel.service 2>/dev/null && echo "TUNNEL: active" || echo "TUNNEL: NOT ACTIVE"
+            ss -tlnp 2>/dev/null | grep ':11435' || echo "(nothing listening on :11435 -- tunnel is DOWN)"
+            echo "  -- tail of tunnel logs --"
+            journalctl -u lambda-ollama-tunnel --no-pager -n 15 2>/dev/null | tail -15
 
             echo ""
-            echo "=== Transcriber status ==="
-            systemctl is-active philly-pulse-live
-            echo "Clips on disk: $(find /root/PhillyPulse/audio_clips/ -type f | wc -l)"
-            echo "Newest clip: $(ls -t /root/PhillyPulse/audio_clips/ | head -1)"
+            echo "######################################################"
+            echo "# 5. LLM smoke test (the call that /api/ingest blocks on)"
+            echo "######################################################"
+            echo "  -- /api/tags via tunnel --"
+            timeout 6 curl -sS http://127.0.0.1:11435/api/tags | head -c 400 || echo "(no Ollama via tunnel)"
+            echo ""
+            echo "  -- chat completion 'OK' --"
+            timeout 25 curl -sS http://127.0.0.1:11435/v1/chat/completions \
+              -H 'Authorization: Bearer ollama' \
+              -H 'Content-Type: application/json' \
+              -d '{"model":"qwen2.5:7b-instruct-q5_K_M","messages":[{"role":"user","content":"Reply with the single word OK"}],"max_tokens":4}' \
+              | head -c 400 || echo "(LLM smoke TIMED OUT)"
+            echo ""
 
             echo ""
-            echo "=== Disk usage ==="
-            df -h /
+            echo "######################################################"
+            echo "# 6. Active LLM provider in /etc/philly-pulse.env"
+            echo "######################################################"
+            grep -E '^(LLM_|LAMBDA_|OPENAI_)' /etc/philly-pulse.env 2>/dev/null \
+              | sed -E 's|(KEY=).+|\1<set>|; s|(API_KEY=).+|\1<set>|; s|(PASSWORD=).+|\1<set>|'
 
             echo ""
-            echo "=== API errors/tracebacks (last 100 lines) ==="
-            journalctl -u philly-pulse-api --no-pager -n 200 --since "5 minutes ago" 2>/dev/null \
-              | grep -A5 -i 'error\|traceback\|exception\|errno' | tail -100
+            echo "######################################################"
+            echo "# 7. Recent /api/ingest activity (the path Lambda hits)"
+            echo "######################################################"
+            echo "  -- POST /api/ingest counts (last 15 min) --"
+            journalctl -u philly-pulse-api --no-pager --since "15 min ago" 2>/dev/null \
+              | grep -E 'POST /api/ingest' \
+              | awk '{print $NF}' | sort | uniq -c | sort -rn | head -10
+            echo "  -- last 10 ingest attempts --"
+            journalctl -u philly-pulse-api --no-pager --since "15 min ago" 2>/dev/null \
+              | grep -E 'POST /api/ingest' | tail -10
 
             echo ""
-            echo "=== Full recent API logs (last 30 lines) ==="
-            journalctl -u philly-pulse-api --no-pager -n 30
+            echo "######################################################"
+            echo "# 8. Recent errors / tracebacks in api logs"
+            echo "######################################################"
+            journalctl -u philly-pulse-api --no-pager --since "10 min ago" 2>/dev/null \
+              | grep -iE 'error|traceback|exception|timeout|read timed out|connectionrefused|httperror' \
+              | tail -40
+
+            echo ""
+            echo "######################################################"
+            echo "# 9. Cutover state (live transcribers should be DISABLED)"
+            echo "######################################################"
+            for c in sf nyc philly chattanooga; do
+              printf "pulse-live@%s: active=%s enabled=%s\n" \
+                "$c" \
+                "$(systemctl is-active pulse-live@${c} 2>/dev/null)" \
+                "$(systemctl is-enabled pulse-live@${c} 2>/dev/null)"
+            done
+            printf "philly-pulse-live (legacy): active=%s enabled=%s\n" \
+              "$(systemctl is-active philly-pulse-live 2>/dev/null)" \
+              "$(systemctl is-enabled philly-pulse-live 2>/dev/null)"
+
+            echo ""
+            echo "######################################################"
+            echo "# 10. Disk + memory pressure (502s often correlate)"
+            echo "######################################################"
+            df -h / | tail -2
+            free -h | head -2
+            echo ""
+            echo "uvicorn process:"
+            ps -o pid,pcpu,pmem,rss,etime,cmd -C python3 2>/dev/null | grep -E 'uvicorn|server' | head -3
