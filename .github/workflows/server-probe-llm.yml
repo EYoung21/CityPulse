@@ -1,0 +1,86 @@
+name: Server Probe LLM
+
+# Quick read-only probe of LLM-related connectivity from prod (Hetzner):
+#   - Can prod reach Lambda Ollama at 150.230.182.19:11434 directly?
+#   - Can prod reach api.openai.com (in case OpenAI is what's currently
+#     configured but timing out on a network problem, not a key issue)?
+#   - Can prod reach api.lambda.ai (the official Lambda Inference API)?
+#
+# Read-only — no changes made.
+#
+# Trigger via:
+#   gh workflow run "Server Probe LLM" --repo EYoung21/CityPulse
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe outbound LLM endpoints
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 2m
+          script: |
+            echo "######################################################"
+            echo "# 1. Direct Lambda Ollama (no tunnel)"
+            echo "######################################################"
+            echo "  -- TCP connect to 150.230.182.19:11434 --"
+            timeout 5 bash -c 'cat </dev/tcp/150.230.182.19/11434 >/dev/null 2>&1 && echo OPEN || echo CLOSED/FILTERED'
+            echo "  -- HTTP /api/tags --"
+            timeout 8 curl -sS -m 8 http://150.230.182.19:11434/api/tags | head -c 400 || echo "(no response)"
+            echo ""
+
+            echo ""
+            echo "######################################################"
+            echo "# 2. Lambda Inference API (public HTTPS)"
+            echo "######################################################"
+            echo "  -- DNS --"
+            getent hosts api.lambda.ai || echo "(no DNS record)"
+            echo "  -- TCP 443 --"
+            timeout 5 bash -c 'cat </dev/tcp/api.lambda.ai/443 >/dev/null 2>&1 && echo OPEN || echo CLOSED/FILTERED'
+            echo "  -- HTTPS GET / --"
+            timeout 10 curl -sS -m 10 -o /dev/null -w "HTTP %{http_code} time=%{time_total}s\n" https://api.lambda.ai/v1/models || echo "(no response)"
+
+            echo ""
+            echo "######################################################"
+            echo "# 3. OpenAI (currently configured per env file)"
+            echo "######################################################"
+            echo "  -- DNS --"
+            getent hosts api.openai.com || echo "(no DNS record)"
+            echo "  -- TCP 443 --"
+            timeout 5 bash -c 'cat </dev/tcp/api.openai.com/443 >/dev/null 2>&1 && echo OPEN || echo CLOSED/FILTERED'
+            echo "  -- HTTPS GET / (anonymous, expect 401) --"
+            timeout 10 curl -sS -m 10 -o /dev/null -w "HTTP %{http_code} time=%{time_total}s\n" https://api.openai.com/v1/models || echo "(no response)"
+            echo "  -- Real call with current OPENAI_API_KEY (sanitised) --"
+            if [[ -f /etc/philly-pulse.env ]]; then
+              CURRENT_KEY=$(grep -E '^OPENAI_API_KEY=' /etc/philly-pulse.env | sed 's/^OPENAI_API_KEY=//')
+              if [[ -n "$CURRENT_KEY" ]]; then
+                timeout 15 curl -sS -m 15 -o /tmp/oa.txt -w "HTTP %{http_code} time=%{time_total}s\n" \
+                  -H "Authorization: Bearer $CURRENT_KEY" \
+                  https://api.openai.com/v1/models || echo "(no response)"
+                head -c 400 /tmp/oa.txt 2>/dev/null
+                echo ""
+              else
+                echo "(no OPENAI_API_KEY in env)"
+              fi
+            fi
+
+            echo ""
+            echo "######################################################"
+            echo "# 4. Lambda private SSH key (for prod_setup_lambda_ollama.sh)"
+            echo "######################################################"
+            ls -la /root/.ssh/ 2>/dev/null | grep -E 'lambda|tunnel' || echo "(no lambda tunnel key found)"
+
+            echo ""
+            echo "######################################################"
+            echo "# 5. Outbound general connectivity sanity"
+            echo "######################################################"
+            echo "  -- example.com :443 --"
+            timeout 5 bash -c 'cat </dev/tcp/example.com/443 >/dev/null 2>&1 && echo OPEN || echo CLOSED/FILTERED'
+            echo "  -- google.com :443 --"
+            timeout 5 bash -c 'cat </dev/tcp/google.com/443 >/dev/null 2>&1 && echo OPEN || echo CLOSED/FILTERED'
