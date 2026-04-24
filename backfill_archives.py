@@ -292,10 +292,17 @@ def fetch_archive_links(session: requests.Session, feed_id: str, day: str) -> li
                 _record_429()
                 if attempt < MAX_RETRIES_PER_REQUEST:
                     wait = _backoff_delay(attempt)
-                    print(f"  [429 archive list] backoff {wait:.0f}s (attempt {attempt+1}/{MAX_RETRIES_PER_REQUEST})...")
+                    print(
+                        f"  [429 archive list] backoff {wait:.0f}s "
+                        f"(attempt {attempt+1}/{MAX_RETRIES_PER_REQUEST})",
+                        flush=True,
+                    )
                     time.sleep(wait)
                     continue
-                print(f"  [429] Giving up on archive list after {MAX_RETRIES_PER_REQUEST} retries")
+                print(
+                    f"  [429] Giving up on archive list after {MAX_RETRIES_PER_REQUEST} retries",
+                    flush=True,
+                )
                 return []
             if resp.status_code != 200:
                 return []
@@ -338,10 +345,17 @@ def download_mp3(session: requests.Session, url: str, dest_path: str) -> bool:
                 _record_429()
                 if attempt < MAX_RETRIES_PER_REQUEST:
                     wait = _backoff_delay(attempt)
-                    print(f"[429] backoff {wait:.0f}s (attempt {attempt+1}/{MAX_RETRIES_PER_REQUEST})...", end=" ", flush=True)
+                    # Newline (not end=" ") so the runner's stdout pump
+                    # sees the line immediately and the heartbeat reflects
+                    # current activity even during long backoff sleeps.
+                    print(
+                        f"    [429 download] backoff {wait:.0f}s "
+                        f"(attempt {attempt+1}/{MAX_RETRIES_PER_REQUEST})",
+                        flush=True,
+                    )
                     time.sleep(wait)
                     continue
-                print("[429] Giving up after retries")
+                print("    [429] Giving up after retries", flush=True)
                 return False
             resp.raise_for_status()
             with open(dest_path, "wb") as f:
@@ -356,7 +370,7 @@ def download_mp3(session: requests.Session, url: str, dest_path: str) -> bool:
                 _record_429()
                 if attempt < MAX_RETRIES_PER_REQUEST:
                     wait = _backoff_delay(attempt)
-                    print(f"[429] backoff {wait:.0f}s...", end=" ", flush=True)
+                    print(f"    [429 download] backoff {wait:.0f}s", flush=True)
                     time.sleep(wait)
                     continue
             print(f"[DL ERROR] {e}")
@@ -697,28 +711,37 @@ def main():
                     tmp_path = tmp.name
 
                 try:
-                    print(f"  [{ai+1}/{len(archives)}] Downloading {time_label}...", end=" ", flush=True)
+                    # Each step prints its own line so the runner's stdout
+                    # pump (and therefore the heartbeat) ticks per step
+                    # rather than batching the whole try-block onto one line.
+                    print(
+                        f"  [{ai+1}/{len(archives)}] Downloading {time_label}...",
+                        flush=True,
+                    )
                     try:
                         if not download_mp3(session, archive_url, tmp_path):
                             continue
                     except QuotaExhaustedError as e:
-                        print(f"\n[QUOTA EXHAUSTED] {e}")
+                        print(f"\n[QUOTA EXHAUSTED] {e}", flush=True)
                         quota_exhausted = True
                         break
 
                     audio = mp3_to_pcm(tmp_path)
                     if audio is None:
-                        print("(empty/error)")
+                        print("    (empty/error)", flush=True)
                         continue
 
                     duration_min = len(audio) / SAMPLE_RATE / 60
-                    print(f"({duration_min:.1f}min)", end=" ", flush=True)
+                    print(
+                        f"    transcribing {duration_min:.1f}min...",
+                        flush=True,
+                    )
 
                     count = transcribe_and_post(model, audio, feed_id, feed_label, archive_ts, city=city_slug)
                     day_transcribed += count
                     total_transcribed += count
                     total_archives += 1
-                    print(f"-> {count} transcripts")
+                    print(f"    -> {count} transcripts", flush=True)
 
                     done_segments.add(seg_id)
                     progress[day_str] = {"done_segments": list(done_segments), "transcripts": day_transcribed}

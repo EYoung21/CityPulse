@@ -149,6 +149,19 @@ export function userAvoidZones(): AvoidZone[] {
   }));
 }
 
+/**
+ * Product toggle: draw-your-own avoid zones + map overlay are hidden
+ * while this stays `false`, but `userAvoidZones()` and
+ * `AvoidAreasManager` remain in the tree for a quick revert.
+ */
+export const USER_DRAWN_AVOID_AREAS_ENABLED = false;
+
+/** Use at routing call sites when personal zones should be suppressed. */
+export function userAvoidZonesForRouting(): AvoidZone[] {
+  if (!USER_DRAWN_AVOID_AREAS_ENABLED) return [];
+  return userAvoidZones();
+}
+
 // Cross-tab + prefs-sync hydration: storage events fire in *other*
 // tabs after a setItem (and after prefs-sync rewrites localStorage on
 // sign-in). Mirror those into our pubsub so subscribers refresh.

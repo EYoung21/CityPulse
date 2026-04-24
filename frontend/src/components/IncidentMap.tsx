@@ -20,6 +20,7 @@ import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "@maplibre/maplibre-gl-leaflet";
 import { vectorBasemapStyleUrl, isVectorTilesEnabled, subscribeVectorTiles } from "@/lib/vector-basemap";
+import { SAFEST_ROUTE_ONLY_UI } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
 import { heatmapWeight } from "@/lib/severity";
 import type { RouteData } from "@/components/RoutePanel";
@@ -1678,8 +1679,9 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       layer.clearLayers();
       // Lazy import to keep the initial chunk lean — this overlay is
       // only relevant once the user has started using the feature.
-      void import("@/lib/avoid-areas").then(({ loadAvoidAreas }) => {
+      void import("@/lib/avoid-areas").then(({ loadAvoidAreas, USER_DRAWN_AVOID_AREAS_ENABLED }) => {
         if (layer !== userAvoidLayerRef.current) return; // unmounted
+        if (!USER_DRAWN_AVOID_AREAS_ENABLED) return;
         for (const a of loadAvoidAreas()) {
           const c = L.circle([a.lat, a.lng], {
             radius: a.radiusM,
@@ -1992,7 +1994,10 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     const chosenIsNormal = hasChosen && hasNormal && sameGeom(routes.chosen!.geometry, routes.normal!.geometry);
 
     // Dim background polylines for any non-chosen options that exist.
-    if (hasNormal && routes.normal && !chosenIsNormal) {
+    // When SAFEST_ROUTE_ONLY_UI is on we never show the grey "fastest"
+    // baseline — the geometry still exists on `routes.normal` for devs
+    // who flip the flag back.
+    if (!SAFEST_ROUTE_ONLY_UI && hasNormal && routes.normal && !chosenIsNormal) {
       L.polyline(routes.normal.geometry, {
         color: "#6b7280",
         weight: 3,

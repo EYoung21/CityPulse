@@ -18,6 +18,11 @@ jobs:
             set -e
             cd /root/PhillyPulse
 
+            # Allowlist must stay in sync with scripts/setup-multi-city.sh
+            # and frontend/src/lib/pulse-cities.ts (active != comingSoon).
+            ACTIVE_CITIES=(sf nyc philly chattanooga)
+            INACTIVE_CITIES=(memphis detroit orlando miami la lasvegas)
+
             cat >/etc/systemd/system/pulse-live@.service <<'EOF'
             [Unit]
             Description=Philly Pulse live transcriber (%i)
@@ -37,40 +42,39 @@ jobs:
             WantedBy=multi-user.target
             EOF
 
-            cat >/etc/systemd/system/pulse-backfill.service <<'EOF'
-            [Unit]
-            Description=Philly Pulse backfill run
-            After=network-online.target
-
-            [Service]
-            Type=oneshot
-            WorkingDirectory=/root/PhillyPulse
-            ExecStart=/root/PhillyPulse/venv/bin/python -u /root/PhillyPulse/multi_transcriber.py --mode backfill --rotate-cities sf,nyc,philly,chattanooga --hours 2
-            User=root
-            EOF
-
-            cat >/etc/systemd/system/pulse-backfill.timer <<'EOF'
-            [Unit]
-            Description=Run Philly Pulse backfill every 2 hours
-
-            [Timer]
-            OnBootSec=5m
-            OnUnitActiveSec=2h
-            Unit=pulse-backfill.service
-            Persistent=true
-
-            [Install]
-            WantedBy=timers.target
-            EOF
-
             systemctl daemon-reload
 
+            # Tear down legacy single-city unit if still around.
             if systemctl list-unit-files philly-pulse-live.service >/dev/null 2>&1; then
               systemctl stop philly-pulse-live || true
               systemctl disable philly-pulse-live || true
             fi
 
-            for city in sf nyc philly chattanooga; do
+            # Tear down the old Hetzner-side backfill (timer + oneshot).
+            # Backfill is now Lambda-only; see scripts/install_lambda_backfill.sh.
+            for legacy in pulse-backfill.timer pulse-backfill.service; do
+              if systemctl list-unit-files "$legacy" >/dev/null 2>&1; then
+                echo "Disabling legacy unit: $legacy"
+                systemctl stop "$legacy" || true
+                systemctl disable "$legacy" || true
+                rm -f "/etc/systemd/system/${legacy}"
+              fi
+            done
+
+            # Stop + disable any pulse-live@<city> for cities not on the
+            # allowlist. Idempotent: harmless if the unit was never
+            # started or was already disabled.
+            for city in "${INACTIVE_CITIES[@]}"; do
+              if systemctl is-enabled --quiet "pulse-live@${city}" 2>/dev/null \
+                  || systemctl is-active --quiet "pulse-live@${city}" 2>/dev/null; then
+                systemctl stop "pulse-live@${city}" || true
+                systemctl disable "pulse-live@${city}" || true
+                echo "Stopped pulse-live@${city}"
+              fi
+            done
+
+            # Enable + (re)start the four active live transcribers.
+            for city in "${ACTIVE_CITIES[@]}"; do
               if [ -f "/root/PhillyPulse/cities/${city}/config.yaml" ]; then
                 systemctl enable "pulse-live@${city}" || true
                 systemctl restart "pulse-live@${city}"
@@ -79,13 +83,29 @@ jobs:
               fi
             done
 
-            systemctl enable pulse-backfill.timer || true
-            systemctl restart pulse-backfill.timer
+            systemctl daemon-reload
 
             echo ""
             echo "=== Final service status ==="
             systemctl is-active philly-pulse-api && echo "API: running" || echo "API: not running"
-            for city in sf nyc philly chattanooga; do
-              systemctl is-active "pulse-live@${city}" && echo "pulse-live@${city}: running" || echo "pulse-live@${city}: not running"
+            echo ""
+            echo "Active (should be running):"
+            for city in "${ACTIVE_CITIES[@]}"; do
+              status=$(systemctl is-active "pulse-live@${city}" 2>/dev/null || echo inactive)
+              echo "  pulse-live@${city}: ${status}"
             done
-            systemctl is-active pulse-backfill.timer && echo "pulse-backfill.timer: active" || echo "pulse-backfill.timer: not active"
+            echo ""
+            echo "Inactive (should NOT be running):"
+            for city in "${INACTIVE_CITIES[@]}"; do
+              status=$(systemctl is-active "pulse-live@${city}" 2>/dev/null || echo inactive)
+              echo "  pulse-live@${city}: ${status}"
+            done
+            echo ""
+            echo "Hetzner backfill (must be gone, lambda-only now):"
+            for legacy in pulse-backfill.timer pulse-backfill.service; do
+              if systemctl list-unit-files "$legacy" >/dev/null 2>&1; then
+                echo "  WARN: $legacy still installed"
+              else
+                echo "  OK: $legacy removed"
+              fi
+            done

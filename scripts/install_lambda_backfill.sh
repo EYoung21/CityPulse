@@ -74,6 +74,10 @@ PP_BRIDGE_URL=https://api.phlpulse.com/api/ingest
 WHISPER_MODEL_SIZE=large-v3-turbo
 BACKFILL_DAY_LIMIT=150
 BACKFILL_HEARTBEAT=$HEARTBEAT
+# Active cities. Anything not in this allowlist is skipped by the
+# runner even if cities/<slug>/config.yaml exists. Edit + restart
+# (sudo systemctl restart citypulse-backfill) to add/remove.
+BACKFILL_CITY_GLOB="philly chattanooga nyc sf"
 # Premium account: aggressive defaults are fine. Drop these back if you
 # ever switch back to free tier.
 BACKFILL_DELAY_BASE=8

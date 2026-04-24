@@ -22,7 +22,8 @@ import {
   type RouteResult,
   type AvoidZone,
 } from "@/lib/routing";
-import { userAvoidZones } from "@/lib/avoid-areas";
+import { userAvoidZonesForRouting } from "@/lib/avoid-areas";
+import { SAFEST_ROUTE_ONLY_UI } from "@/lib/routing";
 import { geocodePhilly } from "@/lib/search";
 import type { Incident } from "@/lib/api";
 
@@ -91,7 +92,7 @@ export default function RoutePanel({ incidents, onRoutesChange }: Props) {
       ];
       const end: [number, number] = [destResults[0].lat, destResults[0].lng];
 
-      const zones = [...buildAvoidZones(incidents), ...userAvoidZones()];
+      const zones = [...buildAvoidZones(incidents), ...userAvoidZonesForRouting()];
       const avoidPolygons = buildAvoidPolygons(zones);
 
       const [normalRoute, safeRoute] = await Promise.all([
@@ -233,20 +234,20 @@ export default function RoutePanel({ incidents, onRoutesChange }: Props) {
         {/* Results */}
         {routeData && (routeData.normal || routeData.safe) && (
           <div className="space-y-2 pt-1">
-            {routeData.safe && (
+            {(routeData.safe || (SAFEST_ROUTE_ONLY_UI && routeData.normal)) && (
               <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 space-y-1">
                 <div className="flex items-center gap-1.5 text-green-400 text-xs font-semibold">
                   <ShieldCheck className="w-3.5 h-3.5" />
-                  SAFE ROUTE
+                  {routeData.safe ? "SAFE ROUTE" : "ROUTE"}
                 </div>
                 <div className="flex gap-4 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1">
                     <Ruler className="w-3 h-3" />
-                    {routeData.safe.distanceKm.toFixed(1)} km
+                    {(routeData.safe ?? routeData.normal)!.distanceKm.toFixed(1)} km
                   </span>
                   <span className="flex items-center gap-1">
                     <Clock className="w-3 h-3" />
-                    {Math.ceil(routeData.safe.durationMin)} min
+                    {Math.ceil((routeData.safe ?? routeData.normal)!.durationMin)} min
                   </span>
                 </div>
                 {routeData.avoidZones.length > 0 && (
@@ -258,7 +259,7 @@ export default function RoutePanel({ incidents, onRoutesChange }: Props) {
               </div>
             )}
 
-            {routeData.normal && (
+            {!SAFEST_ROUTE_ONLY_UI && routeData.normal && (
               <div className="bg-muted/20 border border-border/30 rounded-lg p-3 space-y-1">
                 <div className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
                   <ChevronUp className="w-3.5 h-3.5 rotate-90" />
@@ -277,7 +278,7 @@ export default function RoutePanel({ incidents, onRoutesChange }: Props) {
               </div>
             )}
 
-            {routeData.normal && routeData.safe && (
+            {!SAFEST_ROUTE_ONLY_UI && routeData.normal && routeData.safe && (
               <p className="text-center text-xs text-muted-foreground">
                 Safe route is{" "}
                 <span className="text-green-400 font-medium">

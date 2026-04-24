@@ -63,6 +63,20 @@ export interface RouteOption {
   avoidedFeatures: AvoidFeature[];
 }
 
+/**
+ * When true, the pre-trip picker only lists incident-avoiding options
+ * (`isSafer`). Fastest / no-tolls / no-highways variants are still
+ * requested inside `getRouteOptions` — callers filter with
+ * `filterRouteOptionsForSafestOnlyUi` before populating UI state.
+ */
+export const SAFEST_ROUTE_ONLY_UI = true;
+
+export function filterRouteOptionsForSafestOnlyUi(options: RouteOption[]): RouteOption[] {
+  if (!SAFEST_ROUTE_ONLY_UI) return options;
+  const safer = options.filter((o) => o.isSafer);
+  return safer.length > 0 ? safer : options;
+}
+
 export interface AvoidZone {
   center: [number, number];
   radiusM: number;
