@@ -172,17 +172,10 @@ async def startup():
     """Ensure the database table exists and configure per-city geocoder/LLM."""
     store.get_conn()  # creates table if missing
 
-    # Configure geocoder default with city-specific bounds
-    geo_cfg = _city_config.get("geocode", {})
-    if geo_cfg:
-        geocode.configure_geocoder(
-            viewbox=geo_cfg.get("viewbox", "-75.28,39.87,-74.96,40.14"),
-            bounds=geo_cfg.get("bounds"),
-            suffix=geo_cfg.get("suffix", ", Philadelphia, PA"),
-            city_name=CITY_NAME,
-        )
-
-    # Configure LLM default with the primary city
+    # Configure LLM + geocoder defaults with the primary city.
+    # Prefer the explicitly loaded CITY_CONFIG (single-city server), but
+    # fall back to the multi-city registry (cities/*/config.yaml) so
+    # deployments don't silently revert to the legacy Philly-only bbox.
     default_ctx = _get_city_llm_context(CITY_SLUG)
     if default_ctx:
         llm.configure_llm(
@@ -192,6 +185,22 @@ async def startup():
             center_lng=default_ctx["center_lng"],
             bounds=default_ctx["bounds"],
             llm_local_context=default_ctx.get("llm_local_context", ""),
+        )
+
+    geo_cfg = _city_config.get("geocode", {}) if isinstance(_city_config, dict) else {}
+    if geo_cfg:
+        geocode.configure_geocoder(
+            viewbox=geo_cfg.get("viewbox", default_ctx["viewbox"] if default_ctx else "-75.28,39.87,-74.96,40.14"),
+            bounds=geo_cfg.get("bounds") or (default_ctx["bounds"] if default_ctx else None),
+            suffix=geo_cfg.get("suffix", default_ctx["geocode_suffix"] if default_ctx else ", Philadelphia, PA"),
+            city_name=CITY_NAME,
+        )
+    elif default_ctx:
+        geocode.configure_geocoder(
+            viewbox=default_ctx.get("viewbox") or "-75.28,39.87,-74.96,40.14",
+            bounds=default_ctx.get("bounds"),
+            suffix=default_ctx.get("geocode_suffix") or ", Philadelphia, PA",
+            city_name=default_ctx.get("city_name") or CITY_NAME,
         )
 
     logger.info("%s Pulse API starting up (%d cities registered)",
