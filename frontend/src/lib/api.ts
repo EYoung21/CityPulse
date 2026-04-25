@@ -55,18 +55,9 @@ export interface Incident {
    *  feed to display "Updated 4m ago" instead of the original
    *  `reported_at` when mentions accumulate. */
   last_mention_at?: string | null;
-  /** Community lifecycle status, derived from votes in the
-   *  `incidentStatus` Firestore collection by way of
-   *  `enrichIncidents`. Optional: undefined means we don't have
-   *  enough community signal yet (the default for fresh incidents).
-   *  Consumers should treat undefined and "unverified" identically;
-   *  the discrimination only matters when ramping up visualization
-   *  intensity. */
+  // (Deprecated) Community voting removed; keep optional fields for backward
+  // compatibility with older stored incidents / API responses.
   lifecycle_status?: "still" | "resolved" | "unverified";
-  /** Mirror of `lastVoteAtMs` from the lifecycle aggregate, exposed
-   *  on the incident so the marker layer / list rows can render an
-   *  "X min ago" freshness label without having to look the
-   *  aggregate up themselves. 0 = no community votes yet. */
   lifecycle_last_vote_ms?: number;
 }
 
