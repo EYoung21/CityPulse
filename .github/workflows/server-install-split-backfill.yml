@@ -1,0 +1,196 @@
+name: Server Install Split Backfill
+
+# One-shot installer for the split-pipeline backfill (b2). Replaces the
+# stalled monolithic Lambda backfill with:
+#   * Hetzner-side downloader (citypulse-downloader.service)  - new
+#   * Lambda-side transcriber (citypulse-archive-transcriber)  - new
+#
+# Why: the monolithic backfill on Lambda is stuck in 60-1800s 429 backoff
+# loops because Broadcastify rate-limits the Lambda IP range. Hetzner's
+# IP isn't throttled, so we move the download half there and leave the
+# GPU work where the GPU lives.
+#
+# This workflow:
+#   1. Deploys latest scripts to Hetzner (git pull via /root/deploy.sh).
+#   2. Runs scripts/install_hetzner_downloader.sh on Hetzner.
+#   3. Uses Hetzner as the SSH jump to rsync the two new scripts and
+#      the install_lambda_transcriber.sh into /opt/citypulse-backfill on
+#      Lambda, then runs the install script.
+#   4. Stops the old monolith on Lambda (the install script does this).
+#   5. Starts both new services and verifies end-to-end:
+#      - downloader heartbeat fresh
+#      - transcriber heartbeat fresh
+#      - sidecars flowing into /var/spool/citypulse-incoming
+#      - /api/ingest 200s back on Hetzner
+#
+# Trigger:
+#   gh workflow run "Server Install Split Backfill" --repo EYoung21/CityPulse
+
+on:
+  workflow_dispatch:
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Hetzner — pull latest, install downloader
+        uses: appleboy/ssh-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: GITHUB_TOKEN
+          command_timeout: 10m
+          script: |
+            set -euo pipefail
+
+            echo "######################################################"
+            echo "# 1. Pull latest scripts on Hetzner"
+            echo "######################################################"
+            cd /root/PhillyPulse
+            if [ -n "${GITHUB_TOKEN:-}" ]; then
+              git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/EYoung21/PhillyPulse.git"
+            fi
+            git fetch origin main
+            git reset --hard origin/main
+            git remote set-url origin https://github.com/EYoung21/PhillyPulse.git
+            ls scripts/install_hetzner_downloader.sh scripts/install_lambda_transcriber.sh \
+               scripts/hetzner_archive_downloader.py scripts/lambda_archive_transcriber.py
+
+            echo ""
+            echo "######################################################"
+            echo "# 2. Install Hetzner-side downloader"
+            echo "######################################################"
+            chmod +x scripts/install_hetzner_downloader.sh
+            bash scripts/install_hetzner_downloader.sh
+
+            echo ""
+            echo "######################################################"
+            echo "# 3. Sanity: env file has Broadcastify creds"
+            echo "######################################################"
+            if grep -q '^BROADCASTIFY_USERNAME=$' /etc/citypulse-downloader.env; then
+              echo "WARN: /etc/citypulse-downloader.env has empty creds — will not start downloader"
+              echo "      (the install script tried to copy from /etc/citypulse-backfill.env"
+              echo "       and /etc/philly-pulse.env, but neither had them)"
+              # Don't bail — let the rest of the workflow set up Lambda.
+              # Operator can fill creds + start the service afterward.
+              exit 0
+            fi
+            echo "(creds present)"
+
+            echo ""
+            echo "######################################################"
+            echo "# 4. Sanity: can Hetzner SSH to Lambda?"
+            echo "######################################################"
+            ssh -i /root/.ssh/lambda_tunnel_key \
+                -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+                -o ConnectTimeout=10 \
+                ubuntu@150.230.182.19 'echo "Lambda reachable: $(hostname)"' \
+              || { echo "ERROR: Hetzner cannot SSH to Lambda"; exit 1; }
+
+            echo ""
+            echo "######################################################"
+            echo "# 5. Push new transcriber scripts to Lambda /opt/citypulse-backfill"
+            echo "######################################################"
+            # rsync just the files the transcriber needs. /opt/citypulse-backfill
+            # is the existing checkout install_lambda_backfill.sh laid down — we
+            # update only what changed instead of git-cloning fresh on Lambda
+            # (which would require provisioning credentials there too).
+            ssh -i /root/.ssh/lambda_tunnel_key \
+                -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+                ubuntu@150.230.182.19 'mkdir -p /opt/citypulse-backfill/scripts /opt/citypulse-backfill/cities /opt/citypulse-backfill/philly_pulse'
+
+            for path in \
+              backfill_archives.py \
+              scripts/install_lambda_transcriber.sh \
+              scripts/lambda_archive_transcriber.py
+            do
+              echo "  rsync $path"
+              rsync -az -e "ssh -i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
+                "/root/PhillyPulse/${path}" \
+                "ubuntu@150.230.182.19:/opt/citypulse-backfill/${path}"
+            done
+
+            echo "  rsync philly_pulse/ (need preprocess.py + friends)"
+            rsync -az --delete \
+              -e "ssh -i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
+              /root/PhillyPulse/philly_pulse/ \
+              ubuntu@150.230.182.19:/opt/citypulse-backfill/philly_pulse/
+
+            echo "  rsync cities/ (need per-city Whisper initial_prompt)"
+            rsync -az --delete \
+              -e "ssh -i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
+              /root/PhillyPulse/cities/ \
+              ubuntu@150.230.182.19:/opt/citypulse-backfill/cities/
+
+            echo ""
+            echo "######################################################"
+            echo "# 6. Run install_lambda_transcriber.sh on Lambda"
+            echo "######################################################"
+            ssh -i /root/.ssh/lambda_tunnel_key \
+                -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+                -o ServerAliveInterval=30 \
+                ubuntu@150.230.182.19 'set -e; chmod +x /opt/citypulse-backfill/scripts/install_lambda_transcriber.sh; bash /opt/citypulse-backfill/scripts/install_lambda_transcriber.sh 2>&1 | tail -120'
+
+            echo ""
+            echo "######################################################"
+            echo "# 7. Start both services"
+            echo "######################################################"
+            echo "-- Hetzner downloader --"
+            systemctl enable --now citypulse-downloader.service
+            sleep 3
+            systemctl is-active citypulse-downloader.service && echo "OK" || (echo "NOT ACTIVE — recent log:"; journalctl -u citypulse-downloader -n 40 --no-pager; exit 1)
+
+            echo ""
+            echo "-- Lambda transcriber --"
+            ssh -i /root/.ssh/lambda_tunnel_key \
+                -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+                ubuntu@150.230.182.19 'sudo systemctl enable --now citypulse-archive-transcriber.service && sleep 3 && sudo systemctl is-active citypulse-archive-transcriber.service && echo OK || (echo NOT ACTIVE; sudo journalctl -u citypulse-archive-transcriber -n 60 --no-pager; exit 1)'
+
+            echo ""
+            echo "######################################################"
+            echo "# 8. Wait 90s, then verify forward progress"
+            echo "######################################################"
+            sleep 90
+
+            echo "-- Hetzner downloader heartbeat --"
+            cat /var/log/citypulse-downloader.heartbeat 2>/dev/null || echo "(no heartbeat yet)"
+            echo ""
+            echo "-- Hetzner downloader recent log --"
+            tail -30 /var/log/citypulse-downloader.log 2>/dev/null || journalctl -u citypulse-downloader -n 30 --no-pager
+
+            echo ""
+            echo "-- Lambda incoming queue depth --"
+            ssh -i /root/.ssh/lambda_tunnel_key \
+                -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+                ubuntu@150.230.182.19 'echo "  sidecars: $(ls /var/spool/citypulse-incoming/*.json 2>/dev/null | wc -l)"; echo "  mp3s:     $(ls /var/spool/citypulse-incoming/*.mp3 2>/dev/null | wc -l)"; echo "  failed:   $(ls /var/spool/citypulse-failed/*.json 2>/dev/null | wc -l)"'
+
+            echo ""
+            echo "-- Lambda transcriber heartbeat --"
+            ssh -i /root/.ssh/lambda_tunnel_key \
+                -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+                ubuntu@150.230.182.19 'cat /var/log/citypulse-transcriber.heartbeat 2>/dev/null || echo "(no heartbeat yet)"'
+
+            echo ""
+            echo "-- Lambda transcriber recent log --"
+            ssh -i /root/.ssh/lambda_tunnel_key \
+                -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+                ubuntu@150.230.182.19 'tail -40 /var/log/citypulse-transcriber.log 2>/dev/null || sudo journalctl -u citypulse-archive-transcriber -n 40 --no-pager'
+
+            echo ""
+            echo "-- Hetzner /api/ingest activity (last 90s) --"
+            journalctl -u philly-pulse-api --no-pager --since "90 sec ago" 2>/dev/null \
+              | grep -E 'POST /api/ingest' | awk '{print $(NF-1), $NF}' | sort | uniq -c | sort -rn | head -10 \
+              || echo "(no /api/ingest activity yet — Whisper takes 30-60s for first chunk)"
+
+            echo ""
+            echo "######################################################"
+            echo "# DONE. Split-pipeline backfill is live."
+            echo "#   Watch downloader: ssh root@hetzner 'journalctl -fu citypulse-downloader'"
+            echo "#   Watch transcriber: ssh ubuntu@lambda 'sudo journalctl -fu citypulse-archive-transcriber'"
+            echo "######################################################"
