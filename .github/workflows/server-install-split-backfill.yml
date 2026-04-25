@@ -74,12 +74,10 @@ jobs:
             echo "# 3. Sanity: env file has Broadcastify creds"
             echo "######################################################"
             if grep -q '^BROADCASTIFY_USERNAME=$' /etc/citypulse-downloader.env; then
-              echo "WARN: /etc/citypulse-downloader.env has empty creds — will not start downloader"
-              echo "      (the install script tried to copy from /etc/citypulse-backfill.env"
-              echo "       and /etc/philly-pulse.env, but neither had them)"
-              # Don't bail — let the rest of the workflow set up Lambda.
-              # Operator can fill creds + start the service afterward.
-              exit 0
+              echo "FATAL: /etc/citypulse-downloader.env has empty creds — "
+              echo "       install_hetzner_downloader.sh's Lambda fallback found nothing either."
+              echo "       Inspect: ssh root@hetzner 'sudo cat /etc/citypulse-downloader.env'"
+              exit 1
             fi
             echo "(creds present)"
 
