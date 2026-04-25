@@ -49,9 +49,29 @@ feeds:
   - { feed_id: "44308", label: "SEPTA Transit Police" }
   - { feed_id: "36323", label: "Delaware Co Police Dispatch" }
   - { feed_id: "46438", label: "DelCo Fire/EMS - Countywide Ops" }
+  # Per-sector DelCo PD feeds. The countywide 36323 carries all sectors
+  # interleaved; the per-sector feeds are cleaner and explicitly cover
+  # the suburbs the user wants on phlpulse.com:
+  #   Sector 6 → Swarthmore, Media, Springfield, Nether Providence,
+  #              Rose Valley, Rutledge, Wallingford
+  #   Sector 7 → Haverford Twp (Havertown), Radnor (Wayne, Villanova,
+  #              Rosemont, St Davids) — the Main Line / Bryn Mawr-adjacent
+  #              corridor. Bryn Mawr borough itself is in Lower Merion
+  #              (MontCo) which uses encrypted DMR Tier 3, so Sector 7
+  #              is the closest unencrypted PD coverage we can get.
+  #   Sector 3 → Upper Darby + Clifton Heights (between Philly and
+  #              Swarthmore/Haverford on Market-Frankford line).
+  - { feed_id: "46441", label: "DelCo PD Sector 6 (Swarthmore/Media)" }
+  - { feed_id: "46440", label: "DelCo PD Sector 7 (Haverford/Radnor/Main Line)" }
+  - { feed_id: "46444", label: "DelCo PD Sector 3 (Upper Darby)" }
+  - { feed_id: "46435", label: "DelCo Fire East (Upper Darby/Lansdowne)" }
   - { feed_id: "24104", label: "Chester Co Law Enforcement Dispatch" }
   - { feed_id: "10489", label: "MontCo Fire and EMS - East" }
   - { feed_id: "25767", label: "MontCo Police, Fire and EMS - Region 3" }
+  # MontCo Fire West / Police Southwest covers Lower Merion (Bryn Mawr,
+  # Ardmore, Wynnewood, Bala Cynwyd, Narberth) fire and EMS dispatch.
+  # Lower Merion PD itself is encrypted so we only catch Fire/EMS here.
+  - { feed_id: "18335", label: "MontCo Fire West / Police SW (Lower Merion/Bryn Mawr)" }
 
 tuning:
   # Whisper "initial_prompt": biases the acoustic model toward names it
@@ -66,18 +86,30 @@ tuning:
     Blvd, Girard Ave, Spring Garden, Fairmount, University City, Center
     City, North Philly, South Philly, West Philly, Fishtown, Manayunk,
     Chestnut Hill, Mt Airy, Olney, Frankford.
-    Delaware County: Chester, Upper Darby, Media, Swarthmore, Springfield,
-    Drexel Hill, Lansdowne, Yeadon, Darby, Folcroft, Ridley, Sharon Hill,
-    Aston, Brookhaven, Marcus Hook, Chester Pike, MacDade Blvd, Baltimore
-    Pike, Providence Road.
+    Delaware County: Chester, Upper Darby, Media, Swarthmore, Wallingford,
+    Rutledge, Rose Valley, Nether Providence, Springfield, Drexel Hill,
+    Lansdowne, Yeadon, Darby, Folcroft, Ridley, Sharon Hill, Aston,
+    Brookhaven, Marcus Hook, Havertown, Haverford, Brookline, Manoa,
+    Broomall, Newtown Square, Wayne, Villanova, Rosemont, St Davids,
+    Radnor, Bryn Mawr (PA), Chester Pike, MacDade Blvd, Baltimore Pike,
+    Providence Road, West Chester Pike, Lancaster Avenue, Eagle Road,
+    Darby Road, Township Line.
     Chester County: West Chester, Coatesville, Phoenixville, Downingtown,
-    Kennett Square, Exton, Lincoln Highway, Route 30.
-    Montgomery County: Norristown, Pottstown, King of Prussia, Lansdale,
-    Plymouth Meeting, Conshohocken, Ardmore, Bryn Mawr, Cheltenham,
-    Lansdale, Souderton.
+    Kennett Square, Exton, Paoli, Berwyn, Tredyffrin, Lincoln Highway,
+    Route 30.
+    Montgomery County (Lower Merion / Main Line): Bryn Mawr, Ardmore,
+    Wynnewood, Narberth, Bala Cynwyd, Cynwyd, Penn Valley, Gladwyne,
+    Merion Station, Belmont Hills, Lower Merion, City Avenue, Montgomery
+    Avenue, Lancaster Avenue, Old Lancaster Road.
+    Montgomery County (other): Norristown, Pottstown, King of Prussia,
+    Lansdale, Plymouth Meeting, Conshohocken, Cheltenham, Souderton.
     Bucks County: Doylestown, Levittown, Bensalem, Bristol, Newtown.
     Hospitals: Temple, Jefferson, Penn, Hahnemann, Einstein, Crozer,
-    Riddle, Bryn Mawr Hospital, Paoli Hospital, Lankenau, Abington.
+    Riddle, Bryn Mawr Hospital, Paoli Hospital, Lankenau, Abington,
+    Main Line Health, Bryn Mawr Rehab.
+    Colleges: Swarthmore College, Bryn Mawr College, Haverford College,
+    Villanova, Penn, Drexel, Temple, St Joseph's, La Salle, Eastern,
+    Cabrini, Rosemont College.
     Phrases: responding, en route, on location, in service, 10-4, copy,
     radio, highway, shots fired, person with a gun, robbery in progress,
     assist officer. Short dispatch. Numbers spoken separately.
