@@ -14,14 +14,27 @@ map:
   center_lng: -75.1652
   default_zoom: 12
 
+# Greater Philadelphia metro: Philadelphia city + Delaware, Chester,
+# Montgomery, and Bucks counties. The original Philly-only bounds
+# (lng_min: -75.30) was rejecting every geocoded incident from the
+# DelCo/ChesCo/MontCo scanner feeds — Swarthmore (-75.35), Media
+# (-75.39), Chester (-75.36), West Chester (-75.60), Pottstown
+# (-75.65) all sit west of the old western edge, so suburban dispatch
+# was being captured + transcribed but the resulting addresses fell
+# outside the bbox and were thrown away.
+#
+# `, PA` (rather than `, Philadelphia, PA`) lets Nominatim resolve the
+# city/borough from the street itself, so "1234 Chester Pike" becomes
+# "1234 Chester Pike, PA" and resolves into Delaware County instead
+# of being forced into Philadelphia where it doesn't exist.
 geocode:
-  viewbox: "-75.28,39.87,-74.96,40.14"
+  viewbox: "-75.70,39.78,-74.85,40.30"
   bounds:
-    lat_min: 39.85
-    lat_max: 40.15
-    lng_min: -75.30
-    lng_max: -74.94
-  suffix: ", Philadelphia, PA"
+    lat_min: 39.78
+    lat_max: 40.30
+    lng_min: -75.70
+    lng_max: -74.85
+  suffix: ", PA"
 
 feeds:
   - { feed_id: "4603",  label: "PPD Citywide" }
@@ -41,13 +54,30 @@ feeds:
   - { feed_id: "25767", label: "MontCo Police, Fire and EMS - Region 3" }
 
 tuning:
+  # Whisper "initial_prompt": biases the acoustic model toward names it
+  # would otherwise mis-hear. We list both Philadelphia neighborhoods AND
+  # the surrounding counties' towns/landmarks because the same backend
+  # transcribes DelCo, ChesCo, MontCo, and Bucks scanner feeds.
   initial_prompt: >-
-    Philadelphia PA police radio dispatch. PPD districts 1-26. Units: Charlie,
-    David, Edward, Frank, King, Mary, Nora. Locations: Broad St, Market St,
-    Kensington Ave, Germantown Ave, Roosevelt Blvd, Girard Ave, Spring Garden,
-    Fairmount, University City, Center City, North Philly, South Philly, West
-    Philly, Fishtown, Manayunk, Chestnut Hill, Mt Airy, Olney, Frankford.
-    Hospitals: Temple, Jefferson, Penn, Hahnemann, Einstein. Phrases: responding,
-    en route, on location, in service, 10-4, copy, radio, highway, shots fired,
-    person with a gun, robbery in progress, assist officer. Short dispatch.
-    Numbers spoken separately.
+    Greater Philadelphia PA dispatch (Philadelphia, Delaware County,
+    Chester County, Montgomery County, Bucks County). PPD districts 1-26.
+    Units: Charlie, David, Edward, Frank, King, Mary, Nora.
+    Philly: Broad St, Market St, Kensington Ave, Germantown Ave, Roosevelt
+    Blvd, Girard Ave, Spring Garden, Fairmount, University City, Center
+    City, North Philly, South Philly, West Philly, Fishtown, Manayunk,
+    Chestnut Hill, Mt Airy, Olney, Frankford.
+    Delaware County: Chester, Upper Darby, Media, Swarthmore, Springfield,
+    Drexel Hill, Lansdowne, Yeadon, Darby, Folcroft, Ridley, Sharon Hill,
+    Aston, Brookhaven, Marcus Hook, Chester Pike, MacDade Blvd, Baltimore
+    Pike, Providence Road.
+    Chester County: West Chester, Coatesville, Phoenixville, Downingtown,
+    Kennett Square, Exton, Lincoln Highway, Route 30.
+    Montgomery County: Norristown, Pottstown, King of Prussia, Lansdale,
+    Plymouth Meeting, Conshohocken, Ardmore, Bryn Mawr, Cheltenham,
+    Lansdale, Souderton.
+    Bucks County: Doylestown, Levittown, Bensalem, Bristol, Newtown.
+    Hospitals: Temple, Jefferson, Penn, Hahnemann, Einstein, Crozer,
+    Riddle, Bryn Mawr Hospital, Paoli Hospital, Lankenau, Abington.
+    Phrases: responding, en route, on location, in service, 10-4, copy,
+    radio, highway, shots fired, person with a gun, robbery in progress,
+    assist officer. Short dispatch. Numbers spoken separately.
