@@ -224,6 +224,35 @@ _VAGUE_REGEXES: list[re.Pattern[str]] = [
 ]
 
 
+_DOT_STREET_ABBREV = re.compile(
+    r"\b(Rd|Ave|Blvd|Dr|Pl|Ct|Ln|Pkwy)\.(?=\s|,|$)",
+    re.IGNORECASE,
+)
+
+
+def normalize_location_text_for_geocode(
+    text: str | None,
+    *,
+    suffix: str,
+) -> str | None:
+    """Light cleanup before Nominatim: whitespace, duplicate suffix tails, Rd./Ave. dots.
+
+    Does not expand "St" to "Street" (avoids breaking names like "St Louis").
+    """
+    if text is None:
+        return None
+    s = " ".join(str(text).split()).strip(" ,.;")
+    if not s:
+        return None
+    suf = (suffix or "").strip()
+    if suf:
+        doubled = suf + suf
+        while s.endswith(doubled):
+            s = s[: -len(suf)].rstrip(" ,.;")
+    s = _DOT_STREET_ABBREV.sub(lambda m: m.group(1), s)
+    return s.strip(" ,.;") or None
+
+
 def _is_too_vague(loc: str, suffix: str) -> bool:
     """True if loc is clearly not a real address (just a city, a single
     digit, a generic word, etc.). Suffix is ", City, ST" so we strip

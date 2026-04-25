@@ -39,6 +39,7 @@ def post_transcript(
     text,
     timestamp=None,
     feed_id=None,
+    feed_label=None,
     audio_clip=None,
     raw_audio_clip=None,
     preprocess_meta=None,
@@ -56,6 +57,8 @@ def post_transcript(
             payload["timestamp"] = timestamp
         if feed_id:
             payload["feed_id"] = feed_id
+        if feed_label:
+            payload["feed_label"] = feed_label
         if audio_clip:
             payload["audio_clip"] = audio_clip
         if raw_audio_clip:

@@ -87,6 +87,7 @@ _default_city_context: dict = {
     "center_lat": _PHILLY_CENTER[0],
     "center_lng": _PHILLY_CENTER[1],
     "bounds": _PHILLY_BOUNDS,
+    "llm_local_context": "",
 }
 
 
@@ -96,6 +97,7 @@ def configure_llm(
     center_lat: float = 39.9526,
     center_lng: float = -75.1652,
     bounds: dict | None = None,
+    llm_local_context: str = "",
 ):
     """Set default city context for the LLM. Call once on startup."""
     global _default_city_context
@@ -105,18 +107,58 @@ def configure_llm(
         "center_lat": center_lat,
         "center_lng": center_lng,
         "bounds": bounds or _PHILLY_BOUNDS,
+        "llm_local_context": (llm_local_context or "").strip(),
     }
     logger.info("LLM configured for %s (center: %.4f, %.4f)", city_name, center_lat, center_lng)
 
 
-def _build_system_prompt(ctx: dict) -> str:
+_LLM_LOCAL_MAX_CHARS = int(os.environ.get("LLM_LOCAL_CONTEXT_MAX_CHARS", "1700"))
+
+
+def _truncate_local_context(blob: str, max_chars: int = _LLM_LOCAL_MAX_CHARS) -> str:
+    s = (blob or "").strip()
+    if not s:
+        return ""
+    if len(s) <= max_chars:
+        return s
+    return s[: max_chars - 1].rstrip() + "…"
+
+
+def _sanitize_feed_label(label: str | None) -> str | None:
+    if not label:
+        return None
+    s = " ".join(str(label).split())
+    return s[:500] if s else None
+
+
+def _build_system_prompt(ctx: dict, *, feed_label: str | None = None) -> str:
     city = ctx["city_name"]
     suffix = ctx["geocode_suffix"]
+    local = _truncate_local_context(str(ctx.get("llm_local_context") or ""))
+
+    feed_block = ""
+    fl = _sanitize_feed_label(feed_label)
+    if fl:
+        feed_block = f"""
+## Scanner source
+This transmission is from the feed labeled: "{fl}".
+Prefer place names and jurisdictions that match this feed's typical service area over unrelated cities in the same broader metro when the audio is ambiguous.
+
+"""
+
+    local_block = ""
+    if local:
+        local_block = f"""
+## Local geography and vocabulary (this metro only)
+Use these spellings and jurisdictions when decoding garbled audio or choosing between similarly named places:
+{local}
+
+"""
 
     return f"""\
 You are an AI assistant that extracts structured incident data from {city} \
 police/fire/EMS radio scanner transcripts.
-
+{feed_block}{local_block}
 Given a raw transcript line, output ONLY a JSON object with these fields:
 
 - "is_dispatch_relevant": boolean. true if this describes an actual dispatch-worthy \
@@ -174,7 +216,7 @@ you extract; never invent lat/lng values.
 
 
 # Legacy module-level prompt (backward compat for imports)
-SYSTEM_PROMPT = _build_system_prompt(_default_city_context)
+SYSTEM_PROMPT = _build_system_prompt(_default_city_context, feed_label=None)
 
 
 class LLMError(Exception):
@@ -209,15 +251,20 @@ async def extract_incident(
     raw_text: str,
     city_context: dict | None = None,
     prior_context: list[str] | None = None,
+    feed_label: str | None = None,
 ) -> Optional[dict]:
     """Extract structured incident data from a raw transcript line.
 
     city_context, if provided, overrides the default city for this call.
-    Expected keys: city_name, geocode_suffix, center_lat, center_lng, bounds.
+    Expected keys: city_name, geocode_suffix, center_lat, center_lng, bounds,
+    and optionally llm_local_context (metro vocabulary for the LLM).
 
     prior_context, if provided, is a chronological list of recent transcript
     strings on the same talkgroup. Used to attach officer follow-ups to the
     location of the original dispatch (see plan: adjacent_radio_context).
+
+    feed_label, if provided, is a human-readable scanner feed name (e.g.
+    Broadcastify label) so the model can bias jurisdiction.
 
     Returns a dict with is_dispatch_relevant, severity_category,
     location_text, and confidence. Returns None if the LLM says
@@ -232,7 +279,7 @@ async def extract_incident(
         )
 
     ctx = city_context or _default_city_context
-    prompt = _build_system_prompt(ctx)
+    prompt = _build_system_prompt(ctx, feed_label=feed_label)
 
     messages: list[dict] = [{"role": "system", "content": prompt}]
     prior_block = _format_prior_context(prior_context)
@@ -240,15 +287,38 @@ async def extract_incident(
         messages.append({"role": "system", "content": prior_block})
     messages.append({"role": "user", "content": raw_text})
 
+    use_json_object = os.environ.get("LLM_RESPONSE_FORMAT_JSON", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    response_format: dict | None = {"type": "json_object"} if use_json_object else None
+
     try:
         content = await llm_client.chat_completion(
             messages,
             temperature=0.0,
             max_tokens=300,
             timeout=30.0,
+            response_format=response_format,
         )
     except llm_client.LLMHTTPError as e:
-        raise LLMError(str(e)) from e
+        if response_format and getattr(e, "status_code", None) in (400, 422):
+            logger.warning("LLM json_object mode rejected (%s); retrying without response_format", e)
+            try:
+                content = await llm_client.chat_completion(
+                    messages,
+                    temperature=0.0,
+                    max_tokens=300,
+                    timeout=30.0,
+                    response_format=None,
+                )
+            except llm_client.LLMHTTPError as e2:
+                raise LLMError(str(e2)) from e2
+            except llm_client.LLMConfigError as e2:
+                raise LLMError(str(e2)) from e2
+        else:
+            raise LLMError(str(e)) from e
     except llm_client.LLMConfigError as e:
         raise LLMError(str(e)) from e
 

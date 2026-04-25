@@ -39,6 +39,14 @@ tuning:
     Mexicantown, Southwest Detroit, North End, Hamtramck, Highland Park,
     Dearborn. Freeways: I-75, I-94, I-96, M-10 Lodge, Southfield, Davison,
     Chrysler. Hospitals: DMC, Henry Ford, Detroit Receiving, Sinai-Grace,
-    St. John. Phrases: dispatch, responding, en route, on scene, shots
+    St. John.     Phrases: dispatch, responding, en route, on scene, shots
     fired, holdup alarm, code 1, code 3, signal 6, 10-4, 10-32, 10-50.
     Short dispatch. Numbers spoken separately.
+  llm_local_context: >-
+    Detroit MI and Wayne County. DPD six districts (Central, Southwestern,
+    Northeastern, Northwestern, Western, Eastern) and precincts 1–13.
+    Enclaves: Hamtramck, Highland Park; nearby Dearborn, Lincoln Park.
+    Arterials: Woodward, Gratiot, Michigan, Grand River, Jefferson, Mack,
+    Van Dyke, Livernois, Telegraph, 7 Mile, 8 Mile, Outer Drive.
+    Freeways: I-75, I-94, I-96, M-10 Lodge, Southfield M-39, Davison.
+    Hospitals: DMC, Henry Ford Main, Detroit Receiving, Sinai-Grace.

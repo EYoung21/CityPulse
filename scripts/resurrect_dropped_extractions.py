@@ -49,55 +49,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-import yaml  # noqa: E402
-
 from philly_pulse import geocode  # noqa: E402
 from philly_pulse import persistence as store  # noqa: E402
-
-CITY_REGISTRY: dict[str, dict] = {}
-
-
-def _load_city_registry() -> None:
-    """Mirror server.py's per-city geocode/LLM context loader.
-
-    We re-read these from disk so the script picks up live config edits
-    (e.g. the wider Philly metro bounds) without needing to be deployed
-    to Hetzner first.
-    """
-    cities_dir = REPO_ROOT / "cities"
-    if not cities_dir.is_dir():
-        return
-    for cfg_dir in sorted(cities_dir.iterdir()):
-        cfg_path = cfg_dir / "config.yaml"
-        if not cfg_path.exists():
-            continue
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-            slug = cfg.get("city", {}).get("slug") or cfg_dir.name
-            city_name = cfg.get("city", {}).get("name", slug)
-            geo = cfg.get("geocode", {})
-
-            bounds_raw = geo.get("bounds", {})
-            if isinstance(bounds_raw, str):
-                parts = [float(x) for x in bounds_raw.split(",")]
-                bounds = {
-                    "lng_min": parts[0], "lat_min": parts[1],
-                    "lng_max": parts[2], "lat_max": parts[3],
-                }
-            elif isinstance(bounds_raw, dict):
-                bounds = bounds_raw
-            else:
-                bounds = {"lat_min": -90, "lat_max": 90, "lng_min": -180, "lng_max": 180}
-
-            CITY_REGISTRY[slug] = {
-                "city_name": city_name,
-                "geocode_suffix": geo.get("suffix", f", {city_name}"),
-                "bounds": bounds,
-                "viewbox": geo.get("viewbox", ""),
-            }
-        except Exception as e:
-            print(f"[WARN] failed to load {cfg_path}: {e}", file=sys.stderr)
+from philly_pulse.city_registry import CITY_REGISTRY, load_city_registry  # noqa: E402
 
 
 def _geo_ctx(city: str | None) -> dict | None:
@@ -204,6 +158,12 @@ async def _resurrect_one(
 ) -> str:
     city = data.get("city")
     location_text = (data.get("llm_location_text") or "").strip()
+    gctx = _geo_ctx(city)
+    suf = (gctx or {}).get("suffix") or ""
+    if location_text and suf:
+        norm = geocode.normalize_location_text_for_geocode(location_text, suffix=suf)
+        if norm:
+            location_text = norm
     raw_text = data.get("raw_text") or ""
     feed_id = data.get("feed_id") or ""
     reported_at = data.get("reported_at") or datetime.now(timezone.utc).isoformat()
@@ -211,7 +171,7 @@ async def _resurrect_one(
     confidence = float(data.get("llm_confidence") or 0.5)
     location_confidence = data.get("location_confidence") or "none"
 
-    coords = await geocode.geocode(location_text, geo_ctx=_geo_ctx(city))
+    coords = await geocode.geocode(location_text, geo_ctx=gctx)
     if not coords:
         if not dry_run:
             ext_ref.update({
@@ -273,7 +233,7 @@ async def _resurrect_one(
 
 
 async def _run(args: argparse.Namespace) -> None:
-    _load_city_registry()
+    load_city_registry()
     if not CITY_REGISTRY:
         print("[FATAL] No cities loaded from cities/*/config.yaml", file=sys.stderr)
         sys.exit(2)

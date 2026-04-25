@@ -51,7 +51,18 @@ tuning:
     Burbank, Glendale, Pasadena, Highland Park, Eagle Rock. Freeways: 101,
     405, 5, 10, 110, 134, 170, 210, PCH. Hospitals: LAC+USC, Cedars-Sinai,
     UCLA, Kaiser, Good Samaritan, MLK Community, Harbor-UCLA, Northridge,
-    St Francis. Phrases: code 3, code 4, code 6, 211 in progress, 459, 415,
+    St Francis.     Phrases: code 3, code 4, code 6, 211 in progress, 459, 415,
     187, 245, 273, ADW, GTA, GTAW, AOA, shots fired, suspect, code 30
     ringer, dispatch, en route, on scene, broadcast. Short dispatch.
     Numbers spoken separately.
+  llm_local_context: >-
+    City of Los Angeles and inner LA County (Valley, Westside, South Bureau,
+    Harbor). LAPD bureaus: Central, Rampart, Newton, Hollenbeck, Harbor,
+    Hollywood, Wilshire, West LA, Van Nuys, West Valley, Northeast, 77th,
+    Pacific, Foothill, Devonshire, Southeast, Mission, Olympic, Topanga.
+    LASD contract cities and unincorporated pockets border LAPD—use street
+    + division context before guessing jurisdiction.
+    Corridors: Sunset, Hollywood, Wilshire, Santa Monica, Vermont, Western,
+    Crenshaw, Sepulveda, Figueroa, Alameda, Manchester, Slauson, Rosecrans.
+    Freeways: US-101, I-405, I-5, I-10, I-110, SR-134, PCH.
+    Hospitals: LAC+USC, Cedars-Sinai, UCLA, Kaiser LA, Harbor-UCLA, MLK Jr.
