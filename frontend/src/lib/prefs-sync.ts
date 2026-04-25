@@ -58,7 +58,6 @@ export const SYNCED_PREF_KEYS = [
   "pp:muted-categories",
   "pp:scheduled-reminders",
   "pp:commute-notify-enabled",
-  "pp:hide-resolved-incidents",
   "pp:push-snooze-until",
 ] as const;
 

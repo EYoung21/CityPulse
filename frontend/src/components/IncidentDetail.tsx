@@ -17,7 +17,6 @@ import {
   Volume2,
 } from "lucide-react";
 import PlaceActions from "@/components/PlaceActions";
-import IncidentLifecycleControls from "@/components/IncidentLifecycleControls";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -362,8 +361,6 @@ export default function IncidentDetail({ incident, onClose }: Props) {
         </div>
 
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
-
-        <IncidentLifecycleControls incidentId={incident.id} />
 
         {incident.description && (
           <div className="rounded-lg p-3" style={{ background: "var(--panel-input-bg)" }}>

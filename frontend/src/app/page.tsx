@@ -114,10 +114,6 @@ import AuthBar from "@/components/AuthBar";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { subscribeIncidents } from "@/lib/firestore";
 import { enrichIncidents } from "@/lib/incident-weights";
-import {
-  subscribeAllIncidentStatuses,
-  type IncidentLifecycleAggregate,
-} from "@/lib/incident-status";
 import { buildLocalSummary } from "@/lib/local-summary";
 import { getNeighborhood, incidentsInNeighborhood, NEIGHBORHOODS, type Neighborhood } from "@/lib/neighborhoods";
 import { getCurrentCity } from "@/lib/pulse-cities";
@@ -269,18 +265,6 @@ function MapHome() {
   }, [cityFromEnv, pathname, searchParams]);
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
-  // Community lifecycle aggregates ("still happening" / "resolved")
-  // for any incident that's been voted on in the last ~48h. Fed into
-  // `enrichIncidents` so resolved markers fade, the heatmap stops
-  // weighting them, and the alerts inbox can quietly skip them.
-  const [lifecycleStatuses, setLifecycleStatuses] = useState<
-    Map<string, IncidentLifecycleAggregate>
-  >(() => new Map());
-  // Mirror of `lifecycleStatuses` for use inside intervals/effects
-  // that shouldn't re-bind every time the map updates. Kept in sync
-  // via the same setter wrapper so we avoid a stale closure during
-  // the periodic w_eff refresh.
-  const lifecycleStatusesRef = useRef<Map<string, IncidentLifecycleAggregate>>(new Map());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [summary, setSummary] = useState<string>("");
   const [stats, setStats] = useState<StatsResponse | null>(null);
@@ -424,19 +408,7 @@ function MapHome() {
     setPref("pp:saved-places-overlay", savedPlacesOverlay ? "1" : "0");
   }, [savedPlacesOverlay]);
 
-  // Companion to the lifecycle voting feature: when enabled,
-  // community-resolved scanner incidents disappear from the map +
-  // alerts entirely (instead of just being faded). Defaults to OFF
-  // because hiding raw signal is a stronger choice than dimming it
-  // — users opt in once they trust the community status.
-  const [hideResolved, setHideResolved] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem("pp:hide-resolved-incidents") === "1";
-  });
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    setPref("pp:hide-resolved-incidents", hideResolved ? "1" : "0");
-  }, [hideResolved]);
+  // Community voting removed — incidents are driven purely by timestamps.
 
   const [safetyPoiCats, setSafetyPoiCats] = useState<Set<SafetyPoiCategory>>(() => new Set());
   const [safetyPois, setSafetyPois] = useState<
@@ -998,32 +970,9 @@ function MapHome() {
 
   useEffect(() => {
     const id = setInterval(() => {
-      // Pass the latest lifecycle map so each refresh tick also
-      // applies the most current community signal — otherwise an
-      // incident that was just voted "resolved" wouldn't lose its
-      // weight until the next snapshot pushed a new `incidents`
-      // array down.
-      setIncidents((prev) => enrichIncidents(prev, lifecycleStatusesRef.current));
+      setIncidents((prev) => enrichIncidents(prev));
     }, WEIGHT_REFRESH_MS);
     return () => clearInterval(id);
-  }, []);
-
-  // Live subscription to lifecycle aggregates. The query is bounded
-  // by `lastVoteAtMs >= now-48h` so the listener stays cheap as the
-  // collection grows; older votes naturally fall off the visualisation
-  // and revert incidents to scanner-only weighting.
-  useEffect(() => {
-    const unsub = subscribeAllIncidentStatuses(
-      (next) => {
-        lifecycleStatusesRef.current = next;
-        setLifecycleStatuses(next);
-      },
-      {
-        windowHours: 48,
-        onError: (e) => console.warn("Incident statuses subscribe failed:", e),
-      }
-    );
-    return unsub;
   }, []);
 
   // Off-screen incident detection. The first time we receive an incident
@@ -1054,13 +1003,6 @@ function MapHome() {
       if (dismissedAlertIdsRef.current.has(inc.id)) continue;
       if (inc.lat == null || inc.lng == null) continue;
       if (muted.has(inc.severity_category)) continue;
-      // Don't surface a chip for an incident the community has voted
-      // resolved — it'd be jarring to be steered toward a cleared
-      // scene. The w_eff threshold below would catch most of these
-      // (resolved incidents drop to ~15% weight) but the explicit
-      // check protects against fresh, high-severity incidents that
-      // a single early "resolved" vote shouldn't be able to demote.
-      if (inc.lifecycle_status === "resolved") continue;
       const w = inc.w_eff ?? 0.5;
       if (w < 0.55) continue; // only meaningful severity
       const inView =
@@ -1255,22 +1197,8 @@ function MapHome() {
     });
   }, []);
 
-  // Apply lifecycle aggregates to the scanner stream so resolved
-  // incidents fade and "still active" votes nudge the heatmap up.
-  const mergedIncidents = useMemo(() => {
-    return lifecycleStatuses.size === 0
-      ? incidents
-      : enrichIncidents(incidents, lifecycleStatuses);
-  }, [incidents, lifecycleStatuses]);
-
-  const filteredIncidents = mergedIncidents.filter((inc) => {
+  const filteredIncidents = incidents.filter((inc) => {
     if (inc.hidden) return false;
-    // Optional: hide community-resolved incidents entirely. This is a
-    // user-controlled escalation of the default fade behaviour — it
-    // also drops the incident from the alerts inbox, off-screen
-    // chips, and the heatmap (because we filter before the heat
-    // layer reads from `filteredIncidents`).
-    if (hideResolved && inc.lifecycle_status === "resolved") return false;
     const cutoff = Date.now() - timeFilter * 60 * 60 * 1000;
     if (new Date(inc.reported_at).getTime() < cutoff) return false;
     if (activeCats.size > 0 && !activeCats.has(inc.severity_category)) return false;
@@ -2475,38 +2403,6 @@ function MapHome() {
                     Save a place from the sidebar to see it pinned here.
                   </p>
                 )}
-
-                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
-                <p
-                  className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1"
-                  style={{ color: "var(--panel-text-muted)" }}
-                >
-                  Incident lifecycle
-                </p>
-                <button
-                  onClick={() => setHideResolved((v) => !v)}
-                  className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
-                  style={{ color: "var(--panel-text-secondary)" }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                  aria-pressed={hideResolved}
-                  title="Drop community-resolved incidents from the map, alerts, and heatmap entirely (instead of just fading them)."
-                >
-                  <span className="flex items-center gap-2">
-                    <span aria-hidden="true">✓</span>
-                    <span>Hide community-resolved</span>
-                  </span>
-                  <div
-                    className={`w-8 h-4 rounded-full transition-colors relative ${hideResolved ? "bg-green-500" : ""}`}
-                    style={!hideResolved ? { background: "var(--panel-input-bg)" } : {}}
-                  >
-                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${hideResolved ? "left-4" : "left-0.5"}`} />
-                  </div>
-                </button>
-                <p className="text-[9px] px-2 pb-1 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
-                  Off (default): resolved scenes fade with a green check.
-                  On: they disappear from the map, list, and heatmap.
-                </p>
 
                 {/* Personal avoid-area UI lives in `AvoidAreasManager.tsx`;
                     routing merge is gated by USER_DRAWN_AVOID_AREAS_ENABLED in
