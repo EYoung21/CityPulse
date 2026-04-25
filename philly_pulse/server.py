@@ -242,7 +242,7 @@ async def health():
         "llm_configured": llm.is_configured(),
         "llm_provider": llm_client.active_provider_name(),
         "llm_model": llm_client.active_model(),
-        "inhibitor_configured": bool(inhibitor.INHIBITOR_API_KEY),
+        "inhibitor_configured": inhibitor.GUARDRAIL_MODE not in {"off", "disabled", "none"},
         "incident_count": count,
     }
 

@@ -549,14 +549,46 @@ def transcribe_and_post(
                 "city": city,
             }
 
-            try:
-                resp = requests.post(BRIDGE_URL, json=payload, timeout=30)
-                if resp.status_code == 200:
-                    transcribed += 1
-                else:
-                    print(f"    [INGEST {resp.status_code}] {resp.text[:100]}")
-            except Exception as e:
-                print(f"    [INGEST ERROR] {e}")
+            # Retry on transient backend pressure. The Hetzner box only has
+            # 2GB RAM and the philly-pulse-api uvicorn process can briefly
+            # OOM-kill itself when backfill traffic stacks up on top of
+            # live ingest, returning 502/504 from nginx for a few seconds
+            # while systemd restarts it. Without this retry every transcript
+            # caught in that window was dropped on the floor permanently
+            # (see /var/log/citypulse-backfill.log "[INGEST 502]" runs).
+            max_attempts = 6
+            base_backoff = 4.0
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    resp = requests.post(BRIDGE_URL, json=payload, timeout=60)
+                    sc = resp.status_code
+                    if sc == 200:
+                        transcribed += 1
+                        break
+                    if sc in (429, 502, 503, 504):
+                        if attempt == max_attempts:
+                            print(f"    [INGEST {sc}] gave up after {attempt} attempts: {resp.text[:80]}")
+                            break
+                        wait = min(60.0, base_backoff * (2 ** (attempt - 1))) + random.uniform(0, 1.5)
+                        print(f"    [INGEST {sc}] backoff {wait:.1f}s ({attempt}/{max_attempts})")
+                        time.sleep(wait)
+                        continue
+                    print(f"    [INGEST {sc}] {resp.text[:100]}")
+                    break
+                except requests.exceptions.RequestException as e:
+                    if attempt == max_attempts:
+                        print(f"    [INGEST ERROR] gave up after {attempt} attempts: {e}")
+                        break
+                    wait = min(60.0, base_backoff * (2 ** (attempt - 1))) + random.uniform(0, 1.5)
+                    print(f"    [INGEST ERROR] {e!s} — backoff {wait:.1f}s ({attempt}/{max_attempts})")
+                    time.sleep(wait)
+                except Exception as e:
+                    print(f"    [INGEST ERROR] non-retryable: {e}")
+                    break
+
+            # Tiny inter-transcript delay so a single archive's 50-100
+            # transcripts don't slam the 2GB Hetzner box all at once.
+            time.sleep(0.6)
 
         except Exception as e:
             print(f"    [CHUNK ERROR {ci}] {e}")
