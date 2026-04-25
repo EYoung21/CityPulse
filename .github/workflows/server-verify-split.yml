@@ -1,0 +1,49 @@
+name: Verify Split Backfill
+on:
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Snapshot
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 3m
+          script: |
+            set +e
+            echo "######## Hetzner downloader ########"
+            systemctl is-active citypulse-downloader.service
+            echo "-- heartbeat --"
+            cat /var/log/citypulse-downloader.heartbeat 2>/dev/null
+            echo ""
+            echo "-- recent log (tail 20) --"
+            tail -20 /var/log/citypulse-downloader.log
+            echo ""
+            echo "######## Lambda transcriber state ########"
+            ssh -i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new ubuntu@150.230.182.19 '
+              echo "-- service --"
+              sudo systemctl is-active citypulse-archive-transcriber.service
+              echo "-- queue --"
+              echo "  sidecars: $(ls /var/spool/citypulse-incoming/*.json 2>/dev/null | wc -l)"
+              echo "  mp3s:     $(ls /var/spool/citypulse-incoming/*.mp3 2>/dev/null | wc -l)"
+              echo "  failed:   $(ls /var/spool/citypulse-failed/*.json 2>/dev/null | wc -l)"
+              echo "-- heartbeat --"
+              cat /var/log/citypulse-transcriber.heartbeat 2>/dev/null
+              echo ""
+              echo "-- old monolith status (should be inactive/disabled) --"
+              echo "  active=$(sudo systemctl is-active citypulse-backfill 2>/dev/null) enabled=$(sudo systemctl is-enabled citypulse-backfill 2>/dev/null)"
+              echo "-- transcriber recent log (tail 25) --"
+              tail -25 /var/log/citypulse-transcriber.log
+            '
+            echo ""
+            echo "######## /api/ingest activity (last 5 min) ########"
+            journalctl -u philly-pulse-api --no-pager --since "5 min ago" 2>/dev/null \
+              | grep -E 'POST /api/ingest' | awk '{print $(NF-1), $NF}' | sort | uniq -c | sort -rn | head
+            echo ""
+            echo "  -- by source IP (last 5 min) --"
+            journalctl -u philly-pulse-api --no-pager --since "5 min ago" 2>/dev/null \
+              | grep -E 'POST /api/ingest' \
+              | awk -F: '{print $5}' | awk '{print $NF}' | sort | uniq -c | sort -rn | head
