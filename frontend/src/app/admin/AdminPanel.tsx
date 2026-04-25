@@ -29,8 +29,7 @@ import {
 import { subscribeExtractions, subscribeAllExtractions } from "@/lib/firestore";
 import type { Extraction, VariantResult } from "@/lib/api";
 import AuthBar from "@/components/AuthBar";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+import { apiUrl } from "@/lib/public-api-base";
 
 interface Props {
   onBack: () => void;
@@ -62,7 +61,7 @@ function LiveAudioHeader({ feed }: { feed: FeedInfo }) {
 
   const toggle = () => {
     if (!audioRef.current) {
-      const a = new Audio(`${API_BASE}/api/admin/stream/${feed.feed_id}`);
+      const a = new Audio(apiUrl(`/api/admin/stream/${feed.feed_id}`));
       a.addEventListener("ended", () => setPlaying(false));
       a.addEventListener("error", () => setPlaying(false));
       audioRef.current = a;
@@ -192,7 +191,7 @@ function AudioPlayer({
   const animRef = useRef<number>(0);
   const waveformFetched = useRef(false);
   const accent = accentColor || "#3b82f6";
-  const audioUrl = clipId ? `${API_BASE}/api/${endpoint}/${clipId}` : null;
+  const audioUrl = clipId ? apiUrl(`/api/${endpoint}/${clipId}`) : null;
 
   const fetchWaveform = useCallback(() => {
     if (!audioUrl || waveformFetched.current) return;
@@ -482,7 +481,7 @@ function RetranscribeForm({
         norm_percentile: norm === "off" ? null : parseInt(norm),
         beam_size: parseInt(beam) || 5,
       };
-      const res = await fetch(`${API_BASE}/api/admin/retranscribe`, {
+      const res = await fetch(apiUrl("/api/admin/retranscribe"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -576,7 +575,7 @@ function VerifyPlayButton({ extraction }: { extraction: Extraction }) {
 
   const clipId = extraction.variants?.[0]?.audio_clip ?? extraction.raw_audio_clip;
   const endpoint = extraction.variants?.[0]?.audio_clip ? "audio" : "audio-raw";
-  const audioUrl = clipId ? `${API_BASE}/api/${endpoint}/${clipId}` : null;
+  const audioUrl = clipId ? apiUrl(`/api/${endpoint}/${clipId}`) : null;
 
   const toggle = () => {
     if (!audioUrl) { setError(true); return; }
@@ -889,7 +888,7 @@ function ExtractionCard({
             onClick={async () => {
               setTogglingVis(true);
               try {
-                const res = await fetch(`${API_BASE}/api/admin/incident/${extraction.incident_id}/visibility`, {
+                const res = await fetch(apiUrl(`/api/admin/incident/${extraction.incident_id}/visibility`), {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ hidden: !hiddenOnMap }),
@@ -914,7 +913,7 @@ function ExtractionCard({
             onClick={async () => {
               if (!confirm("Permanently delete this incident from the map?")) return;
               try {
-                const res = await fetch(`${API_BASE}/api/admin/incident/${extraction.incident_id}`, {
+                const res = await fetch(apiUrl(`/api/admin/incident/${extraction.incident_id}`), {
                   method: "DELETE",
                 });
                 if (res.ok) setIncidentDeleted(true);
@@ -967,7 +966,7 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
 
   const handlePredict = async (extractionId: string) => {
     try {
-      const res = await fetch(`${API_BASE}/api/admin/predict`, {
+      const res = await fetch(apiUrl("/api/admin/predict"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ extraction_id: extractionId }),
@@ -1115,7 +1114,7 @@ function AllFeedsContent({ feeds }: { feeds: FeedInfo[] }) {
 
   const handlePredict = async (extractionId: string) => {
     try {
-      const res = await fetch(`${API_BASE}/api/admin/predict`, {
+      const res = await fetch(apiUrl("/api/admin/predict"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ extraction_id: extractionId }),
@@ -1254,7 +1253,7 @@ function AllFeedsSidebarItem({
     } else {
       audiosRef.current.forEach((a) => a.pause());
       const elements = feeds.map((f) => {
-        const a = new Audio(`${API_BASE}/api/admin/stream/${f.feed_id}`);
+        const a = new Audio(apiUrl(`/api/admin/stream/${f.feed_id}`));
         a.addEventListener("error", () => {});
         a.play().catch(() => {});
         return a;
@@ -1326,9 +1325,8 @@ function SidebarFeedItem({
 
   const togglePlay = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!API_BASE) { setStreamError(true); return; }
     if (!audioRef.current) {
-      const a = new Audio(`${API_BASE}/api/admin/stream/${feed.feed_id}`);
+      const a = new Audio(apiUrl(`/api/admin/stream/${feed.feed_id}`));
       a.addEventListener("ended", () => setPlaying(false));
       a.addEventListener("error", () => { setPlaying(false); setStreamError(true); });
       audioRef.current = a;

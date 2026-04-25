@@ -114,6 +114,7 @@ import AuthBar from "@/components/AuthBar";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { subscribeIncidents } from "@/lib/firestore";
 import { enrichIncidents } from "@/lib/incident-weights";
+import { apiUrl } from "@/lib/public-api-base";
 import { buildLocalSummary } from "@/lib/local-summary";
 import { getNeighborhood, incidentsInNeighborhood, NEIGHBORHOODS, type Neighborhood } from "@/lib/neighborhoods";
 import { getCurrentCity } from "@/lib/pulse-cities";
@@ -124,7 +125,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import UpgradePrompt, { ProBadge } from "@/components/UpgradePrompt";
 import { onUpgradeRequested } from "@/lib/upgrade";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 const WEIGHT_REFRESH_MS = 15000;
 
 function statsFromIncidents(incidents: Incident[]): StatsResponse {
@@ -760,8 +760,7 @@ function MapHome() {
   }, [incidents]);
 
   useEffect(() => {
-    const url = `${API_BASE}/api/admin/feeds`;
-    fetch(url)
+    fetch(apiUrl("/api/admin/feeds"))
       .then((r) => r.json())
       .then((data) => {
         if (data.feeds && Array.isArray(data.feeds)) {
@@ -952,6 +951,9 @@ function MapHome() {
 
   useEffect(() => {
     if (useFirestoreData) {
+      // One REST pull up front so the map isn't blank while Firestore connects,
+      // and so quota / rules failures still leave the user with API data.
+      void loadFromApi();
       const unsub = subscribeIncidents(
         (next) => setIncidents(next),
         (e) => {
@@ -1148,7 +1150,8 @@ function MapHome() {
   // every POLL_INTERVAL ms forever.
   const [apiSummaryDown, setApiSummaryDown] = useState(false);
   useEffect(() => {
-    if (!API_BASE || apiSummaryDown) return;
+    if (typeof window === "undefined") return;
+    if (apiSummaryDown) return;
     let cancelled = false;
     let consecutiveFailures = 0;
     const pull = async () => {
@@ -1178,10 +1181,10 @@ function MapHome() {
   }, [apiSummaryDown]);
 
   useEffect(() => {
-    // Use client-side derivation when either (a) we never had an API
-    // configured, or (b) the API is configured but currently down.
-    // Either way, Firestore incidents are the source of truth.
-    if (API_BASE && !apiSummaryDown) return;
+    // Use client-side derivation when the API summary poll is healthy
+    // (`apiSummaryDown` is false). When the API is down / unreachable,
+    // derive from the Firestore-backed incident list instead.
+    if (!apiSummaryDown) return;
     if (!useFirestoreData) return;
     setSummary(buildLocalSummary(incidents));
     setStats(statsFromIncidents(incidents));

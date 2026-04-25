@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { apiUrl, getPublicApiBase } from "@/lib/public-api-base";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 const MAX_EVENTS = 300;
 
 export interface AdminEvent {
@@ -31,11 +31,16 @@ export interface PipelineGroup {
 }
 
 function wsUrl(): string {
-  if (!API_BASE) return "";
-  const base = API_BASE.replace(/\/$/, "");
-  const proto = base.startsWith("https") ? "wss" : "ws";
-  const host = base.replace(/^https?:\/\//, "");
-  return `${proto}://${host}/ws/admin`;
+  if (typeof window === "undefined") return "";
+  const base = getPublicApiBase();
+  if (base) {
+    const b = base.replace(/\/$/, "");
+    const proto = b.startsWith("https") ? "wss" : "ws";
+    const host = b.replace(/^https?:\/\//, "");
+    return `${proto}://${host}/ws/admin`;
+  }
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}//${window.location.host}/ws/admin`;
 }
 
 export function useAdminStream() {
@@ -46,12 +51,10 @@ export function useAdminStream() {
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
-    if (API_BASE) {
-      fetch(`${API_BASE}/api/admin/feeds`)
-        .then((r) => r.json())
-        .then((d) => setFeeds(d.feeds || []))
-        .catch(() => {});
-    }
+    fetch(apiUrl("/api/admin/feeds"))
+      .then((r) => r.json())
+      .then((d) => setFeeds(d.feeds || []))
+      .catch(() => {});
   }, []);
 
   const connect = useCallback(() => {

@@ -14,11 +14,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-
-// Mirror the rest of the app: backend lives at NEXT_PUBLIC_API_URL.
-// Empty string falls back to a same-origin relative path (works in
-// dev when Next is proxied to the FastAPI server).
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+import { apiUrl } from "@/lib/public-api-base";
 
 export interface CityStats {
   slug: string;
@@ -87,7 +83,7 @@ export function useCityStats(
       abortRef.current = ctrl;
       try {
         const r = await fetch(
-          `${API_BASE}/api/city-stats/${encodeURIComponent(slug!)}`,
+          apiUrl(`/api/city-stats/${encodeURIComponent(slug!)}`),
           { headers: { Accept: "application/json" }, signal: ctrl.signal },
         );
         if (!r.ok) {

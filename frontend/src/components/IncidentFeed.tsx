@@ -18,7 +18,7 @@ import {
   Pause,
 } from "lucide-react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+import { apiUrl } from "@/lib/public-api-base";
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
   violent_weapon: <ShieldAlert className="w-3.5 h-3.5" />,
@@ -114,8 +114,8 @@ function IncidentCard({
     e.stopPropagation();
     const audioSrc = inc.audio_url
       ? inc.audio_url
-      : inc.audio_clip && API_BASE
-        ? `${API_BASE}/api/audio/${inc.audio_clip}`
+      : inc.audio_clip
+        ? apiUrl(`/api/audio/${inc.audio_clip}`)
         : null;
     if (!audioSrc) return;
     if (!audioRef.current) {
@@ -188,7 +188,7 @@ function IncidentCard({
         )}
 
         <div className="mt-1.5 flex items-center gap-2">
-          {(inc.audio_url || (inc.audio_clip && API_BASE)) && (
+          {(inc.audio_url || inc.audio_clip) && (
             <button
               onClick={toggleAudio}
               className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium transition-all ${
