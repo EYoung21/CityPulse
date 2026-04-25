@@ -114,7 +114,7 @@ import AuthBar from "@/components/AuthBar";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { subscribeIncidents } from "@/lib/firestore";
 import { enrichIncidents } from "@/lib/incident-weights";
-import { apiUrl } from "@/lib/public-api-base";
+import { apiUrl, fetchPublicApi } from "@/lib/public-api-base";
 import { buildLocalSummary } from "@/lib/local-summary";
 import { getNeighborhood, incidentsInNeighborhood, NEIGHBORHOODS, type Neighborhood } from "@/lib/neighborhoods";
 import { getCurrentCity } from "@/lib/pulse-cities";
@@ -760,7 +760,7 @@ function MapHome() {
   }, [incidents]);
 
   useEffect(() => {
-    fetch(apiUrl("/api/admin/feeds"))
+    fetchPublicApi("/api/admin/feeds")
       .then((r) => r.json())
       .then((data) => {
         if (data.feeds && Array.isArray(data.feeds)) {

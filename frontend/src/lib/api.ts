@@ -1,4 +1,4 @@
-import { apiUrl } from "@/lib/public-api-base";
+import { fetchPublicApi } from "@/lib/public-api-base";
 
 export type LocationConfidence = "direct" | "context" | "none";
 
@@ -126,7 +126,7 @@ export async function fetchIncidents(
   if (since) params.set("since", since);
   if (category) params.set("category", category);
   const qs = params.toString();
-  const res = await fetch(apiUrl(`/api/incidents${qs ? `?${qs}` : ""}`));
+  const res = await fetchPublicApi(`/api/incidents${qs ? `?${qs}` : ""}`);
   if (!res.ok) throw new Error(`Failed to fetch incidents: ${res.status}`);
   const data = await res.json();
   return data.incidents;
@@ -150,7 +150,7 @@ export interface KeywordWatchListResponse {
 }
 
 export async function listKeywordWatches(idToken: string): Promise<KeywordWatchListResponse> {
-  const res = await fetch(apiUrl("/api/keyword-watches"), {
+  const res = await fetchPublicApi("/api/keyword-watches", {
     headers: { Authorization: `Bearer ${idToken}` },
   });
   if (!res.ok) throw new Error(`Failed to list keyword watches: ${res.status}`);
@@ -161,7 +161,7 @@ export async function createKeywordWatch(
   idToken: string,
   body: { keyword: string; city?: string; severityFloor?: number }
 ): Promise<{ watch: KeywordWatch }> {
-  const res = await fetch(apiUrl("/api/keyword-watches"), {
+  const res = await fetchPublicApi("/api/keyword-watches", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
     body: JSON.stringify(body),
@@ -178,7 +178,7 @@ export async function updateKeywordWatch(
   watchId: string,
   body: { active?: boolean; severityFloor?: number }
 ): Promise<{ watch: KeywordWatch }> {
-  const res = await fetch(apiUrl(`/api/keyword-watches/${watchId}`), {
+  const res = await fetchPublicApi(`/api/keyword-watches/${watchId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
     body: JSON.stringify(body),
@@ -188,7 +188,7 @@ export async function updateKeywordWatch(
 }
 
 export async function deleteKeywordWatch(idToken: string, watchId: string): Promise<void> {
-  const res = await fetch(apiUrl(`/api/keyword-watches/${watchId}`), {
+  const res = await fetchPublicApi(`/api/keyword-watches/${watchId}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${idToken}` },
   });
@@ -230,7 +230,7 @@ export async function fetchIncidentPage(opts: {
   if (opts.city) params.set("city", opts.city);
   if (opts.nearLat != null) params.set("near_lat", String(opts.nearLat));
   if (opts.nearLng != null) params.set("near_lng", String(opts.nearLng));
-  const res = await fetch(apiUrl(`/api/incidents/page?${params}`), { signal: opts.signal });
+  const res = await fetchPublicApi(`/api/incidents/page?${params}`, { signal: opts.signal });
   if (!res.ok) throw new Error(`Failed to fetch incident page: ${res.status}`);
   return res.json();
 }
@@ -253,37 +253,37 @@ export async function searchIncidentsApi(opts: {
   if (opts.category) params.set("category", opts.category);
   if (opts.limit != null) params.set("limit", String(opts.limit));
   if (opts.city) params.set("city", opts.city);
-  const res = await fetch(apiUrl(`/api/incidents/search?${params}`), { signal: opts.signal });
+  const res = await fetchPublicApi(`/api/incidents/search?${params}`, { signal: opts.signal });
   if (!res.ok) throw new Error(`Incident search failed: ${res.status}`);
   return (await res.json()) as IncidentSearchResponse;
 }
 
 export async function fetchSummary(): Promise<SummaryResponse> {
-  const res = await fetch(apiUrl("/api/summary"));
+  const res = await fetchPublicApi("/api/summary");
   if (!res.ok) throw new Error(`Failed to fetch summary: ${res.status}`);
   return res.json();
 }
 
 export async function fetchStats(): Promise<StatsResponse> {
-  const res = await fetch(apiUrl("/api/stats"));
+  const res = await fetchPublicApi("/api/stats");
   if (!res.ok) throw new Error(`Failed to fetch stats: ${res.status}`);
   return res.json();
 }
 
 export async function fetchHealth(): Promise<HealthResponse> {
-  const res = await fetch(apiUrl("/api/health"));
+  const res = await fetchPublicApi("/api/health");
   if (!res.ok) throw new Error(`Failed to fetch health: ${res.status}`);
   return res.json();
 }
 
 export async function simulateIncident(): Promise<unknown> {
-  const res = await fetch(apiUrl("/api/simulate"), { method: "POST" });
+  const res = await fetchPublicApi("/api/simulate", { method: "POST" });
   if (!res.ok) throw new Error(`Simulate failed: ${res.status}`);
   return res.json();
 }
 
 export async function seedDemoData(): Promise<{ status: string; count: number }> {
-  const res = await fetch(apiUrl("/api/seed"), { method: "POST" });
+  const res = await fetchPublicApi("/api/seed", { method: "POST" });
   if (!res.ok) throw new Error(`Seed failed: ${res.status}`);
   return res.json();
 }

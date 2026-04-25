@@ -21,9 +21,41 @@ export function getPublicApiBase(): string {
   }
 }
 
+/** The explicitly configured public API base (never same-origin rewritten). */
+export function getExplicitPublicApiBase(): string {
+  return (process.env.NEXT_PUBLIC_API_URL || "").trim().replace(/\/$/, "");
+}
+
 /** Absolute API URL or same-origin path (leading `/`). */
 export function apiUrl(path: string): string {
   const p = path.startsWith("/") ? path : `/${path}`;
   const base = getPublicApiBase();
   return base ? `${base}${p}` : p;
+}
+
+/** Fetch a Python API endpoint with a safe fallback.
+ *
+ * Primary behavior uses `apiUrl(path)` so browser calls stay same-origin and
+ * leverage Next.js rewrites to avoid CORS.
+ *
+ * If the deployment is missing rewrites (common on new domains / mis-set
+ * BACKEND_URL) those same-origin `/api/*` requests return 404. In that case
+ * (or if the request throws), we retry once against the explicit
+ * `NEXT_PUBLIC_API_URL` base if configured.
+ */
+export async function fetchPublicApi(path: string, init?: RequestInit): Promise<Response> {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  const primary = apiUrl(p);
+  const explicitBase = getExplicitPublicApiBase();
+  const explicitUrl = explicitBase ? `${explicitBase}${p}` : "";
+
+  try {
+    const res = await fetch(primary, init);
+    if (res.status !== 404) return res;
+    if (!explicitUrl || primary === explicitUrl) return res;
+    return await fetch(explicitUrl, init);
+  } catch (e) {
+    if (!explicitUrl || primary === explicitUrl) throw e;
+    return await fetch(explicitUrl, init);
+  }
 }

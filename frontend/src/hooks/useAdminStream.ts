@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiUrl, getPublicApiBase } from "@/lib/public-api-base";
+import { fetchPublicApi, getPublicApiBase } from "@/lib/public-api-base";
 
 const MAX_EVENTS = 300;
 
@@ -51,7 +51,7 @@ export function useAdminStream() {
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
-    fetch(apiUrl("/api/admin/feeds"))
+    fetchPublicApi("/api/admin/feeds")
       .then((r) => r.json())
       .then((d) => setFeeds(d.feeds || []))
       .catch(() => {});
