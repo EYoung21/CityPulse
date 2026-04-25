@@ -28,7 +28,7 @@ import { getAuth } from "firebase/auth";
 import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
 import { getCurrentCity } from "@/lib/pulse-cities";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+import { apiUrl } from "@/lib/public-api-base";
 
 export interface PushStatus {
   supported: boolean;
@@ -91,7 +91,7 @@ async function fetchPublicKey(force = false): Promise<{ key: string | null; conf
     return { key: VAPID_PUBLIC_KEY_CACHE.key, configured: VAPID_PUBLIC_KEY_CACHE.configured };
   }
   try {
-    const res = await fetch(`${API_BASE}/api/push/public-key`, { cache: "no-store" });
+    const res = await fetch(apiUrl("/api/push/public-key"), { cache: "no-store" });
     if (!res.ok) throw new Error(`status ${res.status}`);
     const data = (await res.json()) as { publicKey?: string; configured?: boolean };
     VAPID_PUBLIC_KEY_CACHE.key = data.publicKey || null;
@@ -249,7 +249,7 @@ async function postSubscriptionToServer(
     body.notifyRadiusKm = area.radiusKm;
   }
   try {
-    const res = await fetch(`${API_BASE}/api/push/subscribe`, {
+    const res = await fetch(apiUrl("/api/push/subscribe"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -265,7 +265,7 @@ async function postSubscriptionToServer(
 
 async function deleteSubscriptionOnServer(endpoint: string, idToken: string): Promise<void> {
   try {
-    await fetch(`${API_BASE}/api/push/unsubscribe`, {
+    await fetch(apiUrl("/api/push/unsubscribe"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -431,7 +431,7 @@ export async function listPushDevices(): Promise<PushDevice[]> {
   const idToken = await getIdToken();
   if (!idToken) return [];
   try {
-    const res = await fetch(`${API_BASE}/api/push/devices`, {
+    const res = await fetch(apiUrl("/api/push/devices"), {
       headers: { Authorization: `Bearer ${idToken}` },
       cache: "no-store",
     });
@@ -458,7 +458,7 @@ export async function revokePushDevice(deviceId: string): Promise<boolean> {
   const idToken = await getIdToken();
   if (!idToken) return false;
   try {
-    const res = await fetch(`${API_BASE}/api/push/revoke-device`, {
+    const res = await fetch(apiUrl("/api/push/revoke-device"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -512,7 +512,7 @@ export async function sendTestPush(): Promise<PushTestResult> {
     return { ok: false, status: "error", sent: 0, failed: 0, gone: 0, reason: "Sign in first." };
   }
   try {
-    const res = await fetch(`${API_BASE}/api/push/test`, {
+    const res = await fetch(apiUrl("/api/push/test"), {
       method: "POST",
       headers: { Authorization: `Bearer ${idToken}` },
     });

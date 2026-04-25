@@ -1,12 +1,10 @@
 import type { Incident } from "./api";
+import { apiUrl } from "@/lib/public-api-base";
 
 const ORS_URL = "https://api.openrouteservice.org/v2/directions";
 
-/** Same base as `lib/api.ts` so routing hits the backend when using NEXT_PUBLIC_API_URL. */
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
-
 function routeDirectionsUrl(): string {
-  return `${API_BASE}/api/route-directions`;
+  return apiUrl("/api/route-directions");
 }
 
 export type TransportMode =

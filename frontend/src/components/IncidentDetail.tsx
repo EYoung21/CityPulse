@@ -17,8 +17,7 @@ import {
   Volume2,
 } from "lucide-react";
 import PlaceActions from "@/components/PlaceActions";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+import { apiUrl } from "@/lib/public-api-base";
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -277,8 +276,8 @@ export default function IncidentDetail({ incident, onClose }: Props) {
   const confidencePct = Math.round(incident.confidence * 100);
   const audioSrc = incident.audio_url
     ? incident.audio_url
-    : incident.audio_clip && API_BASE
-      ? `${API_BASE}/api/audio/${incident.audio_clip}`
+    : incident.audio_clip
+      ? apiUrl(`/api/audio/${incident.audio_clip}`)
       : null;
   const hasAudio = !!audioSrc;
 
@@ -463,8 +462,8 @@ export default function IncidentDetail({ incident, onClose }: Props) {
               {updateMentions.map((m, idx) => {
                 const mAudioSrc = m.audio_url
                   ? m.audio_url
-                  : m.audio_clip && API_BASE
-                    ? `${API_BASE}/api/audio/${m.audio_clip}`
+                  : m.audio_clip
+                    ? apiUrl(`/api/audio/${m.audio_clip}`)
                     : null;
                 return (
                   <li
