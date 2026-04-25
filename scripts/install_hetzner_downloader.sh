@@ -55,7 +55,10 @@ echo "==> 2. Python venv at $REPO_DIR/.venv-downloader (isolated from the API)"
 # We do NOT reuse philly-pulse-api's venv. The downloader's deps are
 # lightweight (requests, pyyaml) and we'd rather a stray pip upgrade not
 # tip the API over. Memory cost: ~30MB vs sharing.
-if [[ ! -d "$REPO_DIR/.venv-downloader" ]]; then
+# Recreate if missing or broken (partial copies sometimes leave a dir
+# without bin/pip — then the old `[[ ! -d ]]` guard skipped creation).
+if [[ ! -x "$REPO_DIR/.venv-downloader/bin/pip" ]]; then
+  rm -rf "$REPO_DIR/.venv-downloader"
   python3 -m venv "$REPO_DIR/.venv-downloader"
 fi
 "$REPO_DIR/.venv-downloader/bin/pip" install -q --upgrade pip
