@@ -49,29 +49,53 @@ feeds:
   - { feed_id: "44308", label: "SEPTA Transit Police" }
   - { feed_id: "36323", label: "Delaware Co Police Dispatch" }
   - { feed_id: "46438", label: "DelCo Fire/EMS - Countywide Ops" }
-  # Per-sector DelCo PD feeds. The countywide 36323 carries all sectors
-  # interleaved; the per-sector feeds are cleaner and explicitly cover
-  # the suburbs the user wants on phlpulse.com:
-  #   Sector 6 → Swarthmore, Media, Springfield, Nether Providence,
-  #              Rose Valley, Rutledge, Wallingford
-  #   Sector 7 → Haverford Twp (Havertown), Radnor (Wayne, Villanova,
-  #              Rosemont, St Davids) — the Main Line / Bryn Mawr-adjacent
-  #              corridor. Bryn Mawr borough itself is in Lower Merion
-  #              (MontCo) which uses encrypted DMR Tier 3, so Sector 7
-  #              is the closest unencrypted PD coverage we can get.
-  #   Sector 3 → Upper Darby + Clifton Heights (between Philly and
-  #              Swarthmore/Haverford on Market-Frankford line).
-  - { feed_id: "46441", label: "DelCo PD Sector 6 (Swarthmore/Media)" }
+  # Per-sector DelCo PD feeds (P25 Phase II trunked dispatch, one per
+  # patrol sector). The countywide 36323 interleaves all 7 sectors so
+  # transcripts are noisy and easy to mis-attribute geographically; the
+  # per-sector feeds are cleaner and let the LLM bias geocoding to the
+  # right cluster of municipalities. Sector definitions per the
+  # Delaware County PA RadioReference wiki:
+  #   Sector 1 → Brookhaven, Aston, Marcus Hook, Trainer, Upper/Lower
+  #              Chichester, Bethel, Parkside, Upland, Chester Twp
+  #              (south DelCo / Delaware River industrial belt).
+  #   Sector 2 → Swarthmore Boro (incl. Rutledge), Media Boro, Nether
+  #              Providence, Springfield Twp, Morton, Marple Twp,
+  #              Newtown Twp, Upper Providence, Penn State Brandywine.
+  #              **This is the feed that covers Swarthmore College + the
+  #              Springfield/Media/Marple corridor the user asked for.**
+  #   Sector 3 → Chester City only (its own sector since the city
+  #              generates the bulk of DelCo call volume).
+  #   Sector 4 → Lansdowne, Aldan, Clifton Heights, East Lansdowne,
+  #              Yeadon, Darby Boro, Colwyn, Sharon Hill, Folcroft,
+  #              Collingdale, Darby Twp (close-in inner suburbs along
+  #              the Market-Frankford / Baltimore Pike corridor).
+  #   Sector 5 → Eddystone, Ridley Twp, Glenolden, Prospect Park,
+  #              Norwood, Tinicum, Ridley Park (river belt south of
+  #              Sector 4, around Philadelphia International Airport).
+  #   Sector 6 → Upper Darby Twp + Millbourne Boro (between Philly and
+  #              the Main Line on the Market-Frankford El).
+  #   Sector 7 → Haverford Twp (Havertown), Radnor Twp (Wayne, Villanova,
+  #              Rosemont, St Davids), Villanova University — the Main
+  #              Line / Bryn Mawr-adjacent corridor. Bryn Mawr borough
+  #              itself is in Lower Merion (MontCo); Lower Merion PD
+  #              runs encrypted DMR, so Sector 7 + MontCo Fire West
+  #              (18335) is the closest unencrypted coverage we can get.
+  - { feed_id: "46436", label: "DelCo PD Sector 1 (Brookhaven/Aston/Chichester/Marcus Hook)" }
+  - { feed_id: "46437", label: "DelCo PD Sector 2 (Swarthmore/Media/Springfield/Marple/Newtown)" }
+  - { feed_id: "46444", label: "DelCo PD Sector 3 (Chester City)" }
+  - { feed_id: "46443", label: "DelCo PD Sector 4 (Lansdowne/Yeadon/Sharon Hill/Folcroft/Darby)" }
+  - { feed_id: "46442", label: "DelCo PD Sector 5 (Ridley/Eddystone/Glenolden/Prospect Park/Norwood/Tinicum)" }
+  - { feed_id: "46441", label: "DelCo PD Sector 6 (Upper Darby/Millbourne)" }
   - { feed_id: "46440", label: "DelCo PD Sector 7 (Haverford/Radnor/Main Line)" }
-  - { feed_id: "46444", label: "DelCo PD Sector 3 (Upper Darby)" }
-  - { feed_id: "46435", label: "DelCo Fire East (Upper Darby/Lansdowne)" }
+  - { feed_id: "46435", label: "DelCo Fire East (Upper Darby/Lansdowne corridor)" }
   - { feed_id: "24104", label: "Chester Co Law Enforcement Dispatch" }
   - { feed_id: "10489", label: "MontCo Fire and EMS - East" }
   - { feed_id: "25767", label: "MontCo Police, Fire and EMS - Region 3" }
-  # MontCo Fire West / Police Southwest covers Lower Merion (Bryn Mawr,
-  # Ardmore, Wynnewood, Bala Cynwyd, Narberth) fire and EMS dispatch.
-  # Lower Merion PD itself is encrypted so we only catch Fire/EMS here.
-  - { feed_id: "18335", label: "MontCo Fire West / Police SW (Lower Merion/Bryn Mawr)" }
+  # MontCo 18335 broadcasts the entire county Fire/EMS trunk — countywide
+  # dispatch + all regions + Event channels. Lower Merion PD itself is
+  # fully encrypted, so this is the only way we hear anything from
+  # Bryn Mawr / Ardmore / Wynnewood / Bala Cynwyd / Narberth.
+  - { feed_id: "18335", label: "MontCo Fire/EMS All-Regions (Lower Merion/Bryn Mawr/Main Line)" }
 
 tuning:
   # Whisper "initial_prompt": biases the acoustic model toward names it
