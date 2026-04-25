@@ -72,18 +72,35 @@ ssh-keygen -R "$LAMBDA_HOST" >/dev/null 2>&1 || true
 ssh-keyscan -H "$LAMBDA_HOST" >>/root/.ssh/known_hosts 2>/dev/null
 
 echo "==> 5. Env file at $ENV_FILE"
-# Carry forward Broadcastify creds from /etc/citypulse-backfill.env if it
-# exists (Lambda used to host them). Otherwise leave blank for the
-# operator to fill in.
+# Source-of-truth for Broadcastify creds in this stack is
+# /etc/citypulse-backfill.env on Lambda (laid down by the original
+# install_lambda_backfill.sh). Hetzner doesn't have those creds locally,
+# so we ssh over the lambda_tunnel_key — already installed in step 4 —
+# and pull them. Falls back to local /etc/* env files for hosts where
+# Lambda is unreachable (testing, future cutover).
 BC_USER=""
 BC_PASS=""
-for src in /etc/citypulse-backfill.env /etc/philly-pulse.env; do
-  if [[ -f "$src" ]]; then
-    BC_USER="$(awk -F= '/^BROADCASTIFY_USERNAME=/{print $2; exit}' "$src" || true)"
-    BC_PASS="$(awk -F= '/^BROADCASTIFY_PASSWORD=/{print $2; exit}' "$src" || true)"
-    [[ -n "$BC_USER" ]] && break
-  fi
-done
+echo "    fetching Broadcastify creds from Lambda over $LAMBDA_SSH_KEY"
+LAMBDA_ENV_OUT="$(ssh -i "$LAMBDA_SSH_KEY" \
+    -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+    -o ConnectTimeout=10 \
+    "${LAMBDA_USER}@${LAMBDA_HOST}" \
+    'sudo grep -E "^BROADCASTIFY_(USERNAME|PASSWORD)=" /etc/citypulse-backfill.env 2>/dev/null' \
+    2>/dev/null || true)"
+if [[ -n "$LAMBDA_ENV_OUT" ]]; then
+  BC_USER="$(printf '%s\n' "$LAMBDA_ENV_OUT" | awk -F= '/^BROADCASTIFY_USERNAME=/{print $2; exit}')"
+  BC_PASS="$(printf '%s\n' "$LAMBDA_ENV_OUT" | awk -F= '/^BROADCASTIFY_PASSWORD=/{print $2; exit}')"
+fi
+if [[ -z "$BC_USER" ]]; then
+  for src in /etc/citypulse-backfill.env /etc/philly-pulse.env; do
+    if [[ -f "$src" ]]; then
+      BC_USER="$(awk -F= '/^BROADCASTIFY_USERNAME=/{print $2; exit}' "$src" || true)"
+      BC_PASS="$(awk -F= '/^BROADCASTIFY_PASSWORD=/{print $2; exit}' "$src" || true)"
+      [[ -n "$BC_USER" ]] && break
+    fi
+  done
+fi
+[[ -n "$BC_USER" ]] && echo "    found creds (user=${BC_USER:0:3}***)" || echo "    no creds found in any source"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   cat >"$ENV_FILE" <<EOF
@@ -130,7 +147,20 @@ EOF
     echo "    !! $ENV_FILE has empty Broadcastify creds; fill in before starting"
   fi
 else
-  echo "    Keeping existing $ENV_FILE (edit by hand if creds need updating)"
+  # Idempotent backfill: if the file already exists but its creds are
+  # blank (e.g. a previous run failed to fetch from Lambda), rewrite
+  # just the BROADCASTIFY_* lines. Don't touch anything else the
+  # operator may have edited.
+  EXISTING_USER="$(awk -F= '/^BROADCASTIFY_USERNAME=/{print $2; exit}' "$ENV_FILE" || true)"
+  if [[ -z "$EXISTING_USER" && -n "$BC_USER" ]]; then
+    echo "    backfilling Broadcastify creds into existing $ENV_FILE"
+    sed -i \
+        -e "s|^BROADCASTIFY_USERNAME=.*|BROADCASTIFY_USERNAME=${BC_USER}|" \
+        -e "s|^BROADCASTIFY_PASSWORD=.*|BROADCASTIFY_PASSWORD=${BC_PASS}|" \
+        "$ENV_FILE"
+  else
+    echo "    Keeping existing $ENV_FILE (edit by hand if creds need updating)"
+  fi
 fi
 
 echo "==> 6. systemd unit at $SERVICE_FILE"
