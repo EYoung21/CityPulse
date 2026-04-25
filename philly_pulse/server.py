@@ -77,10 +77,15 @@ def _get_city_geo_context(city_slug: str) -> dict | None:
 
 app = FastAPI(title=f"{CITY_NAME} Pulse API", version="0.1.0")
 
+# CORS: `Allow-Origin: *` must not be combined with `Allow-Credentials: true`
+# (browser will reject). The SPA calls this API with default fetch credentials
+# and `Authorization: Bearer …` only — no cross-origin cookies — so credentials
+# stay off. (If you add cookie sessions later, switch to explicit `allow_origins`
+# and set `allow_credentials=True`.)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
