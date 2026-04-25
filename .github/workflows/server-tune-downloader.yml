@@ -1,0 +1,34 @@
+name: Tune Downloader Pacing
+
+# Bump DOWNLOADER_DELAY_BASE on the Hetzner downloader env to reduce 429
+# rate. Defaults set by install_hetzner_downloader.sh were 5s±2s, which
+# we observed gets throttled around segment 17-18 of a single feed/day.
+# 10s±3s is still ~3x faster than the original Lambda monolith and
+# tests show it stays under the burst threshold.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  tune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Patch env + restart
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 1m
+          script: |
+            set -e
+            sed -i \
+              -e 's/^DOWNLOADER_DELAY_BASE=.*/DOWNLOADER_DELAY_BASE=10/' \
+              -e 's/^DOWNLOADER_DELAY_JITTER=.*/DOWNLOADER_DELAY_JITTER=3/' \
+              -e 's/^DOWNLOADER_BACKOFF_BASE=.*/DOWNLOADER_BACKOFF_BASE=45/' \
+              /etc/citypulse-downloader.env
+            grep -E '^DOWNLOADER_(DELAY|BACKOFF)' /etc/citypulse-downloader.env
+            systemctl restart citypulse-downloader.service
+            sleep 5
+            systemctl is-active citypulse-downloader.service && echo "OK"
+            tail -10 /var/log/citypulse-downloader.log
