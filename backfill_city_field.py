@@ -21,12 +21,18 @@ from firebase_admin import credentials, firestore
 
 # feed_id → city slug mapping (from all cities/*/config.yaml)
 FEED_TO_CITY: dict[str, str] = {
-    # Philadelphia
+    # Philadelphia metro (Philly + DelCo + ChesCo + MontCo)
     "4603": "philly", "17310": "philly", "21297": "philly",
     "45495": "philly", "18836": "philly", "15102": "philly",
     "15195": "philly", "34250": "philly", "15747": "philly",
     "44308": "philly", "36323": "philly", "46438": "philly",
     "24104": "philly", "10489": "philly", "25767": "philly",
+    # DelCo per-sector PD (P25 Phase II) + DelCo Fire East
+    "46436": "philly", "46437": "philly", "46444": "philly",
+    "46443": "philly", "46442": "philly", "46441": "philly",
+    "46440": "philly", "46435": "philly",
+    # MontCo Fire/EMS All-Regions (covers Lower Merion / Bryn Mawr / Main Line)
+    "18335": "philly",
     # San Francisco
     "46180": "sf", "6336": "sf",
     # New York City
