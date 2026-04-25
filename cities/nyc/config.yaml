@@ -36,3 +36,18 @@ tuning:
     Lincoln, Jacobi, Kings County, Maimonides, Elmhurst.
     Phrases: central, responding, 10-4, 10-13, 10-85, shots fired, robbery,
     assault, in pursuit, on the scene. Short dispatch. Numbers spoken separately.
+  llm_local_context: >-
+    New York City five boroughs: Manhattan, Brooklyn, Queens, Bronx, Staten
+    Island. NYPD precincts 1–123; FDNY borough dispatch names. Prefer the
+    borough actually named on the radio over defaulting to “Manhattan.”
+    Manhattan: Harlem, East Harlem, UWS, UES, Midtown, Chelsea, Village,
+    LES, Chinatown, FiDi, Hell’s Kitchen, Inwood, Washington Heights.
+    Brooklyn: Bed-Stuy, Brownsville, East New York, Crown Heights, Flatbush,
+    Bushwick, Williamsburg, Park Slope, Sunset Park, Bay Ridge, Coney Island.
+    Queens: Jamaica, Flushing, Astoria, LIC, Jackson Heights, Far Rockaway.
+    Bronx: South Bronx, Mott Haven, Fordham, Pelham Bay. Staten Island:
+    St George, South Shore.
+    Major roads: Broadway, FDR, BQE, Cross Bronx, Bruckner, LIE I-495,
+    Grand Central, Henry Hudson, West Side Highway, Belt Parkway.
+    Hospitals: Bellevue, Mount Sinai, NYU Langone, NewYork-Presbyterian,
+    Jacobi, Lincoln, Kings County, Elmhurst, Maimonides.

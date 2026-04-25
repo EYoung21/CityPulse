@@ -59,56 +59,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-import yaml  # noqa: E402
-
 from philly_pulse import geocode, llm  # noqa: E402
-
-CITY_REGISTRY: dict[str, dict] = {}
-
-_DEFAULT_BOUNDS = {"lat_min": 39.85, "lat_max": 40.15, "lng_min": -75.30, "lng_max": -74.94}
+from philly_pulse.city_registry import CITY_REGISTRY, FEED_LABELS, load_city_registry  # noqa: E402
 
 
-def _load_city_registry() -> None:
-    cities_dir = REPO_ROOT / "cities"
-    if not cities_dir.is_dir():
-        return
-    for cfg_dir in sorted(cities_dir.iterdir()):
-        cfg_path = cfg_dir / "config.yaml"
-        if not cfg_path.exists():
-            continue
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-            slug = cfg.get("city", {}).get("slug") or cfg_dir.name
-            city_name = cfg.get("city", {}).get("name", slug)
-            geo = cfg.get("geocode", {})
-            map_cfg = cfg.get("map", {})
-
-            bounds_raw = geo.get("bounds", {})
-            if isinstance(bounds_raw, str):
-                parts = [float(x) for x in bounds_raw.split(",")]
-                bounds = {
-                    "lng_min": parts[0], "lat_min": parts[1],
-                    "lng_max": parts[2], "lat_max": parts[3],
-                }
-            elif isinstance(bounds_raw, dict):
-                bounds = bounds_raw
-            else:
-                bounds = _DEFAULT_BOUNDS
-
-            center_lat = map_cfg.get("center_lat") or (bounds["lat_min"] + bounds["lat_max"]) / 2
-            center_lng = map_cfg.get("center_lng") or (bounds["lng_min"] + bounds["lng_max"]) / 2
-
-            CITY_REGISTRY[slug] = {
-                "city_name": city_name,
-                "geocode_suffix": geo.get("suffix", f", {city_name}"),
-                "center_lat": center_lat,
-                "center_lng": center_lng,
-                "bounds": bounds,
-                "viewbox": geo.get("viewbox", ""),
-            }
-        except Exception as e:
-            print(f"[WARN] failed to load {cfg_path}: {e}", file=sys.stderr)
+def _feed_label(feed_id: str | None) -> str | None:
+    if not feed_id:
+        return None
+    return FEED_LABELS.get(str(feed_id).strip())
 
 
 def _llm_ctx(city: str | None) -> dict | None:
@@ -228,6 +186,7 @@ async def _recover_one(incident_id: str, ref, data: dict, *, dry_run: bool) -> s
             raw_text,
             city_context=_llm_ctx(city),
             prior_context=prior_context or None,
+            feed_label=_feed_label(feed_id),
         )
     except llm.LLMError as e:
         print(f"  [{incident_id}] LLM error: {e}")
@@ -248,6 +207,12 @@ async def _recover_one(incident_id: str, ref, data: dict, *, dry_run: bool) -> s
 
     new_loc = (result.get("location_text") or "").strip()
     new_conf = result.get("location_confidence", "none")
+    gctx = _geo_ctx(city)
+    suf = (gctx or {}).get("suffix") or (_llm_ctx(city) or {}).get("geocode_suffix") or ""
+    if new_loc and suf:
+        norm = geocode.normalize_location_text_for_geocode(new_loc, suffix=suf)
+        if norm:
+            new_loc = norm
 
     if not new_loc:
         if not dry_run:
@@ -309,7 +274,7 @@ async def _run(args: argparse.Namespace) -> None:
         f"(model: {llm_client.active_model()})"
     )
 
-    _load_city_registry()
+    load_city_registry()
     if not CITY_REGISTRY:
         print("[WARN] No city registry loaded; falling back to defaults.", file=sys.stderr)
 

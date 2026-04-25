@@ -349,6 +349,7 @@ def transcriber_worker(worker_id):
             _pp_post(
                 PP_BRIDGE_URL, standard_text, timestamp,
                 feed_id=feed_id,
+                feed_label=feed_label,
                 raw_audio_clip=raw_clip_id,
                 variants=variants_list,
                 city=CITY_SLUG,

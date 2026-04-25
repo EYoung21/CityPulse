@@ -41,3 +41,12 @@ tuning:
     Phrases: signal 47, signal 63, signal 64, shots fired, in pursuit,
     code 3, 10-50, 10-71, 10-32, dispatch, responding, en route, on
     scene. Short dispatch. Numbers spoken separately.
+  llm_local_context: >-
+    Memphis TN and Shelby County. MPD stations (Austin Peay, Raines,
+    Mt Moriah, Crump, Tillman, North Main, Airways, Appling Farms, Ridgeway);
+    Shelby County Sheriff on shared feed.
+    Areas: Downtown, Midtown, South Memphis, Whitehaven, Hickory Hill,
+    Frayser, Cordova, Bartlett, Germantown, Collierville, Millington, Mud Island.
+    Roads: Union, Poplar, Lamar, Elvis Presley Blvd, Summer, Winchester,
+    Getwell, Riverside, I-40, I-240.
+    Hospitals: Regional One, Methodist, Baptist, Le Bonheur, St Jude.

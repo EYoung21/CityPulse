@@ -302,7 +302,13 @@ def transcriber_worker(model, device):
                         print(f" (MQTT publish failed: {e})")
                 # POST to PhillyPulse ingest (non-blocking daemon thread)
                 if PP_ENABLED:
-                    _pp_post(PP_BRIDGE_URL, text, timestamp)
+                    _pp_post(
+                        PP_BRIDGE_URL,
+                        text,
+                        timestamp,
+                        feed_id=str(FEED_NUMBER),
+                        feed_label=FEED_DESCRIPTION,
+                    )
             else:
                 print(f"   (Empty after cleanup — discarded)")
 

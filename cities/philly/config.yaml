@@ -113,3 +113,25 @@ tuning:
     Phrases: responding, en route, on location, in service, 10-4, copy,
     radio, highway, shots fired, person with a gun, robbery in progress,
     assist officer. Short dispatch. Numbers spoken separately.
+  llm_local_context: >-
+    Greater Philadelphia PA metro: Philadelphia city plus Delaware, Chester,
+    Montgomery, and Bucks counties. Prefer the county implied by the scanner
+    feed (PPD citywide vs DelCo sectors vs MontCo/Chester) over forcing
+    “Philadelphia” when the street name exists in the suburbs.
+    Philadelphia: Center City, North/South/West Philly, Kensington, Fishtown,
+    Manayunk, Germantown, University City, neighborhoods along Broad, Market,
+    Girard, Roosevelt Blvd, Schuylkill Expressway I-76, Vine St Expy.
+    Delaware County: Upper Darby, Media, Springfield, Swarthmore, Chester,
+    Ridley, Lansdowne, Yeadon, Havertown/Haverford Twp, Drexel Hill, Newtown
+    Square, Wayne, Villanova, Radnor, Rosemont; Chester Pike, MacDade,
+    Baltimore Pike, Providence Rd, West Chester Pike, Township Line.
+    Chester County: West Chester, Coatesville, Exton, Downingtown, Kennett,
+    Paoli, Great Valley, Route 30.
+    Montgomery County: Norristown, King of Prussia, Plymouth Meeting,
+    Conshohocken, Lower Merion, Bryn Mawr, Ardmore, Narberth, Wynnewood,
+    Lansdale, Pottstown; City Ave, Lancaster Ave, Germantown Pike.
+    Bucks: Bensalem, Bristol, Doylestown, Levittown.
+    Hospitals: Temple, Jefferson, Penn, Einstein, Crozer, Riddle, Bryn Mawr
+    Hospital, Lankenau, Paoli, Abington, Main Line Health.
+    Colleges: Penn, Drexel, Temple, Villanova, Swarthmore, Bryn Mawr,
+    Haverford, St Joe’s, La Salle.

@@ -44,6 +44,15 @@ tuning:
     Little Haiti, Wynwood, Brickell, Downtown, Overtown, Coconut Grove,
     Coral Gables, Hialeah, Doral. I-95, I-195, I-395, US-1, SR 836 Dolphin,
     SR 826 Palmetto. Hospitals: Jackson Memorial, Mercy, Mount Sinai, UM
-    Hospital, Baptist. Phrases: signal 4, signal 5, signal 7, signal 11,
+    Hospital, Baptist.     Phrases: signal 4, signal 5, signal 7, signal 11,
     signal 13, signal 20, signal 21, code 3, shots fired, dispatch, en
     route, on scene. Short dispatch. Numbers spoken separately.
+  llm_local_context: >-
+    Miami-Dade County FL. City of Miami (Central/North/South districts) vs
+    Miami-Dade PD unincorporated (Hammocks, Kendall, etc.) vs Coral Gables.
+    Neighborhoods: Brickell, Downtown, Overtown, Wynwood, Liberty City,
+    Little Haiti, Little Havana, Allapattah, Flagami, Coconut Grove, Coral
+    Gables, Hialeah, Doral, Aventura, Miami Beach (often referenced).
+    Roads: Biscayne Blvd, Flagler, Calle Ocho, Brickell Ave, Collins,
+    MacArthur Causeway, Julia Tuttle, Palmetto SR-826, Dolphin SR-836, I-95.
+    Hospitals: Jackson Memorial, UM/JMH, Mount Sinai, Baptist, Mercy.

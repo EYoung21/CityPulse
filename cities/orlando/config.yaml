@@ -41,6 +41,14 @@ tuning:
     Maitland, Apopka, Pine Castle, Belle Isle, Edgewood. I-4, SR 408
     East-West, SR 417 GreeneWay, SR 528 Beachline, Florida's Turnpike.
     Hospitals: Orlando Health, ORMC, Arnold Palmer, Winnie Palmer, AdventHealth,
-    Nemours. Phrases: dispatch, en route, on scene, signal 7, signal 11,
+    Nemours.     Phrases: dispatch, en route, on scene, signal 7, signal 11,
     code 3, structure fire, working fire, medical, MVA, rollover, trauma
     alert. Short dispatch. Numbers spoken separately.
+  llm_local_context: >-
+    Orange County FL fire/EMS (Orlando metro). Orlando Fire vs Orange County
+    Fire Rescue; Winter Park and Maitland may appear on regional talkgroups.
+    Corridors: I-Drive, OBT, Colonial, Mills, Semoran, John Young, Sand Lake,
+    Kirkman, Conway, 408, 417, 528 Beachline, Florida’s Turnpike.
+    Neighborhoods: Parramore, Pine Hills, College Park, Baldwin Park,
+    Thornton Park, Lake Nona, Apopka, Winter Park, Maitland.
+    Hospitals: Orlando Health, ORMC, Arnold Palmer, Winnie Palmer, AdventHealth.

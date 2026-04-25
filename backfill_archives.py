@@ -544,6 +544,7 @@ def transcribe_and_post(
                 "text": standard_text,
                 "timestamp": chunk_ts,
                 "feed_id": feed_id,
+                "feed_label": feed_label,
                 "raw_audio_clip": raw_clip_id,
                 "variants": variants_list,
                 "city": city,

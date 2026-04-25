@@ -44,3 +44,11 @@ tuning:
     Erlanger, CHI Memorial, Parkridge. Phrases: responding, en route, on scene,
     10-4, copy, dispatch, signal, code, fire department, EMS, medic. Short
     dispatch. Numbers spoken separately.
+  llm_local_context: >-
+    Chattanooga TN and Hamilton County. CPD sectors Adam/Baker/Charlie;
+    Hamilton County Sheriff; East Ridge, Soddy-Daisy, Red Bank, Collegedale,
+    Signal Mountain, Lookout Mountain, Hixson, Brainerd, Ooltewah.
+    Major roads: Broad St, Market St, McCallie Ave, Rossville Blvd, Amnicola
+    Hwy, MLK Blvd, Ringgold Rd, Hixson Pike, Brainerd Rd, Shallowford Rd;
+    I-24, I-75, US-27, Tennessee River bridges.
+    Hospitals: Erlanger, CHI Memorial, Parkridge.

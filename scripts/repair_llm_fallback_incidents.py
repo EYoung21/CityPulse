@@ -49,59 +49,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-import yaml  # noqa: E402
-
 from philly_pulse import geocode, llm  # noqa: E402
 from philly_pulse import persistence as store  # noqa: E402
-
-_PHILLY_BOUNDS = {"lat_min": 39.85, "lat_max": 40.15, "lng_min": -75.30, "lng_max": -74.94}
-
-CITY_REGISTRY: dict[str, dict] = {}
+from philly_pulse.city_registry import CITY_REGISTRY, FEED_LABELS, load_city_registry  # noqa: E402
 
 
-def _load_city_registry() -> None:
-    """Mirror server.py's per-city geocode/LLM context loader."""
-    cities_dir = REPO_ROOT / "cities"
-    if not cities_dir.is_dir():
-        print(f"[WARN] No cities/ directory at {cities_dir}", file=sys.stderr)
-        return
-    for cfg_dir in sorted(cities_dir.iterdir()):
-        cfg_path = cfg_dir / "config.yaml"
-        if not cfg_path.exists():
-            continue
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-            slug = cfg.get("city", {}).get("slug") or cfg_dir.name
-            city_name = cfg.get("city", {}).get("name", slug)
-            geo = cfg.get("geocode", {})
-            map_cfg = cfg.get("map", {})
-
-            bounds_raw = geo.get("bounds", {})
-            if isinstance(bounds_raw, str):
-                parts = [float(x) for x in bounds_raw.split(",")]
-                bounds = {
-                    "lng_min": parts[0], "lat_min": parts[1],
-                    "lng_max": parts[2], "lat_max": parts[3],
-                }
-            elif isinstance(bounds_raw, dict):
-                bounds = bounds_raw
-            else:
-                bounds = _PHILLY_BOUNDS
-
-            center_lat = map_cfg.get("center_lat") or (bounds["lat_min"] + bounds["lat_max"]) / 2
-            center_lng = map_cfg.get("center_lng") or (bounds["lng_min"] + bounds["lng_max"]) / 2
-
-            CITY_REGISTRY[slug] = {
-                "city_name": city_name,
-                "geocode_suffix": geo.get("suffix", f", {city_name}"),
-                "center_lat": center_lat,
-                "center_lng": center_lng,
-                "bounds": bounds,
-                "viewbox": geo.get("viewbox", ""),
-            }
-        except Exception as e:
-            print(f"[WARN] Failed to load city config {cfg_path}: {e}", file=sys.stderr)
+def _feed_label(feed_id: str | None) -> str | None:
+    if not feed_id:
+        return None
+    return FEED_LABELS.get(str(feed_id).strip())
 
 
 def _llm_ctx(city: str | None) -> dict | None:
@@ -222,6 +178,7 @@ async def _repair_one(incident_id: str, ref, data: dict, *, dry_run: bool) -> st
             raw_text,
             city_context=_llm_ctx(city),
             prior_context=prior_context or None,
+            feed_label=_feed_label(feed_id),
         )
     except llm.LLMError as e:
         print(f"  [{incident_id}] LLM error: {e}")
@@ -250,11 +207,17 @@ async def _repair_one(incident_id: str, ref, data: dict, *, dry_run: bool) -> st
 
     new_location_text = result.get("location_text")
     new_loc_confidence = result.get("location_confidence", "none")
+    gctx = _geo_ctx(city)
+    suf = (gctx or {}).get("suffix") or (_llm_ctx(city) or {}).get("geocode_suffix") or ""
+    if new_location_text and suf:
+        norm = geocode.normalize_location_text_for_geocode(str(new_location_text).strip(), suffix=suf)
+        if norm:
+            new_location_text = norm
 
     new_lat = None
     new_lng = None
     if new_location_text:
-        coords = await geocode.geocode(new_location_text, geo_ctx=_geo_ctx(city))
+        coords = await geocode.geocode(new_location_text, geo_ctx=gctx)
         if coords:
             new_lat, new_lng = coords
 
@@ -350,7 +313,7 @@ async def _run(args: argparse.Namespace) -> None:
         f"(model: {llm_client.active_model()})"
     )
 
-    _load_city_registry()
+    load_city_registry()
     if not CITY_REGISTRY:
         print("[WARN] No city registry loaded; geocode/LLM will use defaults.", file=sys.stderr)
 

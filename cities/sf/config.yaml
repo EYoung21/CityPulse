@@ -85,3 +85,17 @@ tuning:
     Phrases: responding, en route, on scene, copy, radio, shots fired,
     code 3, 10-4, 415, 211, 459, 187, 5150. Short dispatch. Numbers
     spoken separately.
+  llm_local_context: >-
+    San Francisco Bay Area corridor: San Francisco city plus the Peninsula
+    (San Mateo County) down through Palo Alto and Stanford. Match jurisdiction
+    to the feed (SFPD vs San Mateo Sheriff vs Palo Alto/Stanford fire).
+    San Francisco: SOMA, Tenderloin, Mission, Castro, Richmond, Sunset,
+    Bayview, Excelsior, Marina, North Beach, Presidio; Market, Van Ness,
+    Geary, Mission St, Embarcadero, Divisadero, 19th Ave, Great Highway.
+    Peninsula: Daly City, South SF, San Bruno, Millbrae, Burlingame, San Mateo,
+    Belmont, Redwood City, Menlo Park, Palo Alto, Mountain View; El Camino
+    Real, US-101, I-280, Sand Hill Rd, Page Mill, Bayshore, Skyline.
+    Bridges: Bay Bridge, Golden Gate, San Mateo, Dumbarton.
+    Hospitals: SF General, UCSF, CPMC, Kaiser SF, Stanford Hospital, Packard,
+    Sequoia, Mills-Peninsula.
+    Stanford University campus and adjacent unincorporated areas.

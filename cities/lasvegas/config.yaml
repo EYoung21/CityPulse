@@ -51,3 +51,11 @@ tuning:
     Henderson, St Rose. Phrases: dispatch, en route, on scene, working
     fire, structure fire, MVA, rollover, code 3, medical, trauma alert.
     Short dispatch. Numbers spoken separately.
+  llm_local_context: >-
+    Clark County NV: Las Vegas, North Las Vegas, Henderson, Paradise,
+    Spring Valley, Enterprise, Summerlin, Boulder City. Note: LVMPD is
+    encrypted—feeds skew fire/EMS/NHP; medical and crash language is common.
+    Strip corridor: Las Vegas Blvd, Tropicana, Flamingo, Sahara, Spring Mountain,
+    Harmon, Russell, Decatur, Rainbow, Eastern, Boulder Hwy.
+    Beltways: I-15, I-215, US-95. Hospitals: UMC, Sunrise, MountainView,
+    Centennial Hills, Henderson Hospital, St Rose.

@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import admin_events, geocode, inhibitor, llm, llm_client, persistence as store, prefilter, push as push_mod, weights
+from . import admin_events, city_registry, geocode, inhibitor, llm, llm_client, persistence as store, prefilter, push as push_mod, weights
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,58 +45,18 @@ if _city_config_path and Path(_city_config_path).exists():
     CITY_SLUG = _city_config.get("city", {}).get("slug") or Path(_city_config_path).parent.name
     logger.info("Loaded city config: %s from %s", CITY_NAME, _city_config_path)
 
-# ── Multi-city registry (loaded from cities/ directory) ─────────────
+# ── Multi-city registry + feed labels (cities/*/config.yaml) ───────
 
-_PHILLY_BOUNDS = {"lat_min": 39.85, "lat_max": 40.15, "lng_min": -75.30, "lng_max": -74.94}
-
-CITY_REGISTRY: dict[str, dict] = {}
-
-
-def _load_city_registry():
-    """Load all city configs from the cities/ directory."""
-    cities_dir = Path(__file__).resolve().parent.parent / "cities"
-    if not cities_dir.is_dir():
-        logger.warning("No cities/ directory found at %s", cities_dir)
-        return
-    for cfg_dir in sorted(cities_dir.iterdir()):
-        cfg_path = cfg_dir / "config.yaml"
-        if not cfg_path.exists():
-            continue
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-            slug = cfg.get("city", {}).get("slug") or cfg_dir.name
-            city_name = cfg.get("city", {}).get("name", slug)
-            geo = cfg.get("geocode", {})
-            map_cfg = cfg.get("map", {})
-
-            bounds_raw = geo.get("bounds", {})
-            if isinstance(bounds_raw, str):
-                parts = [float(x) for x in bounds_raw.split(",")]
-                bounds = {"lng_min": parts[0], "lat_min": parts[1],
-                          "lng_max": parts[2], "lat_max": parts[3]}
-            elif isinstance(bounds_raw, dict):
-                bounds = bounds_raw
-            else:
-                bounds = _PHILLY_BOUNDS
-
-            center_lat = map_cfg.get("center_lat") or (bounds["lat_min"] + bounds["lat_max"]) / 2
-            center_lng = map_cfg.get("center_lng") or (bounds["lng_min"] + bounds["lng_max"]) / 2
-
-            CITY_REGISTRY[slug] = {
-                "city_name": city_name,
-                "geocode_suffix": geo.get("suffix", f", {city_name}"),
-                "center_lat": center_lat,
-                "center_lng": center_lng,
-                "bounds": bounds,
-                "viewbox": geo.get("viewbox", ""),
-            }
-            logger.info("Registered city: %s (%s)", city_name, slug)
-        except Exception as e:
-            logger.warning("Failed to load city config %s: %s", cfg_path, e)
+CITY_REGISTRY = city_registry.CITY_REGISTRY
+FEED_LABELS = city_registry.FEED_LABELS
 
 
-_load_city_registry()
+def _resolve_feed_label(feed_id: str | None, req_label: str | None) -> str | None:
+    if req_label and str(req_label).strip():
+        return str(req_label).strip()
+    if not feed_id:
+        return None
+    return FEED_LABELS.get(str(feed_id).strip())
 
 
 def _get_city_llm_context(city_slug: str) -> dict | None:
@@ -178,6 +138,7 @@ class IngestRequest(BaseModel):
     text: str
     timestamp: str | None = None
     feed_id: str | None = None
+    feed_label: str | None = None
     audio_clip: str | None = None
     raw_audio_clip: str | None = None
     preprocess_meta: dict | None = None
@@ -225,6 +186,7 @@ async def startup():
             center_lat=default_ctx["center_lat"],
             center_lng=default_ctx["center_lng"],
             bounds=default_ctx["bounds"],
+            llm_local_context=default_ctx.get("llm_local_context", ""),
         )
 
     logger.info("%s Pulse API starting up (%d cities registered)",
@@ -523,6 +485,7 @@ async def ingest(req: IngestRequest):
 
     feed_id = req.feed_id or "unknown"
     city = req.city or CITY_SLUG
+    feed_label = _resolve_feed_label(feed_id, req.feed_label)
 
     # Audio data is saved AFTER the pipeline determines the incident is map-worthy.
     # This avoids wasting disk on rejected/no-location transcripts (~95% reduction).
@@ -639,6 +602,7 @@ async def ingest(req: IngestRequest):
             req.text,
             city_context=city_llm_ctx,
             prior_context=prior_context or None,
+            feed_label=feed_label,
         )
     except llm.LLMError as e:
         await admin_events.broadcast({
@@ -686,6 +650,11 @@ async def ingest(req: IngestRequest):
 
     category = extraction["severity_category"]
     location_text = extraction["location_text"]
+    geo_suffix = (city_geo_ctx or {}).get("suffix") or (city_llm_ctx or {}).get("geocode_suffix") or ""
+    if location_text and geo_suffix:
+        location_text = geocode.normalize_location_text_for_geocode(
+            location_text, suffix=geo_suffix
+        )
     confidence = extraction["confidence"]
     description = extraction.get("description")
     s_base = weights.get_s_base(category)
@@ -1347,6 +1316,7 @@ async def admin_predict(req: PredictRequest):
 
     predict_llm_ctx = _get_city_llm_context(ext_city)
     predict_geo_ctx = _get_city_geo_context(ext_city)
+    predict_feed_label = _resolve_feed_label(str(feed_id), None)
 
     # Adjacent-radio context (same as ingest path).
     prior_context: list[str] = []
@@ -1371,6 +1341,7 @@ async def admin_predict(req: PredictRequest):
             raw_text,
             city_context=predict_llm_ctx,
             prior_context=prior_context or None,
+            feed_label=predict_feed_label,
         )
     except llm.LLMError as e:
         raise HTTPException(status_code=502, detail=f"LLM error: {e}")
@@ -1386,6 +1357,11 @@ async def admin_predict(req: PredictRequest):
 
     category = result["severity_category"]
     location_text = result["location_text"]
+    pred_suffix = (predict_geo_ctx or {}).get("suffix") or (predict_llm_ctx or {}).get("geocode_suffix") or ""
+    if location_text and pred_suffix:
+        location_text = geocode.normalize_location_text_for_geocode(
+            location_text, suffix=pred_suffix
+        )
     confidence = result["confidence"]
     s_base = weights.get_s_base(category)
 
