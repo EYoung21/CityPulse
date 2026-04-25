@@ -56,9 +56,14 @@ from philly_pulse import geocode  # noqa: E402
 FEED_TO_COUNTY: dict[str, str] = {
     "36323": "Delaware County",
     "46438": "Delaware County",
+    "46435": "Delaware County",  # DelCo Fire East
+    "46440": "Delaware County",  # DelCo PD Sector 7 (Haverford/Radnor)
+    "46441": "Delaware County",  # DelCo PD Sector 6 (Swarthmore/Media)
+    "46444": "Delaware County",  # DelCo PD Sector 3 (Upper Darby)
     "24104": "Chester County",
     "10489": "Montgomery County",
     "25767": "Montgomery County",
+    "18335": "Montgomery County",  # MontCo Fire West / Police SW (Bryn Mawr)
 }
 
 PHILLY_BOX = dict(lat_min=39.85, lat_max=40.15, lng_min=-75.30, lng_max=-74.94)
