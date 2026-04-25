@@ -133,8 +133,10 @@ def _get_db():
     return _ensure_client()
 
 
-def _iter_hidden_incidents(city: str | None, limit: int | None, force: bool):
-    """Stream incidents we hid in the city-center backfill."""
+def _load_hidden_incidents(city: str | None, limit: int | None, force: bool) -> list[tuple]:
+    """Materialize incidents up front so the Firestore stream cursor doesn't
+    time out while we do slow per-row LLM calls (a single 13-min run will
+    blow past the gRPC deadline)."""
     db = _get_db()
     q = (
         db.collection("incidents")
@@ -142,18 +144,16 @@ def _iter_hidden_incidents(city: str | None, limit: int | None, force: bool):
     )
     if city:
         q = q.where("city", "==", city)
-    if limit:
-        q = q.limit(int(limit))
 
-    yielded = 0
+    rows: list[tuple] = []
     for snap in q.stream():
         data = snap.to_dict() or {}
         if not force and data.get("repair_attempted_at"):
             continue
-        yield snap.id, snap.reference, data
-        yielded += 1
-        if limit and yielded >= int(limit):
-            return
+        rows.append((snap.id, snap.reference, data))
+        if limit and len(rows) >= int(limit):
+            break
+    return rows
 
 
 def _adjacent_context(feed_id: str, reported_at: str, *, window_s: int = 60,
@@ -285,7 +285,10 @@ async def _recover_one(incident_id: str, ref, data: dict, *, dry_run: bool) -> s
     }
     if not dry_run:
         ref.update(payload)
-    print(f"  [{incident_id}] RECOVERED → {new_loc!r} @ ({new_lat:.5f}, {new_lng:.5f}) conf={new_conf}")
+    print(
+        f"  [{incident_id}] RECOVERED → {new_loc!r} @ ({new_lat:.5f}, {new_lng:.5f}) conf={new_conf}",
+        flush=True,
+    )
     return "recovered"
 
 
@@ -314,13 +317,23 @@ async def _run(args: argparse.Namespace) -> None:
     processed = 0
     started = time.time()
 
-    for incident_id, ref, data in _iter_hidden_incidents(args.city, args.limit, args.force):
+    print("[INFO] loading hidden incidents from Firestore...", flush=True)
+    rows = _load_hidden_incidents(args.city, args.limit, args.force)
+    print(f"[INFO] loaded {len(rows)} incidents needing recovery", flush=True)
+
+    for incident_id, ref, data in rows:
         outcome = await _recover_one(incident_id, ref, data, dry_run=args.dry_run)
         counts[outcome] += 1
         processed += 1
-        if processed % 25 == 0:
+        if processed % 10 == 0:
             elapsed = time.time() - started
-            print(f"  ... {processed} processed in {elapsed:.0f}s (counts: {dict(counts)})")
+            rate = processed / max(elapsed, 1)
+            eta_s = (len(rows) - processed) / max(rate, 0.001)
+            print(
+                f"  ... {processed}/{len(rows)} processed in {elapsed:.0f}s "
+                f"({rate:.2f}/s, ETA {eta_s/60:.1f}min) counts: {dict(counts)}",
+                flush=True,
+            )
         await asyncio.sleep(args.sleep)
 
     print()

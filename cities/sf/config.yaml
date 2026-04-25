@@ -5,27 +5,83 @@ city:
   domain: "sfopulse.com"
 
 feeds:
-  - feed_id: "46180"
-    label: "SFPD Police"
-  - feed_id: "6336"
-    label: "SFFD Fire/EMS"
+  - { feed_id: "46180", label: "SFPD Police" }
+  - { feed_id: "6336",  label: "SFFD Fire/EMS" }
+  # ── Peninsula corridor (SF → Stanford) ─────────────────────────────
+  # Adds the 35-mile US-101/I-280 corridor between San Francisco and
+  # Stanford. PAPD/Stanford DPS voice is unreachable (encrypted SVRCS
+  # P25 trunked system, same situation as Lower Merion PD on the East
+  # Coast), so we capture fire + EMS for those towns plus PD for the
+  # towns that still run on clear frequencies (Menlo Park, Atherton,
+  # San Mateo County Sheriff coverage area).
+  - { feed_id: "45035", label: "San Mateo County Sheriff" }            # SMC SO PatPri 1+2 (unincorporated SMC + contract cities)
+  - { feed_id: "45051", label: "San Mateo County EMS Dispatch" }       # peninsula-wide medical
+  - { feed_id: "46578", label: "San Mateo County Fire South" }         # SMCFD South Dispatch (Belmont→Menlo Park)
+  - { feed_id: "45521", label: "San Mateo County Fire / CalFire CZU" } # SMC fire + CalFire countywide
+  - { feed_id: "45860", label: "Menlo Park & Atherton Police Dispatch" }
+  - { feed_id: "34259", label: "Palo Alto Fire" }                      # primary PAFD dispatch talkgroup
+  - { feed_id: "17718", label: "Stanford Fire" }                       # Stanford campus fire/EMS
 
 geocode:
-  viewbox: "-122.52,37.70,-122.36,37.81"
-  bounds: "-122.52,37.70,-122.36,37.81"
-  suffix: ", San Francisco, CA"
+  # Wider bounding box covering San Francisco proper plus the entire
+  # Peninsula corridor down through Daly City, San Bruno, Burlingame,
+  # San Mateo, Belmont, Redwood City, Atherton, Menlo Park, Palo Alto
+  # and Stanford. Stanford sits at ~37.43, -122.17; we extend a bit
+  # past it so Mountain View / Stanford Research Park aren't clipped.
+  viewbox: "-122.55,37.40,-122.05,37.85"
+  bounds:
+    lat_min: 37.40
+    lat_max: 37.85
+    lng_min: -122.55
+    lng_max: -122.05
+  # Generic ", CA" rather than ", San Francisco, CA" so Nominatim can
+  # infer the actual Peninsula city from the address itself. Otherwise
+  # a "Hamilton Ave, Palo Alto" callout from a SMC-Sheriff dispatch
+  # would force-resolve to a Hamilton St in SF (same bug we hit on
+  # Philly with DelCo addresses being forced into Philly proper).
+  suffix: ", CA"
 
 tuning:
   initial_prompt: >-
-    San Francisco CA police radio dispatch. SFPD districts Southern, Tenderloin,
-    Bayview, Mission, Central, Northern, Park, Richmond, Ingleside, Taraval.
-    Locations: Market St, Mission St, Van Ness Ave, Geary Blvd, Divisadero,
-    Haight St, Castro, Tenderloin, SoMa, Financial District, Chinatown,
-    North Beach, Fisherman's Wharf, Marina, Pacific Heights, Nob Hill, Russian Hill,
-    Sunset, Richmond, Excelsior, Visitacion Valley, Bayview, Hunters Point,
-    Potrero Hill, Dogpatch, Mission Bay, Golden Gate Park, Twin Peaks, Embarcadero,
-    Union Square, Civic Center, Hayes Valley, Western Addition, Japantown.
-    I-80, US-101, I-280, Highway 1, Bay Bridge, Golden Gate Bridge, 19th Ave.
-    Hospitals: SF General, UCSF, Kaiser, St. Mary's, Chinese Hospital, CPMC.
+    San Francisco Bay Area police, fire and EMS radio dispatch covering
+    San Francisco proper plus the Peninsula corridor (San Mateo County
+    and northern Santa Clara County: Stanford, Palo Alto, Menlo Park,
+    Atherton).
+    SFPD districts: Southern, Tenderloin, Bayview, Mission, Central,
+    Northern, Park, Richmond, Ingleside, Taraval.
+    SF locations: Market St, Mission St, Van Ness Ave, Geary Blvd,
+    Divisadero, Haight St, Castro, Tenderloin, SoMa, Financial District,
+    Chinatown, North Beach, Fisherman's Wharf, Marina, Pacific Heights,
+    Nob Hill, Russian Hill, Sunset, Richmond, Excelsior, Visitacion
+    Valley, Bayview, Hunters Point, Potrero Hill, Dogpatch, Mission Bay,
+    Golden Gate Park, Twin Peaks, Embarcadero, Union Square, Civic
+    Center, Hayes Valley, Western Addition, Japantown.
+    Northern Peninsula (San Mateo County): Daly City, Brisbane,
+    Colma, South San Francisco, San Bruno, Millbrae, Burlingame,
+    Hillsborough, San Mateo, Foster City, Belmont, San Carlos,
+    Redwood City, Atherton, Menlo Park, East Palo Alto, Pacifica,
+    Half Moon Bay, Woodside, Portola Valley, Emerald Hills.
+    Southern Peninsula (Santa Clara County, north): Palo Alto,
+    Stanford, Stanford University, Stanford Hospital, Stanford
+    Shopping Center, Mountain View, Los Altos.
+    Stanford campus landmarks: Stanford Memorial Church, Hoover Tower,
+    The Oval, Palm Drive, Galvez Field, Maples Pavilion, Stanford
+    Stadium, Encina Hall, Tresidder, Old Union, Roble, Wilbur,
+    Stern, Florence Moore, Lagunita, Escondido Village, Searsville
+    Lake, Jasper Ridge.
+    Roads: I-80, US-101, I-280, Highway 1, El Camino Real, Bay Bridge,
+    Golden Gate Bridge, San Mateo Bridge, Dumbarton Bridge, 19th Ave,
+    Junipero Serra Blvd, Sand Hill Road, Page Mill Road, Embarcadero
+    Road, University Avenue, Middlefield Road, Bayshore, Skyline,
+    Woodside Road, Alpine Road, Whipple Avenue, El Camino, Willow Road.
+    Hospitals: SF General, UCSF, Kaiser, St. Mary's, Chinese Hospital,
+    CPMC, Stanford Hospital, Stanford Children's, Lucile Packard,
+    Sequoia Hospital, Mills-Peninsula, Kaiser Redwood City, Kaiser
+    South San Francisco, Seton Medical Center.
+    Universities/schools: Stanford University, Stanford, SF State, USF,
+    UCSF, City College, Skyline College, Cañada College, College of
+    San Mateo, Notre Dame de Namur, Menlo College, Palo Alto High,
+    Gunn High.
     Phrases: responding, en route, on scene, copy, radio, shots fired,
-    code 3, 10-4, 415, 211, 459, 187. Short dispatch. Numbers spoken separately.
+    code 3, 10-4, 415, 211, 459, 187, 5150. Short dispatch. Numbers
+    spoken separately.

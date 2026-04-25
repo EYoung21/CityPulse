@@ -123,40 +123,73 @@ def _load_dropped_extractions(
     city: str | None,
     since_iso: str,
     limit: int | None,
+    window_hours: int = 6,
 ) -> list[tuple]:
     """Return (extraction_id, ref, data) for rows we should re-geocode.
 
-    We materialize the full list up front so the Firestore stream cursor
-    doesn't time out while we sit in Nominatim's 1 req/s rate limit.
+    We page the time range in `window_hours` chunks because the Firestore
+    server-side stream times out on long ranges (~100k+ docs/week). Each
+    chunk is materialized into memory in a single `.get()` call, which
+    is bounded by Firestore's 60s deadline rather than dripping rows
+    over many minutes.
     """
+    from google.api_core.exceptions import DeadlineExceeded
     db = _get_db()
-    # Query by reported_at only — adding a `city` filter requires a
-    # composite index we don't have. We filter by city in-process below.
-    q = db.collection("extractions").where("reported_at", ">=", since_iso)
 
+    since_dt = datetime.fromisoformat(since_iso)
+    end_dt = datetime.now(timezone.utc)
     rows: list[tuple] = []
     scanned = 0
-    for snap in q.stream():
-        scanned += 1
-        d = snap.to_dict() or {}
-        if city and d.get("city") != city:
+
+    cur = since_dt
+    while cur < end_dt:
+        nxt = min(cur + timedelta(hours=window_hours), end_dt)
+        cur_iso = cur.isoformat()
+        nxt_iso = nxt.isoformat()
+        try:
+            q = (
+                db.collection("extractions")
+                .where("reported_at", ">=", cur_iso)
+                .where("reported_at", "<", nxt_iso)
+            )
+            chunk = list(q.get())  # snapshot read; bounded by single-RPC deadline
+        except DeadlineExceeded:
+            print(f"[WARN] window {cur_iso} → {nxt_iso} timed out; halving", flush=True)
+            window_hours = max(1, window_hours // 2)
             continue
-        if d.get("incident_id"):
-            continue  # already produced an incident; nothing to recover
-        if d.get("llm_relevant") is not True:
-            continue  # LLM said not dispatch-worthy; respect that
-        gs = (d.get("geocode_status") or "")
-        if not gs.startswith("no_result"):
-            continue  # only re-process rows that failed at the geocode stage
-        if not (d.get("llm_location_text") or "").strip():
-            continue  # no address to retry
-        if d.get("inhibitor_status") == "blocked":
-            continue  # ethical guardrail blocked it; don't resurrect
-        if d.get("resurrect_attempted_at"):
-            continue  # already tried once
-        rows.append((snap.id, snap.reference, d))
-        if limit and len(rows) >= int(limit):
-            break
+
+        for snap in chunk:
+            scanned += 1
+            d = snap.to_dict() or {}
+            if city and d.get("city") != city:
+                continue
+            if d.get("incident_id"):
+                continue
+            if d.get("llm_relevant") is not True:
+                continue
+            gs = (d.get("geocode_status") or "")
+            if not gs.startswith("no_result"):
+                continue
+            if not (d.get("llm_location_text") or "").strip():
+                continue
+            if d.get("inhibitor_status") == "blocked":
+                continue
+            if d.get("resurrect_attempted_at"):
+                continue
+            rows.append((snap.id, snap.reference, d))
+            if limit and len(rows) >= int(limit):
+                print(
+                    f"[INFO] hit limit={limit} after scanning {scanned} extractions",
+                    flush=True,
+                )
+                return rows
+
+        print(
+            f"[INFO] window {cur_iso[:19]} → {nxt_iso[:19]}: "
+            f"{len(chunk)} docs, total queued so far: {len(rows)}",
+            flush=True,
+        )
+        cur = nxt
 
     print(f"[INFO] scanned {scanned} extractions, queued {len(rows)} for re-geocode", flush=True)
     return rows

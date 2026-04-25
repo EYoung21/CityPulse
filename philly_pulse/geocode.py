@@ -172,14 +172,56 @@ async def _try_nominatim(
 # fill the field anyway. Geocoding any of these returns the city centroid
 # (or a single random hit), so we drop them before they cluster on one pin.
 _VAGUE_LOCATIONS = {
-    "highway", "freeway", "expressway", "interstate",
-    "downtown", "uptown", "midtown",
+    "highway", "freeway", "expressway", "interstate", "turnpike",
+    "the highway", "the freeway", "the expressway", "the interstate",
+    "the turnpike",
+    "downtown", "uptown", "midtown", "downtown area",
     "north", "south", "east", "west",
     "north side", "south side", "east side", "west side",
-    "outside", "inside", "nearby", "downtown area",
+    "outside", "inside", "nearby",
     "the area", "this area", "the neighborhood", "the block",
     "unknown", "unspecified", "n/a", "none", "tbd",
+    # Generic POI/feature words with no name attached. Nominatim happily
+    # resolves "the mall" / "alley" / "the park" to a random POI in the
+    # bbox and we end up clustering at one pin. Drop these unless the LLM
+    # also gave us a street/cross-street.
+    "mall", "the mall", "shopping mall", "shopping center",
+    "alley", "the alley", "alleyway", "an alley",
+    "park", "the park", "parking lot", "the parking lot", "parking garage",
+    "the corner", "the intersection", "intersection",
+    "gas station", "the gas station", "store", "the store",
+    "school", "the school", "the church", "church",
+    "apartment", "the apartment", "apartment building", "the apartment building",
+    "house", "the house", "the residence", "residence",
+    "hospital", "the hospital",
+    "bus stop", "the bus stop", "bus station",
+    "subway", "the subway", "subway station", "metro station",
+    "train station", "the train station",
 }
+
+# Regex patterns matched against the cleaned (suffix-stripped) location_text.
+# Anything matching these is "I have a road type but no specific cross-street
+# or address" — Nominatim will give us a single arbitrary point on a long
+# linear road, which is worse than no result.
+_VAGUE_REGEXES: list[re.Pattern[str]] = [
+    # Bare interstate / route designators: "I-95", "I-280", "I-95N",
+    # "I-40 east", "i 95", "us-101", "us 101", "route 30", "rt 30",
+    # "highway 1", "hwy 1", "sr-99", "state route 1".
+    re.compile(r"^(?:i|us|sr|ca|pa)[-\s]?\d{1,3}\s*(?:[nsew]|north|south|east|west)?$", re.IGNORECASE),
+    re.compile(r"^(?:route|rt|rte|highway|hwy|state\s+route|us\s+route)\s*\d{1,4}\s*(?:[nsew]|north|south|east|west)?$", re.IGNORECASE),
+    # "interstate 95", "interstate 95 north"
+    re.compile(r"^interstate\s+\d{1,3}\s*(?:[nsew]|north|south|east|west)?$", re.IGNORECASE),
+    # "exit 6", "crossing 6", "mile marker 12", "milepost 12" — number-only
+    # waypoints with no road name.
+    re.compile(r"^(?:exit|crossing|mile\s*marker|mile\s*post|milepost|mp)\s+\d+\w*$", re.IGNORECASE),
+    # "<brand> parking lot" — Walmart parking lot, Target parking lot, etc.
+    # The brand alone is already in _clean_location's strip list; the
+    # "parking lot" residue clusters at a random POI.
+    re.compile(r"^(?:walmart|target|costco|home\s*depot|lowes|cvs|walgreens|wawa|7[-\s]?eleven|safeway|whole\s*foods|mcdonald'?s|starbucks|dunkin)\s+(?:parking\s+lot|parking\s+garage|parking)$", re.IGNORECASE),
+    # "block of <number>" or "<number> block" with no street name.
+    re.compile(r"^\d+\s+block$", re.IGNORECASE),
+    re.compile(r"^block\s+of\s+\d+$", re.IGNORECASE),
+]
 
 
 def _is_too_vague(loc: str, suffix: str) -> bool:
@@ -194,6 +236,9 @@ def _is_too_vague(loc: str, suffix: str) -> bool:
     for piece in (suf, suf.split(",")[0].strip()):
         if piece and s.endswith(piece):
             s = s[: -len(piece)].rstrip(" ,").strip()
+    # Also drop a state-only suffix (", PA" / ", CA") — common when the
+    # LLM gave us "I-95, PA" instead of a real cross-street.
+    s = re.sub(r",\s*[a-z]{2}\s*$", "", s).strip(" ,.")
     s = s.strip(" ,.")
     if not s:
         # All that was left was the city name → vague.
@@ -211,10 +256,16 @@ def _is_too_vague(loc: str, suffix: str) -> bool:
     # if nothing else is left, drop it.
     if re.fullmatch(
         r"(?:walmart|mcdonald'?s|cvs|wawa|7-?eleven|dunkin|target|"
-        r"starbucks|whole\s*foods|home\s*depot)",
+        r"starbucks|whole\s*foods|home\s*depot|lowes|costco|safeway|"
+        r"walgreens|trader\s*joe'?s)",
         s,
     ):
         return True
+    # Highway / interstate / "exit 6" / "<brand> parking lot" — see
+    # _VAGUE_REGEXES above for the exhaustive list.
+    for pat in _VAGUE_REGEXES:
+        if pat.match(s):
+            return True
     return False
 
 
