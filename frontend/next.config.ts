@@ -1,6 +1,17 @@
 import type { NextConfig } from "next";
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://127.0.0.1:8765";
+/** FastAPI origin (no trailing slash). On Vercel this must be set or `/api/*` rewrites miss the backend. */
+const BACKEND_URL = (process.env.BACKEND_URL || "http://127.0.0.1:8765").replace(/\/$/, "");
+
+if (process.env.VERCEL === "1") {
+  const raw = process.env.BACKEND_URL?.trim() || "";
+  if (!raw || /127\.0\.0\.1|localhost/i.test(raw)) {
+    console.warn(
+      "[next.config] Vercel: set BACKEND_URL to your FastAPI origin (e.g. https://api.phlpulse.com) with no trailing slash. " +
+        "If it is missing or still localhost, same-origin fetches to /api/incidents (etc.) 404 at the edge.",
+    );
+  }
+}
 
 const nextConfig: NextConfig = {
   async headers() {
