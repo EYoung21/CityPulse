@@ -556,7 +556,7 @@
 
 /* ─── Stats Section ─── */
 .lp-stats-section {
-  padding: 80px 24px 60px;
+  padding: 64px 24px 48px;
   max-width: 1100px;
   margin: 0 auto;
 }
@@ -640,7 +640,9 @@
 /* ─── Scroll-Pinned Scene ─── */
 .lp-scroll-scene {
   position: relative;
-  height: 150vh;
+  /* Keep the scroll-driven headline punchy — 150vh left too much
+     dead space between sections on most screens. */
+  height: 125vh;
 }
 
 .lp-scroll-scene-sticky {
@@ -689,11 +691,13 @@
 
 /* ─── Statement Section ─── */
 .lp-statement {
-  min-height: 50vh;
+  /* This block is text-heavy; don't force a half-viewport minimum that
+     reads as an empty black spacer on larger monitors. */
+  min-height: auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 60px 24px;
+  padding: 48px 24px;
   position: relative;
 }
 
@@ -807,7 +811,7 @@
 
 /* ─── City Grid (Sister Cities) ─── */
 .lp-cities {
-  padding: 80px 24px 120px;
+  padding: 72px 24px 96px;
   max-width: 1100px;
   margin: 0 auto;
 }
@@ -1001,7 +1005,7 @@
 
 /* ─── CTA ─── */
 .lp-cta {
-  padding: 100px 24px 60px;
+  padding: 88px 24px 56px;
   text-align: center;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
@@ -1076,7 +1080,7 @@
 
 /* ─── Safer-routing demo section ─── */
 .lp-route-section {
-  padding: 80px 24px 40px;
+  padding: 64px 24px 36px;
   max-width: 1200px;
   margin: 0 auto;
 }
@@ -1572,7 +1576,7 @@
   .lp-stats-strip { grid-template-columns: repeat(2, 1fr); }
   .lp-city-grid { grid-template-columns: 1fr; }
   .lp-cities { padding: 60px 16px 80px; }
-  .lp-scroll-scene { height: 180vh; }
+  .lp-scroll-scene { height: 150vh; }
   .lp-switcher-menu { min-width: 260px; }
   .lp-route-canvas-wrap { aspect-ratio: 16 / 11; }
   .lp-route-canvas-legend {
