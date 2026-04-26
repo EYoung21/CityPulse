@@ -267,7 +267,7 @@ export default function LoginScreen() {
             </div>
           </div>
         </div>
-
+      </div>
     </div>
   );
 }
