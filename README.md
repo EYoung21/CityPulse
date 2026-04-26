@@ -192,7 +192,7 @@ drive future server-fired triggers; the response includes `scanned`
 - All incidents are labeled **UNVERIFIED** — this is a situational awareness tool, not a verified crime database
 - The Inhibitor API blocks content that could cause harm, which means some real incidents may be filtered out (this is by design)
 - Safe routing adds avoid zones around incidents but cannot guarantee safety — it reduces exposure to known reported activity
-- Currently covers Philadelphia only (Broadcastify feed 4603 — Philadelphia Police Citywide)
+- Currently covers the **Greater Philadelphia metro** — Philadelphia plus **Delaware County, Chester County, Montgomery County, and Bucks County** (including citywide + sector feeds, plus Fire/EMS and transit where available).
 
 ## License and Copyright
 

@@ -6,7 +6,7 @@ city:
   short: "PHL"
   slug: "philly"
   domain: "phlpulse.com"
-  region: "Philadelphia, PA"
+  region: "Greater Philadelphia, PA (Philadelphia + DelCo/ChesCo/MontCo/Bucks)"
   tagline: "Google Maps tells you the fastest way. PhillyPulse tells you the safest."
 
 map:
