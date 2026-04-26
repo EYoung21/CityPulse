@@ -10,6 +10,7 @@ import AdminLauncher from "@/components/AdminLauncher";
 import AdminPanel from "@/app/admin/AdminPanel";
 import ModerationPanel from "@/app/admin/ModerationPanel";
 import type { ReactNode } from "react";
+import type { User } from "firebase/auth";
 
 /** Exact paths that skip the auth gate entirely. Marketing / campaign URLs
  *  must be reachable from ads, decks, and partner email without a login wall. */
@@ -21,6 +22,15 @@ const PUBLIC_ROUTE_PREFIXES = ["/use-cases/"];
 function isPublicRoute(pathname: string): boolean {
   if (PUBLIC_ROUTES.includes(pathname)) return true;
   return PUBLIC_ROUTE_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
+/** Signed-in but still on /login — must leave for the app (guest, Google, email).
+ *  Exception: email/password users who have not verified yet stay on the
+ *  verification panel inside LoginScreen. */
+function shouldLeaveLoginForApp(user: User): boolean {
+  if (user.isAnonymous) return true;
+  if (!user.email) return true;
+  return user.emailVerified;
 }
 
 function RedirectTo({ to }: { to: string }) {
@@ -45,6 +55,11 @@ function AuthGate({ children }: { children: ReactNode }) {
   // and admins — the product gate only kicks in once you deep-link into
   // the authenticated map or feed.
   if (isPublicRoute(pathname)) {
+    // /login stays public, but Firebase sign-in (guest, Google, email) must
+    // navigate into the app; otherwise anonymous auth succeeds with no UI change.
+    if (pathname === "/login" && user && shouldLeaveLoginForApp(user)) {
+      return <RedirectTo to="/" />;
+    }
     return <>{children}</>;
   }
 

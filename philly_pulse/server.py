@@ -2220,7 +2220,12 @@ async def push_test(authorization: Optional[str] = Header(None)):
 
 @app.get("/api/audio/{clip_id}")
 async def get_audio_clip(clip_id: str):
-    """Serve an audio clip — checks local disk first, then redirects to Firebase Storage."""
+    """Serve an audio clip — local disk first, else proxy bytes from Firebase Storage.
+
+    Do not redirect to ``storage.googleapis.com``: the SPA uses ``fetch()`` to
+    decode waveforms; a 302 makes the browser enforce CORS on the final URL, and
+    public buckets typically omit ``Access-Control-Allow-Origin`` for web apps.
+    """
     if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
         raise HTTPException(status_code=400, detail="Invalid clip ID")
 
@@ -2234,10 +2239,30 @@ async def get_audio_clip(clip_id: str):
             headers={"Cache-Control": "public, max-age=86400"},
         )
 
-    # Try Firebase Storage — construct the public URL and redirect
-    storage_url = f"https://storage.googleapis.com/{_STORAGE_BUCKET}/audio/{clip_id}.wav"
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url=storage_url, status_code=302)
+    object_path = f"audio/{clip_id}.wav"
+    last_status: int | None = None
+    try:
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            for bucket in _storage_bucket_candidates():
+                url = f"https://storage.googleapis.com/{bucket}/{object_path}"
+                resp = await client.get(url)
+                last_status = resp.status_code
+                if resp.status_code == 200:
+                    return Response(
+                        content=resp.content,
+                        media_type="audio/wav",
+                        headers={"Cache-Control": "public, max-age=86400"},
+                    )
+    except httpx.RequestError as e:
+        logger.warning("Failed to fetch audio clip %s from storage: %s", clip_id, e)
+        raise HTTPException(status_code=502, detail="Storage unreachable") from e
+
+    if last_status == 404:
+        raise HTTPException(status_code=404, detail="Audio clip not found")
+    raise HTTPException(
+        status_code=502,
+        detail=f"Storage returned HTTP {last_status}" if last_status else "Storage error",
+    )
 
 
 @app.get("/api/audio-raw/{clip_id}")

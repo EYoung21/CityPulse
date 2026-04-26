@@ -14,13 +14,14 @@ import {
   createUserWithEmailAndPassword,
   deleteUser,
   getAuth,
+  getRedirectResult,
   onAuthStateChanged,
   reauthenticateWithPopup,
   sendEmailVerification,
   signInAnonymously,
   signInWithCustomToken as fbSignInWithCustomToken,
   signInWithEmailAndPassword,
-  signInWithPopup,
+  signInWithRedirect,
   signOut,
   updateProfile,
   type User,
@@ -118,67 +119,79 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // leaking a listener after sign-out and to avoid a stale doc
     // shadowing the new user's data on account switching.
     let userDocUnsub: (() => void) | null = null;
+    let authUnsub: (() => void) | null = null;
+    let cancelled = false;
 
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
+    // Finish Google (OAuth) sign-in when returning from `signInWithRedirect`.
+    // Runs once per load; no pending redirect is a normal outcome.
+    void getRedirectResult(auth)
+      .catch((e) => {
+        console.warn("getRedirectResult:", e);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        authUnsub = onAuthStateChanged(auth, (u) => {
+          setUser(u);
 
-      // Always clean up any previous user-doc listener before we
-      // either subscribe to the new one or settle into the
-      // signed-out state. Otherwise an account switch (sign out →
-      // sign in as someone else) leaks the previous listener and
-      // briefly flashes the previous user's tier.
-      if (userDocUnsub) {
-        userDocUnsub();
-        userDocUnsub = null;
-      }
+          // Always clean up any previous user-doc listener before we
+          // either subscribe to the new one or settle into the
+          // signed-out state. Otherwise an account switch (sign out →
+          // sign in as someone else) leaks the previous listener and
+          // briefly flashes the previous user's tier.
+          if (userDocUnsub) {
+            userDocUnsub();
+            userDocUnsub = null;
+          }
 
-      if (u && u.email) {
-        const db = getFirestore(getFirebaseApp());
-        // Real-time listener so a Stripe webhook write — either
-        // tier:'pro' on subscription or proUntil on a 3-day pass —
-        // reflects in the UI within a second of the webhook firing,
-        // with no page reload required.
-        userDocUnsub = onSnapshot(
-          doc(db, "users", u.uid),
-          (snap) => {
-            const data = snap.data();
-            if (data?.tier && ["free", "pro", "enterprise"].includes(data.tier)) {
-              setTier(data.tier as UserTier);
-            } else {
-              setTier("free");
-            }
-            // Firestore Timestamps round-trip as objects with .toDate;
-            // be defensive about the field being missing or wrong-typed
-            // (e.g. left over from a manual Firestore edit during
-            // testing) so a malformed doc doesn't crash the provider.
-            const raw = data?.proUntil as Timestamp | undefined;
-            const next = raw && typeof raw.toDate === "function" ? raw.toDate() : null;
-            setProUntil(next);
-          },
-          () => {
-            // Read denied or transient — fall back to free rather
-            // than gambling on a stale grant.
+          if (u && u.email) {
+            const db = getFirestore(getFirebaseApp());
+            // Real-time listener so a Stripe webhook write — either
+            // tier:'pro' on subscription or proUntil on a 3-day pass —
+            // reflects in the UI within a second of the webhook firing,
+            // with no page reload required.
+            userDocUnsub = onSnapshot(
+              doc(db, "users", u.uid),
+              (snap) => {
+                const data = snap.data();
+                if (data?.tier && ["free", "pro", "enterprise"].includes(data.tier)) {
+                  setTier(data.tier as UserTier);
+                } else {
+                  setTier("free");
+                }
+                // Firestore Timestamps round-trip as objects with .toDate;
+                // be defensive about the field being missing or wrong-typed
+                // (e.g. left over from a manual Firestore edit during
+                // testing) so a malformed doc doesn't crash the provider.
+                const raw = data?.proUntil as Timestamp | undefined;
+                const next = raw && typeof raw.toDate === "function" ? raw.toDate() : null;
+                setProUntil(next);
+              },
+              () => {
+                // Read denied or transient — fall back to free rather
+                // than gambling on a stale grant.
+                setTier("free");
+                setProUntil(null);
+              }
+            );
+            // Do not gate the whole app on the first `users/{uid}` snapshot.
+            // Waiting here delayed map mount + `/api/*` loads until Firestore
+            // connected (felt like "slow login"). Tier defaults to `free` until
+            // the snapshot updates it.
+            setLoading(false);
+            // Warm the ID token so the first parallel REST calls after mount
+            // avoid contending on the same refresh.
+            if (!u.isAnonymous) void u.getIdToken().catch(() => {});
+          } else {
             setTier("free");
             setProUntil(null);
+            setLoading(false);
           }
-        );
-        // Do not gate the whole app on the first `users/{uid}` snapshot.
-        // Waiting here delayed map mount + `/api/*` loads until Firestore
-        // connected (felt like "slow login"). Tier defaults to `free` until
-        // the snapshot updates it.
-        setLoading(false);
-        // Warm the ID token so the first parallel REST calls after mount
-        // avoid contending on the same refresh.
-        if (!u.isAnonymous) void u.getIdToken().catch(() => {});
-      } else {
-        setTier("free");
-        setProUntil(null);
-        setLoading(false);
-      }
-    });
+        });
+      });
 
     return () => {
-      unsub();
+      cancelled = true;
+      authUnsub?.();
       if (userDocUnsub) userDocUnsub();
     };
   }, []);
@@ -236,7 +249,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signInWithGoogle = useCallback(async () => {
     const auth = getAuth(getFirebaseApp());
     const provider = new GoogleAuthProvider();
-    await signInWithPopup(auth, provider);
+    // Redirect avoids popup/opener COOP issues on some browsers and hosts
+    // (Chrome logging `window.closed` / `window.close` blocked under strict COOP).
+    await signInWithRedirect(auth, provider);
   }, []);
 
   const signUpWithEmail = useCallback(async (email: string, password: string) => {

@@ -33,6 +33,22 @@ export function apiUrl(path: string): string {
   return base ? `${base}${p}` : p;
 }
 
+/** URL to play an incident clip in the browser (same-origin when possible).
+ *
+ * Prefer ``/api/audio/{clip}`` over a bare ``audio_url`` pointing at GCS: the
+ * waveform player uses ``fetch()`` + ``decodeAudioData``, which fails CORS when
+ * the API responds with a redirect to ``storage.googleapis.com``.
+ */
+export function incidentAudioSrc(inc: {
+  audio_clip?: string | null;
+  audio_url?: string | null;
+}): string | null {
+  const clip = inc.audio_clip?.trim();
+  if (clip) return apiUrl(`/api/audio/${clip}`);
+  const u = inc.audio_url?.trim();
+  return u || null;
+}
+
 /** Fetch a Python API endpoint with a safe fallback.
  *
  * Primary behavior uses `apiUrl(path)` so browser calls stay same-origin and

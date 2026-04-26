@@ -30,7 +30,7 @@ import HourClock from "@/components/charts/HourClock";
 import { subscribeIncidents } from "@/lib/firestore";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { enrichIncidents } from "@/lib/incident-weights";
-import { apiUrl } from "@/lib/public-api-base";
+import { incidentAudioSrc } from "@/lib/public-api-base";
 
 interface Props {
   slug: string;
@@ -386,11 +386,7 @@ function NotableIncidentCard({
   sev: { label: string; markerColor: string };
 }) {
   const [playing, setPlaying] = useState(false);
-  const audioSrc = inc.audio_url
-    ? inc.audio_url
-    : inc.audio_clip
-      ? apiUrl(`/api/audio/${inc.audio_clip}`)
-      : null;
+  const audioSrc = incidentAudioSrc(inc);
   const hasAudio = !!audioSrc;
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
