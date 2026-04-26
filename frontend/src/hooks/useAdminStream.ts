@@ -52,8 +52,11 @@ export function useAdminStream() {
 
   useEffect(() => {
     fetchPublicApi("/api/admin/feeds")
-      .then((r) => r.json())
-      .then((d) => setFeeds(d.feeds || []))
+      .then(async (r) => {
+        if (!r.ok) return;
+        const d = (await r.json()) as { feeds?: FeedInfo[] };
+        setFeeds(d.feeds || []);
+      })
       .catch(() => {});
   }, []);
 

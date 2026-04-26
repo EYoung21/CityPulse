@@ -761,8 +761,9 @@ function MapHome() {
 
   useEffect(() => {
     fetchPublicApi("/api/admin/feeds")
-      .then((r) => r.json())
-      .then((data) => {
+      .then(async (r) => {
+        if (!r.ok) return;
+        const data = (await r.json()) as { feeds?: { feed_id?: string; label?: string }[] };
         if (data.feeds && Array.isArray(data.feeds)) {
           const labels: Record<string, string> = {};
           for (const f of data.feeds) {

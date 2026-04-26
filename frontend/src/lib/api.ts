@@ -3,16 +3,38 @@ import { isFirebaseConfigured, getFirebaseApp } from "@/lib/firebase";
 import { getAuth } from "firebase/auth";
 import { requestUpgrade } from "@/lib/upgrade";
 
+/** Dedupe concurrent token reads (e.g. `Promise.all` of fetchIncidents + fetchSummary). */
+let idTokenInFlight: Promise<string | null> | null = null;
+let idTokenInFlightUid: string | null = null;
+
 async function maybeIdToken(): Promise<string | null> {
   if (!isFirebaseConfigured()) return null;
-  try {
-    const auth = getAuth(getFirebaseApp());
-    const u = auth.currentUser;
-    if (!u || u.isAnonymous) return null;
-    return await u.getIdToken();
-  } catch {
-    return null;
-  }
+  const auth = getAuth(getFirebaseApp());
+  const u = auth.currentUser;
+  if (!u || u.isAnonymous) return null;
+
+  if (idTokenInFlight && idTokenInFlightUid === u.uid) return idTokenInFlight;
+
+  const uid = u.uid;
+  const p = (async () => {
+    try {
+      const cur = getAuth(getFirebaseApp()).currentUser;
+      if (!cur || cur.isAnonymous || cur.uid !== uid) return null;
+      return await cur.getIdToken();
+    } catch {
+      return null;
+    }
+  })();
+
+  idTokenInFlight = p;
+  idTokenInFlightUid = uid;
+  p.finally(() => {
+    if (idTokenInFlight === p) {
+      idTokenInFlight = null;
+      idTokenInFlightUid = null;
+    }
+  });
+  return p;
 }
 
 function handleClampHeaders(res: Response, feature = "History beyond 1 hour") {

@@ -11,8 +11,17 @@ import AdminPanel from "@/app/admin/AdminPanel";
 import ModerationPanel from "@/app/admin/ModerationPanel";
 import type { ReactNode } from "react";
 
-/** Routes that skip the auth gate entirely */
-const PUBLIC_ROUTES = ["/landing", "/login"];
+/** Exact paths that skip the auth gate entirely. Marketing / campaign URLs
+ *  must be reachable from ads, decks, and partner email without a login wall. */
+const PUBLIC_ROUTES = ["/landing", "/login", "/teams", "/use-cases"];
+
+/** Path prefixes that skip the auth gate (for dynamic segments). */
+const PUBLIC_ROUTE_PREFIXES = ["/use-cases/"];
+
+function isPublicRoute(pathname: string): boolean {
+  if (PUBLIC_ROUTES.includes(pathname)) return true;
+  return PUBLIC_ROUTE_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
 
 function RedirectTo({ to }: { to: string }) {
   const router = useRouter();
@@ -31,8 +40,11 @@ function AuthGate({ children }: { children: ReactNode }) {
   usePrefsSync();
   const [adminMode, setAdminMode] = useState<"launcher" | "dashboard" | "admin" | "moderation" | null>(null);
 
-  // Skip auth for public routes (e.g. /landing)
-  if (PUBLIC_ROUTES.includes(pathname)) {
+  // Skip auth for public routes (e.g. /landing, /teams, /use-cases/*).
+  // These render the same content for signed-out visitors, signed-in users,
+  // and admins — the product gate only kicks in once you deep-link into
+  // the authenticated map or feed.
+  if (isPublicRoute(pathname)) {
     return <>{children}</>;
   }
 
