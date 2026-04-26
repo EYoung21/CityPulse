@@ -1,4 +1,24 @@
 import { fetchPublicApi } from "@/lib/public-api-base";
+import { isFirebaseConfigured, getFirebaseApp } from "@/lib/firebase";
+import { getAuth } from "firebase/auth";
+import { requestUpgrade } from "@/lib/upgrade";
+
+async function maybeIdToken(): Promise<string | null> {
+  if (!isFirebaseConfigured()) return null;
+  try {
+    const auth = getAuth(getFirebaseApp());
+    const u = auth.currentUser;
+    if (!u || u.isAnonymous) return null;
+    return await u.getIdToken();
+  } catch {
+    return null;
+  }
+}
+
+function handleClampHeaders(res: Response, feature = "History beyond 1 hour") {
+  const clamped = res.headers.get("x-pulse-clamped");
+  if (clamped === "1") requestUpgrade(feature);
+}
 
 export type LocationConfidence = "direct" | "context" | "none";
 
@@ -126,7 +146,11 @@ export async function fetchIncidents(
   if (since) params.set("since", since);
   if (category) params.set("category", category);
   const qs = params.toString();
-  const res = await fetchPublicApi(`/api/incidents${qs ? `?${qs}` : ""}`);
+  const idToken = await maybeIdToken();
+  const res = await fetchPublicApi(`/api/incidents${qs ? `?${qs}` : ""}`, {
+    headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
+  });
+  handleClampHeaders(res);
   if (!res.ok) throw new Error(`Failed to fetch incidents: ${res.status}`);
   const data = await res.json();
   return data.incidents;
@@ -230,7 +254,12 @@ export async function fetchIncidentPage(opts: {
   if (opts.city) params.set("city", opts.city);
   if (opts.nearLat != null) params.set("near_lat", String(opts.nearLat));
   if (opts.nearLng != null) params.set("near_lng", String(opts.nearLng));
-  const res = await fetchPublicApi(`/api/incidents/page?${params}`, { signal: opts.signal });
+  const idToken = await maybeIdToken();
+  const res = await fetchPublicApi(`/api/incidents/page?${params}`, {
+    signal: opts.signal,
+    headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
+  });
+  handleClampHeaders(res);
   if (!res.ok) throw new Error(`Failed to fetch incident page: ${res.status}`);
   return res.json();
 }
@@ -253,13 +282,22 @@ export async function searchIncidentsApi(opts: {
   if (opts.category) params.set("category", opts.category);
   if (opts.limit != null) params.set("limit", String(opts.limit));
   if (opts.city) params.set("city", opts.city);
-  const res = await fetchPublicApi(`/api/incidents/search?${params}`, { signal: opts.signal });
+  const idToken = await maybeIdToken();
+  const res = await fetchPublicApi(`/api/incidents/search?${params}`, {
+    signal: opts.signal,
+    headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
+  });
+  handleClampHeaders(res);
   if (!res.ok) throw new Error(`Incident search failed: ${res.status}`);
   return (await res.json()) as IncidentSearchResponse;
 }
 
 export async function fetchSummary(): Promise<SummaryResponse> {
-  const res = await fetchPublicApi("/api/summary");
+  const idToken = await maybeIdToken();
+  const res = await fetchPublicApi("/api/summary", {
+    headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
+  });
+  handleClampHeaders(res);
   if (!res.ok) throw new Error(`Failed to fetch summary: ${res.status}`);
   return res.json();
 }

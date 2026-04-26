@@ -29,6 +29,7 @@ import InstallPrompt from "@/components/InstallPrompt";
 import { fetchIncidentPage, type Incident } from "@/lib/api";
 import { fetchIncidentPageFromFirestore } from "@/lib/firestore";
 import { getCurrentCity } from "@/lib/pulse-cities";
+import { useAuth } from "@/contexts/AuthContext";
 
 /**
  * Read-path resolver for the feed: Firestore first (resilient to the
@@ -46,6 +47,7 @@ async function loadIncidentPage(opts: {
   city?: string;
   nearLat?: number | null;
   nearLng?: number | null;
+  since?: string;
   signal?: AbortSignal;
 }) {
   try {
@@ -73,6 +75,11 @@ export default function FeedPage() {
   const abortRef = useRef<AbortController | null>(null);
 
   const city = getCurrentCity();
+  const { isPro } = useAuth();
+  const freeSinceIso = useMemo(
+    () => new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    []
+  );
 
   /** First-page load + reload on mode change. */
   const loadFirst = useCallback(async () => {
@@ -95,6 +102,7 @@ export default function FeedPage() {
         city: city.slug,
         nearLat: mode === "near" ? userLoc?.lat ?? null : null,
         nearLng: mode === "near" ? userLoc?.lng ?? null : null,
+        since: isPro ? undefined : freeSinceIso,
         signal: ctrl.signal,
       });
       if (!ctrl.signal.aborted) {

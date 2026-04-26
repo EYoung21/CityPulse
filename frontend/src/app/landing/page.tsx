@@ -568,6 +568,66 @@ export default function LandingPage() {
         <StatsStrip city={city} />
       </section>
 
+      {/* ═══ Use cases — what the platform supports today ═══ */}
+      <section className="lp-usecases" aria-label="Who uses CityPulse">
+        <div className="lp-usecases-inner">
+          <div className="lp-stat-label">Teams & Partners</div>
+          <h2 className="lp-usecases-title">Built for more than the map.</h2>
+          <p className="lp-usecases-sub">
+            CityPulse turns live scanner traffic into structured, geocoded incident data — useful for routing, alerts, and situational awareness.
+          </p>
+          <div className="lp-usecases-grid">
+            <div className="lp-usecase-card">
+              <div className="lp-usecase-top">
+                <div className="lp-usecase-name">Logistics & delivery detours</div>
+              </div>
+              <div className="lp-usecase-body">
+                Route around active scenes before traffic apps catch up — crashes, closures, and violent incidents.
+              </div>
+            </div>
+            <div className="lp-usecase-card">
+              <div className="lp-usecase-top">
+                <div className="lp-usecase-name">Press / newsroom alerting</div>
+                <span className="lp-usecase-badge">Pro</span>
+              </div>
+              <div className="lp-usecase-body">
+                Keyword-based alerts for “shots fired”, “structure fire”, “officer down”, and more.
+              </div>
+            </div>
+            <div className="lp-usecase-card">
+              <div className="lp-usecase-top">
+                <div className="lp-usecase-name">Event security monitoring</div>
+              </div>
+              <div className="lp-usecase-body">
+                Watch incident density and escalation patterns around venues, routes, and perimeters.
+              </div>
+            </div>
+            <div className="lp-usecase-card">
+              <div className="lp-usecase-top">
+                <div className="lp-usecase-name">Research / public-good analysis</div>
+              </div>
+              <div className="lp-usecase-body">
+                Searchable, time-windowed incident stream for oversight, academic work, and civic tooling.
+              </div>
+            </div>
+            <div className="lp-usecase-card">
+              <div className="lp-usecase-top">
+                <div className="lp-usecase-name">API access (pilot)</div>
+                <span className="lp-usecase-badge">Pro</span>
+              </div>
+              <div className="lp-usecase-body">
+                Pro/Enterprise can pull structured incidents programmatically for dashboards and integrations.
+              </div>
+            </div>
+          </div>
+          <div className="lp-usecases-foot">
+            <span className="lp-usecases-note">
+              All incidents are labeled <strong>UNVERIFIED</strong>. Pro features require an account.
+            </span>
+          </div>
+        </div>
+      </section>
+
       {/* ═══ Scroll-Driven Scene ═══ */}
       <section className="lp-scroll-scene">
         <div className="lp-scroll-scene-sticky">

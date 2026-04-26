@@ -561,6 +561,98 @@
   margin: 0 auto;
 }
 
+.lp-usecases {
+  padding: 40px 24px 60px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.lp-usecases-title {
+  font-size: clamp(1.8rem, 3.6vw, 2.75rem);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  margin: 0 0 10px;
+  line-height: 1.1;
+}
+
+.lp-usecases-sub {
+  margin: 0 0 22px;
+  max-width: 760px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.lp-usecases-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.lp-usecase-card {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(8px);
+  padding: 18px 18px 16px;
+  min-height: 110px;
+  transition: border-color 0.25s ease, transform 0.25s ease;
+}
+
+.lp-usecase-card:hover {
+  border-color: rgba(var(--accent-rgb), 0.25);
+  transform: translateY(-2px);
+}
+
+.lp-usecase-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.lp-usecase-name {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.lp-usecase-badge {
+  font-family: var(--font-geist-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgb(var(--accent-rgb));
+  border: 1px solid rgba(var(--accent-rgb), 0.35);
+  background: rgba(var(--accent-rgb), 0.08);
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.lp-usecase-body {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.55);
+  line-height: 1.5;
+}
+
+.lp-usecases-foot {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.lp-usecases-note {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.35);
+  text-align: center;
+}
+
+.lp-usecases-note strong {
+  color: rgba(255, 255, 255, 0.7);
+}
+
 .lp-stats-header {
   text-align: center;
   margin-bottom: 32px;
@@ -1574,6 +1666,7 @@
   .lp-header-logo { width: 26px; height: 26px; }
   .lp-header-cta { padding: 8px 16px; font-size: 0.85rem; }
   .lp-stats-strip { grid-template-columns: repeat(2, 1fr); }
+  .lp-usecases-grid { grid-template-columns: 1fr; }
   .lp-city-grid { grid-template-columns: 1fr; }
   .lp-cities { padding: 60px 16px 80px; }
   .lp-scroll-scene { height: 150vh; }
