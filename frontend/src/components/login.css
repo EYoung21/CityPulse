@@ -1,0 +1,180 @@
+/* Login / Signup screen styling
+   Mirrors the landing page "glass + accent" visual language without
+   pulling in the heavy MapLibre hero background. */
+
+.lp-login-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #0a0a1a 0%, #060611 55%, #0d0d1f 100%);
+  color: #fff;
+}
+
+.lp-login-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.lp-login-bg::before {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(var(--accent-rgb), 0.14), transparent 55%),
+    radial-gradient(circle at 22% 55%, rgba(255, 255, 255, 0.03), transparent 60%),
+    radial-gradient(circle at 82% 62%, rgba(255, 255, 255, 0.025), transparent 62%),
+    linear-gradient(180deg, rgba(6, 6, 17, 0.1) 0%, rgba(6, 6, 17, 0.65) 70%, rgba(6, 6, 17, 0.92) 100%),
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.02) 0 1px, transparent 1px 72px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.015) 0 1px, transparent 1px 92px);
+  filter: saturate(0.95) contrast(1.05);
+}
+
+.lp-login-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 65% 55% at 50% 35%, rgba(0,0,0,0), rgba(0,0,0,0.55) 70%, rgba(0,0,0,0.8) 100%);
+}
+
+.lp-login-shell {
+  width: 100%;
+  max-width: 420px;
+  position: relative;
+  z-index: 2;
+}
+
+.lp-login-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(var(--accent-rgb), 0.05);
+  overflow: hidden;
+}
+
+.lp-login-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 0%, rgba(var(--accent-rgb), 0.12), transparent 55%);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.lp-login-card-inner {
+  position: relative;
+  padding: 26px 24px 22px;
+}
+
+.lp-login-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.lp-login-wordmark {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: linear-gradient(
+    135deg,
+    #fff 0%,
+    rgba(var(--accent2-rgb), 1) 55%,
+    rgba(var(--accent-rgb), 1) 100%
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.lp-login-subhead {
+  text-align: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+  margin-bottom: 18px;
+  font-family: var(--font-geist-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.lp-login-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+}
+.lp-login-divider > span {
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.25);
+  font-family: var(--font-geist-mono);
+}
+.lp-login-divider > div {
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.lp-login-btn {
+  width: 100%;
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: transform 0.15s ease, filter 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+.lp-login-btnPrimary {
+  background: linear-gradient(135deg, rgba(var(--accent2-rgb), 1) 0%, rgba(var(--accent-rgb), 1) 100%);
+  color: #071018;
+  box-shadow: 0 10px 26px rgba(var(--accent-rgb), 0.25);
+}
+.lp-login-btnPrimary:hover { transform: translateY(-1px); filter: brightness(1.05); }
+
+.lp-login-btnGhost {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.9);
+}
+.lp-login-btnGhost:hover { border-color: rgba(var(--accent-rgb), 0.3); background: rgba(var(--accent-rgb), 0.06); }
+
+.lp-login-input {
+  width: 100%;
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-size: 13px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+.lp-login-input::placeholder { color: rgba(255,255,255,0.35); }
+.lp-login-input:focus { border-color: rgba(var(--accent-rgb), 0.45); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12); }
+
+.lp-login-foot {
+  margin-top: 14px;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+}
+.lp-login-link {
+  color: rgb(var(--accent-rgb));
+  font-weight: 600;
+  text-decoration: none;
+}
+.lp-login-link:hover { text-decoration: underline; }
+
+.lp-login-citynav {
+  margin-top: 18px;
+}
