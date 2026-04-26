@@ -964,7 +964,14 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     if (!map) return;
     const targetZoom = zoom;
     const targetPoint = map.project([lat, lng], targetZoom);
-    const sidebarPx = 380;
+    let sidebarPx = 380;
+    if (typeof document !== "undefined") {
+      const raw = getComputedStyle(document.documentElement)
+        .getPropertyValue("--pp-map-sidebar-width")
+        .trim();
+      const n = Number.parseFloat(raw);
+      if (Number.isFinite(n)) sidebarPx = n;
+    }
     const cardPx = 384;
     const mapW = map.getSize().x;
     const isMobile = mapW < 768;

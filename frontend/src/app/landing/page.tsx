@@ -629,7 +629,7 @@ export default function LandingPage() {
           </div>
           <div className="lp-usecases-foot" style={{ flexDirection: "column", gap: "14px" }}>
             <span className="lp-usecases-note">
-              All incidents are labeled <strong>UNVERIFIED</strong>. Without signing in, incident reads are about the <strong>last hour</strong>; <strong>Pro</strong> adds deeper history, <strong>keyword push alerts</strong>, and <strong>programmatic access</strong>.{" "}
+              Data is scanner-derived and not verified as fact—see <strong>About</strong> on the map for the full disclaimer. Without signing in, incident reads are about the <strong>last hour</strong>; <strong>Pro</strong> adds deeper history, <strong>keyword push alerts</strong>, and <strong>programmatic access</strong>.{" "}
               <a
                 href="/teams"
                 className="lp-usecases-teams-link"

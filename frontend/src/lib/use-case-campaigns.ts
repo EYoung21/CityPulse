@@ -46,7 +46,7 @@ export const USE_CASE_CAMPAIGNS: Record<UseCaseSlug, UseCaseCampaign> = {
     ],
     ctas: [{ label: "Open the live map", href: "/" }],
     footnote:
-      "Not dispatch software. All incident data is UNVERIFIED scanner-sourced intelligence.",
+      "Not dispatch software. Incident data is scanner-sourced and not verified as fact.",
   },
   newsroom: {
     slug: "newsroom",
@@ -64,7 +64,7 @@ export const USE_CASE_CAMPAIGNS: Record<UseCaseSlug, UseCaseCampaign> = {
       { label: "Sign in", href: "/login" },
     ],
     footnote:
-      "Pro subscription required for keyword watches. All data UNVERIFIED.",
+      "Pro subscription required for keyword watches. Scanner-derived data only.",
   },
   venue: {
     slug: "venue",
@@ -77,7 +77,8 @@ export const USE_CASE_CAMPAIGNS: Record<UseCaseSlug, UseCaseCampaign> = {
       "We intentionally **do not** promise a dedicated venue dashboard yet. The **live map** is the product, so expectations stay aligned with what we ship today.",
     ],
     ctas: [{ label: "Open the live map", href: "/" }],
-    footnote: "UNVERIFIED data. Not a replacement for official event or police coordination.",
+    footnote:
+      "Not a replacement for official event or police coordination. Scanner-derived only.",
   },
   research: {
     slug: "research",
@@ -86,7 +87,7 @@ export const USE_CASE_CAMPAIGNS: Record<UseCaseSlug, UseCaseCampaign> = {
     metaDescription: `Searchable, paginated incident data on ${site}. Public API window is about one hour without Pro. Pro unlocks deeper history for analysis.`,
     headline: "Structured stream for analysis and civic tooling",
     paragraphs: [
-      "Incidents include category, location text, timestamps, and (when geocoded) coordinates. That is enough for many oversight, academic, and civic use cases, with clear **UNVERIFIED** labeling.",
+      "Incidents include category, location text, timestamps, and (when geocoded) coordinates. That is enough for many oversight, academic, and civic use cases—treat outputs as research inputs, not certified records.",
       "Without Pro, HTTP reads are clamped to roughly the **last hour** of incidents. **Pro** unlocks longer history for the same endpoints. The **full-screen feed** at `/feed` is another way to browse the stream without the main map chrome.",
     ],
     ctas: [
@@ -100,7 +101,7 @@ export const USE_CASE_CAMPAIGNS: Record<UseCaseSlug, UseCaseCampaign> = {
     slug: "api",
     cardTitle: "API access (pilot)",
     pageTitle: `Developer API (pilot) | ${site}`,
-    metaDescription: `HTTP JSON API for CityPulse incidents: endpoints, Firebase Bearer auth, Pro history clamp, curl examples, and UNVERIFIED / legal caveats. Limited pilot.`,
+    metaDescription: `HTTP JSON API for CityPulse incidents: endpoints, Firebase Bearer auth, Pro history clamp, curl examples, and data-quality / legal notes. Limited pilot.`,
     pro: true,
     headline: "Developer API — endpoints, auth, and pilot terms",
     paragraphs: [
@@ -113,7 +114,7 @@ export const USE_CASE_CAMPAIGNS: Record<UseCaseSlug, UseCaseCampaign> = {
       { label: "Teams hub", href: "/teams" },
     ],
     footnote:
-      "No self-serve org-grade API keys yet — tokens are scoped to signed-in users. Rate limits apply. All data UNVERIFIED.",
+      "No self-serve org-grade API keys yet — tokens are scoped to signed-in users. Rate limits apply. Scanner-derived, not verified as fact.",
   },
 };
 

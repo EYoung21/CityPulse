@@ -4,7 +4,6 @@ import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import type { Incident, IncidentMention } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
 import {
-  AlertTriangle,
   MapPin,
   Clock,
   Brain,
@@ -315,10 +314,6 @@ export default function IncidentDetail({ incident, onClose }: Props) {
                 style={{ backgroundColor: sev.markerColor + "20", color: sev.markerColor }}
               >
                 {sev.label}
-              </span>
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-500 flex items-center gap-1">
-                <AlertTriangle className="w-2.5 h-2.5" />
-                UNVERIFIED
               </span>
             </div>
             <div className="flex items-center gap-2">

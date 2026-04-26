@@ -2,7 +2,7 @@
 
 import type { Incident } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
-import { X, MapPin, Clock, AlertTriangle, Radio } from "lucide-react";
+import { X, MapPin, Clock, Radio } from "lucide-react";
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -101,12 +101,6 @@ export default function ClusterListPanel({ incidents, onSelect, onClose }: Props
                         }}
                       >
                         {sev.label}
-                      </span>
-                      <span
-                        className="text-[9px] font-mono px-1 py-0.5 rounded border border-amber-500/30 text-amber-500 flex items-center gap-0.5"
-                      >
-                        <AlertTriangle className="w-2 h-2" />
-                        UNVERIFIED
                       </span>
                       <span
                         className="text-[10px] flex items-center gap-1 ml-auto"

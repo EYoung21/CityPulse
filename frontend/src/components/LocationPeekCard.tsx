@@ -7,7 +7,7 @@
  *  commit 415e7e3). This is purely informational — no save, no write
  *  state — so an accidental long-press costs the user nothing.
  *
- *  Render contract: same bottom-3 / left-[396px] slot as
+ *  Render contract: same bottom-3 / calc(sidebar+1rem) slot as
  *  SafetyScoreCard, ClusterListPanel, IncidentDetail. The parent is
  *  responsible for ensuring only one of those is mounted at a time.
  *

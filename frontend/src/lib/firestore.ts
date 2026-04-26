@@ -84,6 +84,26 @@ function mapDoc(id: string, data: Record<string, unknown>): Incident {
   };
 }
 
+/** Same query slice as `subscribeIncidents`, one `getDocs` read.
+ *  Used to paint the map as soon as possible: `onSnapshot` can lag on
+ *  cold start while this returns from cache or a single round-trip. */
+export async function fetchIncidentsSnapshotOnce(): Promise<Incident[]> {
+  const db = getFirestore(getFirebaseApp());
+  const q = query(
+    collection(db, COLLECTION),
+    where("city", "==", getCurrentCity().slug),
+    orderBy("reported_at", "desc"),
+    limitFn(MAX_DOCS)
+  );
+  const snap = await getDocs(q);
+  const list: Incident[] = [];
+  snap.forEach((d) => {
+    const row = mapDoc(d.id, d.data());
+    if (shouldRenderIncident(row)) list.push(row);
+  });
+  return enrichIncidents(list);
+}
+
 /**
  * Live incidents for the map (non-blocked only). Caller should filter by category client-side if needed.
  */
