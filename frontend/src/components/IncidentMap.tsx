@@ -945,6 +945,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const districtsLayerRef = useRef<L.LayerGroup | null>(null);
   const parkedPinMarkerRef = useRef<L.Marker | null>(null);
   const selectedHighlightRef = useRef<L.LayerGroup | null>(null);
+  /** `flyTo` only on selection change / first coords — not on every incidents poll. */
+  const lastFlyToForSelectedIdRef = useRef<string | null>(null);
   /** Avoid map.fitBounds on every live GPS tick when only the origin (A) moves. */
   const previewFitDestRef = useRef<{ lat: number; lng: number } | null>(null);
   const previewFitWaypointsTailRef = useRef<string>("");
@@ -1732,14 +1734,24 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     const highlight = selectedHighlightRef.current;
     if (highlight) highlight.clearLayers();
 
-    if (!selectedId || !mapRef.current) return;
+    if (!selectedId || !mapRef.current) {
+      if (!selectedId) lastFlyToForSelectedIdRef.current = null;
+      return;
+    }
     const map = mapRef.current;
     const inc = incidents.find((i) => i.id === selectedId);
     if (inc?.lat == null || inc?.lng == null) return;
 
-    // Preserve the viewer's current zoom when selecting an incident.
-    // (But if they're zoomed far out, nudge in enough to make the marker meaningful.)
-    flyToOffset(inc.lat, inc.lng, Math.max(map.getZoom(), 15));
+    // Center once per selection. The dependency array includes `incidents`
+    // so the highlight ring stays in sync, but the feed refetches on a
+    // timer — we must not `flyTo` on every refresh or the user cannot
+    // pan / zoom away while the detail panel stays open.
+    if (lastFlyToForSelectedIdRef.current !== selectedId) {
+      lastFlyToForSelectedIdRef.current = selectedId;
+      // Preserve the viewer's current zoom when selecting an incident.
+      // (But if they're zoomed far out, nudge in enough to make the marker meaningful.)
+      flyToOffset(inc.lat, inc.lng, Math.max(map.getZoom(), 15));
+    }
 
     if (highlight) {
       const kind = resolveBlipKind(inc);

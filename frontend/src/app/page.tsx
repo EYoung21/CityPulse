@@ -2273,9 +2273,10 @@ function MapHome() {
                 initial={{ opacity: 0, scale: 0.9, y: 8 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.9, y: 8 }}
-                className="absolute bottom-12 right-0 w-48 rounded-xl shadow-2xl overflow-hidden p-2 backdrop-blur-md"
+                className="absolute bottom-12 right-0 w-48 max-w-[min(12rem,calc(100vw-1.5rem))] max-h-[calc(100vh-5rem)] flex flex-col overflow-hidden rounded-xl shadow-2xl backdrop-blur-md"
                 style={{ background: "var(--panel-bg)", border: "1px solid var(--panel-border)" }}
               >
+                <div className="min-h-0 flex-1 overflow-y-auto p-2">
                 <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Map Layers</p>
                 <button
                   onClick={() => setHeatmapEnabled(!heatmapEnabled)}
@@ -2547,6 +2548,7 @@ function MapHome() {
                     <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${vectorTilesEnabled ? "left-4" : "left-0.5"}`} />
                   </div>
                 </button>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>

@@ -153,13 +153,6 @@ function IncidentCard({
         style={{ backgroundColor: sev.markerColor, opacity: isSelected ? 1 : 0.4 }}
       />
 
-      <div
-        className="mt-0.5 w-7 h-7 rounded-md flex items-center justify-center shrink-0"
-        style={{ backgroundColor: sev.markerColor + "18", color: sev.markerColor }}
-      >
-        {CATEGORY_ICONS[inc.severity_category] || <CircleDot className="w-3.5 h-3.5" />}
-      </div>
-
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 mb-0.5">
           <span
@@ -241,15 +234,28 @@ function IncidentCard({
       </div>
 
       <div className="flex flex-col items-end gap-1 shrink-0">
-        {showMapThumbnail && inc.lat != null && inc.lng != null && (
-          <IncidentThumbnail
-            lat={inc.lat}
-            lng={inc.lng}
-            width={110}
-            height={72}
-            markerColor={sev.markerColor}
-          />
-        )}
+        <div className="flex items-start gap-1.5">
+          {showMapThumbnail && inc.lat != null && inc.lng != null && (
+            <IncidentThumbnail
+              lat={inc.lat}
+              lng={inc.lng}
+              width={110}
+              height={72}
+              markerColor={sev.markerColor}
+            />
+          )}
+          <div
+            className="mt-0.5 w-7 h-7 rounded-md flex items-center justify-center shrink-0"
+            style={{
+              background: "var(--panel-input-bg, rgba(255,255,255,0.06))",
+              color: "var(--panel-text-secondary, rgba(255,255,255,0.55))",
+            }}
+            title={sev.label}
+            aria-label={`Type: ${sev.label}`}
+          >
+            {CATEGORY_ICONS[inc.severity_category] || <CircleDot className="w-3.5 h-3.5" />}
+          </div>
+        </div>
         <span className="text-[10px] font-mono" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }}>
           {timeAgo(inc.reported_at)}
         </span>
