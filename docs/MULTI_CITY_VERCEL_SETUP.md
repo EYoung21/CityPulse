@@ -49,6 +49,8 @@ Expand the **Environment Variables** section and add all of the following.
 These are identical across all city deployments:
 
 ```
+# Required: Next rewrites /api/* → this origin. No trailing slash. Without it, /api/incidents 404s on the Vercel domain.
+BACKEND_URL                              = https://api.phlpulse.com
 NEXT_PUBLIC_API_URL                      = https://api.phlpulse.com
 NEXT_PUBLIC_FIREBASE_API_KEY             = AIzaSyAu3krAALwmLhvIzmSal8ZVoydzBy2kRXs
 NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN         = phlpulse.firebaseapp.com
@@ -57,6 +59,10 @@ NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET      = phlpulse.firebasestorage.app
 NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID = 609403849368
 NEXT_PUBLIC_FIREBASE_APP_ID              = 1:609403849368:web:b0a6871aed39203685deed
 ```
+
+**If the map never loads and the browser shows `GET https://www…/api/incidents` → 404:** `BACKEND_URL` is missing or still points at localhost. Redeploy after fixing.
+
+**If `https://api.phlpulse.com` returns 502:** the FastAPI process or reverse proxy on the Hetzner box is down — fix the server; “CORS blocked” in the console when calling `api.*` from `www` is often from 502/edge error pages lacking `Access-Control-Allow-Origin`, not a misconfigured CORS middleware.
 
 #### City-specific variables
 

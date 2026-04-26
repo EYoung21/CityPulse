@@ -62,7 +62,7 @@ Every pin on the map is labeled **UNVERIFIED**. PhillyPulse is a situational awa
 | Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS 4 |
 | UI components | shadcn/ui, Leaflet, Framer Motion, Lucide React |
 | Routing engine | OpenRouteService API |
-| Hosting | Vercel (frontend), dedicated server (backend) |
+| Hosting | Vercel (frontend; set `BACKEND_URL` to the FastAPI origin so `/api/*` rewrites work), dedicated server (backend) |
 | Domain | phlpulse.com (GoDaddy) |
 
 ## Run Instructions
@@ -165,7 +165,8 @@ drive future server-fired triggers; the response includes `scanned`
 ### Production
 
 - **Frontend** is deployed on Vercel at [phlpulse.com](https://phlpulse.com)
-- **Backend API** runs on a dedicated server at `api.phlpulse.com`
+- **Vercel env:** set `BACKEND_URL=https://api.phlpulse.com` (no trailing slash) in the Vercel project so Next.js rewrites `https://www.phlpulse.com/api/*` to the Python API. Without it, `/api/incidents` and similar paths return 404. See `docs/MULTI_CITY_VERCEL_SETUP.md` for multi-city projects.
+- **Backend API** runs on a dedicated server at `api.phlpulse.com` — if you see 502, fix the process/reverse proxy there; CORS console noise on `api.*` is often a side effect of error responses, not a separate CORS bug.
 - **Transcriber** runs continuously on the same server, ingesting live scanner audio 24/7
 
 ## Key Features
