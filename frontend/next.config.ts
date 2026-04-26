@@ -20,7 +20,8 @@ const nextConfig: NextConfig = {
     // Allow popups to keep the opener relationship for auth flows.
     return [
       {
-        source: "/:path*",
+        // `/(.*)` matches root + all paths (some Next/Vercel combos are picky about `/:path*`)
+        source: "/(.*)",
         headers: [
           {
             key: "Cross-Origin-Opener-Policy",

@@ -16,7 +16,7 @@ import {
   Volume2,
 } from "lucide-react";
 import PlaceActions from "@/components/PlaceActions";
-import { apiUrl } from "@/lib/public-api-base";
+import { incidentAudioSrc } from "@/lib/public-api-base";
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -273,11 +273,7 @@ interface Props {
 export default function IncidentDetail({ incident, onClose }: Props) {
   const sev = getSeverity(incident.severity_category);
   const confidencePct = Math.round(incident.confidence * 100);
-  const audioSrc = incident.audio_url
-    ? incident.audio_url
-    : incident.audio_clip
-      ? apiUrl(`/api/audio/${incident.audio_clip}`)
-      : null;
+  const audioSrc = incidentAudioSrc(incident);
   const hasAudio = !!audioSrc;
 
   // Mentions are appended chronologically by the dedup pipeline. We
@@ -455,11 +451,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
             </p>
             <ul className="space-y-2">
               {updateMentions.map((m, idx) => {
-                const mAudioSrc = m.audio_url
-                  ? m.audio_url
-                  : m.audio_clip
-                    ? apiUrl(`/api/audio/${m.audio_clip}`)
-                    : null;
+                const mAudioSrc = incidentAudioSrc(m);
                 return (
                   <li
                     key={`${m.at}-${idx}`}
