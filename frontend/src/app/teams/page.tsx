@@ -134,7 +134,7 @@ export default function TeamsPage() {
           </div>
 
           <p className="lp-usecases-note" style={{ marginTop: 28, textAlign: "center", maxWidth: 640, margin: "28px auto 0" }}>
-            All data is <strong>UNVERIFIED</strong> scanner-sourced intelligence, not a dispatch or emergency
+            Scanner-sourced intelligence for awareness only—not dispatch or an emergency
             system. See the{" "}
             <Link href="/" className="underline underline-offset-4" style={{ color: "rgb(var(--accent-rgb))" }}>
               landing page

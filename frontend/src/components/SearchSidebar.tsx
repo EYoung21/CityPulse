@@ -38,6 +38,24 @@ import { publishRouteState } from "@/lib/route-state";
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
 
+const MAP_SIDEBAR_WIDTH_LS = "pp:map-sidebar-width";
+const MAP_SIDEBAR_DEFAULT = 380;
+const MAP_SIDEBAR_MIN = 280;
+const MAP_SIDEBAR_MAX = 560;
+
+function readSavedSidebarWidth(): number {
+  if (typeof window === "undefined") return MAP_SIDEBAR_DEFAULT;
+  try {
+    const raw = window.localStorage.getItem(MAP_SIDEBAR_WIDTH_LS);
+    if (raw == null) return MAP_SIDEBAR_DEFAULT;
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n)) return MAP_SIDEBAR_DEFAULT;
+    return Math.min(MAP_SIDEBAR_MAX, Math.max(MAP_SIDEBAR_MIN, n));
+  } catch {
+    return MAP_SIDEBAR_DEFAULT;
+  }
+}
+
 function haversineM(aLat: number, aLng: number, bLat: number, bLng: number): number {
   const R = 6371000;
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -130,7 +148,59 @@ export default function SearchSidebar({
   onMobileOpenChange,
 }: Props) {
   const isMobile = useIsMobile();
+  const [sidebarWidthPx, setSidebarWidthPx] = useState(readSavedSidebarWidth);
   const { user } = useAuth();
+
+  useEffect(() => {
+    if (isMobile) {
+      document.documentElement.style.removeProperty("--pp-map-sidebar-width");
+      return;
+    }
+    document.documentElement.style.setProperty("--pp-map-sidebar-width", `${sidebarWidthPx}px`);
+    return () => {
+      document.documentElement.style.removeProperty("--pp-map-sidebar-width");
+    };
+  }, [sidebarWidthPx, isMobile]);
+
+  const onSidebarResizePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (isMobile) return;
+      e.preventDefault();
+      const el = e.currentTarget;
+      el.setPointerCapture(e.pointerId);
+      const startX = e.clientX;
+      const startW = sidebarWidthPx;
+      let currentW = startW;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      const move = (ev: PointerEvent) => {
+        const dw = ev.clientX - startX;
+        currentW = Math.min(MAP_SIDEBAR_MAX, Math.max(MAP_SIDEBAR_MIN, startW + dw));
+        setSidebarWidthPx(currentW);
+      };
+      const cleanup = () => {
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", cleanup);
+        window.removeEventListener("pointercancel", cleanup);
+        try {
+          window.localStorage.setItem(MAP_SIDEBAR_WIDTH_LS, String(currentW));
+        } catch {
+          /* ignore */
+        }
+        try {
+          el.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", cleanup);
+      window.addEventListener("pointercancel", cleanup);
+    },
+    [isMobile, sidebarWidthPx]
+  );
   // Display name (if signed in) is included on share-ETA links so the
   // recipient sees "Eli is driving" rather than "Someone is driving".
   // Held in a ref so the share callback always sees the current value
@@ -920,14 +990,28 @@ export default function SearchSidebar({
   return (
     <div className="absolute top-0 left-0 bottom-0 z-[1000] flex pointer-events-none">
       <div
-        className="w-[380px] h-full flex flex-col pointer-events-auto backdrop-blur-xl shadow-2xl"
+        className="h-full flex flex-col pointer-events-auto backdrop-blur-xl shadow-2xl shrink-0 relative"
         style={{
+          width: sidebarWidthPx,
           background: "var(--panel-bg)",
           borderRight: "1px solid var(--panel-border)",
           boxShadow: "4px 0 24px var(--panel-shadow)",
         }}
       >
         {innerContent}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          title="Drag to resize"
+          className="absolute top-0 right-0 z-20 w-2 h-full cursor-col-resize touch-none pointer-events-auto flex justify-center -mr-px"
+          onPointerDown={onSidebarResizePointerDown}
+        >
+          <span
+            className="w-px h-[min(100%,12rem)] self-center rounded-full bg-white/25 opacity-80 hover:opacity-100 hover:bg-white/40 transition-[opacity,background-color]"
+            aria-hidden
+          />
+        </div>
       </div>
     </div>
   );

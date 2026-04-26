@@ -256,10 +256,10 @@ export default function ApiDocsSection() {
         volume and latency expectations. Abuse will be rate-limited or blocked.
       </SubNote>
 
-      <h3 style={H3_STYLE}>UNVERIFIED data &amp; legal</h3>
+      <h3 style={H3_STYLE}>Data quality &amp; legal</h3>
       <SubNote>
-        Every incident is <strong>UNVERIFIED</strong> scanner-sourced intelligence,
-        not a dispatch feed or emergency system. Commercial / high-stakes use may
+        Responses reflect scanner audio and automated extraction—treat as unverified
+        intelligence, not a dispatch feed or emergency system. Commercial / high-stakes use may
         require a legal review of jurisdiction-specific scanner retransmission
         rules and the terms of the underlying audio provider (for example,{" "}
         <a

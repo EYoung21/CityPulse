@@ -112,7 +112,7 @@ import {
 import { useTheme } from "@/lib/theme";
 import AuthBar from "@/components/AuthBar";
 import { isFirebaseConfigured } from "@/lib/firebase";
-import { subscribeIncidents } from "@/lib/firestore";
+import { fetchIncidentsSnapshotOnce, subscribeIncidents } from "@/lib/firestore";
 import { enrichIncidents } from "@/lib/incident-weights";
 import { apiUrl, fetchPublicApi } from "@/lib/public-api-base";
 import { buildLocalSummary } from "@/lib/local-summary";
@@ -936,24 +936,33 @@ function MapHome() {
   }, [basemapStyle, recenterCity]);
 
   const loadFromApi = useCallback(async () => {
+    // Do not use Promise.all across incidents + summary + stats: any
+    // failure or slow /api/summary or /api/stats blocked setIncidents
+    // until everything settled, so the map stayed empty for seconds
+    // while Firestore caught up (especially when /api/* 404s on Vercel).
+    void fetchIncidents()
+      .then((inc) => setIncidents(inc))
+      .catch((e) => console.error("Failed to load incidents:", e));
+
     try {
-      const [inc, sum, st] = await Promise.all([
-        fetchIncidents(),
-        fetchSummary(),
-        fetchStats(),
-      ]);
-      setIncidents(inc);
+      const [sum, st] = await Promise.all([fetchSummary(), fetchStats()]);
       setSummary(sum.summary);
       setStats(st);
     } catch (e) {
-      console.error("Failed to load data:", e);
+      console.warn("Summary/stats unavailable", e);
     }
   }, []);
 
   useEffect(() => {
     if (useFirestoreData) {
-      // One REST pull up front so the map isn't blank while Firestore connects,
-      // and so quota / rules failures still leave the user with API data.
+      // One-shot Firestore read often returns (from cache or server)
+      // before the first onSnapshot callback — paints pins immediately.
+      void fetchIncidentsSnapshotOnce()
+        .then((rows) => {
+          if (rows.length > 0) setIncidents(rows);
+        })
+        .catch(() => {});
+      // REST pull in parallel so API works as a second source when healthy.
       void loadFromApi();
       const unsub = subscribeIncidents(
         (next) => setIncidents(next),
@@ -1640,7 +1649,7 @@ function MapHome() {
       />
 
       {/* Top category pills */}
-      <div className="absolute top-3 left-3 md:left-[396px] right-3 z-[999] pointer-events-none">
+      <div className="absolute top-3 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] right-3 z-[999] pointer-events-none">
         <div className="flex flex-col gap-1.5 md:flex-row md:items-center md:gap-2 overflow-x-auto no-scrollbar pointer-events-auto">
           <div
             className="flex items-center rounded-full overflow-hidden shadow-lg shrink-0 backdrop-blur-md"
@@ -2571,7 +2580,7 @@ function MapHome() {
       </div>
 
       {/* Bottom status bar */}
-      <div className="absolute bottom-0 left-0 md:left-[380px] right-0 z-[998] pointer-events-none hidden md:block">
+      <div className="absolute bottom-0 left-0 md:left-[var(--pp-map-sidebar-width,380px)] right-0 z-[998] pointer-events-none hidden md:block">
         <div
           className="flex items-center justify-between px-4 py-2 backdrop-blur-md"
           style={{ background: "var(--status-bg)", borderTop: "1px solid var(--status-border)" }}
@@ -2663,9 +2672,9 @@ function MapHome() {
                 <AlertTriangle className="w-3 h-3" /> DISCLAIMER
               </p>
               <p className="leading-relaxed" style={{ color: "var(--panel-text-muted)" }}>
-                All data is sourced from public radio scanner audio via AI
-                transcription. Every pin is <strong style={{ color: "var(--panel-text-secondary)" }}>UNVERIFIED</strong>. Not
-                real-time 911 data. Do not rely on this for safety-critical decisions.
+                Incidents come from public scanner audio and automated transcription.
+                Treat them as situational awareness only—they are not verified as fact,
+                not real-time official data, and not for safety-critical decisions.
               </p>
             </div>
 
@@ -2714,7 +2723,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[396px] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
           >
             <SafetyScoreCard
               lat={mapTap.lat}
@@ -2733,7 +2742,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[396px] z-[1000] w-72 max-w-[calc(100vw-5rem)]"
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-72 max-w-[calc(100vw-5rem)]"
           >
             <LocationPeekCard
               lat={peekAnchor.lat}
@@ -2753,7 +2762,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[396px] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
           >
             <AnalyticsPanel
               incidents={filteredIncidents}
@@ -2772,7 +2781,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[396px] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
           >
             <DistrictCard
               neighborhood={selectedDistrict.neighborhood}
@@ -2800,7 +2809,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[396px] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
           >
             <ClusterListPanel
               incidents={clusterIncidents}
@@ -2818,7 +2827,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[396px] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
           >
             <IncidentDetail
               incident={selected}
