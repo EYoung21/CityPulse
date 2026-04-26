@@ -154,16 +154,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const raw = data?.proUntil as Timestamp | undefined;
             const next = raw && typeof raw.toDate === "function" ? raw.toDate() : null;
             setProUntil(next);
-            setLoading(false);
           },
           () => {
             // Read denied or transient — fall back to free rather
             // than gambling on a stale grant.
             setTier("free");
             setProUntil(null);
-            setLoading(false);
           }
         );
+        // Do not gate the whole app on the first `users/{uid}` snapshot.
+        // Waiting here delayed map mount + `/api/*` loads until Firestore
+        // connected (felt like "slow login"). Tier defaults to `free` until
+        // the snapshot updates it.
+        setLoading(false);
+        // Warm the ID token so the first parallel REST calls after mount
+        // avoid contending on the same refresh.
+        if (!u.isAnonymous) void u.getIdToken().catch(() => {});
       } else {
         setTier("free");
         setProUntil(null);

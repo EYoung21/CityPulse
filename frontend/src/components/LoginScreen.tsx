@@ -84,7 +84,7 @@ export default function LoginScreen() {
                   className="lp-login-btn"
                   style={{ color: `rgb(${accentRgb})` }}
                 >
-                  I&apos;ve verified — refresh
+                  After you verify, reload
                 </button>
               </div>
             </div>

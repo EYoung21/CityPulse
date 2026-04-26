@@ -111,10 +111,16 @@ export function SafeRouteSection({ city }: Props) {
     <section className="lp-route-section" aria-label="Safer routing demo">
       <div className="lp-route-section-inner">
         <header className="lp-route-section-head">
-          <span className="lp-hero-eyebrow lp-route-section-eyebrow">
-            <span className="lp-hero-live-dot" />
-            <span>Safer routing</span>
-          </span>
+          <div
+            className="lp-hero-channel lp-hero-channel--compact lp-route-section-eyebrow"
+            role="status"
+            aria-label="Route comparison demo"
+          >
+            <span className="lp-hero-channel__pulse" aria-hidden="true" />
+            <p className="lp-hero-channel__line" style={{ margin: 0 }}>
+              Corridor compare
+            </p>
+          </div>
           <h2 className="lp-route-section-title">Routed around, not through.</h2>
           <p className="lp-route-section-sub">
             Two routes, same destination. One crosses an active incident

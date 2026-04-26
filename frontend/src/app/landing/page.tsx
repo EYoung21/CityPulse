@@ -365,7 +365,7 @@ function StatsStrip({ city }: { city: LandingCity }) {
   if (incidents24h !== null) {
     cells.push({
       kind: "numeric",
-      label: "Incidents · 24h",
+      label: "Incidents, last 24h",
       value: incidents24h,
       live: true,
     });
@@ -505,17 +505,18 @@ export default function LandingPage() {
         </div>
         <div className="lp-hero-content">
           <motion.div
-            className="lp-hero-eyebrow"
+            className="lp-hero-channel"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+            role="status"
+            aria-label={`Live scanner feed for ${city.name}`}
           >
-            <span className="lp-hero-live-dot" />
-            <span>{city.name}</span>
-            <span className="lp-hero-sep" aria-hidden="true">·</span>
-            <span className="lp-hero-domain">{city.domain}</span>
-            <span className="lp-hero-sep" aria-hidden="true">·</span>
-            <span className="lp-hero-live">LIVE</span>
+            <span className="lp-hero-channel__pulse" aria-hidden="true" />
+            <div className="lp-hero-channel__body">
+              <p className="lp-hero-channel__line">Open channel · {city.name}</p>
+              <p className="lp-hero-channel__domain">{city.domain}</p>
+            </div>
           </motion.div>
           <motion.h1
             className="lp-hero-title"
@@ -574,7 +575,7 @@ export default function LandingPage() {
           <div className="lp-stat-label">Teams & Partners</div>
           <h2 className="lp-usecases-title">Built for more than the map.</h2>
           <p className="lp-usecases-sub">
-            CityPulse turns live scanner traffic into structured, geocoded incident data — useful for routing, alerts, and situational awareness.
+            CityPulse turns live scanner traffic into structured, geocoded incident data you can use for routing, alerts, and situational awareness.
           </p>
           <div className="lp-usecases-grid">
             <div className="lp-usecase-card">
@@ -582,7 +583,7 @@ export default function LandingPage() {
                 <div className="lp-usecase-name">Logistics & delivery detours</div>
               </div>
               <div className="lp-usecase-body">
-                Route around active scenes before traffic apps catch up — crashes, closures, and violent incidents.
+                Route around active scenes before traffic apps catch up, including crashes, closures, and violent incidents.
               </div>
             </div>
             <div className="lp-usecase-card">
@@ -599,7 +600,7 @@ export default function LandingPage() {
                 <div className="lp-usecase-name">Event security monitoring</div>
               </div>
               <div className="lp-usecase-body">
-                Watch incident density and escalation patterns around venues, routes, and perimeters.
+                Situational awareness on the <strong>same live map</strong> with heatmap, time window, and layers. Not a separate venue dashboard.
               </div>
             </div>
             <div className="lp-usecase-card">
@@ -607,7 +608,7 @@ export default function LandingPage() {
                 <div className="lp-usecase-name">Research / public-good analysis</div>
               </div>
               <div className="lp-usecase-body">
-                Searchable, time-windowed incident stream for oversight, academic work, and civic tooling.
+                Searchable, paginated stream with a normalized schema (location, category, times). The public API window is about the <strong>last hour</strong> without Pro; Pro unlocks longer history for analysis.
               </div>
             </div>
             <div className="lp-usecase-card">
@@ -616,13 +617,34 @@ export default function LandingPage() {
                 <span className="lp-usecase-badge">Pro</span>
               </div>
               <div className="lp-usecase-body">
-                Pro/Enterprise can pull structured incidents programmatically for dashboards and integrations.
+                Authenticated Pro reads for structured incidents in integrations. <strong>Limited pilot.</strong> Talk to us before production loads.{" "}
+                <a
+                  href="/use-cases/api"
+                  style={{ color: "rgb(var(--accent-rgb))", textDecoration: "underline", textUnderlineOffset: 3 }}
+                >
+                  Developer docs →
+                </a>
               </div>
             </div>
           </div>
-          <div className="lp-usecases-foot">
+          <div className="lp-usecases-foot" style={{ flexDirection: "column", gap: "14px" }}>
             <span className="lp-usecases-note">
-              All incidents are labeled <strong>UNVERIFIED</strong>. Pro features require an account.
+              All incidents are labeled <strong>UNVERIFIED</strong>. Without signing in, incident reads are about the <strong>last hour</strong>; <strong>Pro</strong> adds deeper history, <strong>keyword push alerts</strong>, and <strong>programmatic access</strong>.{" "}
+              <a
+                href="/teams"
+                className="lp-usecases-teams-link"
+                style={{ color: "rgb(var(--accent-rgb))", textDecoration: "underline", textUnderlineOffset: 3 }}
+              >
+                Teams &amp; app links
+              </a>
+              {" · "}
+              <a
+                href="/use-cases"
+                className="lp-usecases-teams-link"
+                style={{ color: "rgb(var(--accent-rgb))", textDecoration: "underline", textUnderlineOffset: 3 }}
+              >
+                Campaign URLs
+              </a>
             </span>
           </div>
         </div>
