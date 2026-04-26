@@ -56,6 +56,121 @@ function sampleCubicLngLat(
   return pts;
 }
 
+/** Sample a Catmull–Rom spline through waypoints (lng/lat) into points. */
+function sampleCatmullRomLngLat(
+  pts: [number, number][],
+  samplesPerSegment = 28,
+): [number, number][] {
+  if (pts.length <= 2) return pts.slice();
+  const out: [number, number][] = [];
+  const n = pts.length;
+  const get = (i: number) => pts[Math.max(0, Math.min(n - 1, i))];
+  for (let i = 0; i < n - 1; i++) {
+    const p0 = get(i - 1);
+    const p1 = get(i);
+    const p2 = get(i + 1);
+    const p3 = get(i + 2);
+    for (let s = 0; s <= samplesPerSegment; s++) {
+      const t = s / samplesPerSegment;
+      const t2 = t * t;
+      const t3 = t2 * t;
+      const x =
+        0.5 *
+        (2 * p1[0] +
+          (-p0[0] + p2[0]) * t +
+          (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 +
+          (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3);
+      const y =
+        0.5 *
+        (2 * p1[1] +
+          (-p0[1] + p2[1]) * t +
+          (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 +
+          (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3);
+      if (out.length === 0) out.push([x, y]);
+      else {
+        const [lx, ly] = out[out.length - 1];
+        if (Math.hypot(x - lx, y - ly) > 1e-6) out.push([x, y]);
+      }
+    }
+  }
+  return out;
+}
+
+function clamp(v: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function midpointOnPolylineLngLat(poly: [number, number][]): [number, number] {
+  if (poly.length === 0) return [0, 0];
+  if (poly.length === 1) return poly[0];
+  let total = 0;
+  for (let i = 1; i < poly.length; i++) {
+    total += Math.hypot(poly[i][0] - poly[i - 1][0], poly[i][1] - poly[i - 1][1]);
+  }
+  const half = total / 2;
+  let acc = 0;
+  for (let i = 1; i < poly.length; i++) {
+    const a = poly[i - 1];
+    const b = poly[i];
+    const seg = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    if (acc + seg >= half) {
+      const t = (half - acc) / seg;
+      return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    }
+    acc += seg;
+  }
+  return poly[poly.length - 1];
+}
+
+/** Build a "slalom" green route that visibly weaves around each blip. */
+function buildSlalomGreenRoute(pair: RouteDemoPair): [number, number][] {
+  const [fx, fy] = pair.fromLngLat;
+  const [tx, ty] = pair.toLngLat;
+  const dx = tx - fx;
+  const dy = ty - fy;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const nx = -uy;
+  const ny = ux;
+
+  const midAx = (fx + tx) / 2;
+  const midAy = (fy + ty) / 2;
+  const [hx, hy] = pair.hotLngLat;
+  // Choose which side "away from hot zone" is, then alternate around it.
+  const baseSign = (hx - midAx) * nx + (hy - midAy) * ny > 0 ? -1 : 1;
+
+  const blips = [...(pair.blips ?? [])]
+    .map((b) => {
+      const bx = b.lng;
+      const by = b.lat;
+      const t = (bx - fx) * ux + (by - fy) * uy; // projection along from->to axis
+      return { bx, by, t };
+    })
+    .sort((a, b) => a.t - b.t);
+
+  // Offset magnitude tuned so it reads like "around cones" but stays local.
+  const offBase = clamp(len * 0.14, 0.0016, 0.0065);
+
+  const waypoints: [number, number][] = [[fx, fy]];
+  for (let i = 0; i < blips.length; i++) {
+    const b = blips[i];
+    // Alternate sides each blip, but bias overall to avoid the hot zone.
+    const side = baseSign * (i % 2 === 0 ? 1 : -1);
+    // Strength scales with proximity to the corridor center.
+    const frac = clamp(b.t / len, 0.1, 0.9);
+    const strength = 0.75 + 0.35 * Math.sin(frac * Math.PI);
+    const off = offBase * strength * side;
+    // Place the waypoint slightly "ahead" of the blip along the path
+    // so the curve visibly bends around it.
+    const ahead = clamp(len * 0.03, 0.0008, 0.0025);
+    waypoints.push([b.bx + ux * ahead + nx * off, b.by + uy * ahead + ny * off]);
+  }
+  waypoints.push([tx, ty]);
+
+  return sampleCatmullRomLngLat(waypoints, 26);
+}
+
 /**
  * Analytical midpoints (t=0.5) of the same red/green bezier curves
  * built by buildRoutes(). We compute these instead of pulling pts[40]
@@ -98,24 +213,9 @@ function midpointsLngLat(pair: RouteDemoPair): {
     0.5,
   );
 
-  const dx = tx - fx;
-  const dy = ty - fy;
-  const len = Math.hypot(dx, dy) || 1;
-  const nx = -dy / len;
-  const ny = dx / len;
-  const midAx = (fx + tx) / 2;
-  const midAy = (fy + ty) / 2;
-  const sign = (hx - midAx) * nx + (hy - midAy) * ny > 0 ? -1 : 1;
-  const offMag = len * 0.22 * sign;
-  const offX = nx * offMag;
-  const offY = ny * offMag;
-  const greenMid = cubicAt(
-    pair.fromLngLat,
-    [fx + dx * 0.3 + offX, fy + dy * 0.3 + offY],
-    [fx + dx * 0.7 + offX, fy + dy * 0.7 + offY],
-    pair.toLngLat,
-    0.5,
-  );
+  // Green midpoint should follow the actual "slalom" polyline midpoint
+  // so the checkmark always sits on the visible curve.
+  const greenMid = midpointOnPolylineLngLat(buildSlalomGreenRoute(pair));
 
   return { redMid, greenMid };
 }
@@ -139,30 +239,8 @@ function buildRoutes(pair: RouteDemoPair): {
     80,
   );
 
-  // Green "safer" — gentle detour that bows perpendicular to the
-  // from→to axis, just enough to *step around* the hot zone instead of
-  // crossing it. The previous 55% offset turned a 3.6km Fishtown→
-  // Center City trip into a ~2km swing into Camden, which read as "go
-  // to a different city" rather than "route around the bad block".
-  // 22% feels like the cab driver who knows the back streets.
-  const dx = tx - fx;
-  const dy = ty - fy;
-  const len = Math.hypot(dx, dy) || 1;
-  const nx = -dy / len;
-  const ny = dx / len;
-  const midAx = (fx + tx) / 2;
-  const midAy = (fy + ty) / 2;
-  const sign = (hx - midAx) * nx + (hy - midAy) * ny > 0 ? -1 : 1;
-  const offMag = len * 0.22 * sign;
-  const offX = nx * offMag;
-  const offY = ny * offMag;
-  const green = sampleCubicLngLat(
-    pair.fromLngLat,
-    [fx + dx * 0.3 + offX, fy + dy * 0.3 + offY],
-    [fx + dx * 0.7 + offX, fy + dy * 0.7 + offY],
-    pair.toLngLat,
-    80,
-  );
+  // Green "safer" — slalom around each incident blip, like cones.
+  const green = buildSlalomGreenRoute(pair);
 
   return { red, green };
 }
