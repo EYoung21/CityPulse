@@ -20,6 +20,7 @@ import {
   useEffect,
   useImperativeHandle,
   useRef,
+  useState,
 } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -83,6 +84,7 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
     const mapRef = useRef<maplibregl.Map | null>(null);
     const readyPromiseRef = useRef<Promise<maplibregl.Map> | null>(null);
     const readyResolveRef = useRef<((m: maplibregl.Map) => void) | null>(null);
+    const [loaded, setLoaded] = useState(false);
     // Hold the latest onReady in a ref so we don't tear down the map
     // every time the parent re-renders with a new closure.
     const onReadyRef = useRef(onReady);
@@ -103,6 +105,7 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
     /* ── Init: create the map once per city ──────────────────────── */
     useEffect(() => {
       if (!containerRef.current) return;
+      setLoaded(false);
 
       const map = new maplibregl.Map({
         container: containerRef.current,
@@ -113,7 +116,8 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
         bearing,
         interactive: false,
         attributionControl: false,
-        fadeDuration: 300,
+        // Avoid an obvious "tiles fade in" flash on the landing hero.
+        fadeDuration: 0,
       });
       mapRef.current = map;
 
@@ -132,6 +136,7 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
         );
         readyResolveRef.current?.(map);
         onReadyRef.current?.(map);
+        setLoaded(true);
       });
 
       const ro = new ResizeObserver(() => {
@@ -303,7 +308,12 @@ export const CityMapCanvas = forwardRef<CityMapCanvasHandle, Props>(
     }, [incidents]);
 
     return (
-      <div className={className} aria-hidden="true">
+      <div
+        className={className}
+        aria-hidden="true"
+        data-map-loaded={loaded ? "1" : "0"}
+      >
+        <div className="lp-map-placeholder" />
         <div ref={containerRef} className="lp-map-canvas" />
         <div className="lp-map-tint" />
       </div>
