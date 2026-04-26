@@ -34,7 +34,7 @@ interface Props {
 
 type SearchMode = "places" | "incidents";
 
-const FREE_INCIDENT_SEARCH_HOURS = 3;
+const FREE_INCIDENT_SEARCH_HOURS = 1;
 
 export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 24, onSelectIncident }: Props) {
   const [query, setQuery] = useState("");

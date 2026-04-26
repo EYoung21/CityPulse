@@ -18,7 +18,7 @@ from typing import Optional
 import httpx
 import numpy as np
 import yaml
-from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -27,6 +27,10 @@ from . import admin_events, city_registry, geocode, inhibitor, llm, llm_client, 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Free tier read window: unauthenticated callers (and authed free users)
+# can only read incidents within this most-recent time horizon.
+FREE_INCIDENT_WINDOW_SECONDS = 60 * 60
 
 # When False, ingest only stores raw transcript+audio — no LLM/inhibitor/geocode.
 # Flip to True (or set env PHILLY_PULSE_LLM_AUTO=1) to resume automatic processing.
@@ -966,16 +970,32 @@ async def ingest(req: IngestRequest):
 
 @app.get("/api/incidents")
 async def get_incidents(
+    response: Response,
     since: str | None = Query(None, description="ISO timestamp filter"),
     category: str | None = Query(None, description="Severity category filter"),
+    authorization: Optional[str] = Header(None),
 ):
     """Return all displayable incidents with computed w_eff."""
+    decoded = _try_verify_firebase_token(authorization)
+    is_pro = bool(decoded) and _is_pro_uid(decoded or {})
+    effective_since, clamped = _apply_free_since(since, is_pro)
+    if clamped:
+        response.headers["X-Pulse-Clamped"] = "1"
+        response.headers["X-Pulse-Free-Window-Sec"] = str(FREE_INCIDENT_WINDOW_SECONDS)
+    elif not is_pro:
+        response.headers["X-Pulse-Free-Window-Sec"] = str(FREE_INCIDENT_WINDOW_SECONDS)
     try:
-        incidents = store.list_incidents(since=since, category=category)
+        incidents = store.list_incidents(since=effective_since, category=category)
         incidents = weights.enrich_incidents(incidents)
     except Exception:
         incidents = []
-    return {"incidents": incidents}
+    meta = {
+        "tier": "pro" if is_pro else "free",
+        "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
+        "clamped": bool(clamped),
+        "effectiveSince": effective_since,
+    }
+    return {"incidents": incidents, "meta": meta}
 
 
 def _normalize_search_term(s: str) -> str:
@@ -1000,6 +1020,7 @@ def _incident_matches_query(inc: dict, terms: list[str]) -> bool:
 
 @app.get("/api/incidents/page")
 async def page_incidents(
+    response: Response,
     cursor: str | None = Query(None, description="Opaque cursor: ISO reported_at of the last row from the prior page"),
     limit: int = Query(20, ge=1, le=50, description="Page size"),
     since: str | None = Query(None, description="Lower bound (defaults to now-24h)"),
@@ -1007,6 +1028,7 @@ async def page_incidents(
     city: str | None = Query(None, description="City slug filter"),
     near_lat: float | None = Query(None, ge=-90.0, le=90.0),
     near_lng: float | None = Query(None, ge=-180.0, le=180.0),
+    authorization: Optional[str] = Header(None),
 ):
     """Cursor-paginated feed for the full-screen `/feed` route.
 
@@ -1018,10 +1040,37 @@ async def page_incidents(
     24h to match the map's default window — the caller passes a
     longer `since` for power users on Pro tiers.
     """
+    decoded = _try_verify_firebase_token(authorization)
+    is_pro = bool(decoded) and _is_pro_uid(decoded or {})
     if not since:
         since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    effective_since, clamped = _apply_free_since(since, is_pro)
+    if clamped:
+        response.headers["X-Pulse-Clamped"] = "1"
+        response.headers["X-Pulse-Free-Window-Sec"] = str(FREE_INCIDENT_WINDOW_SECONDS)
+    elif not is_pro:
+        response.headers["X-Pulse-Free-Window-Sec"] = str(FREE_INCIDENT_WINDOW_SECONDS)
+
+    # If a free caller paginates past the allowed window, return an empty
+    # page rather than leaking older incidents.
+    if not is_pro and cursor:
+        cursor_dt = _parse_iso_datetime(cursor)
+        if cursor_dt and cursor_dt < _free_since_dt():
+            response.headers["X-Pulse-Clamped"] = "1"
+            return {
+                "incidents": [],
+                "next_cursor": None,
+                "mode": "recent",
+                "meta": {
+                    "tier": "free",
+                    "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
+                    "clamped": True,
+                    "effectiveSince": effective_since,
+                    "paywalled": "history",
+                },
+            }
     try:
-        incidents = store.list_incidents(since=since, category=category)
+        incidents = store.list_incidents(since=effective_since, category=category)
     except Exception:
         incidents = []
     if city:
@@ -1051,6 +1100,12 @@ async def page_incidents(
             "incidents": weights.enrich_incidents(page) if page else [],
             "next_cursor": None,
             "mode": "near",
+            "meta": {
+                "tier": "pro" if is_pro else "free",
+                "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
+                "clamped": bool(clamped),
+                "effectiveSince": effective_since,
+            },
         }
 
     incidents.sort(key=lambda i: i.get("reported_at") or "", reverse=True)
@@ -1064,7 +1119,17 @@ async def page_incidents(
         page = weights.enrich_incidents(page)
     except Exception:
         pass
-    return {"incidents": page, "next_cursor": next_cursor, "mode": "recent"}
+    return {
+        "incidents": page,
+        "next_cursor": next_cursor,
+        "mode": "recent",
+        "meta": {
+            "tier": "pro" if is_pro else "free",
+            "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
+            "clamped": bool(clamped),
+            "effectiveSince": effective_since,
+        },
+    }
 
 
 def _haversine_km_inline(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -1079,12 +1144,14 @@ def _haversine_km_inline(lat1: float, lng1: float, lat2: float, lng2: float) -> 
 
 @app.get("/api/incidents/search")
 async def search_incidents(
+    response: Response,
     q: str = Query(..., description="Free-text query"),
     since: str | None = Query(None, description="ISO lower bound (default: today-3h)"),
     until: str | None = Query(None, description="ISO upper bound (default: now)"),
     category: str | None = Query(None, description="Severity category filter"),
     limit: int = Query(50, ge=1, le=200, description="Max results"),
     city: str | None = Query(None, description="City slug filter"),
+    authorization: Optional[str] = Header(None),
 ):
     """Full-text search over incident title/category/description/transcript.
 
@@ -1100,8 +1167,16 @@ async def search_incidents(
 
     terms = [t for t in norm.split(" ") if t]
 
+    decoded = _try_verify_firebase_token(authorization)
+    is_pro = bool(decoded) and _is_pro_uid(decoded or {})
+    effective_since, clamped = _apply_free_since(since, is_pro)
+    if clamped:
+        response.headers["X-Pulse-Clamped"] = "1"
+    if not is_pro:
+        response.headers["X-Pulse-Free-Window-Sec"] = str(FREE_INCIDENT_WINDOW_SECONDS)
+
     try:
-        incidents = store.list_incidents(since=since, category=category)
+        incidents = store.list_incidents(since=effective_since, category=category)
     except Exception:
         incidents = []
 
@@ -1124,6 +1199,12 @@ async def search_incidents(
         "total": len(matched),
         "query": q,
         "terms": terms,
+        "meta": {
+            "tier": "pro" if is_pro else "free",
+            "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
+            "clamped": bool(clamped),
+            "effectiveSince": effective_since,
+        },
     }
 
 
@@ -1147,13 +1228,31 @@ async def simulate():
 
 
 @app.get("/api/summary")
-async def summary():
+async def summary(
+    response: Response,
+    authorization: Optional[str] = Header(None),
+):
     """AI-generated natural language summary of recent activity."""
-    incidents = store.list_incidents()
+    decoded = _try_verify_firebase_token(authorization)
+    is_pro = bool(decoded) and _is_pro_uid(decoded or {})
+    effective_since, clamped = _apply_free_since(None, is_pro)
+    if not is_pro:
+        response.headers["X-Pulse-Free-Window-Sec"] = str(FREE_INCIDENT_WINDOW_SECONDS)
+
+    incidents = store.list_incidents(since=effective_since) if not is_pro else store.list_incidents()
     recent = incidents[:20]
 
     if not recent:
-        return {"summary": "No recent incidents to summarize.", "incident_count": 0}
+        return {
+            "summary": "No recent incidents to summarize.",
+            "incident_count": 0,
+            "meta": {
+                "tier": "pro" if is_pro else "free",
+                "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
+                "clamped": bool(clamped),
+                "effectiveSince": effective_since,
+            },
+        }
 
     if not llm.is_configured():
         lines = [
@@ -1164,6 +1263,12 @@ async def summary():
         return {
             "summary": f"{len(recent)} recent incidents in {CITY_NAME}:\n" + "\n".join(lines),
             "incident_count": len(recent),
+            "meta": {
+                "tier": "pro" if is_pro else "free",
+                "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
+                "clamped": bool(clamped),
+                "effectiveSince": effective_since,
+            },
         }
 
     # Build a summary prompt from recent incidents
@@ -1189,13 +1294,28 @@ async def summary():
             max_tokens=200,
             timeout=20.0,
         )
-        return {"summary": text.strip(), "incident_count": len(recent)}
+        return {
+            "summary": text.strip(),
+            "incident_count": len(recent),
+            "meta": {
+                "tier": "pro" if is_pro else "free",
+                "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
+                "clamped": bool(clamped),
+                "effectiveSince": effective_since,
+            },
+        }
     except Exception as e:
         logger.warning("Summary LLM call failed: %s", e)
 
     return {
         "summary": f"{len(recent)} recent incidents across {CITY_NAME}. Check the map for details.",
         "incident_count": len(recent),
+        "meta": {
+            "tier": "pro" if is_pro else "free",
+            "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
+            "clamped": bool(clamped),
+            "effectiveSince": effective_since,
+        },
     }
 
 
@@ -1644,6 +1764,72 @@ def _is_pro_uid(decoded: dict) -> bool:
 def _require_pro(decoded: dict) -> None:
     if not _is_pro_uid(decoded):
         raise HTTPException(status_code=402, detail="Pro subscription required")
+
+
+def _try_verify_firebase_token(authorization: Optional[str]) -> dict | None:
+    """Best-effort Firebase token verification.
+
+    Returns decoded token dict when valid; otherwise returns None.
+    Unlike `_verify_firebase_token`, this never raises — it exists so
+    read endpoints can treat missing/invalid auth as "free".
+    """
+    if not authorization or not str(authorization).lower().startswith("bearer "):
+        return None
+    token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        return None
+    try:
+        from firebase_admin import auth as fb_auth
+        decoded = fb_auth.verify_id_token(token, check_revoked=False)
+    except Exception:
+        return None
+    if not decoded or not decoded.get("uid"):
+        return None
+    return decoded
+
+
+def _parse_iso_datetime(s: str | None) -> datetime | None:
+    """Best-effort ISO-8601 parser.
+
+    Returns an aware datetime in UTC when possible; None on failure.
+    """
+    if not s:
+        return None
+    raw = str(s).strip()
+    if not raw:
+        return None
+    try:
+        # Accept trailing Z.
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _free_since_dt(now: datetime | None = None) -> datetime:
+    base = now or datetime.now(timezone.utc)
+    return base - timedelta(seconds=FREE_INCIDENT_WINDOW_SECONDS)
+
+
+def _apply_free_since(
+    requested_since_iso: str | None,
+    is_pro: bool,
+) -> tuple[str | None, bool]:
+    """Return (effective_since_iso, clamped) for incident read endpoints."""
+    if is_pro:
+        return requested_since_iso, False
+    cutoff = _free_since_dt()
+    cutoff_iso = cutoff.isoformat()
+    dt = _parse_iso_datetime(requested_since_iso)
+    if not dt:
+        return cutoff_iso, False
+    if dt < cutoff:
+        return cutoff_iso, True
+    return requested_since_iso or cutoff_iso, False
 
 
 def _verify_firebase_admin(authorization: Optional[str]) -> dict:

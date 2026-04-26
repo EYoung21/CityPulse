@@ -171,21 +171,24 @@ export async function fetchIncidentPageFromFirestore(opts: {
   city?: string;
   nearLat?: number | null;
   nearLng?: number | null;
+  since?: string;
 }): Promise<IncidentPageResponse> {
   const db = getFirestore(getFirebaseApp());
   const limit = opts.limit ?? 20;
   const citySlug = opts.city || getCurrentCity().slug;
   const isNear = opts.nearLat != null && opts.nearLng != null;
+  const sinceIso = (opts.since || "").trim();
 
   if (isNear) {
     // Pull up to 500 recent incidents in the city, then haversine-sort.
     // 7 days window keeps payload bounded; matches the server's
     // `mode=near` heuristic of "recent enough to still be useful".
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+    const lowerBound = sinceIso && sinceIso > sevenDaysAgo ? sinceIso : sevenDaysAgo;
     const q = query(
       collection(db, COLLECTION),
       where("city", "==", citySlug),
-      where("reported_at", ">=", sevenDaysAgo),
+      where("reported_at", ">=", lowerBound),
       orderBy("reported_at", "desc"),
       limitFn(500),
     );
@@ -214,6 +217,7 @@ export async function fetchIncidentPageFromFirestore(opts: {
   // "recent" mode: cursor is the previous page's last `reported_at`.
   const baseConstraints = [
     where("city", "==", citySlug),
+    ...(sinceIso ? [where("reported_at", ">=", sinceIso)] : []),
     orderBy("reported_at", "desc"),
   ];
   const q = opts.cursor
