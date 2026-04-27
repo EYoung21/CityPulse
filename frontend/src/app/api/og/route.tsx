@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
   const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
 
   const accent = SEVERITY_COLOR[category] || "#3b82f6";
-  const catLabel = category ? categoryLabel(category) : "PhillyPulse";
+  const catLabel = category ? categoryLabel(category) : "CityPulse";
   const timeLabel = time ? relTime(time) : "";
   const logoUrl = new URL("/logo.png", req.url).toString();
 
@@ -95,10 +95,10 @@ export async function GET(req: NextRequest) {
           />
           <div style={{ display: "flex", flexDirection: "column" }}>
             <span style={{ fontSize: 22, fontWeight: 700, letterSpacing: 1 }}>
-              PhillyPulse
+              CityPulse
             </span>
             <span style={{ fontSize: 14, color: "#94a3b8", letterSpacing: 2, textTransform: "uppercase" }}>
-              {cityName} · CityPulse
+              {cityName}
             </span>
           </div>
         </div>
@@ -174,7 +174,7 @@ export async function GET(req: NextRequest) {
           }}
         >
           <span>Real-time AI-powered community safety</span>
-          <span style={{ color: accent, fontWeight: 600 }}>→ Open in PhillyPulse</span>
+          <span style={{ color: accent, fontWeight: 600 }}>→ Open CityPulse</span>
         </div>
       </div>
     ),

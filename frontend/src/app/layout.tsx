@@ -55,8 +55,8 @@ export const metadata: Metadata = {
     title: `CityPulse · ${siteName} · ${cityName}`,
     description: `Real-time AI-powered community safety map for ${cityName}.`,
     type: "website",
-    siteName: "PhillyPulse",
-    images: [{ url: "/api/og", width: 1200, height: 630, alt: "PhillyPulse · live safety map" }],
+    siteName: "CityPulse",
+    images: [{ url: "/api/og", width: 1200, height: 630, alt: "CityPulse · live safety map" }],
   },
   twitter: {
     card: "summary_large_image",
