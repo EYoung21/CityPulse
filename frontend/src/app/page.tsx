@@ -936,20 +936,29 @@ function MapHome() {
   }, [basemapStyle, recenterCity]);
 
   const loadFromApi = useCallback(async () => {
-    // Do not use Promise.all across incidents + summary + stats: any
-    // failure or slow /api/summary or /api/stats blocked setIncidents
-    // until everything settled, so the map stayed empty for seconds
-    // while Firestore caught up (especially when /api/* 404s on Vercel).
-    void fetchIncidents()
-      .then((inc) => setIncidents(inc))
-      .catch((e) => console.error("Failed to load incidents:", e));
-
-    try {
-      const [sum, st] = await Promise.all([fetchSummary(), fetchStats()]);
-      setSummary(sum.summary);
-      setStats(st);
-    } catch (e) {
-      console.warn("Summary/stats unavailable", e);
+    // Do **not** use Promise.all: a 502 on /api/summary or /api/stats must not
+    // block applying /api/incidents — otherwise the map stays empty until every
+    // dependency succeeds (users see 30–60s "Loading map" when the API is flaky).
+    const [ir, sr, tr] = await Promise.allSettled([
+      fetchIncidents(),
+      fetchSummary(),
+      fetchStats(),
+    ]);
+    if (ir.status === "fulfilled") {
+      setIncidents(ir.value);
+    } else {
+      console.error("Failed to load incidents:", ir.reason);
+    }
+    const inc = ir.status === "fulfilled" ? ir.value : null;
+    if (sr.status === "fulfilled") {
+      setSummary(sr.value.summary);
+    } else if (inc) {
+      setSummary(buildLocalSummary(inc));
+    }
+    if (tr.status === "fulfilled") {
+      setStats(tr.value);
+    } else if (inc) {
+      setStats(statsFromIncidents(inc));
     }
   }, []);
 
@@ -1191,14 +1200,13 @@ function MapHome() {
   }, [apiSummaryDown]);
 
   useEffect(() => {
-    // Use client-side derivation when the API summary poll is healthy
-    // (`apiSummaryDown` is false). When the API is down / unreachable,
-    // derive from the Firestore-backed incident list instead.
+    // When the API summary/stats poll has given up, derive both from the
+    // incident list (Firestore *or* REST — same shape) so the sidebar does
+    // not stay blank on REST-only deployments.
     if (!apiSummaryDown) return;
-    if (!useFirestoreData) return;
     setSummary(buildLocalSummary(incidents));
     setStats(statsFromIncidents(incidents));
-  }, [useFirestoreData, incidents, apiSummaryDown]);
+  }, [incidents, apiSummaryDown]);
 
   const toggleCat = useCallback((cats: readonly string[]) => {
     setActiveCats((prev) => {

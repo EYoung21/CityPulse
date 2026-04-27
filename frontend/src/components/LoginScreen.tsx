@@ -262,9 +262,9 @@ export default function LoginScreen() {
           )}
         </p>
 
-            <div className="lp-login-citynav">
-              <CityNav />
-            </div>
+        <div className="lp-login-citynav">
+          <CityNav />
+        </div>
           </div>
         </div>
       </div>
