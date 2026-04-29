@@ -58,20 +58,57 @@ export function incidentAudioSrc(inc: {
  * BACKEND_URL) those same-origin `/api/*` requests return 404. In that case
  * (or if the request throws), we retry once against the explicit
  * `NEXT_PUBLIC_API_URL` base if configured.
+ *
+ * Same-origin **502/503/504** from the edge proxy also triggers one retry to
+ * the explicit API when it differs from the primary URL — common when the
+ * Python backend is slow or the proxy flakes on cold start, and it restores
+ * `/api/incidents` and `/api/audio/*` without waiting for the next poll.
  */
 export async function fetchPublicApi(path: string, init?: RequestInit): Promise<Response> {
   const p = path.startsWith("/") ? path : `/${path}`;
   const primary = apiUrl(p);
   const explicitBase = getExplicitPublicApiBase();
   const explicitUrl = explicitBase ? `${explicitBase}${p}` : "";
+  const canFallback = Boolean(explicitUrl && primary !== explicitUrl);
 
   try {
     const res = await fetch(primary, init);
-    if (res.status !== 404) return res;
-    if (!explicitUrl || primary === explicitUrl) return res;
-    return await fetch(explicitUrl, init);
+    if (res.status === 404 && canFallback) {
+      return await fetch(explicitUrl, init);
+    }
+    if (
+      canFallback &&
+      (res.status === 502 || res.status === 503 || res.status === 504)
+    ) {
+      const fb = await fetch(explicitUrl, init);
+      if (fb.ok) return fb;
+      if (fb.status === 404) return fb;
+    }
+    return res;
   } catch (e) {
-    if (!explicitUrl || primary === explicitUrl) throw e;
+    if (!canFallback) throw e;
     return await fetch(explicitUrl, init);
   }
+}
+
+/** `fetch(url)` but same-origin `/api/*` URLs go through `fetchPublicApi` so
+ * 404/502 fallbacks (and CORS-safe same-origin first hop) match `fetchIncidents`
+ * and other API helpers. Use for waveform `arrayBuffer()` loads and similar.
+ */
+export async function fetchUrlWithPublicApiFallback(
+  url: string,
+  init?: RequestInit
+): Promise<Response> {
+  if (typeof window === "undefined") {
+    return await fetch(url, init);
+  }
+  try {
+    const u = new URL(url, window.location.origin);
+    if (u.origin === window.location.origin && u.pathname.startsWith("/api/")) {
+      return await fetchPublicApi(u.pathname + u.search, init);
+    }
+  } catch {
+    /* fall through */
+  }
+  return await fetch(url, init);
 }

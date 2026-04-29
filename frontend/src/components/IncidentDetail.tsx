@@ -16,7 +16,10 @@ import {
   Volume2,
 } from "lucide-react";
 import PlaceActions from "@/components/PlaceActions";
-import { incidentAudioSrc } from "@/lib/public-api-base";
+import {
+  incidentAudioSrc,
+  fetchUrlWithPublicApiFallback,
+} from "@/lib/public-api-base";
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -67,20 +70,22 @@ function WaveformPlayer({
     : transcript.split(/\s+/).filter(Boolean);
 
   useEffect(() => {
-    const audio = new Audio(src);
+    let objectUrl: string | null = null;
+    const audio = new Audio();
     audioRef.current = audio;
 
     audio.addEventListener("loadedmetadata", () => setDuration(audio.duration));
     audio.addEventListener("ended", () => setPlaying(false));
     audio.addEventListener("error", () => setPlaying(false));
 
-    fetch(src)
-      .then((r) => r.arrayBuffer())
-      .then((buf) => {
-        const ctx = new AudioContext();
-        return ctx.decodeAudioData(buf);
+    fetchUrlWithPublicApiFallback(src)
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.arrayBuffer().then((buf) => ({ buf, mime: r.headers.get("content-type") }));
       })
-      .then((decoded) => {
+      .then(async ({ buf, mime }) => {
+        const ctx = new AudioContext();
+        const decoded = await ctx.decodeAudioData(buf.slice(0));
         const raw = decoded.getChannelData(0);
         const bars = 60;
         const blockSize = Math.floor(raw.length / bars);
@@ -94,12 +99,17 @@ function WaveformPlayer({
         }
         const max = Math.max(...samples, 0.01);
         setWaveformData(samples.map((s) => s / max));
+
+        const type = mime && mime.startsWith("audio/") ? mime : "audio/mpeg";
+        objectUrl = URL.createObjectURL(new Blob([buf], { type }));
+        audio.src = objectUrl;
       })
       .catch(() => {});
 
     return () => {
       audio.pause();
       audio.src = "";
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
       if (animRef.current) cancelAnimationFrame(animRef.current);
     };
   }, [src]);
