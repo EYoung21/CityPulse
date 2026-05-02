@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, Loader2, Trash2, WifiOff, Check, AlertCircle } from "lucide-react";
+import { Download, Loader2, Trash2, WifiOff, Check, AlertCircle, Lock } from "lucide-react";
+import { requestUpgrade } from "@/lib/upgrade";
 import {
   precacheTiles,
   estimateTileCount,
@@ -13,6 +14,8 @@ import {
 } from "@/lib/offline-tiles";
 
 interface Props {
+  /** Pro-only: offline precache + cache stats / clear. */
+  isPro: boolean;
   /** Returns the current map viewport bounds, or null if the map
    *  isn't ready. The host (page.tsx) owns the map ref. */
   getBounds: () => PrecacheBounds | null;
@@ -32,7 +35,7 @@ interface Props {
  *  Total ~530 tiles for a typical save → comfortably under the 2500
  *  hard cap. Adjacent saves overlap and the SW de-dupes by URL.
  */
-export default function OfflineTilesPanel({ getBounds, tileTemplate }: Props) {
+export default function OfflineTilesPanel({ isPro, getBounds, tileTemplate }: Props) {
   const [stats, setStats] = useState<CacheStats | null>(null);
   const [estimate, setEstimate] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -47,12 +50,55 @@ export default function OfflineTilesPanel({ getBounds, tileTemplate }: Props) {
   };
 
   useEffect(() => {
+    if (!isPro) return;
     void refreshStats();
     // Recompute the estimate whenever the panel mounts so the user
     // sees an accurate "this download will be ~N tiles" preview.
     const b = getBounds();
     if (b) setEstimate(estimateTileCount(b, 14, 17));
-  }, [getBounds]);
+  }, [getBounds, isPro]);
+
+  if (!isPro) {
+    return (
+      <div className="px-1.5 pb-1.5 space-y-1.5">
+        <div
+          className="rounded-lg p-2 text-[11px] space-y-2"
+          style={{
+            background: "var(--panel-input-bg)",
+            border: "1px solid var(--panel-border)",
+          }}
+        >
+          <div className="flex items-start gap-2" style={{ color: "var(--panel-text)" }}>
+            <span
+              className="shrink-0 mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-md"
+              style={{ background: "rgba(139,92,246,0.2)", color: "#c4b5fd" }}
+              aria-hidden
+            >
+              <Lock className="w-3.5 h-3.5" />
+            </span>
+            <div className="min-w-0">
+              <p className="font-semibold leading-snug">Offline tiles — Pro</p>
+              <p className="mt-1 text-[10px] leading-snug" style={{ color: "var(--panel-text-muted)" }}>
+                Pre-download map tiles for your current view so the map stays usable without a cell signal.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => requestUpgrade("Offline tiles")}
+            className="w-full rounded-lg px-2 py-1.5 text-[11px] font-semibold transition-colors"
+            style={{
+              background: "rgba(139,92,246,0.18)",
+              color: "#e9d5ff",
+              border: "1px solid rgba(167,139,250,0.35)",
+            }}
+          >
+            Unlock with Pro
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const handleSave = async () => {
     const bounds = getBounds();

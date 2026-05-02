@@ -1847,7 +1847,11 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const onDistrictClickRef = useRef(onDistrictClick);
   onDistrictClickRef.current = onDistrictClick;
 
-  // Neighborhood district overlays (Mafia III-style)
+  // Neighborhood district overlays — choropleth-style fills inspired by
+  // classic district maps: solid pastel fills (~40–50% opacity), crisp
+  // light borders, white labels. True non-overlap needs polygon rings
+  // (see `public/neighborhoods/*.json`); for bbox-only cities we paint
+  // larger regions first so smaller districts aren't buried underneath.
   useEffect(() => {
     const map = mapRef.current;
     const layer = districtsLayerRef.current;
@@ -1855,21 +1859,41 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     layer.clearLayers();
     if (!districtsEnabled) return;
 
-    const DISTRICT_COLORS = [
-      "#22c55e", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6",
-      "#ec4899", "#14b8a6", "#f97316", "#06b6d4", "#a3e635",
-      "#e879f9", "#fb923c", "#34d399", "#818cf8", "#fbbf24",
-      "#f87171", "#2dd4bf", "#c084fc", "#4ade80", "#38bdf8",
+    /** Muted fills (game-style); read against dark basemaps. */
+    const DISTRICT_FILLS = [
+      "#6b9b6e", "#6b93c4", "#c49a5c", "#c47a7a", "#9b7bc4",
+      "#c46b9e", "#5ca89a", "#c4885c", "#5c9fc4", "#9bb85c",
+      "#b87bc4", "#c49a6e", "#5cb89a", "#8b8fc4", "#c4a85c",
+      "#c47a8a", "#4cb0a0", "#a88bc4", "#7bc47a", "#6ba8c4",
     ];
+    const BORDER = "rgba(255,255,255,0.55)";
+    const BASE_FILL_OPACITY = 0.44;
+    const HOVER_FILL_DELTA = 0.1;
 
-    for (let i = 0; i < NEIGHBORHOODS.length; i++) {
-      const n = NEIGHBORHOODS[i];
-      const color = DISTRICT_COLORS[i % DISTRICT_COLORS.length];
+    const approxArea = (n: (typeof NEIGHBORHOODS)[0]) => {
+      if (n.polygon && n.polygon.length > 0) {
+        const ring = n.polygon[0];
+        if (ring.length < 3) return 0;
+        let a = 0;
+        for (let k = 0; k < ring.length - 1; k++) {
+          const [lng1, lat1] = ring[k];
+          const [lng2, lat2] = ring[k + 1];
+          a += lng1 * lat2 - lng2 * lat1;
+        }
+        return Math.abs(a / 2);
+      }
+      const { north, south, east, west } = n.bounds;
+      return Math.max(1e-8, (north - south) * (east - west));
+    };
+
+    const ordered = NEIGHBORHOODS.map((n, idx) => ({ n, idx, area: approxArea(n) })).sort(
+      (x, y) => y.area - x.area
+    );
+
+    for (const { n, idx } of ordered) {
+      const fillColor = DISTRICT_FILLS[idx % DISTRICT_FILLS.length];
       const nIncidents = incidentsInNeighborhood(incidents, n.slug);
-      const count = nIncidents.length;
-
-      const severity = count === 0 ? 0 : Math.min(count / 8, 1);
-      const fillOpacity = 0.08 + severity * 0.18;
+      const fillOpacity = BASE_FILL_OPACITY;
 
       // Prefer the true GeoJSON polygon when it's been wired in for
       // this neighborhood (lib/neighborhoods.ts); fall back to the
@@ -1888,23 +1912,21 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
           ring.map(([lng, lat]) => [lat, lng] as L.LatLngTuple)
         );
         shape = L.polygon(ringsLatLng, {
-          color,
-          weight: 2,
-          opacity: 0.6,
-          fillColor: color,
+          color: BORDER,
+          weight: 1.25,
+          opacity: 0.95,
+          fillColor,
           fillOpacity,
-          dashArray: "6 3",
         });
       } else {
         shape = L.rectangle(
           [[n.bounds.south, n.bounds.west], [n.bounds.north, n.bounds.east]],
           {
-            color,
-            weight: 2,
-            opacity: 0.6,
-            fillColor: color,
+            color: BORDER,
+            weight: 1.25,
+            opacity: 0.95,
+            fillColor,
             fillOpacity,
-            dashArray: "6 3",
           }
         );
       }
@@ -1915,10 +1937,18 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       });
 
       shape.on("mouseover", () => {
-        shape.setStyle({ fillOpacity: fillOpacity + 0.12, weight: 3, opacity: 0.9 });
+        shape.setStyle({
+          fillOpacity: Math.min(0.78, fillOpacity + HOVER_FILL_DELTA),
+          weight: 2,
+          opacity: 1,
+        });
       });
       shape.on("mouseout", () => {
-        shape.setStyle({ fillOpacity, weight: 2, opacity: 0.6 });
+        shape.setStyle({
+          fillOpacity,
+          weight: 1.25,
+          opacity: 0.95,
+        });
       });
 
       shape.addTo(layer);
@@ -1927,20 +1957,20 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         className: "",
         html: `<div style="
           white-space: nowrap;
-          font-size: 11px;
-          font-weight: 700;
-          color: ${color};
-          text-shadow: 0 0 6px rgba(0,0,0,0.9), 0 1px 3px rgba(0,0,0,0.7);
-          letter-spacing: 0.5px;
+          font-size: 13px;
+          font-weight: 800;
+          font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+          color: #f8fafc;
+          letter-spacing: 0.04em;
           text-transform: uppercase;
           pointer-events: none;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 1px;
+          text-align: center;
+          text-shadow:
+            0 0 10px rgba(0,0,0,0.85),
+            0 1px 2px rgba(0,0,0,0.9),
+            0 0 1px rgba(0,0,0,1);
         ">
           <span>${n.name}</span>
-          ${count > 0 ? `<span style="font-size:9px;opacity:0.8;font-weight:600;">${count} incident${count !== 1 ? "s" : ""}</span>` : ""}
         </div>`,
         iconSize: [0, 0],
         iconAnchor: [0, 0],

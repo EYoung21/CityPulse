@@ -7,7 +7,6 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Shield,
-  AlertTriangle,
   Eye,
   X,
   Layers,
@@ -251,7 +250,7 @@ function MapHome() {
   const isDark = resolved === "dark";
   const [firestoreAvailable, setFirestoreAvailable] = useState(() => isFirebaseConfigured());
   const useFirestoreData = firestoreAvailable;
-  const { isPro } = useAuth();
+  const { isPro, loading: authLoading } = useAuth();
 
   const cityFromEnv = process.env.NEXT_PUBLIC_CITY_NAME?.trim();
   const [cityDisplayName, setCityDisplayName] = useState(() => {
@@ -407,6 +406,13 @@ function MapHome() {
     if (typeof window === "undefined") return;
     setPref("pp:saved-places-overlay", savedPlacesOverlay ? "1" : "0");
   }, [savedPlacesOverlay]);
+
+  /** Pinning saved places on the map is Pro-only (wait for auth so we
+   *  don't clear the overlay during the initial `isPro === false` tick). */
+  useEffect(() => {
+    if (authLoading) return;
+    if (!isPro) setSavedPlacesOverlay(false);
+  }, [isPro, authLoading]);
 
   // Community voting removed — incidents are driven purely by timestamps.
 
@@ -938,20 +944,21 @@ function MapHome() {
   }, [basemapStyle, recenterCity]);
 
   const loadFromApi = useCallback(async () => {
-    // Do **not** use Promise.all: a 502 on /api/summary or /api/stats must not
-    // block applying /api/incidents — otherwise the map stays empty until every
-    // dependency succeeds (users see 30–60s "Loading map" when the API is flaky).
-    const [ir, sr, tr] = await Promise.allSettled([
-      fetchIncidents(),
-      fetchSummary(),
-      fetchStats(),
-    ]);
-    if (ir.status === "fulfilled") {
-      setIncidents(ir.value);
-    } else {
-      console.error("Failed to load incidents:", ir.reason);
-    }
-    const inc = ir.status === "fulfilled" ? ir.value : null;
+    // Never block pins on summary/stats: apply incidents as soon as the
+    // incidents fetch settles (Firestore-off path and API-first paints).
+    const incPromise = fetchIncidents()
+      .then((rows) => {
+        setIncidents(rows);
+        return rows;
+      })
+      .catch((reason) => {
+        console.error("Failed to load incidents:", reason);
+        return null;
+      });
+
+    const [sr, tr] = await Promise.allSettled([fetchSummary(), fetchStats()]);
+    const inc = await incPromise;
+
     if (sr.status === "fulfilled") {
       setSummary(sr.value.summary);
     } else if (inc) {
@@ -1463,7 +1470,7 @@ function MapHome() {
         safetyPois={safetyPois}
         nearbyPois={nearbyPois}
         parkedPin={parkedPin ? { lat: parkedPin.lat, lng: parkedPin.lng } : null}
-        savedPlaces={savedPlacesOverlay && savedDestinations.length > 0
+        savedPlaces={isPro && savedPlacesOverlay && savedDestinations.length > 0
           ? savedDestinations.map((d) => {
               // Mirror the SavedPlaces palette logic for list-bound
               // entries so the on-map dot matches its sidebar row.
@@ -2403,26 +2410,47 @@ function MapHome() {
 
                 <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
                 <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Saved places</p>
-                <button
-                  onClick={() => setSavedPlacesOverlay((v) => !v)}
-                  className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
-                  style={{ color: "var(--panel-text-secondary)" }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                  aria-pressed={savedPlacesOverlay}
-                >
-                  <span className="flex items-center gap-2">
-                    <span aria-hidden="true">📍</span>
-                    <span>Pin saved places{savedDestinations.length > 0 ? ` (${savedDestinations.length})` : ""}</span>
-                  </span>
-                  <div
-                    className={`w-8 h-4 rounded-full transition-colors relative ${savedPlacesOverlay ? "bg-amber-500" : ""}`}
-                    style={!savedPlacesOverlay ? { background: "var(--panel-input-bg)" } : {}}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!isPro) {
+                        setShowUpgrade("Pin saved places");
+                        return;
+                      }
+                      setSavedPlacesOverlay((v) => !v);
+                    }}
+                    className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
+                    style={{ color: "var(--panel-text-secondary)" }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                    aria-pressed={isPro ? savedPlacesOverlay : false}
+                    title={isPro ? "Show saved places on the map" : "Pin saved places (Pro)"}
                   >
-                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${savedPlacesOverlay ? "left-4" : "left-0.5"}`} />
-                  </div>
-                </button>
-                {savedPlacesOverlay && savedDestinations.length === 0 && (
+                    <span className="flex items-center gap-2">
+                      <span aria-hidden="true">📍</span>
+                      <span>Pin saved places{savedDestinations.length > 0 ? ` (${savedDestinations.length})` : ""}</span>
+                    </span>
+                    <div
+                      className={`w-8 h-4 rounded-full transition-colors relative ${isPro && savedPlacesOverlay ? "bg-amber-500" : ""}`}
+                      style={!isPro || !savedPlacesOverlay ? { background: "var(--panel-input-bg)" } : {}}
+                    >
+                      <div
+                        className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${isPro && savedPlacesOverlay ? "left-4" : "left-0.5"}`}
+                      />
+                    </div>
+                  </button>
+                  {!isPro && (
+                    <span
+                      className="absolute top-1.5 right-2 w-3.5 h-3.5 flex items-center justify-center rounded-full pointer-events-none"
+                      style={{ background: "rgba(139,92,246,0.9)" }}
+                      aria-hidden
+                    >
+                      <Lock className="w-2 h-2 text-white" />
+                    </span>
+                  )}
+                </div>
+                {isPro && savedPlacesOverlay && savedDestinations.length === 0 && (
                   <p className="text-[9px] px-2 pb-1 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
                     Save a place from the sidebar to see it pinned here.
                   </p>
@@ -2435,6 +2463,7 @@ function MapHome() {
                 <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
                 <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Offline tiles</p>
                 <OfflineTilesPanel
+                  isPro={isPro}
                   getBounds={() => mapRef.current?.getBounds() ?? null}
                   tileTemplate={(() => {
                     // Mirror IncidentMap.basemapUrl(): cache the same
@@ -2650,9 +2679,10 @@ function MapHome() {
               data, and geocoding places it on this map.
             </p>
             <p className="text-xs leading-relaxed" style={{ color: "var(--panel-text-secondary)" }}>
-              Every incident is evaluated by the{" "}
-              <strong className="text-blue-500">Applied AI Studio Inhibitor</strong> ethical guardrail.
-              Content flagged for PII, potential harm, or hallucination is blocked.
+              Before display, each incident runs through a{" "}
+              <strong className="text-blue-500">built-in guardrail</strong>{" "}
+              (pattern checks for obvious PII and similar sensitive content in the transcript).
+              Anything that fails that pass is kept off the public map.
             </p>
             {stats && (
               <div className="text-xs space-y-1.5 rounded-lg p-3" style={{ background: "var(--panel-input-bg)" }}>
@@ -2677,21 +2707,15 @@ function MapHome() {
                 <p className="text-xs leading-relaxed" style={{ color: "var(--panel-text-secondary)" }}>{summary}</p>
               </div>
             )}
-            <div className="text-[10px] pt-3" style={{ borderTop: "1px solid var(--panel-border)", color: "var(--panel-text-secondary)" }}>
-              <p className="font-medium text-amber-500 mb-1 flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" /> DISCLAIMER
-              </p>
-              <p className="leading-relaxed" style={{ color: "var(--panel-text-muted)" }}>
-                Incidents come from public scanner audio and automated transcription.
-                Treat them as situational awareness only—they are not verified as fact,
-                not real-time official data, and not for safety-critical decisions.
-              </p>
-            </div>
+            <p
+              className="text-[10px] leading-relaxed pt-3"
+              style={{ borderTop: "1px solid var(--panel-border)", color: "var(--panel-text-muted)" }}
+            >
+              Scanner feeds are public and machine-processed. Pins are for general awareness, not
+              verified facts, dispatch records, or emergency decision-making.
+            </p>
 
-            {/* Feedback shortcut. Lives at the bottom of the About
-                panel because anyone reading the disclaimer is
-                already in "let's talk" mode. The form itself is a
-                global modal mounted at the page root. */}
+            {/* Feedback shortcut at the bottom of About; form is a global modal. */}
             <button
               type="button"
               onClick={() => {
