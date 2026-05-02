@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchPublicApi, getPublicApiBase } from "@/lib/public-api-base";
+import { getCurrentCity } from "@/lib/pulse-cities";
 
 const MAX_EVENTS = 300;
 
@@ -34,13 +35,16 @@ function wsUrl(): string {
   if (typeof window === "undefined") return "";
   const base = getPublicApiBase();
   if (base) {
-    const b = base.replace(/\/$/, "");
-    const proto = b.startsWith("https") ? "wss" : "ws";
-    const host = b.replace(/^https?:\/\//, "");
-    return `${proto}://${host}/ws/admin`;
+    try {
+      const u = new URL(base);
+      const wsProto = u.protocol === "https:" ? "wss:" : "ws:";
+      return `${wsProto}//${u.host}/ws/admin`;
+    } catch {
+      /* fall through — same-origin */
+    }
   }
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}//${window.location.host}/ws/admin`;
+  const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${wsProto}//${window.location.host}/ws/admin`;
 }
 
 export function useAdminStream() {
@@ -51,7 +55,9 @@ export function useAdminStream() {
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
-    fetchPublicApi("/api/admin/feeds")
+    const slug = getCurrentCity().slug;
+    const q = slug ? `?city=${encodeURIComponent(slug)}` : "";
+    fetchPublicApi(`/api/admin/feeds${q}`)
       .then(async (r) => {
         if (!r.ok) return;
         const d = (await r.json()) as { feeds?: FeedInfo[] };

@@ -37,6 +37,12 @@ const nextConfig: NextConfig = {
     return {
       afterFiles: [
         {
+          // FastAPI WebSocket routes live under `/ws/*`, not `/api/*`.
+          // Without this, the admin panel connects to the Next origin and the upgrade never reaches Python.
+          source: "/ws/:path*",
+          destination: `${BACKEND_URL}/ws/:path*`,
+        },
+        {
           source: "/api/:path*",
           destination: `${BACKEND_URL}/api/:path*`,
         },

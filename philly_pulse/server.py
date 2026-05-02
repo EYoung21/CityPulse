@@ -18,7 +18,7 @@ from typing import Optional
 import httpx
 import numpy as np
 import yaml
-from fastapi import FastAPI, Header, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -1389,8 +1389,24 @@ async def admin_ws(ws: WebSocket):
 
 
 @app.get("/api/admin/feeds")
-async def admin_feeds():
-    """List of available Broadcastify feeds."""
+async def admin_feeds(
+    request: Request,
+    city: str | None = Query(
+        None,
+        description="Pulse city slug (e.g. nyc, philly). Defaults from Host header, then server FEEDS.",
+    ),
+):
+    """List of Broadcastify feeds for the admin panel — scoped per city when known."""
+    slug = (city or "").strip().lower()
+    if not slug:
+        raw_host = (request.headers.get("host") or "").lower()
+        host = raw_host.split(":")[0]
+        if host.startswith("www."):
+            host = host[4:]
+        slug = city_registry.DOMAIN_TO_SLUG.get(host, "")
+    rows = city_registry.CITY_FEEDS.get(slug) if slug else None
+    if rows:
+        return {"feeds": rows}
     return {"feeds": FEEDS}
 
 
