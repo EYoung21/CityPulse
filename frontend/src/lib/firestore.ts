@@ -15,7 +15,9 @@ import { enrichIncidents } from "@/lib/incident-weights";
 import { getCurrentCity } from "@/lib/pulse-cities";
 
 const COLLECTION = "incidents";
-const MAX_DOCS = 5000;
+/** Map + live listener: cap sync size for fast first paint. Recent
+ *  incidents dominate the viewport; 5000 docs was routinely 4–5s cold. */
+const MAP_SYNC_LIMIT = 1200;
 
 function toISOString(val: unknown): string {
   if (!val) return new Date().toISOString();
@@ -93,7 +95,7 @@ export async function fetchIncidentsSnapshotOnce(): Promise<Incident[]> {
     collection(db, COLLECTION),
     where("city", "==", getCurrentCity().slug),
     orderBy("reported_at", "desc"),
-    limitFn(MAX_DOCS)
+    limitFn(MAP_SYNC_LIMIT)
   );
   const snap = await getDocs(q);
   const list: Incident[] = [];
@@ -116,7 +118,7 @@ export function subscribeIncidents(
     collection(db, COLLECTION),
     where("city", "==", getCurrentCity().slug),
     orderBy("reported_at", "desc"),
-    limitFn(MAX_DOCS)
+    limitFn(MAP_SYNC_LIMIT)
   );
 
   return onSnapshot(
