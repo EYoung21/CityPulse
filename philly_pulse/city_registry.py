@@ -21,11 +21,19 @@ CITY_REGISTRY: dict[str, dict] = {}
 # Broadcastify feed_id (str) → human label; merged across all cities/*.yaml
 FEED_LABELS: dict[str, str] = {}
 
+# slug → [{"feed_id": "...", "label": "..."}, …] for admin UI / per-city streams
+CITY_FEEDS: dict[str, list[dict[str, str]]] = {}
+
+# production hostname (no www) → slug — from each city's config `city.domain`
+DOMAIN_TO_SLUG: dict[str, str] = {}
+
 
 def load_city_registry() -> None:
-    """Populate CITY_REGISTRY and FEED_LABELS from cities/*/config.yaml."""
+    """Populate CITY_REGISTRY, FEED_LABELS, CITY_FEEDS, DOMAIN_TO_SLUG from cities/*/config.yaml."""
     CITY_REGISTRY.clear()
     FEED_LABELS.clear()
+    CITY_FEEDS.clear()
+    DOMAIN_TO_SLUG.clear()
     cities_dir = Path(__file__).resolve().parent.parent / "cities"
     if not cities_dir.is_dir():
         logger.warning("No cities/ directory found at %s", cities_dir)
@@ -39,6 +47,12 @@ def load_city_registry() -> None:
                 cfg = yaml.safe_load(f) or {}
             slug = cfg.get("city", {}).get("slug") or cfg_dir.name
             city_name = cfg.get("city", {}).get("name", slug)
+            domain_raw = cfg.get("city", {}).get("domain")
+            if isinstance(domain_raw, str) and domain_raw.strip():
+                d = domain_raw.strip().lower()
+                if d.startswith("www."):
+                    d = d[4:]
+                DOMAIN_TO_SLUG[d] = slug
             geo = cfg.get("geocode", {})
             map_cfg = cfg.get("map", {})
 
@@ -75,6 +89,7 @@ def load_city_registry() -> None:
                 "viewbox": geo.get("viewbox", ""),
                 "llm_local_context": llm_local.strip(),
             }
+            feeds_list: list[dict[str, str]] = []
             for feed in cfg.get("feeds") or []:
                 if not isinstance(feed, dict):
                     continue
@@ -85,6 +100,7 @@ def load_city_registry() -> None:
                 k = str(fid).strip()
                 if not k:
                     continue
+                feeds_list.append({"feed_id": k, "label": str(lab).strip()})
                 if k in FEED_LABELS:
                     if FEED_LABELS[k] != str(lab).strip():
                         logger.warning(
@@ -95,6 +111,7 @@ def load_city_registry() -> None:
                         )
                     continue
                 FEED_LABELS[k] = str(lab).strip()
+            CITY_FEEDS[slug] = feeds_list
             logger.info("Registered city: %s (%s)", city_name, slug)
         except Exception as e:
             logger.warning("Failed to load city config %s: %s", cfg_path, e)

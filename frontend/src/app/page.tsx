@@ -760,7 +760,9 @@ function MapHome() {
   }, [incidents]);
 
   useEffect(() => {
-    fetchPublicApi("/api/admin/feeds")
+    const slug = getCurrentCity().slug;
+    const q = slug ? `?city=${encodeURIComponent(slug)}` : "";
+    fetchPublicApi(`/api/admin/feeds${q}`)
       .then(async (r) => {
         if (!r.ok) return;
         const data = (await r.json()) as { feeds?: { feed_id?: string; label?: string }[] };
