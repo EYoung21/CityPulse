@@ -59,17 +59,19 @@ export function incidentAudioSrc(inc: {
  * (or if the request throws), we retry once against the explicit
  * `NEXT_PUBLIC_API_URL` base if configured.
  *
- * Same-origin **502/503/504** from the edge proxy also triggers one retry to
- * the explicit API when it differs from the primary URL — common when the
- * Python backend is slow or the proxy flakes on cold start, and it restores
- * `/api/incidents` and `/api/audio/*` without waiting for the next poll.
+ * Same-origin **502/503/504** can trigger one retry to the explicit API only
+ * when that retry is **CORS-safe** (same origin, or phlpulse.com → api.phlpulse.com).
+ * Other city domains skip cross-origin retry so a bad `BACKEND_URL` does not
+ * produce misleading CORS errors against api.phlpulse.com.
  */
 export async function fetchPublicApi(path: string, init?: RequestInit): Promise<Response> {
   const p = path.startsWith("/") ? path : `/${path}`;
   const primary = apiUrl(p);
   const explicitBase = getExplicitPublicApiBase();
   const explicitUrl = explicitBase ? `${explicitBase}${p}` : "";
-  const canFallback = Boolean(explicitUrl && primary !== explicitUrl);
+  const canFallback =
+    Boolean(explicitUrl && primary !== explicitUrl) &&
+    crossOriginFallbackAllowed(explicitBase);
 
   try {
     const res = await fetch(primary, init);
@@ -88,6 +90,26 @@ export async function fetchPublicApi(path: string, init?: RequestInit): Promise<
   } catch (e) {
     if (!canFallback) throw e;
     return await fetch(explicitUrl, init);
+  }
+}
+
+/** Cross-origin retry to `NEXT_PUBLIC_API_URL` is only safe when the browser
+ * is allowed to read that origin. We allow (a) same-origin, or (b) the legacy
+ * www.phlpulse.com → api.phlpulse.com split. Other city domains (423pulse.com,
+ * newyorkcitypulse.com, …) must use their own Vercel `BACKEND_URL` — retrying
+ * api.phlpulse.com would always fail CORS and spam the console. */
+function crossOriginFallbackAllowed(explicitBase: string): boolean {
+  if (typeof window === "undefined") return true;
+  const raw = explicitBase.trim();
+  if (!raw) return false;
+  try {
+    const u = new URL(raw);
+    if (u.origin === window.location.origin) return true;
+    const host = window.location.hostname.toLowerCase();
+    const onPhlpulseSite = host === "phlpulse.com" || host.endsWith(".phlpulse.com");
+    return onPhlpulseSite && u.hostname.toLowerCase() === "api.phlpulse.com";
+  } catch {
+    return false;
   }
 }
 
