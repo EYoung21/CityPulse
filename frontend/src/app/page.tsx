@@ -2659,20 +2659,49 @@ function MapHome() {
         </div>
       </div>
 
-      {/* About panel */}
+      {/* About / transparency — full-screen overlay so it never stacks under
+          the bottom-right tool rail (z-1001) or fights Pulse Network dropdowns. */}
       <AnimatePresence>
         {showAbout && (
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-16 right-3 z-[1000] w-80 max-w-[calc(100vw-1.5rem)] max-h-[calc(100vh-8rem)] overflow-y-auto rounded-xl shadow-2xl backdrop-blur-xl p-4 space-y-3"
-            style={{ background: "var(--panel-bg)", border: "1px solid var(--panel-border)" }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pp-about-title"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-[2400] flex items-end justify-center md:items-center p-3 pb-10 md:pb-6 bg-black/55 backdrop-blur-[2px]"
+            onClick={() => setShowAbout(false)}
           >
-            <h3 className="font-semibold flex items-center gap-2 text-sm" style={{ color: "var(--panel-text)" }}>
-              <Shield className="w-4 h-4 text-blue-500" />
-              Transparency & Responsible AI
-            </h3>
+            <motion.div
+              initial={{ opacity: 0, y: 28 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md max-h-[min(34rem,82dvh)] overflow-y-auto rounded-2xl shadow-2xl backdrop-blur-xl p-4 space-y-3 border"
+              style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <h3
+                  id="pp-about-title"
+                  className="font-semibold flex items-center gap-2 text-sm min-w-0"
+                  style={{ color: "var(--panel-text)" }}
+                >
+                  <Shield className="w-4 h-4 text-blue-500 shrink-0" />
+                  <span className="leading-snug">Transparency & Responsible AI</span>
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowAbout(false)}
+                  className="shrink-0 p-1.5 rounded-lg transition-colors hover:bg-white/10"
+                  style={{ color: "var(--panel-text-muted)" }}
+                  aria-label="Close about panel"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             <p className="text-xs leading-relaxed" style={{ color: "var(--panel-text-secondary)" }}>
               {cityDisplayName} Pulse uses AI at every layer: speech-to-text (Whisper)
               converts police scanner audio, an LLM extracts structured incident
@@ -2737,6 +2766,7 @@ function MapHome() {
                 receipts-style breakdown of how reports are handled. */}
             <a
               href="/transparency"
+              onClick={() => setShowAbout(false)}
               className="mt-2 w-full inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors"
               style={{
                 background: "rgba(168,85,247,0.10)",
@@ -2746,6 +2776,7 @@ function MapHome() {
             >
               See community moderation transparency →
             </a>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
