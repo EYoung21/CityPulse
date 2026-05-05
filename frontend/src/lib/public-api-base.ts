@@ -1,3 +1,24 @@
+import { PULSE_CITIES } from "@/lib/pulse-cities";
+
+/** Apex hostnames for Pulse marketing sites that share `api.phlpulse.com`.
+ * Used so a Vercel 502 on same-origin `/api/*` can retry the public API
+ * (CORS is open on the FastAPI host). Includes short aliases not in the
+ * city registry (e.g. `nycpulse.com` → NYC). */
+function pulseMarketingApexHosts(): Set<string> {
+  const s = new Set<string>(["nycpulse.com"]);
+  for (const c of PULSE_CITIES) {
+    const d = c.domain?.trim().toLowerCase().replace(/^www\./, "");
+    if (d) s.add(d);
+  }
+  return s;
+}
+
+let _pulseApexCache: Set<string> | null = null;
+function getPulseMarketingApexHosts(): Set<string> {
+  if (!_pulseApexCache) _pulseApexCache = pulseMarketingApexHosts();
+  return _pulseApexCache;
+}
+
 /** Resolve the base URL for Python API calls from the browser.
  *
  * When `NEXT_PUBLIC_API_URL` points at a *different origin* than the page
@@ -26,6 +47,22 @@ export function getExplicitPublicApiBase(): string {
   return (process.env.NEXT_PUBLIC_API_URL || "").trim().replace(/\/$/, "");
 }
 
+const SHARED_PROD_API = "https://api.phlpulse.com";
+
+/** Env `NEXT_PUBLIC_API_URL`, or the shared prod API when the page is on a
+ * known Pulse city domain (covers Vercel projects missing that env var). */
+function effectivePublicApiBase(): string {
+  const fromEnv = getExplicitPublicApiBase();
+  if (fromEnv) return fromEnv;
+  if (typeof window === "undefined") return "";
+  const host = window.location.hostname.toLowerCase();
+  const apex = host.replace(/^www\./, "");
+  if (host === "phlpulse.com" || host.endsWith(".phlpulse.com"))
+    return SHARED_PROD_API;
+  if (getPulseMarketingApexHosts().has(apex)) return SHARED_PROD_API;
+  return "";
+}
+
 /** Absolute API URL or same-origin path (leading `/`). */
 export function apiUrl(path: string): string {
   const p = path.startsWith("/") ? path : `/${path}`;
@@ -44,7 +81,22 @@ export function incidentAudioSrc(inc: {
   audio_url?: string | null;
 }): string | null {
   const clip = inc.audio_clip?.trim();
-  if (clip) return apiUrl(`/api/audio/${clip}`);
+  if (clip) {
+    const path = `/api/audio/${clip}`;
+    if (typeof window !== "undefined") {
+      const explicit = effectivePublicApiBase();
+      if (explicit && crossOriginFallbackAllowed(explicit)) {
+        try {
+          if (new URL(explicit).origin !== window.location.origin) {
+            return `${explicit}${path}`;
+          }
+        } catch {
+          /* fall through */
+        }
+      }
+    }
+    return apiUrl(path);
+  }
   const u = inc.audio_url?.trim();
   return u || null;
 }
@@ -60,14 +112,14 @@ export function incidentAudioSrc(inc: {
  * `NEXT_PUBLIC_API_URL` base if configured.
  *
  * Same-origin **502/503/504** can trigger one retry to the explicit API only
- * when that retry is **CORS-safe** (same origin, or phlpulse.com → api.phlpulse.com).
- * Other city domains skip cross-origin retry so a bad `BACKEND_URL` does not
- * produce misleading CORS errors against api.phlpulse.com.
+ * when that retry is **CORS-safe** (known Pulse marketing domains → api.phlpulse.com).
+ * Other origins skip cross-origin retry unless they are known Pulse city
+ * domains that share `api.phlpulse.com` (CORS on that API allows browser reads).
  */
 export async function fetchPublicApi(path: string, init?: RequestInit): Promise<Response> {
   const p = path.startsWith("/") ? path : `/${path}`;
   const primary = apiUrl(p);
-  const explicitBase = getExplicitPublicApiBase();
+  const explicitBase = effectivePublicApiBase();
   const explicitUrl = explicitBase ? `${explicitBase}${p}` : "";
   const canFallback =
     Boolean(explicitUrl && primary !== explicitUrl) &&
@@ -93,11 +145,9 @@ export async function fetchPublicApi(path: string, init?: RequestInit): Promise<
   }
 }
 
-/** Cross-origin retry to `NEXT_PUBLIC_API_URL` is only safe when the browser
- * is allowed to read that origin. We allow (a) same-origin, or (b) the legacy
- * www.phlpulse.com → api.phlpulse.com split. Other city domains (423pulse.com,
- * newyorkcitypulse.com, …) must use their own Vercel `BACKEND_URL` — retrying
- * api.phlpulse.com would always fail CORS and spam the console. */
+/** Cross-origin retry to `NEXT_PUBLIC_API_URL` when the explicit base is
+ * `https://api.phlpulse.com` and the page is served from a known Pulse city
+ * domain (or `*.phlpulse.com`). The shared FastAPI stack uses permissive CORS. */
 function crossOriginFallbackAllowed(explicitBase: string): boolean {
   if (typeof window === "undefined") return true;
   const raw = explicitBase.trim();
@@ -105,9 +155,13 @@ function crossOriginFallbackAllowed(explicitBase: string): boolean {
   try {
     const u = new URL(raw);
     if (u.origin === window.location.origin) return true;
+    if (u.hostname.toLowerCase() !== "api.phlpulse.com") return false;
+
     const host = window.location.hostname.toLowerCase();
-    const onPhlpulseSite = host === "phlpulse.com" || host.endsWith(".phlpulse.com");
-    return onPhlpulseSite && u.hostname.toLowerCase() === "api.phlpulse.com";
+    if (host === "phlpulse.com" || host.endsWith(".phlpulse.com")) return true;
+
+    const apex = host.replace(/^www\./, "");
+    return getPulseMarketingApexHosts().has(apex);
   } catch {
     return false;
   }
