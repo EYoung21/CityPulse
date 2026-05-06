@@ -1053,11 +1053,16 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
     // Initial view: prefer the URL hash (`#zoom/lat/lng`, Google-Maps style)
     // so a shared "look at where I'm looking" link works on first paint.
+    // Discard hash coordinates more than ~5° (~550 km) from the city center
+    // so a stale/corrupted hash doesn't send the map to the middle of the ocean.
     const hashView = parseHashView();
-    const initialCenter: [number, number] = hashView
-      ? [hashView.lat, hashView.lng]
+    const hashInRange = hashView &&
+      Math.abs(hashView.lat - center[0]) < 5 &&
+      Math.abs(hashView.lng - center[1]) < 5;
+    const initialCenter: [number, number] = hashInRange
+      ? [hashView!.lat, hashView!.lng]
       : center;
-    const initialZoom = hashView ? hashView.zoom : zoom;
+    const initialZoom = hashInRange ? hashView!.zoom : zoom;
 
     const map = L.map("incident-map", {
       zoomControl: false,
