@@ -51,7 +51,6 @@ import ReminderBanner from "@/components/ReminderBanner";
 import FilterPresetsBar from "@/components/FilterPresetsBar";
 import ManeuverChip from "@/components/ManeuverChip";
 import TurnList from "@/components/TurnList";
-import SearchAreaPill from "@/components/SearchAreaPill";
 import RecenterPill from "@/components/RecenterPill";
 import AlongRoutePanel from "@/components/AlongRoutePanel";
 import ParkingApproachPill from "@/components/ParkingApproachPill";
@@ -60,7 +59,6 @@ import CompassIndicator from "@/components/CompassIndicator";
 import SafetyEscapePanel from "@/components/SafetyEscapePanel";
 import UndoToastHost from "@/components/UndoToastHost";
 import KeyboardShortcutsHelp from "@/components/KeyboardShortcutsHelp";
-import InstallPrompt from "@/components/InstallPrompt";
 import MapGesturesTour from "@/components/MapGesturesTour";
 import FeedbackForm from "@/components/FeedbackForm";
 import CommuteNotifier from "@/components/CommuteNotifier";
@@ -116,6 +114,7 @@ import { enrichIncidents } from "@/lib/incident-weights";
 import { apiUrl, fetchPublicApi } from "@/lib/public-api-base";
 import { buildLocalSummary } from "@/lib/local-summary";
 import { getNeighborhood, incidentsInNeighborhood, NEIGHBORHOODS, type Neighborhood } from "@/lib/neighborhoods";
+import { DISTRICTS, type District } from "@/lib/districts";
 import { getCurrentCity } from "@/lib/pulse-cities";
 import { assessSafety } from "@/lib/search";
 import Sparkline from "@/components/charts/Sparkline";
@@ -208,17 +207,6 @@ const THEME_OPTIONS = [
   { id: "dark" as const, icon: Moon, label: "Dark" },
 ];
 
-function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
-  const R = 6371;
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(bLat - aLat);
-  const dLng = toRad(bLng - aLng);
-  const x =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
-}
-
 /**
  * Mobile-aware home shell: per the build plan (§4) mobile users land
  * on `/feed` by default while desktop users land on the map. The
@@ -271,11 +259,6 @@ function MapHome() {
   const [timeFilter, setTimeFilter] = useState(1);
   const [activeCats, setActiveCats] = useState<Set<string>>(new Set());
   const [mapTap, setMapTap] = useState<{ lat: number; lng: number } | null>(null);
-  /** "Score this area" pill anchor: the lat/lng we last opened a card on (or
-   *  the city-default center). The pill appears once the user pans further
-   *  than ~600m from this point and no overlay card is currently open. */
-  const [scoreAnchor, setScoreAnchor] = useState<{ lat: number; lng: number } | null>(null);
-  const [pillTarget, setPillTarget] = useState<{ lat: number; lng: number } | null>(null);
   // Long-press / right-click anchor for the LocationPeekCard. Cleared
   // automatically by the useEffect below whenever a competing overlay
   // takes the bottom-left card slot, so we don't end up with two
@@ -626,7 +609,7 @@ function MapHome() {
     if (typeof window === "undefined") return true;
     return window.innerWidth >= 768;
   });
-  const [selectedDistrict, setSelectedDistrict] = useState<{ neighborhood: Neighborhood; incidents: Incident[] } | null>(null);
+  const [selectedDistrict, setSelectedDistrict] = useState<{ district: District; incidents: Incident[] } | null>(null);
   const [clusterIncidentIds, setClusterIncidentIds] = useState<string[] | null>(null);
   const [showUpgrade, setShowUpgrade] = useState<string | null>(null);
   // Listen for upgrade requests dispatched by descendants (saved-place
@@ -817,7 +800,6 @@ function MapHome() {
       // wait — same UX as tapping "My location" then long-pressing.
       const apply = (lat: number, lng: number) => {
         setMapTap({ lat, lng });
-        setScoreAnchor({ lat, lng });
         requestAnimationFrame(() => mapRef.current?.flyTo(lat, lng, 16));
       };
       if (userLocation) {
@@ -1342,21 +1324,18 @@ function MapHome() {
         ref={mapRef}
         incidents={filteredIncidents}
         selectedId={selectedId}
-        onSelectIncident={(id) => { setMapTap(null); setSelectedId(id); setPillTarget(null); if (window.innerWidth < 768) setSidebarOpen(false); }}
+        onSelectIncident={(id) => { setMapTap(null); setSelectedId(id); if (window.innerWidth < 768) setSidebarOpen(false); }}
         routes={routes}
         onMapTap={(lat, lng) => {
           if (measureMode) {
             // Measure mode swallows the tap — append to vertices and
             // skip every other map-tap side effect (SafetyScoreCard,
-            // pill, etc.) so the user can chain points without losing
-            // UI state.
+            // etc.) so the user can chain points without losing UI state.
             setMeasurePoints((p) => [...p, [lat, lng]]);
             return;
           }
           setSelectedId(null);
           setMapTap({ lat, lng });
-          setScoreAnchor({ lat, lng });
-          setPillTarget(null);
         }}
         onLongPress={(lat, lng) => {
           // Long-press / right-click → "What's happening here?" peek.
@@ -1370,25 +1349,10 @@ function MapHome() {
           setSelectedId(null);
           setClusterIncidentIds(null);
           setSelectedDistrict(null);
-          setPillTarget(null);
           setPeekAnchor({ lat, lng });
         }}
         measurePoints={measureMode ? measurePoints : null}
-        onMapMove={(lat, lng, zoom) => {
-          // Pill suppressed while any overlay card is up — they obscure
-          // most of the map and the action would feel duplicative.
-          if (mapTap || selectedId || tripGeometry) {
-            setPillTarget(null);
-          } else {
-            const anchor = scoreAnchor;
-            if (!anchor) setPillTarget({ lat, lng });
-            else {
-              const km = haversineKm(anchor.lat, anchor.lng, lat, lng);
-              if (km > 0.6) setPillTarget({ lat, lng });
-              else setPillTarget(null);
-            }
-          }
-
+        onMapMove={(_lat, _lng, zoom) => {
           // Persistent Safety-POI overlay: refetch when the viewport
           // shifts meaningfully *and* at least one category is on. We
           // gate on zoom ≥ 12 to avoid pulling thousands of POIs at
@@ -1510,7 +1474,7 @@ function MapHome() {
         timeFilterHours={timeFilter}
         heatmapDemoBoost={false}
         districtsEnabled={districtsEnabled}
-        onDistrictClick={(n, incs) => setSelectedDistrict({ neighborhood: n, incidents: incs })}
+        onDistrictClick={(district, incs) => setSelectedDistrict({ district, incidents: incs })}
         onClusterClick={(ids) => { setSelectedId(null); setClusterIncidentIds(ids); }}
       />
 
@@ -1756,18 +1720,6 @@ function MapHome() {
         </div>
       </div>
 
-      {/* "Score this area" pill — appears once the user pans far from the
-          last anchor and no overlay card is open. */}
-      {pillTarget && !mapTap && !selectedId && !tripGeometry && (
-        <SearchAreaPill
-          onClick={() => {
-            setMapTap(pillTarget);
-            setScoreAnchor(pillTarget);
-            setPillTarget(null);
-          }}
-        />
-      )}
-
       {/* Recipient view of a "Share my live ETA" link (?trip=<token>). */}
       {sharedTrip && (
         <SharedTripCard trip={sharedTrip} onClose={() => setSharedTrip(null)} />
@@ -1804,12 +1756,6 @@ function MapHome() {
           sheet. The component owns its own open state and listens for
           the key directly — page only mounts it. */}
       <KeyboardShortcutsHelp />
-
-      {/* PWA install prompt. Self-managed: shows itself only after a
-          minute of engagement, only on browsers that support
-          beforeinstallprompt (or iOS Safari with a custom hint), and
-          only if the user hasn't already dismissed. */}
-      <InstallPrompt />
 
       {/* Scheduled-trip reminder runner + banner. Runner is headless
           (renders nothing); it sweeps localStorage on mount, arms
@@ -2849,7 +2795,7 @@ function MapHome() {
             className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
           >
             <DistrictCard
-              neighborhood={selectedDistrict.neighborhood}
+              district={selectedDistrict.district}
               incidents={selectedDistrict.incidents}
               color={(() => {
                 const DISTRICT_COLORS = [
@@ -2858,7 +2804,7 @@ function MapHome() {
                   "#e879f9", "#fb923c", "#34d399", "#818cf8", "#fbbf24",
                   "#f87171", "#2dd4bf", "#c084fc", "#4ade80", "#38bdf8",
                 ];
-                const idx = NEIGHBORHOODS.findIndex((n) => n.slug === selectedDistrict.neighborhood.slug);
+                const idx = DISTRICTS.findIndex((n) => n.slug === selectedDistrict.district.slug);
                 return DISTRICT_COLORS[idx >= 0 ? idx % DISTRICT_COLORS.length : 0];
               })()}
               onClose={() => setSelectedDistrict(null)}

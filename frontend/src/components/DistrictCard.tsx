@@ -2,7 +2,7 @@
 
 import { X, Shield, AlertTriangle, Flame, HeartPulse, Car, Siren } from "lucide-react";
 import type { Incident } from "@/lib/api";
-import type { Neighborhood } from "@/lib/neighborhoods";
+import type { District } from "@/lib/districts";
 
 const CATEGORY_META: Record<string, { icon: typeof Shield; color: string; label: string }> = {
   violent: { icon: Siren, color: "#ef4444", label: "Violent" },
@@ -30,13 +30,13 @@ function threatLevel(count: number): { label: string; color: string } {
 }
 
 interface Props {
-  neighborhood: Neighborhood;
+  district: District;
   incidents: Incident[];
   color: string;
   onClose: () => void;
 }
 
-export default function DistrictCard({ neighborhood, incidents, color, onClose }: Props) {
+export default function DistrictCard({ district, incidents, color, onClose }: Props) {
   const breakdown = categoryBreakdown(incidents);
   const threat = threatLevel(incidents.length);
   const criticalCount = incidents.filter((i) => i.w_eff >= 0.7).length;
@@ -73,7 +73,7 @@ export default function DistrictCard({ neighborhood, incidents, color, onClose }
               className="text-sm font-bold uppercase tracking-wide"
               style={{ color }}
             >
-              {neighborhood.name}
+              {district.name}
             </h3>
             <p className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
               District Overview
