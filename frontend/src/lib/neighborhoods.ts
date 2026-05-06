@@ -14,14 +14,21 @@ import { getCurrentCity } from "./pulse-cities";
  * polygon coordinates into `CITY_NEIGHBORHOODS["sf"]` etc. — no code
  * changes required.
  *
- * Polygon coordinates follow the GeoJSON convention:
+ * Polygon coordinates follow the GeoJSON coordinate order:
  *   `Array<Array<[lng, lat]>>`
- * Where outer array is the polygon, inner arrays are linear rings,
- * and each ring is a closed list of `[lng, lat]` points (first ==
- * last). Single-ring polygons (no holes) are the common case.
+ * Each inner array is an independent closed outer boundary. This lets one
+ * neighborhood/district contain multiple disconnected map pieces without
+ * Leaflet treating later rings as holes.
+ *
+ * When a district truly needs holes, `multiPolygon` follows GeoJSON polygon
+ * nesting without the FeatureCollection wrapper:
+ *   `Array<Array<Array<[lng, lat]>>>`
+ * i.e. polygons → rings → points, where ring 0 is the exterior and later
+ * rings are holes.
  */
 
 export type LngLatRing = [number, number][];
+export type LngLatPolygon = LngLatRing[];
 
 export interface Neighborhood {
   name: string;
@@ -31,10 +38,12 @@ export interface Neighborhood {
   /** Axis-aligned bounding box. Always present so legacy callers
    *  (heatmap clip, dashboard rect) keep working without a polygon. */
   bounds: { north: number; south: number; east: number; west: number };
-  /** Optional GeoJSON polygon ring(s), `[ [lng,lat], … ]`. When set,
+  /** Optional polygon outer boundary ring(s), `[ [lng,lat], … ]`. When set,
    *  point-in-polygon takes priority over bbox so adjacent
    *  neighborhoods (e.g. Fishtown vs Kensington) don't overlap. */
   polygon?: LngLatRing[];
+  /** Optional polygon pieces with holes. Prefer this when present. */
+  multiPolygon?: LngLatPolygon[];
 }
 
 // Existing Philadelphia data — every entry has a bbox for the legacy
@@ -206,7 +215,10 @@ function pointInRing(lat: number, lng: number, ring: LngLatRing): boolean {
 }
 
 function pointInNeighborhood(n: Neighborhood, lat: number, lng: number): boolean {
-  if (n.polygon && n.polygon.length > 0) {
+  if (
+    (n.multiPolygon && n.multiPolygon.length > 0) ||
+    (n.polygon && n.polygon.length > 0)
+  ) {
     // Cheap bbox prefilter: every polygon is contained in its bbox,
     // so failing the rectangle skips the per-vertex math entirely.
     if (
@@ -217,12 +229,20 @@ function pointInNeighborhood(n: Neighborhood, lat: number, lng: number): boolean
     ) {
       return false;
     }
+    if (n.multiPolygon && n.multiPolygon.length > 0) {
+      for (const polygon of n.multiPolygon) {
+        if (polygon.length === 0 || !pointInRing(lat, lng, polygon[0])) continue;
+        const inHole = polygon.slice(1).some((hole) => pointInRing(lat, lng, hole));
+        if (!inHole) return true;
+      }
+      return false;
+    }
     // OR across all outer rings so MultiPolygon neighborhoods (SF
     // Marina has 17 pieces incl. waterfront + offshore islands) are
     // treated as the union of their parts. Holes are not modelled —
     // neighborhood boundaries virtually never have them, and treating
     // a missing one as "inside" is the safer default for our scoring.
-    for (const ring of n.polygon) {
+    for (const ring of n.polygon || []) {
       if (pointInRing(lat, lng, ring)) return true;
     }
     return false;
