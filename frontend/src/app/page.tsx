@@ -2225,10 +2225,10 @@ function MapHome() {
           <AnimatePresence>
             {showTheme && (
               <motion.div
-                initial={{ opacity: 0, scale: 0.9, y: 8 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.9, y: 8 }}
-                className="absolute bottom-12 right-0 w-40 rounded-xl shadow-2xl overflow-hidden backdrop-blur-md"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 8 }}
+                className="fixed z-[1002] right-3 w-40 max-h-[min(24rem,calc(100dvh-1rem-env(safe-area-inset-top,0px)))] overflow-y-auto rounded-xl shadow-2xl backdrop-blur-md max-md:bottom-[calc(env(safe-area-inset-bottom,0px)+56px+9.5rem)] md:bottom-[calc(4.5rem+5.5rem)]"
                 style={{ background: "var(--panel-bg)", border: "1px solid var(--panel-border)" }}
               >
                 <p className="text-[10px] font-semibold uppercase tracking-wider px-3 py-2" style={{ color: "var(--panel-text-muted)" }}>Theme</p>
@@ -2297,10 +2297,10 @@ function MapHome() {
           <AnimatePresence>
             {showLayers && (
               <motion.div
-                initial={{ opacity: 0, scale: 0.9, y: 8 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.9, y: 8 }}
-                className="absolute bottom-12 right-0 w-48 max-w-[min(12rem,calc(100vw-1.5rem))] max-h-[calc(100vh-5rem)] flex flex-col overflow-hidden rounded-xl shadow-2xl backdrop-blur-md"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                className="fixed z-[1002] right-3 w-48 max-w-[min(12rem,calc(100vw-1.5rem))] flex flex-col overflow-hidden rounded-xl shadow-2xl backdrop-blur-md top-[max(0.5rem,env(safe-area-inset-top,0px))] max-md:bottom-[calc(env(safe-area-inset-bottom,0px)+56px+9.5rem)] md:bottom-[calc(4.5rem+6.5rem)]"
                 style={{ background: "var(--panel-bg)", border: "1px solid var(--panel-border)" }}
               >
                 <div className="min-h-0 flex-1 overflow-y-auto p-2">
