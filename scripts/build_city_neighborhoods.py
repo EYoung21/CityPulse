@@ -171,10 +171,15 @@ Source URLs (download to /tmp/ before running):
   Queens:       https://raw.githubusercontent.com/codeforgermany/click_that_hood/main/public/data/queens.geojson
   Bronx:        https://raw.githubusercontent.com/codeforgermany/click_that_hood/main/public/data/bronx.geojson
   Staten Is.:   https://raw.githubusercontent.com/codeforgermany/click_that_hood/main/public/data/staten-island.geojson
+  Philadelphia: https://raw.githubusercontent.com/codeforgermany/click_that_hood/main/public/data/philadelphia.geojson
 
-Chattanooga: no clean public neighborhoods polygon source as of writing.
-  When one becomes available (e.g. via chattadata.org), add a `build_chattanooga()`
-  function above and a CITY_NEIGHBORHOODS["chattanooga"] entry in lib/neighborhoods.ts.
+Philadelphia: philly.json is built by scripts/build_philly_districts.py which merges
+  the 158 raw click_that_hood neighborhoods into 12 major districts via convex hull.
+  Run that script to regenerate (e.g. if the district groupings change).
+
+Chattanooga: chattanooga.json is hand-authored (no public polygon source exists).
+  If a public source becomes available via chattadata.org or Hamilton County GIS,
+  migrate to a proper convert() call here.
 """
 
 
