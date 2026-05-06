@@ -2,7 +2,8 @@
 """Build frontend/public/neighborhoods/philly.json from raw click_that_hood GeoJSON.
 
 Downloads the Philadelphia GeoJSON (158 neighborhoods) and merges them into
-12 major districts via convex hull, producing organic polygon shapes.
+12 major districts via true polygon union, producing clean non-overlapping
+district boundaries.
 
 Usage:
   python3 scripts/build_philly_districts.py
@@ -109,7 +110,7 @@ def _rings_to_output(rings: list) -> list:
 
 
 def build(geojson_path: str | None = None) -> None:
-    from shapely.geometry import shape
+    from shapely.geometry import Polygon, shape
     from shapely.ops import unary_union
 
     if geojson_path:
@@ -129,7 +130,7 @@ def build(geojson_path: str | None = None) -> None:
             if n not in all_source:
                 print(f"  WARNING: '{n}' not found in source (district: {d})")
 
-    districts = []
+    merged_by_district = []
     for dname, members in DISTRICT_MAP.items():
         # Collect shapely geometries for all member neighborhoods.
         shapes = []
@@ -144,25 +145,51 @@ def build(geojson_path: str | None = None) -> None:
             print(f"  SKIP: no polygon data for '{dname}'")
             continue
 
-        # True polygon union — no overlap, clean shared borders.
+        # True polygon union — each major district is built from exact source
+        # neighborhood geometry rather than bounding boxes or convex hulls.
         merged = unary_union(shapes)
-        # Simplify slightly (0.0002° ≈ 20m) to reduce vertex count.
-        merged = merged.simplify(0.0002, preserve_topology=True)
+        # Do not simplify here. Even topology-preserving simplification can
+        # nudge shared borders enough to create visible slivers or overlaps
+        # between adjacent districts.
+        merged_by_district.append((dname, len(shapes), merged))
 
+    def polygon_pieces(geom):
+        if geom.is_empty:
+            return []
+        if geom.geom_type == "Polygon":
+            return [geom]
+        if geom.geom_type == "MultiPolygon":
+            return list(geom.geoms)
+        if geom.geom_type == "GeometryCollection":
+            pieces = []
+            for g in geom.geoms:
+                pieces.extend(polygon_pieces(g))
+            return pieces
+        return []
+
+    districts = []
+    for dname, shape_count, merged in merged_by_district:
         # Extract outer rings from the result (Polygon or MultiPolygon).
-        geom_type = merged.geom_type
-        if geom_type == "Polygon":
-            pieces = [merged]
-        elif geom_type == "MultiPolygon":
-            pieces = list(merged.geoms)
-        else:
-            print(f"  SKIP: unexpected geometry type {geom_type} for '{dname}'")
+        pieces = polygon_pieces(merged)
+        if not pieces:
+            print(f"  SKIP: no remaining polygon pieces for '{dname}'")
             continue
 
         rings_out = []
+        multi_polygon_out = []
         for piece in pieces:
-            coords = list(piece.exterior.coords)
-            rings_out.append([[round(c[0], 5), round(c[1], 5)] for c in coords])
+            if not isinstance(piece, Polygon) or piece.area <= 0:
+                continue
+            exterior = [[round(c[0], 5), round(c[1], 5)] for c in piece.exterior.coords]
+            holes = [
+                [[round(c[0], 5), round(c[1], 5)] for c in interior.coords]
+                for interior in piece.interiors
+            ]
+            rings_out.append(exterior)
+            multi_polygon_out.append([exterior, *holes])
+        if not rings_out:
+            print(f"  SKIP: no exterior rings for '{dname}'")
+            continue
 
         all_lats = [c[1] for ring in rings_out for c in ring]
         all_lngs = [c[0] for ring in rings_out for c in ring]
@@ -180,8 +207,9 @@ def build(geojson_path: str | None = None) -> None:
             "name": dname, "slug": slug,
             "center": center, "bounds": bounds,
             "polygon": rings_out,
+            "multiPolygon": multi_polygon_out,
         })
-        print(f"  {dname}: {len(shapes)} neighborhoods → {len(rings_out)} piece(s), {total_verts} verts")
+        print(f"  {dname}: {shape_count} neighborhoods → {len(rings_out)} piece(s), {total_verts} verts")
 
     with open(OUT_PATH, "w") as f:
         json.dump(districts, f, separators=(",", ":"))

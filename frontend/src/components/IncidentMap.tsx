@@ -1905,24 +1905,46 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       // axis-aligned rectangle that legacy entries still use. Either
       // way we end up with a Leaflet `Path` we can wire click /
       // hover to identically.
-      let shape: L.Path;
-      if (n.polygon && n.polygon.length > 0) {
-        // Leaflet expects [lat, lng]; our polygon storage matches
-        // GeoJSON ([lng, lat]) so we flip per vertex. We pass *all*
-        // outer rings so MultiPolygon neighborhoods (SF Marina,
-        // Brooklyn waterfront pieces, etc.) render every piece —
-        // Leaflet treats an array of rings as one path with multiple
-        // sub-shapes which is exactly what we want.
-        const ringsLatLng: L.LatLngTuple[][] = n.polygon.map((ring) =>
-          ring.map(([lng, lat]) => [lat, lng] as L.LatLngTuple)
+      let shape: L.Path | L.FeatureGroup;
+      if (n.multiPolygon && n.multiPolygon.length > 0) {
+        // Multi-polygon pieces preserve holes. Draw each polygon piece as a
+        // separate Leaflet polygon so disconnected areas do not get stitched
+        // together.
+        const pieces = n.multiPolygon.map((polygon) =>
+          L.polygon(
+            polygon.map((ring) =>
+              ring.map(([lng, lat]) => [lat, lng] as L.LatLngTuple)
+            ),
+            {
+              color: BORDER,
+              weight: 1.25,
+              opacity: 0.95,
+              fillColor,
+              fillOpacity,
+              fillRule: "evenodd",
+            }
+          )
         );
-        shape = L.polygon(ringsLatLng, {
-          color: BORDER,
-          weight: 1.25,
-          opacity: 0.95,
-          fillColor,
-          fillOpacity,
-        });
+        shape = L.featureGroup(pieces);
+      } else if (n.polygon && n.polygon.length > 0) {
+        // Leaflet expects [lat, lng]; our polygon storage follows GeoJSON
+        // ([lng, lat]), so flip per vertex. Each stored ring is an
+        // independent outer boundary, not a hole. Rendering each as its own
+        // polygon prevents Leaflet from stitching disconnected pieces into
+        // triangle fans.
+        const pieces = n.polygon.map((ring) =>
+          L.polygon(
+            ring.map(([lng, lat]) => [lat, lng] as L.LatLngTuple),
+            {
+              color: BORDER,
+              weight: 1.25,
+              opacity: 0.95,
+              fillColor,
+              fillOpacity,
+            }
+          )
+        );
+        shape = L.featureGroup(pieces);
       } else {
         shape = L.rectangle(
           [[n.bounds.south, n.bounds.west], [n.bounds.north, n.bounds.east]],
