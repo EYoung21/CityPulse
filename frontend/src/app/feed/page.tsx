@@ -25,7 +25,6 @@ import Link from "next/link";
 import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Map as MapIcon, Crosshair } from "lucide-react";
 import IncidentFeed from "@/components/IncidentFeed";
 import MobileBottomNav, { MOBILE_NAV_HEIGHT_PX } from "@/components/MobileBottomNav";
-import InstallPrompt from "@/components/InstallPrompt";
 import { fetchIncidentPage, type Incident } from "@/lib/api";
 import { fetchIncidentPageFromFirestore } from "@/lib/firestore";
 import { getCurrentCity } from "@/lib/pulse-cities";
@@ -358,7 +357,6 @@ export default function FeedPage() {
         />
       </main>
       <MobileBottomNav />
-      <InstallPrompt />
     </div>
   );
 }

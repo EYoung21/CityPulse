@@ -24,8 +24,8 @@ import { SAFEST_ROUTE_ONLY_UI } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
 import { heatmapWeight } from "@/lib/severity";
 import type { RouteData } from "@/components/RoutePanel";
-import { NEIGHBORHOODS, type Neighborhood, incidentsInNeighborhood } from "@/lib/neighborhoods";
-import { useCityNeighborhoods } from "@/hooks/useCityNeighborhoods";
+import { DISTRICTS, type District, incidentsInDistrict } from "@/lib/districts";
+import { useCityDistricts } from "@/hooks/useCityDistricts";
 import { getCurrentCity } from "@/lib/pulse-cities";
 import { spawnSnapPulse } from "@/lib/snap-pulse";
 
@@ -309,7 +309,7 @@ interface Props {
   /** Demo: vivid heat + pulse + radiating vehicle / user marker (e.g. route sim checkbox). */
   heatmapDemoBoost?: boolean;
   districtsEnabled?: boolean;
-  onDistrictClick?: (neighborhood: Neighborhood, incidents: Incident[]) => void;
+  onDistrictClick?: (district: District, incidents: Incident[]) => void;
   onClusterClick?: (incidentIds: string[]) => void;
   /** Long-press / right-click on the map. Currently wired to the
    *  LocationPeekCard; no sticky marker is rendered here. */
@@ -318,7 +318,7 @@ interface Props {
    *  across reloads (24h TTL). */
   parkedPin?: { lat: number; lng: number } | null;
   /** Debounced (~250ms) callback fired after pan/zoom with the current map
-   *  center + zoom. Used by the "Score this area" pill in `page.tsx`. */
+   *  center + zoom (e.g. Safety-POI refetch in `page.tsx`). */
   onMapMove?: (lat: number, lng: number, zoom: number) => void;
   /** Compass heading in degrees (0=N, clockwise). Renders a directional
    *  cone behind the user marker. Null/undefined → no cone. */
@@ -937,10 +937,10 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
    *  unaware of which renderer is active. */
   const tileLayerRef = useRef<L.Layer | null>(null);
   const usingVectorTilesRef = useRef<boolean>(false);
-  // Lazy-load the active city's neighborhood polygons. `version` bumps
-  // once the JSON file lands so the districts effect below re-runs and
-  // swaps rectangles → true polygons without a manual reload.
-  const { version: neighborhoodsVersion } = useCityNeighborhoods();
+  // Lazy-load the active city's stylized district polygons. `version`
+  // bumps once the JSON file lands so the overlay effect below re-runs
+  // without a manual reload.
+  const { version: districtsVersion } = useCityDistricts();
   const trailLayerRef = useRef<L.LayerGroup | null>(null);
   const districtsLayerRef = useRef<L.LayerGroup | null>(null);
   const parkedPinMarkerRef = useRef<L.Marker | null>(null);
@@ -1177,8 +1177,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     map.on("moveend", scheduleHashWrite);
     map.on("zoomend", scheduleHashWrite);
 
-    // Same debounce window for the "Score this area" pill in page.tsx — we
-    // dispatch the new center so the parent can compare against its anchor.
+    // Debounced viewport updates for the parent (e.g. bbox-driven refetch).
     let movePillTimer: ReturnType<typeof setTimeout> | null = null;
     const dispatchMove = () => {
       if (movePillTimer) clearTimeout(movePillTimer);
@@ -1852,11 +1851,10 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const onDistrictClickRef = useRef(onDistrictClick);
   onDistrictClickRef.current = onDistrictClick;
 
-  // Neighborhood district overlays — choropleth-style fills inspired by
-  // classic district maps: solid pastel fills (~40–50% opacity), crisp
-  // light borders, white labels. True non-overlap needs polygon rings
-  // (see `public/neighborhoods/*.json`); for bbox-only cities we paint
-  // larger regions first so smaller districts aren't buried underneath.
+  // Metro district overlays — game-map style fills with crisp light
+  // borders and sparse labels. The geometry comes from
+  // `public/districts/*.json` and is intentionally larger + cleaner
+  // than the neighborhood registry used elsewhere in the app.
   useEffect(() => {
     const map = mapRef.current;
     const layer = districtsLayerRef.current;
@@ -1875,30 +1873,49 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     const BASE_FILL_OPACITY = 0.44;
     const HOVER_FILL_DELTA = 0.1;
 
-    const approxArea = (n: (typeof NEIGHBORHOODS)[0]) => {
+    const ringArea = (ring: [number, number][]) => {
+      if (ring.length < 3) return 0;
+      let a = 0;
+      for (let k = 0; k < ring.length - 1; k++) {
+        const [lng1, lat1] = ring[k];
+        const [lng2, lat2] = ring[k + 1];
+        a += lng1 * lat2 - lng2 * lat1;
+      }
+      return Math.abs(a / 2);
+    };
+
+    const approxArea = (n: (typeof DISTRICTS)[0]) => {
+      if (n.multiPolygon && n.multiPolygon.length > 0) {
+        return n.multiPolygon.reduce(
+          (sum, polygon) => sum + ringArea(polygon[0] || []),
+          0
+        );
+      }
       if (n.polygon && n.polygon.length > 0) {
-        const ring = n.polygon[0];
-        if (ring.length < 3) return 0;
-        let a = 0;
-        for (let k = 0; k < ring.length - 1; k++) {
-          const [lng1, lat1] = ring[k];
-          const [lng2, lat2] = ring[k + 1];
-          a += lng1 * lat2 - lng2 * lat1;
-        }
-        return Math.abs(a / 2);
+        return n.polygon.reduce((sum, ring) => sum + ringArea(ring), 0);
       }
       const { north, south, east, west } = n.bounds;
       return Math.max(1e-8, (north - south) * (east - west));
     };
 
-    const ordered = NEIGHBORHOODS.map((n, idx) => ({ n, idx, area: approxArea(n) })).sort(
+    const ordered = DISTRICTS.map((n, idx) => ({ n, idx, area: approxArea(n) })).sort(
       (x, y) => y.area - x.area
     );
+    const labelCandidates: Array<{
+      area: number;
+      count: number;
+      district: District;
+    }> = [];
 
     for (const { n, idx } of ordered) {
       const fillColor = DISTRICT_FILLS[idx % DISTRICT_FILLS.length];
-      const nIncidents = incidentsInNeighborhood(incidents, n.slug);
+      const nIncidents = incidentsInDistrict(incidents, n.slug);
       const fillOpacity = BASE_FILL_OPACITY;
+      labelCandidates.push({
+        area: approxArea(n),
+        count: nIncidents.length,
+        district: n,
+      });
 
       // Prefer the true GeoJSON polygon when it's been wired in for
       // this neighborhood (lib/neighborhoods.ts); fall back to the
@@ -1979,16 +1996,37 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       });
 
       shape.addTo(layer);
+    }
+
+    const labelBoxes: Array<{ left: number; top: number; right: number; bottom: number }> = [];
+    const orderedLabels = [...labelCandidates].sort(
+      (a, b) => b.count - a.count || b.area - a.area
+    );
+    for (const { district } of orderedLabels) {
+      const labelPoint = map.latLngToLayerPoint([district.center.lat, district.center.lng]);
+      const labelWidth = Math.max(78, Math.min(220, district.name.length * 7.1));
+      const labelHeight = 22;
+      const box = {
+        left: labelPoint.x - labelWidth / 2,
+        top: labelPoint.y - labelHeight / 2,
+        right: labelPoint.x + labelWidth / 2,
+        bottom: labelPoint.y + labelHeight / 2,
+      };
+      const overlapsExisting = labelBoxes.some((b) =>
+        !(box.right < b.left || box.left > b.right || box.bottom < b.top || box.top > b.bottom)
+      );
+      if (overlapsExisting) continue;
+      labelBoxes.push(box);
 
       const label = L.divIcon({
         className: "",
         html: `<div style="
           white-space: nowrap;
-          font-size: 13px;
+          font-size: 12px;
           font-weight: 800;
           font-family: system-ui, -apple-system, Segoe UI, sans-serif;
           color: #f8fafc;
-          letter-spacing: 0.04em;
+          letter-spacing: 0.03em;
           text-transform: uppercase;
           pointer-events: none;
           text-align: center;
@@ -1997,14 +2035,14 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
             0 1px 2px rgba(0,0,0,0.9),
             0 0 1px rgba(0,0,0,1);
         ">
-          <span>${n.name}</span>
+          <span>${district.name}</span>
         </div>`,
         iconSize: [0, 0],
         iconAnchor: [0, 0],
       });
-      L.marker([n.center.lat, n.center.lng], { icon: label, interactive: false }).addTo(layer);
+      L.marker([district.center.lat, district.center.lng], { icon: label, interactive: false }).addTo(layer);
     }
-  }, [districtsEnabled, incidents, neighborhoodsVersion]);
+  }, [districtsEnabled, incidents, districtsVersion]);
 
   // Routes, avoidance zones, A/B pins — only re-draws when routes object changes
   useEffect(() => {
