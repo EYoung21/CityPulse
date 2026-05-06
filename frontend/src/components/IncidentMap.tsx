@@ -88,6 +88,65 @@ function gid(uid: number, name: string): string {
   return `ppig_${uid}_${name}`;
 }
 
+function fmtSvgCoord(n: number): string {
+  return Number.isFinite(n) ? n.toFixed(1) : "0";
+}
+
+function smoothRingToSvgPath(points: L.Point[]): string {
+  if (!points || points.length === 0) return "";
+  if (points.length < 3) {
+    const [first, ...rest] = points;
+    return `M${fmtSvgCoord(first.x)} ${fmtSvgCoord(first.y)}${rest
+      .map((p) => `L${fmtSvgCoord(p.x)} ${fmtSvgCoord(p.y)}`)
+      .join("")}Z`;
+  }
+  const midpoint = (a: L.Point, b: L.Point) =>
+    L.point((a.x + b.x) / 2, (a.y + b.y) / 2);
+  const start = midpoint(points[points.length - 1], points[0]);
+  let d = `M${fmtSvgCoord(start.x)} ${fmtSvgCoord(start.y)}`;
+  for (let i = 0; i < points.length; i++) {
+    const current = points[i];
+    const next = points[(i + 1) % points.length];
+    const end = midpoint(current, next);
+    d += `Q${fmtSvgCoord(current.x)} ${fmtSvgCoord(current.y)} ${fmtSvgCoord(
+      end.x
+    )} ${fmtSvgCoord(end.y)}`;
+  }
+  return `${d}Z`;
+}
+
+function smoothPartsToSvgPath(parts: L.Point[][]): string {
+  return parts.map((ring) => smoothRingToSvgPath(ring)).filter(Boolean).join(" ");
+}
+
+function makeSmoothPolygon(
+  latlngs: L.LatLngExpression[] | L.LatLngExpression[][],
+  options: L.PolylineOptions
+) {
+  const polygon = L.polygon(latlngs as any, options);
+  const smoothPolygon = polygon as L.Polygon & {
+    _parts?: L.Point[][];
+    _renderer?: { _setPath?: (layer: unknown, path: string) => void };
+    _updatePath?: () => void;
+  };
+  const originalUpdatePath = smoothPolygon._updatePath?.bind(smoothPolygon);
+  smoothPolygon._updatePath = function updateSmoothPath() {
+    const renderer = smoothPolygon._renderer;
+    const parts = smoothPolygon._parts;
+    if (!renderer || typeof renderer._setPath !== "function" || !parts || parts.length === 0) {
+      originalUpdatePath?.();
+      return;
+    }
+    const d = smoothPartsToSvgPath(parts);
+    if (!d) {
+      originalUpdatePath?.();
+      return;
+    }
+    renderer._setPath(smoothPolygon, d);
+  };
+  return polygon;
+}
+
 /**
  * Monochrome silhouette per sub-type.  All violence kinds share RED,
  * medical shares BLUE, etc.  Each sub-type has a unique shape.
@@ -1928,7 +1987,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         // separate Leaflet polygon so disconnected areas do not get stitched
         // together.
         const pieces = n.multiPolygon.map((polygon) =>
-          L.polygon(
+          makeSmoothPolygon(
             polygon.map((ring) =>
               ring.map(([lng, lat]) => [lat, lng] as L.LatLngTuple)
             ),
@@ -1953,7 +2012,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         // polygon prevents Leaflet from stitching disconnected pieces into
         // triangle fans.
         const pieces = n.polygon.map((ring) =>
-          L.polygon(
+          makeSmoothPolygon(
             ring.map(([lng, lat]) => [lat, lng] as L.LatLngTuple),
             {
               color: BORDER,
@@ -1969,8 +2028,13 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         );
         shape = L.featureGroup(pieces);
       } else {
-        shape = L.rectangle(
-          [[n.bounds.south, n.bounds.west], [n.bounds.north, n.bounds.east]],
+        shape = makeSmoothPolygon(
+          [
+            [n.bounds.south, n.bounds.west],
+            [n.bounds.south, n.bounds.east],
+            [n.bounds.north, n.bounds.east],
+            [n.bounds.north, n.bounds.west],
+          ],
           {
             color: BORDER,
             weight: 1.1,

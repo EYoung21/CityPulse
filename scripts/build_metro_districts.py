@@ -45,7 +45,7 @@ class Seed:
 CITY_CONFIGS = {
     "philly": {
         "grid_step": 0.0052,
-        "expand": 0.018,
+        "expand": 0.05,
         "smooth_multiplier": 6.2,
         "terrain_strength": 0.17,
         "phase": 0.35,
@@ -89,7 +89,7 @@ CITY_CONFIGS = {
     },
     "nyc": {
         "grid_step": 0.0046,
-        "expand": 0.016,
+        "expand": 0.04,
         "smooth_multiplier": 6.0,
         "terrain_strength": 0.15,
         "phase": 1.15,
@@ -139,7 +139,7 @@ CITY_CONFIGS = {
     },
     "sf": {
         "grid_step": 0.0048,
-        "expand": 0.014,
+        "expand": 0.05,
         "smooth_multiplier": 5.8,
         "terrain_strength": 0.16,
         "phase": 2.05,
@@ -195,7 +195,7 @@ CITY_CONFIGS = {
     },
     "chattanooga": {
         "grid_step": 0.0048,
-        "expand": 0.012,
+        "expand": 0.035,
         "smooth_multiplier": 5.8,
         "terrain_strength": 0.16,
         "phase": 2.75,
