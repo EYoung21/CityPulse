@@ -13,7 +13,6 @@ Source:
   https://raw.githubusercontent.com/codeforgermany/click_that_hood/main/public/data/philadelphia.geojson
 """
 import json
-import math
 import sys
 import urllib.request
 from pathlib import Path
@@ -91,65 +90,28 @@ DISTRICT_MAP: dict[str, list[str]] = {
 }
 
 
-def _all_points(feat_by_name: dict, names: list[str]) -> list[tuple[float, float]]:
-    pts: list[tuple[float, float]] = []
-    for name in names:
-        feat = feat_by_name.get(name)
-        if not feat:
-            continue
-        geom = feat["geometry"]
-        if geom["type"] == "Polygon":
-            for ring in geom["coordinates"]:
-                pts.extend(ring)
-        elif geom["type"] == "MultiPolygon":
-            for poly in geom["coordinates"]:
-                for ring in poly:
-                    pts.extend(ring)
-    return pts
+def _geom_to_rings(geom: dict) -> list:
+    """Extract outer rings from a GeoJSON Polygon or MultiPolygon geometry."""
+    rings = []
+    if geom["type"] == "Polygon":
+        if geom["coordinates"]:
+            rings.append(geom["coordinates"][0])
+    elif geom["type"] == "MultiPolygon":
+        for poly in geom["coordinates"]:
+            if poly:
+                rings.append(poly[0])
+    return rings
 
 
-def _cross(O, A, B):
-    return (A[0] - O[0]) * (B[1] - O[1]) - (A[1] - O[1]) * (B[0] - O[0])
-
-
-def _convex_hull(pts: list) -> list:
-    pts = sorted(set(map(tuple, pts)))
-    if len(pts) < 3:
-        return pts
-    lower: list = []
-    for p in pts:
-        while len(lower) >= 2 and _cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-    upper: list = []
-    for p in reversed(pts):
-        while len(upper) >= 2 and _cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-    return lower[:-1] + upper[:-1]
-
-
-def _rdp(pts: list, tol: float) -> list:
-    """Ramer-Douglas-Peucker simplification."""
-    if len(pts) < 3:
-        return pts
-    a, b = pts[0], pts[-1]
-    dx, dy = b[0] - a[0], b[1] - a[1]
-    denom = math.hypot(dx, dy) or 1e-12
-    dmax, idx = 0.0, 0
-    for i in range(1, len(pts) - 1):
-        p = pts[i]
-        d = abs(dy * p[0] - dx * p[1] + b[0] * a[1] - b[1] * a[0]) / denom
-        if d > dmax:
-            dmax, idx = d, i
-    if dmax > tol:
-        l = _rdp(pts[:idx + 1], tol)
-        r = _rdp(pts[idx:], tol)
-        return l[:-1] + r
-    return [pts[0], pts[-1]]
+def _rings_to_output(rings: list) -> list:
+    """Round coordinates to 5 decimal places."""
+    return [[[round(c[0], 5), round(c[1], 5)] for c in ring] for ring in rings]
 
 
 def build(geojson_path: str | None = None) -> None:
+    from shapely.geometry import shape
+    from shapely.ops import unary_union
+
     if geojson_path:
         with open(geojson_path) as f:
             raw = json.load(f)
@@ -169,34 +131,57 @@ def build(geojson_path: str | None = None) -> None:
 
     districts = []
     for dname, members in DISTRICT_MAP.items():
-        pts = _all_points(feat_by_name, members)
-        if not pts:
+        # Collect shapely geometries for all member neighborhoods.
+        shapes = []
+        for n in members:
+            feat = feat_by_name.get(n)
+            if feat:
+                try:
+                    shapes.append(shape(feat["geometry"]))
+                except Exception:
+                    pass
+        if not shapes:
             print(f"  SKIP: no polygon data for '{dname}'")
             continue
-        hull = _convex_hull(pts)
-        # RDP on the open hull (first != last), then close manually.
-        # Passing a closed ring (first == last) to RDP collapses it to 2 pts.
-        simplified = _rdp(hull, tol=0.0005)
-        poly = [[round(p[0], 5), round(p[1], 5)] for p in (simplified + [simplified[0]])]
-        lats = [p[1] for p in poly]
-        lngs = [p[0] for p in poly]
+
+        # True polygon union — no overlap, clean shared borders.
+        merged = unary_union(shapes)
+        # Simplify slightly (0.0002° ≈ 20m) to reduce vertex count.
+        merged = merged.simplify(0.0002, preserve_topology=True)
+
+        # Extract outer rings from the result (Polygon or MultiPolygon).
+        geom_type = merged.geom_type
+        if geom_type == "Polygon":
+            pieces = [merged]
+        elif geom_type == "MultiPolygon":
+            pieces = list(merged.geoms)
+        else:
+            print(f"  SKIP: unexpected geometry type {geom_type} for '{dname}'")
+            continue
+
+        rings_out = []
+        for piece in pieces:
+            coords = list(piece.exterior.coords)
+            rings_out.append([[round(c[0], 5), round(c[1], 5)] for c in coords])
+
+        all_lats = [c[1] for ring in rings_out for c in ring]
+        all_lngs = [c[0] for ring in rings_out for c in ring]
         bounds = {
-            "north": round(max(lats), 5), "south": round(min(lats), 5),
-            "east": round(max(lngs), 5),  "west": round(min(lngs), 5),
+            "north": round(max(all_lats), 5), "south": round(min(all_lats), 5),
+            "east":  round(max(all_lngs), 5), "west":  round(min(all_lngs), 5),
         }
-        center = {
-            "lat": round((bounds["north"] + bounds["south"]) / 2, 5),
-            "lng": round((bounds["east"]  + bounds["west"])  / 2, 5),
-        }
+        centroid = merged.centroid
+        center = {"lat": round(centroid.y, 5), "lng": round(centroid.x, 5)}
         slug = (dname.lower()
                 .replace(" & ", "-").replace(", ", "-")
                 .replace(" ", "-").replace(",", ""))
+        total_verts = sum(len(r) for r in rings_out)
         districts.append({
             "name": dname, "slug": slug,
             "center": center, "bounds": bounds,
-            "polygon": [poly],
+            "polygon": rings_out,
         })
-        print(f"  {dname}: {len(pts)} pts → {len(hull)} hull → {len(simplified)} verts")
+        print(f"  {dname}: {len(shapes)} neighborhoods → {len(rings_out)} piece(s), {total_verts} verts")
 
     with open(OUT_PATH, "w") as f:
         json.dump(districts, f, separators=(",", ":"))
