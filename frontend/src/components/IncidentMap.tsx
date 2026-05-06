@@ -1869,7 +1869,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       "#b87bc4", "#c49a6e", "#5cb89a", "#8b8fc4", "#c4a85c",
       "#c47a8a", "#4cb0a0", "#a88bc4", "#7bc47a", "#6ba8c4",
     ];
-    const BORDER = "rgba(255,255,255,0.55)";
+    const BORDER = "rgba(255,255,255,0.46)";
     const BASE_FILL_OPACITY = 0.44;
     const HOVER_FILL_DELTA = 0.1;
 
@@ -1934,11 +1934,14 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
             ),
             {
               color: BORDER,
-              weight: 1.25,
-              opacity: 0.95,
+              weight: 1.1,
+              opacity: 0.84,
               fillColor,
               fillOpacity,
               fillRule: "evenodd",
+              lineCap: "round",
+              lineJoin: "round",
+              smoothFactor: 1.15,
             }
           )
         );
@@ -1954,10 +1957,13 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
             ring.map(([lng, lat]) => [lat, lng] as L.LatLngTuple),
             {
               color: BORDER,
-              weight: 1.25,
-              opacity: 0.95,
+              weight: 1.1,
+              opacity: 0.84,
               fillColor,
               fillOpacity,
+              lineCap: "round",
+              lineJoin: "round",
+              smoothFactor: 1.15,
             }
           )
         );
@@ -1967,10 +1973,12 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
           [[n.bounds.south, n.bounds.west], [n.bounds.north, n.bounds.east]],
           {
             color: BORDER,
-            weight: 1.25,
-            opacity: 0.95,
+            weight: 1.1,
+            opacity: 0.84,
             fillColor,
             fillOpacity,
+            lineCap: "round",
+            lineJoin: "round",
           }
         );
       }
@@ -1983,15 +1991,15 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       shape.on("mouseover", () => {
         shape.setStyle({
           fillOpacity: Math.min(0.78, fillOpacity + HOVER_FILL_DELTA),
-          weight: 2,
+          weight: 1.7,
           opacity: 1,
         });
       });
       shape.on("mouseout", () => {
         shape.setStyle({
           fillOpacity,
-          weight: 1.25,
-          opacity: 0.95,
+          weight: 1.1,
+          opacity: 0.84,
         });
       });
 
