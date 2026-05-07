@@ -88,130 +88,6 @@ function gid(uid: number, name: string): string {
   return `ppig_${uid}_${name}`;
 }
 
-function fmtSvgCoord(n: number): string {
-  return Number.isFinite(n) ? n.toFixed(1) : "0";
-}
-
-const DISTRICT_BORDER_SIMPLIFY_PX = 10;
-const DISTRICT_BORDER_TENSION = 0.72;
-
-function pointSegmentDistance(p: L.Point, a: L.Point, b: L.Point): number {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  if (dx === 0 && dy === 0) return p.distanceTo(a);
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy)));
-  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
-}
-
-function simplifyOpenPoints(points: L.Point[], tolerance: number): L.Point[] {
-  if (points.length <= 2) return points;
-  let maxDistance = 0;
-  let index = 0;
-  const first = points[0];
-  const last = points[points.length - 1];
-  for (let i = 1; i < points.length - 1; i++) {
-    const distance = pointSegmentDistance(points[i], first, last);
-    if (distance > maxDistance) {
-      maxDistance = distance;
-      index = i;
-    }
-  }
-  if (maxDistance <= tolerance) return [first, last];
-  const left = simplifyOpenPoints(points.slice(0, index + 1), tolerance);
-  const right = simplifyOpenPoints(points.slice(index), tolerance);
-  return left.slice(0, -1).concat(right);
-}
-
-function simplifyClosedRing(points: L.Point[], tolerance: number): L.Point[] {
-  if (points.length <= 5) return points;
-  const ring =
-    points[0].distanceTo(points[points.length - 1]) < 0.5
-      ? points.slice(0, -1)
-      : points.slice();
-  if (ring.length <= 5) return ring;
-
-  const centroid = ring.reduce(
-    (acc, p) => L.point(acc.x + p.x / ring.length, acc.y + p.y / ring.length),
-    L.point(0, 0)
-  );
-  let startIndex = 0;
-  let farthest = -Infinity;
-  for (let i = 0; i < ring.length; i++) {
-    const distance = ring[i].distanceTo(centroid);
-    if (distance > farthest) {
-      farthest = distance;
-      startIndex = i;
-    }
-  }
-
-  const rotated = ring.slice(startIndex).concat(ring.slice(0, startIndex));
-  const simplified = simplifyOpenPoints(rotated.concat(rotated[0]), tolerance);
-  const closed = simplified[0].distanceTo(simplified[simplified.length - 1]) < 0.5
-    ? simplified.slice(0, -1)
-    : simplified;
-  return closed.length >= 4 ? closed : ring;
-}
-
-function smoothRingToSvgPath(points: L.Point[]): string {
-  if (!points || points.length === 0) return "";
-  const simplified = simplifyClosedRing(points, DISTRICT_BORDER_SIMPLIFY_PX);
-  if (simplified.length < 3) {
-    const [first, ...rest] = points;
-    return `M${fmtSvgCoord(first.x)} ${fmtSvgCoord(first.y)}${rest
-      .map((p) => `L${fmtSvgCoord(p.x)} ${fmtSvgCoord(p.y)}`)
-      .join("")}Z`;
-  }
-  let d = `M${fmtSvgCoord(simplified[0].x)} ${fmtSvgCoord(simplified[0].y)}`;
-  const n = simplified.length;
-  for (let i = 0; i < n; i++) {
-    const p0 = simplified[(i - 1 + n) % n];
-    const p1 = simplified[i];
-    const p2 = simplified[(i + 1) % n];
-    const p3 = simplified[(i + 2) % n];
-    const c1 = L.point(
-      p1.x + ((p2.x - p0.x) / 6) * DISTRICT_BORDER_TENSION,
-      p1.y + ((p2.y - p0.y) / 6) * DISTRICT_BORDER_TENSION
-    );
-    const c2 = L.point(
-      p2.x - ((p3.x - p1.x) / 6) * DISTRICT_BORDER_TENSION,
-      p2.y - ((p3.y - p1.y) / 6) * DISTRICT_BORDER_TENSION
-    );
-    d += `C${fmtSvgCoord(c1.x)} ${fmtSvgCoord(c1.y)} ${fmtSvgCoord(c2.x)} ${fmtSvgCoord(c2.y)} ${fmtSvgCoord(p2.x)} ${fmtSvgCoord(p2.y)}`;
-  }
-  return `${d}Z`;
-}
-
-function smoothPartsToSvgPath(parts: L.Point[][]): string {
-  return parts.map((ring) => smoothRingToSvgPath(ring)).filter(Boolean).join(" ");
-}
-
-function makeSmoothPolygon(
-  latlngs: L.LatLngExpression[] | L.LatLngExpression[][],
-  options: L.PolylineOptions
-) {
-  const polygon = L.polygon(latlngs as any, options);
-  const smoothPolygon = polygon as L.Polygon & {
-    _parts?: L.Point[][];
-    _renderer?: { _setPath?: (layer: unknown, path: string) => void };
-    _updatePath?: () => void;
-  };
-  const originalUpdatePath = smoothPolygon._updatePath?.bind(smoothPolygon);
-  smoothPolygon._updatePath = function updateSmoothPath() {
-    const renderer = smoothPolygon._renderer;
-    const parts = smoothPolygon._parts;
-    if (!renderer || typeof renderer._setPath !== "function" || !parts || parts.length === 0) {
-      originalUpdatePath?.();
-      return;
-    }
-    const d = smoothPartsToSvgPath(parts);
-    if (!d) {
-      originalUpdatePath?.();
-      return;
-    }
-    renderer._setPath(smoothPolygon, d);
-  };
-  return polygon;
-}
 
 /**
  * Monochrome silhouette per sub-type.  All violence kinds share RED,
@@ -2048,68 +1924,45 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       // way we end up with a Leaflet `Path` we can wire click /
       // hover to identically.
       let shape: L.Path | L.FeatureGroup;
+      const polyOptions: L.PolylineOptions = {
+        color: BORDER,
+        weight: 1.1,
+        opacity: 0.84,
+        fillColor,
+        fillOpacity,
+        lineCap: "round",
+        lineJoin: "round",
+        // smoothFactor: 0 → render exact geo vertices so shared borders
+        // between adjacent districts always align perfectly at any zoom.
+        smoothFactor: 0,
+      };
       if (n.multiPolygon && n.multiPolygon.length > 0) {
-        // Multi-polygon pieces preserve holes. Draw each polygon piece as a
-        // separate Leaflet polygon so disconnected areas do not get stitched
-        // together.
         const pieces = n.multiPolygon.map((polygon) =>
-          makeSmoothPolygon(
+          L.polygon(
             polygon.map((ring) =>
               ring.map(([lng, lat]) => [lat, lng] as L.LatLngTuple)
             ),
-            {
-              color: BORDER,
-              weight: 1.1,
-              opacity: 0.84,
-              fillColor,
-              fillOpacity,
-              fillRule: "evenodd",
-              lineCap: "round",
-              lineJoin: "round",
-              smoothFactor: 1.15,
-            }
+            { ...polyOptions, fillRule: "evenodd" }
           )
         );
         shape = L.featureGroup(pieces);
       } else if (n.polygon && n.polygon.length > 0) {
-        // Leaflet expects [lat, lng]; our polygon storage follows GeoJSON
-        // ([lng, lat]), so flip per vertex. Each stored ring is an
-        // independent outer boundary, not a hole. Rendering each as its own
-        // polygon prevents Leaflet from stitching disconnected pieces into
-        // triangle fans.
         const pieces = n.polygon.map((ring) =>
-          makeSmoothPolygon(
+          L.polygon(
             ring.map(([lng, lat]) => [lat, lng] as L.LatLngTuple),
-            {
-              color: BORDER,
-              weight: 1.1,
-              opacity: 0.84,
-              fillColor,
-              fillOpacity,
-              lineCap: "round",
-              lineJoin: "round",
-              smoothFactor: 1.15,
-            }
+            polyOptions
           )
         );
         shape = L.featureGroup(pieces);
       } else {
-        shape = makeSmoothPolygon(
+        shape = L.polygon(
           [
             [n.bounds.south, n.bounds.west],
             [n.bounds.south, n.bounds.east],
             [n.bounds.north, n.bounds.east],
             [n.bounds.north, n.bounds.west],
           ],
-          {
-            color: BORDER,
-            weight: 1.1,
-            opacity: 0.84,
-            fillColor,
-            fillOpacity,
-            lineCap: "round",
-            lineJoin: "round",
-          }
+          polyOptions
         );
       }
 
