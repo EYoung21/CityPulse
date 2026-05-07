@@ -57,7 +57,7 @@ export function loadCityDistricts(slug: string): Promise<District[]> {
   const existing = _loadPromises[slug];
   if (existing) return existing;
 
-  const p = fetch(`/districts/${slug}.json`, { cache: "force-cache" })
+  const p = fetch(`/districts/${slug}.json`, { cache: "no-cache" })
     .then((res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status} loading ${slug}.json`);
       return res.json();
