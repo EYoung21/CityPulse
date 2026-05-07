@@ -6,28 +6,25 @@ They are a game-map layer: fewer, larger regions that cover the metro
 scanner footprint and feel closer to a Mafia III district map than a
 county choropleth.
 
-The old generator assigned a hex grid directly to seeds, which made the
-final borders visibly stepped. This version instead:
+Each city is built as a Voronoi diagram over hand-tuned seed points
+clipped to a hand-tuned metro hull. The Voronoi construction guarantees
+that every shared border between two districts is a single straight
+segment (a perpendicular bisector) — adjacent districts always meet
+exactly, with no grid artifacts or staircase aliasing at any zoom level.
 
-1. softens a hand-tuned metro hull per city,
-2. lays down a fine square coverage inside that hull,
-3. grows districts outward from seed cells with a shared terrain field
-   so every district stays contiguous while borders bend organically,
-4. simplifies the resulting polygon coverage while preserving shared
-   edges and exact no-overlap coverage.
+The legacy `bias`, `grid_step`, `smooth_multiplier`, `terrain_strength`,
+and `phase` config fields are kept for source compatibility but ignored
+by the Voronoi generator; tune cell size by adjusting seed positions.
 """
 
 from __future__ import annotations
 
-import heapq
 import json
-import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from shapely import coverage_simplify, coverage_union_all, set_precision
-from shapely.geometry import LineString, MultiPolygon, Point, Polygon, box
-from shapely.ops import linemerge, polygonize, unary_union
+from shapely.geometry import MultiPoint, MultiPolygon, Point, Polygon, box
+from shapely.ops import unary_union, voronoi_diagram
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "frontend/public/districts"
@@ -282,271 +279,59 @@ def soften_clip(hulls: list[list[tuple[float, float]]], expand: float):
     return clip.buffer(0)
 
 
-def build_grid_cells(clip, step: float):
+def build_voronoi_districts(clip, seeds: list[Seed]) -> dict[str, Polygon | MultiPolygon]:
+    """Voronoi-partition the metro hull around the seed points.
+
+    Each Voronoi cell is the locus of points closer to one seed than to any
+    other; cell boundaries are perpendicular bisectors — clean straight
+    segments shared exactly between adjacent districts."""
+    multi = MultiPoint([(s.lng, s.lat) for s in seeds])
+
+    # voronoi_diagram clips each cell to the envelope rectangle. Pass an
+    # envelope much larger than the hull so the final intersection-with-hull
+    # step is what shapes the perimeter cells, not the envelope.
     minx, miny, maxx, maxy = clip.bounds
-    cols = int(math.ceil((maxx - minx) / step)) + 2
-    rows = int(math.ceil((maxy - miny) / step)) + 2
-    cells = {}
-    coords = {}
-    for row in range(rows):
-        y = miny + row * step
-        for col in range(cols):
-            x = minx + col * step
-            piece = box(x - step / 2, y - step / 2, x + step / 2, y + step / 2).intersection(clip)
-            if piece.is_empty:
+    pad = max(maxx - minx, maxy - miny)
+    envelope = box(minx - pad, miny - pad, maxx + pad, maxy + pad)
+    diagram = voronoi_diagram(multi, envelope=envelope)
+    cells = list(diagram.geoms)
+
+    out: dict[str, Polygon | MultiPolygon] = {}
+    used = [False] * len(cells)
+    for s in seeds:
+        seed_pt = Point(s.lng, s.lat)
+        for i, cell in enumerate(cells):
+            if used[i] or not cell.contains(seed_pt):
                 continue
-            key = (row, col)
-            cells[key] = piece
-            rp = piece.representative_point()
-            coords[key] = (rp.x, rp.y)
-    return cells, coords
+            clipped = cell.intersection(clip).buffer(0)
+            if not clipped.is_empty:
+                out[s.slug] = clipped
+                used[i] = True
+            break
 
-
-def choose_seed_cells(cells: dict, coords: dict, seeds: list[Seed]) -> dict[int, tuple[int, int]]:
-    available = set(cells.keys())
-    chosen = {}
-    for idx, seed in enumerate(seeds):
-        if not available:
-            raise RuntimeError("ran out of grid cells while placing seed cells")
-        best = min(
-            available,
-            key=lambda rc: (coords[rc][0] - seed.lng) ** 2 + (coords[rc][1] - seed.lat) ** 2,
-        )
-        chosen[idx] = best
-        available.remove(best)
-    return chosen
-
-
-def terrain_factor(
-    lng: float,
-    lat: float,
-    bounds: tuple[float, float, float, float],
-    phase: float,
-    strength: float,
-) -> float:
-    minx, miny, maxx, maxy = bounds
-    cx = (minx + maxx) / 2
-    cy = (miny + maxy) / 2
-    span_x = max(maxx - minx, 1e-9)
-    span_y = max(maxy - miny, 1e-9)
-    nx = (lng - cx) / span_x
-    ny = (lat - cy) / span_y
-    field = (
-        0.58 * math.sin(2.4 * nx + 1.8 * ny + phase)
-        + 0.32 * math.cos(4.7 * ny - 1.1 * nx - phase * 0.7)
-        + 0.18 * math.sin(6.4 * (nx - ny) + phase * 1.3)
-    )
-    return max(0.72, min(1.34, 1.0 + strength * field))
-
-
-def grow_districts_contiguous(
-    clip,
-    seeds: list[Seed],
-    step: float,
-    phase: float,
-    terrain_strength: float,
-) -> dict[str, Polygon | MultiPolygon]:
-    cells, coords = build_grid_cells(clip, step)
-    seed_cells = choose_seed_cells(cells, coords, seeds)
-
-    owner: dict[tuple[int, int], int] = {}
-    dist: dict[tuple[int, int], float] = {}
-    pq: list[tuple[float, int, tuple[int, int]]] = []
-
-    for seed_idx, cell_key in seed_cells.items():
-        owner[cell_key] = seed_idx
-        dist[cell_key] = 0.0
-        heapq.heappush(pq, (0.0, seed_idx, cell_key))
-
-    neighbors = [
-        (-1, 0), (1, 0), (0, -1), (0, 1),
-        (-1, -1), (-1, 1), (1, -1), (1, 1),
-    ]
-
-    while pq:
-        cost, seed_idx, key = heapq.heappop(pq)
-        if cost != dist.get(key) or owner.get(key) != seed_idx:
-            continue
-        x, y = coords[key]
-        for drow, dcol in neighbors:
-            nkey = (key[0] + drow, key[1] + dcol)
-            if nkey not in cells:
-                continue
-            nx, ny = coords[nkey]
-            lng_scale = math.cos(math.radians((y + ny) / 2))
-            edge = math.hypot((nx - x) * lng_scale, ny - y)
-            if edge <= 0:
-                continue
-            terrain = terrain_factor((x + nx) / 2, (y + ny) / 2, clip.bounds, phase, terrain_strength)
-            new_cost = cost + edge * seeds[seed_idx].bias * terrain
-            prev = dist.get(nkey)
-            if prev is None or new_cost < prev - 1e-12:
-                dist[nkey] = new_cost
-                owner[nkey] = seed_idx
-                heapq.heappush(pq, (new_cost, seed_idx, nkey))
-
-    # Safety net: if a disconnected hull component somehow lacked a seed,
-    # claim its cells by straight-line proximity so the final coverage
-    # still fully blankets the metro hull.
-    for key, piece in cells.items():
-        if key in owner:
-            continue
-        rp = piece.representative_point()
-        owner[key] = min(
-            range(len(seeds)),
-            key=lambda i: math.hypot(rp.x - seeds[i].lng, rp.y - seeds[i].lat) * seeds[i].bias,
-        )
-
-    by_slug: dict[str, list[Polygon]] = {seed.slug: [] for seed in seeds}
-    for key, seed_idx in owner.items():
-        by_slug[seeds[seed_idx].slug].append(cells[key])
-
-    geoms = {
-        seed.slug: unary_union(by_slug[seed.slug]).intersection(clip).buffer(0)
-        for seed in seeds
-    }
-
-    # Patch any tiny numeric leftover slivers back into the nearest
-    # district so exported polygons exactly cover the softened hull.
-    covered = unary_union([geom for geom in geoms.values() if not geom.is_empty]).buffer(0)
+    # Safety net: any sliver of the hull not assigned to a cell (can happen
+    # when two seeds collide at the same Voronoi boundary) goes to the
+    # geometrically nearest seed so coverage is exact.
+    covered = unary_union([g for g in out.values() if not g.is_empty]).buffer(0)
     missing = clip.difference(covered)
     if not missing.is_empty:
         for piece in as_polygons(missing):
             rp = piece.representative_point()
-            target = min(
-                seeds,
-                key=lambda seed: math.hypot(rp.x - seed.lng, rp.y - seed.lat) * seed.bias,
-            )
-            geoms[target.slug] = unary_union([geoms[target.slug], piece]).buffer(0)
+            target = min(seeds, key=lambda s: rp.distance(Point(s.lng, s.lat)))
+            existing = out.get(target.slug)
+            out[target.slug] = unary_union([existing, piece]).buffer(0) if existing else piece
 
-    return geoms
-
-
-def chaikin_line(coords: list[tuple[float, float]], *, closed: bool, iterations: int = 4):
-    pts = [tuple(p) for p in (coords[:-1] if closed else coords)]
-    for _ in range(iterations):
-        if len(pts) <= 2:
-            break
-        out = [] if closed else [pts[0]]
-        n = len(pts)
-        limit = n if closed else n - 1
-        for i in range(limit):
-            p = pts[i]
-            q = pts[(i + 1) % n]
-            out.append((0.75 * p[0] + 0.25 * q[0], 0.75 * p[1] + 0.25 * q[1]))
-            out.append((0.25 * p[0] + 0.75 * q[0], 0.25 * p[1] + 0.75 * q[1]))
-        if not closed:
-            out.append(pts[-1])
-        pts = out
-    return pts + [pts[0]] if closed and pts else pts
-
-
-def gaussian_smooth_line(coords: list[tuple[float, float]], *, closed: bool, iterations: int):
-    """Iterative 3-tap [0.25, 0.5, 0.25] averaging on the polyline.
-       Topology-preserving when applied to a merged boundary set, since we
-       work directly on the shared lines that bound the partition."""
-    pts = [tuple(p) for p in (coords[:-1] if closed else coords)]
-    for _ in range(iterations):
-        n = len(pts)
-        if n < 3:
-            break
-        out = []
-        for i in range(n):
-            if not closed and (i == 0 or i == n - 1):
-                out.append(pts[i])
-                continue
-            p_prev = pts[(i - 1) % n]
-            p = pts[i]
-            p_next = pts[(i + 1) % n]
-            out.append(
-                (
-                    0.25 * p_prev[0] + 0.5 * p[0] + 0.25 * p_next[0],
-                    0.25 * p_prev[1] + 0.5 * p[1] + 0.25 * p_next[1],
-                )
-            )
-        pts = out
-    return pts + [pts[0]] if closed and pts else pts
-
-
-def smooth_coverage_boundaries(geoms: dict[str, Polygon | MultiPolygon]):
-    # Two-stage topology-preserving smoothing on the merged boundary set:
-    # Chaikin softens corners (4 iterations → 16× vertex density) and
-    # Gaussian averaging (12 passes) erases the residual staircase aliasing
-    # left over from the grid expansion. Operating on the merged lines
-    # rather than per-polygon means adjacent districts always share the
-    # same smoothed border vertices, so they can never overlap or gap.
-    merged_lines = linemerge(unary_union([geom.boundary for geom in geoms.values() if not geom.is_empty]))
-    smoothed_lines = []
-    for seg in (list(merged_lines.geoms) if hasattr(merged_lines, "geoms") else [merged_lines]):
-        coords = list(seg.coords)
-        if len(coords) < 3:
-            smoothed_lines.append(seg)
-            continue
-        closed = coords[0] == coords[-1]
-        chaikin = chaikin_line(coords, closed=closed, iterations=4)
-        gaussian = gaussian_smooth_line(chaikin, closed=closed, iterations=12)
-        # Trim redundant near-collinear vertices the smoothing produced.
-        # Done here on the merged boundary line so adjacent districts'
-        # shared edges still get the same simplification — no slivers.
-        line = LineString(gaussian)
-        if line.length > 0:
-            line = line.simplify(2e-5, preserve_topology=False)
-        smoothed_lines.append(line)
-
-    polygon_pieces = list(polygonize(unary_union(smoothed_lines)))
-    by_slug: dict[str, list[Polygon]] = {slug: [] for slug in geoms}
-    for poly in polygon_pieces:
-        rp = poly.representative_point()
-        owner = None
-        for slug, geom in geoms.items():
-            if geom.buffer(1e-9).contains(rp):
-                owner = slug
-                break
-        if owner is None:
-            owner = min(geoms, key=lambda slug: geoms[slug].distance(rp))
-        by_slug[owner].append(poly)
-
-    return {
-        slug: unary_union(parts).buffer(0)
-        for slug, parts in by_slug.items()
-        if parts
-    }
+    return out
 
 
 def build_city(slug: str, cfg: dict) -> None:
     clip = soften_clip(cfg["hulls"], cfg["expand"])
     seeds: list[Seed] = cfg["seeds"]
-    geoms = grow_districts_contiguous(
-        clip=clip,
-        seeds=seeds,
-        step=cfg["grid_step"],
-        phase=cfg["phase"],
-        terrain_strength=cfg["terrain_strength"],
-    )
-
-    coverage = [geoms[seed.slug] for seed in seeds if not geoms[seed.slug].is_empty]
-    simplified = coverage_simplify(
-        coverage,
-        cfg["grid_step"] * cfg["smooth_multiplier"],
-        simplify_boundary=False,
-    )
-
-    simplified_by_slug = {}
-    active_seeds = [seed for seed in seeds if not geoms[seed.slug].is_empty]
-    for seed, geom in zip(active_seeds, simplified):
-        snapped = set_precision(coverage_union_all(as_polygons(geom)).buffer(0), 1e-6)
-        simplified_by_slug[seed.slug] = snapped.buffer(0)
-
-    simplified_by_slug = smooth_coverage_boundaries(simplified_by_slug)
-    simplified_by_slug = {
-        slug: set_precision(coverage_union_all(as_polygons(geom)).buffer(0), 1e-7).buffer(0)
-        for slug, geom in simplified_by_slug.items()
-        if not geom.is_empty
-    }
+    geoms = build_voronoi_districts(clip, seeds)
 
     districts = []
     for seed in seeds:
-        geom = simplified_by_slug.get(seed.slug)
+        geom = geoms.get(seed.slug)
         if geom is None or geom.is_empty:
             continue
         polygon, multi_polygon, bounds = polygon_to_output(geom)
