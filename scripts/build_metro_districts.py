@@ -441,7 +441,40 @@ def chaikin_line(coords: list[tuple[float, float]], *, closed: bool, iterations:
     return pts + [pts[0]] if closed and pts else pts
 
 
+def gaussian_smooth_line(coords: list[tuple[float, float]], *, closed: bool, iterations: int):
+    """Iterative 3-tap [0.25, 0.5, 0.25] averaging on the polyline.
+       Topology-preserving when applied to a merged boundary set, since we
+       work directly on the shared lines that bound the partition."""
+    pts = [tuple(p) for p in (coords[:-1] if closed else coords)]
+    for _ in range(iterations):
+        n = len(pts)
+        if n < 3:
+            break
+        out = []
+        for i in range(n):
+            if not closed and (i == 0 or i == n - 1):
+                out.append(pts[i])
+                continue
+            p_prev = pts[(i - 1) % n]
+            p = pts[i]
+            p_next = pts[(i + 1) % n]
+            out.append(
+                (
+                    0.25 * p_prev[0] + 0.5 * p[0] + 0.25 * p_next[0],
+                    0.25 * p_prev[1] + 0.5 * p[1] + 0.25 * p_next[1],
+                )
+            )
+        pts = out
+    return pts + [pts[0]] if closed and pts else pts
+
+
 def smooth_coverage_boundaries(geoms: dict[str, Polygon | MultiPolygon]):
+    # Two-stage topology-preserving smoothing on the merged boundary set:
+    # Chaikin softens corners (4 iterations → 16× vertex density) and
+    # Gaussian averaging (12 passes) erases the residual staircase aliasing
+    # left over from the grid expansion. Operating on the merged lines
+    # rather than per-polygon means adjacent districts always share the
+    # same smoothed border vertices, so they can never overlap or gap.
     merged_lines = linemerge(unary_union([geom.boundary for geom in geoms.values() if not geom.is_empty]))
     smoothed_lines = []
     for seg in (list(merged_lines.geoms) if hasattr(merged_lines, "geoms") else [merged_lines]):
@@ -449,15 +482,16 @@ def smooth_coverage_boundaries(geoms: dict[str, Polygon | MultiPolygon]):
         if len(coords) < 3:
             smoothed_lines.append(seg)
             continue
-        smoothed_lines.append(
-            LineString(
-                chaikin_line(
-                    coords,
-                    closed=coords[0] == coords[-1],
-                    iterations=2,
-                )
-            )
-        )
+        closed = coords[0] == coords[-1]
+        chaikin = chaikin_line(coords, closed=closed, iterations=4)
+        gaussian = gaussian_smooth_line(chaikin, closed=closed, iterations=12)
+        # Trim redundant near-collinear vertices the smoothing produced.
+        # Done here on the merged boundary line so adjacent districts'
+        # shared edges still get the same simplification — no slivers.
+        line = LineString(gaussian)
+        if line.length > 0:
+            line = line.simplify(2e-5, preserve_topology=False)
+        smoothed_lines.append(line)
 
     polygon_pieces = list(polygonize(unary_union(smoothed_lines)))
     by_slug: dict[str, list[Polygon]] = {slug: [] for slug in geoms}
