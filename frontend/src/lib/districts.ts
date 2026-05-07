@@ -11,6 +11,8 @@ export interface District {
   bounds: { north: number; south: number; east: number; west: number };
   polygon?: LngLatRing[];
   multiPolygon?: LngLatPolygon[];
+  /** Slugs of districts that share a boundary (from build_metro_districts). */
+  neighbors?: string[];
 }
 
 const CITY_DISTRICTS: Record<string, District[]> = {

@@ -348,6 +348,26 @@ def build_city(slug: str, cfg: dict) -> None:
             }
         )
 
+    # Adjacent districts share a boundary (Shapely touches). Used by the map
+    # for greedy graph coloring so neighbors rarely share the same fill hue.
+    slugs = [d["slug"] for d in districts]
+    for d in districts:
+        g = geoms.get(d["slug"])
+        if g is None or g.is_empty:
+            d["neighbors"] = []
+            continue
+        nbr: list[str] = []
+        for s in slugs:
+            if s == d["slug"]:
+                continue
+            og = geoms.get(s)
+            if og is None or og.is_empty:
+                continue
+            if g.touches(og):
+                nbr.append(s)
+        nbr.sort()
+        d["neighbors"] = nbr
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = OUT_DIR / f"{slug}.json"
     with out_path.open("w") as f:
