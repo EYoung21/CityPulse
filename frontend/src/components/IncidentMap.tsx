@@ -92,25 +92,91 @@ function fmtSvgCoord(n: number): string {
   return Number.isFinite(n) ? n.toFixed(1) : "0";
 }
 
+const DISTRICT_BORDER_SIMPLIFY_PX = 10;
+const DISTRICT_BORDER_TENSION = 0.72;
+
+function pointSegmentDistance(p: L.Point, a: L.Point, b: L.Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  if (dx === 0 && dy === 0) return p.distanceTo(a);
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+function simplifyOpenPoints(points: L.Point[], tolerance: number): L.Point[] {
+  if (points.length <= 2) return points;
+  let maxDistance = 0;
+  let index = 0;
+  const first = points[0];
+  const last = points[points.length - 1];
+  for (let i = 1; i < points.length - 1; i++) {
+    const distance = pointSegmentDistance(points[i], first, last);
+    if (distance > maxDistance) {
+      maxDistance = distance;
+      index = i;
+    }
+  }
+  if (maxDistance <= tolerance) return [first, last];
+  const left = simplifyOpenPoints(points.slice(0, index + 1), tolerance);
+  const right = simplifyOpenPoints(points.slice(index), tolerance);
+  return left.slice(0, -1).concat(right);
+}
+
+function simplifyClosedRing(points: L.Point[], tolerance: number): L.Point[] {
+  if (points.length <= 5) return points;
+  const ring =
+    points[0].distanceTo(points[points.length - 1]) < 0.5
+      ? points.slice(0, -1)
+      : points.slice();
+  if (ring.length <= 5) return ring;
+
+  const centroid = ring.reduce(
+    (acc, p) => L.point(acc.x + p.x / ring.length, acc.y + p.y / ring.length),
+    L.point(0, 0)
+  );
+  let startIndex = 0;
+  let farthest = -Infinity;
+  for (let i = 0; i < ring.length; i++) {
+    const distance = ring[i].distanceTo(centroid);
+    if (distance > farthest) {
+      farthest = distance;
+      startIndex = i;
+    }
+  }
+
+  const rotated = ring.slice(startIndex).concat(ring.slice(0, startIndex));
+  const simplified = simplifyOpenPoints(rotated.concat(rotated[0]), tolerance);
+  const closed = simplified[0].distanceTo(simplified[simplified.length - 1]) < 0.5
+    ? simplified.slice(0, -1)
+    : simplified;
+  return closed.length >= 4 ? closed : ring;
+}
+
 function smoothRingToSvgPath(points: L.Point[]): string {
   if (!points || points.length === 0) return "";
-  if (points.length < 3) {
+  const simplified = simplifyClosedRing(points, DISTRICT_BORDER_SIMPLIFY_PX);
+  if (simplified.length < 3) {
     const [first, ...rest] = points;
     return `M${fmtSvgCoord(first.x)} ${fmtSvgCoord(first.y)}${rest
       .map((p) => `L${fmtSvgCoord(p.x)} ${fmtSvgCoord(p.y)}`)
       .join("")}Z`;
   }
-  const midpoint = (a: L.Point, b: L.Point) =>
-    L.point((a.x + b.x) / 2, (a.y + b.y) / 2);
-  const start = midpoint(points[points.length - 1], points[0]);
-  let d = `M${fmtSvgCoord(start.x)} ${fmtSvgCoord(start.y)}`;
-  for (let i = 0; i < points.length; i++) {
-    const current = points[i];
-    const next = points[(i + 1) % points.length];
-    const end = midpoint(current, next);
-    d += `Q${fmtSvgCoord(current.x)} ${fmtSvgCoord(current.y)} ${fmtSvgCoord(
-      end.x
-    )} ${fmtSvgCoord(end.y)}`;
+  let d = `M${fmtSvgCoord(simplified[0].x)} ${fmtSvgCoord(simplified[0].y)}`;
+  const n = simplified.length;
+  for (let i = 0; i < n; i++) {
+    const p0 = simplified[(i - 1 + n) % n];
+    const p1 = simplified[i];
+    const p2 = simplified[(i + 1) % n];
+    const p3 = simplified[(i + 2) % n];
+    const c1 = L.point(
+      p1.x + ((p2.x - p0.x) / 6) * DISTRICT_BORDER_TENSION,
+      p1.y + ((p2.y - p0.y) / 6) * DISTRICT_BORDER_TENSION
+    );
+    const c2 = L.point(
+      p2.x - ((p3.x - p1.x) / 6) * DISTRICT_BORDER_TENSION,
+      p2.y - ((p3.y - p1.y) / 6) * DISTRICT_BORDER_TENSION
+    );
+    d += `C${fmtSvgCoord(c1.x)} ${fmtSvgCoord(c1.y)} ${fmtSvgCoord(c2.x)} ${fmtSvgCoord(c2.y)} ${fmtSvgCoord(p2.x)} ${fmtSvgCoord(p2.y)}`;
   }
   return `${d}Z`;
 }
