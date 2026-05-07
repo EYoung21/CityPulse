@@ -17,11 +17,19 @@ set -euo pipefail
 
 LAMBDA_IP="${1:-${LAMBDA_IP:-150.230.182.19}}"
 LAMBDA_USER="${LAMBDA_USER:-ubuntu}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+if [[ ! -f "$SSH_KEY" && -f "$ROOT/.secrets/prod_lambda_tunnel_key" ]]; then
+    SSH_KEY="$ROOT/.secrets/prod_lambda_tunnel_key"
+fi
 REPO_DIR_REMOTE="${REPO_DIR_REMOTE:-/opt/citypulse-backfill}"
 ENV_FILE_REMOTE="${ENV_FILE_REMOTE:-/etc/citypulse-backfill.env}"
-
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+FIREBASE_LOCAL=""
+if [[ -f "$ROOT/.secrets/firebase-service-account.json" ]]; then
+    FIREBASE_LOCAL="$ROOT/.secrets/firebase-service-account.json"
+elif compgen -G "$ROOT"/phlpulse-firebase-adminsdk-*.json >/dev/null 2>&1; then
+    FIREBASE_LOCAL=$(compgen -G "$ROOT"/phlpulse-firebase-adminsdk-*.json | head -1)
+fi
 
 echo "==> Target: ${LAMBDA_USER}@${LAMBDA_IP}"
 
@@ -62,7 +70,17 @@ rsync -az --delete \
     -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new" \
     "$ROOT/" "${LAMBDA_USER}@${LAMBDA_IP}:${REPO_DIR_REMOTE}/"
 
-echo "==> 2. Run installer (apt deps, venv, systemd unit)"
+if [[ -n "$FIREBASE_LOCAL" ]]; then
+    echo "==> 1b. Push Firebase service account to $REPO_DIR_REMOTE/.secrets/"
+    ssh -i "$SSH_KEY" "${LAMBDA_USER}@${LAMBDA_IP}" "mkdir -p ${REPO_DIR_REMOTE}/.secrets && chmod 700 ${REPO_DIR_REMOTE}/.secrets"
+    scp -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new \
+        "$FIREBASE_LOCAL" "${LAMBDA_USER}@${LAMBDA_IP}:${REPO_DIR_REMOTE}/.secrets/firebase-service-account.json"
+    ssh -i "$SSH_KEY" "${LAMBDA_USER}@${LAMBDA_IP}" "chmod 600 ${REPO_DIR_REMOTE}/.secrets/firebase-service-account.json"
+else
+    echo "==> 1b. No local Firebase JSON found (.secrets/firebase-service-account.json or phlpulse-firebase-adminsdk-*.json); skip push"
+fi
+
+echo "==> 2. Run installer (apt deps, venv, systemd units)"
 ssh -i "$SSH_KEY" "${LAMBDA_USER}@${LAMBDA_IP}" "bash $REPO_DIR_REMOTE/scripts/install_lambda_backfill.sh"
 
 echo "==> 3. Patch creds into ${ENV_FILE_REMOTE}"
@@ -74,16 +92,20 @@ ssh -i "$SSH_KEY" "${LAMBDA_USER}@${LAMBDA_IP}" "
         sed -E 's|(PASSWORD=).*|\1<set>|; s|(USERNAME=).+|\1<set>|'
 "
 
-echo "==> 4. Start (or restart) citypulse-backfill.service"
+echo "==> 4. Start (or restart) ingest API + backfill"
 ssh -i "$SSH_KEY" "${LAMBDA_USER}@${LAMBDA_IP}" "
-    sudo systemctl enable citypulse-backfill
+    sudo systemctl enable citypulse-ingest-api citypulse-backfill
+    sudo systemctl restart citypulse-ingest-api
+    sleep 2
     sudo systemctl restart citypulse-backfill
-    sleep 3
-    sudo systemctl status citypulse-backfill --no-pager -l | head -25
+    sleep 2
+    sudo systemctl status citypulse-ingest-api --no-pager -l | head -18
+    echo ---
+    sudo systemctl status citypulse-backfill --no-pager -l | head -18
 "
 
 echo
 echo "==> Deployed. Tail logs:"
-echo "    ssh -i $SSH_KEY ${LAMBDA_USER}@${LAMBDA_IP} 'sudo journalctl -fu citypulse-backfill'"
+echo "    ssh -i $SSH_KEY ${LAMBDA_USER}@${LAMBDA_IP} 'tail -f /var/log/citypulse-ingest-api.log /var/log/citypulse-backfill.log'"
 echo "==> Heartbeat (poll from your laptop):"
 echo "    ssh -i $SSH_KEY ${LAMBDA_USER}@${LAMBDA_IP} 'cat /var/log/lambda_backfill.heartbeat'"

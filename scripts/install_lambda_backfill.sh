@@ -10,14 +10,18 @@
 #      writes heartbeat to /var/log/lambda_backfill.heartbeat for the
 #      laptop-side auto-terminator to monitor.
 #
-# Pre-req on Lambda: scripts/prod_setup_lambda_ollama.sh equivalent is
-# NOT needed here — the backfill on Lambda POSTs transcripts to prod's
-# /api/ingest, and prod is the one that calls Ollama through the
-# already-existing tunnel.
+# Lambda layout:
+#   * citypulse-ingest-api.service — FastAPI on 127.0.0.1 (see
+#     CITYPULSE_LOCAL_INGEST_PORT) with PHILLY_PULSE_LLM_AUTO=1, Firestore,
+#     and LLM_* pointing at local Ollama (:11434). Backfill POSTs here so
+#     Hetzner is not in the critical path (avoids OOM/502/timeouts).
+#   * citypulse-backfill.service — Whisper + POSTs to the local ingest URL.
 #
 # To uninstall:
-#   systemctl disable --now citypulse-backfill
-#   rm /etc/systemd/system/citypulse-backfill.service /etc/citypulse-backfill.env
+#   systemctl disable --now citypulse-backfill citypulse-ingest-api
+#   rm /etc/systemd/system/citypulse-backfill.service \
+#      /etc/systemd/system/citypulse-ingest-api.service \
+#      /etc/citypulse-backfill.env
 #   rm -rf /opt/citypulse-backfill
 #   systemctl daemon-reload
 
@@ -27,6 +31,7 @@ REPO_DIR="${REPO_DIR:-/opt/citypulse-backfill}"
 ENV_FILE="${ENV_FILE:-/etc/citypulse-backfill.env}"
 HEARTBEAT="${HEARTBEAT:-/var/log/lambda_backfill.heartbeat}"
 SERVICE_FILE="/etc/systemd/system/citypulse-backfill.service"
+INGEST_API_SERVICE_FILE="/etc/systemd/system/citypulse-ingest-api.service"
 PYTHON="${PYTHON:-/usr/bin/python3}"
 
 echo "==> 1. apt deps (ffmpeg, python3-venv, build deps for faster-whisper)"
@@ -37,6 +42,8 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
 echo "==> 2. Python venv at $REPO_DIR/.venv"
 sudo mkdir -p "$REPO_DIR"
 sudo chown -R "$(id -un):$(id -gn)" "$REPO_DIR"
+mkdir -p "$REPO_DIR/.secrets"
+chmod 700 "$REPO_DIR/.secrets"
 if [[ ! -d "$REPO_DIR/.venv" ]]; then
     "$PYTHON" -m venv "$REPO_DIR/.venv"
 fi
@@ -56,6 +63,15 @@ pip install -q \
     requests pyyaml numpy scipy \
     webrtcvad \
     "nvidia-cudnn-cu12==9.*"
+# FastAPI stack for the loopback ingest service (same as Hetzner prod).
+if [[ -f "$REPO_DIR/requirements-philly-pulse.txt" ]]; then
+    pip install -q -r "$REPO_DIR/requirements-philly-pulse.txt"
+else
+    echo "    WARNING: $REPO_DIR/requirements-philly-pulse.txt missing; local ingest API may fail to import."
+fi
+
+VENV_PY_MINOR=$("$REPO_DIR/.venv/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+VENV_CUDNN_LIB="$REPO_DIR/.venv/lib/python${VENV_PY_MINOR}/site-packages/nvidia/cudnn/lib"
 
 # faster-whisper looks for libcudnn at runtime; symlink it onto the
 # loader path so we don't have to set LD_LIBRARY_PATH everywhere.
@@ -71,20 +87,24 @@ sudo chown "$(id -un)" "$HEARTBEAT"
 echo "==> 4. Env file at $ENV_FILE"
 if [[ ! -f "$ENV_FILE" ]]; then
     sudo tee "$ENV_FILE" >/dev/null <<EOF
-# /etc/citypulse-backfill.env -- consumed by citypulse-backfill.service
-# Edit BROADCASTIFY_USERNAME/PASSWORD before starting the service.
+# /etc/citypulse-backfill.env — shared by citypulse-ingest-api + citypulse-backfill
+# Edit BROADCASTIFY_USERNAME/PASSWORD before starting.
 BROADCASTIFY_USERNAME=
 BROADCASTIFY_PASSWORD=
-PP_BRIDGE_URL=https://api.phlpulse.com/api/ingest
+# Loopback ingest (Whisper posts here; avoids Hetzner OOM/502 on backfill).
+CITYPULSE_LOCAL_INGEST_PORT=18080
+PP_BRIDGE_URL=http://127.0.0.1:18080/api/ingest
+PHILLY_PULSE_LLM_AUTO=1
+PHILLY_PULSE_STORE=firestore
+GOOGLE_APPLICATION_CREDENTIALS=$REPO_DIR/.secrets/firebase-service-account.json
+LLM_BASE_URL=http://127.0.0.1:11434/v1
+LLM_API_KEY=ollama
+LLM_MODEL=qwen2.5:7b-instruct-q5_K_M
+LLM_PROVIDER_NAME=ollama-local
 WHISPER_MODEL_SIZE=large-v3-turbo
 BACKFILL_DAY_LIMIT=150
 BACKFILL_HEARTBEAT=$HEARTBEAT
-# Active cities. Anything not in this allowlist is skipped by the
-# runner even if cities/<slug>/config.yaml exists. Edit + restart
-# (sudo systemctl restart citypulse-backfill) to add/remove.
 BACKFILL_CITY_GLOB="philly chattanooga nyc sf"
-# Premium account: aggressive defaults are fine. Drop these back if you
-# ever switch back to free tier.
 BACKFILL_DELAY_BASE=8
 BACKFILL_DELAY_JITTER=3
 BACKFILL_BACKOFF_BASE=60
@@ -95,50 +115,103 @@ EOF
     sudo chmod 640 "$ENV_FILE"
     echo "    !! $ENV_FILE has empty creds. Fill in BROADCASTIFY_USERNAME/PASSWORD before starting."
 else
-    echo "    Keeping existing $ENV_FILE (edit by hand if creds need updating)."
+    echo "    Keeping existing $ENV_FILE (merge step below adds any missing keys)."
 fi
 
-echo "==> 5. systemd unit at $SERVICE_FILE"
-sudo tee "$SERVICE_FILE" >/dev/null <<EOF
+echo "==> 4b. Ensure loopback ingest + Firestore + LLM keys exist"
+sudo touch "$ENV_FILE"
+# Migrate off prod HTTPS bridge (Hetzner OOM + timeouts under backfill).
+if sudo grep -qE '^PP_BRIDGE_URL=https://(api\.)?phlpulse\.com' "$ENV_FILE" 2>/dev/null; then
+    echo "    Migrating PP_BRIDGE_URL -> http://127.0.0.1:18080/api/ingest"
+    sudo sed -i 's|^PP_BRIDGE_URL=.*|PP_BRIDGE_URL=http://127.0.0.1:18080/api/ingest|' "$ENV_FILE"
+fi
+
+append_if_missing() {
+    local key="$1"
+    local val="$2"
+    if sudo grep -qE "^${key}=" "$ENV_FILE" 2>/dev/null; then
+        return 0
+    fi
+    echo "${key}=${val}" | sudo tee -a "$ENV_FILE" >/dev/null
+}
+
+append_if_missing CITYPULSE_LOCAL_INGEST_PORT 18080
+append_if_missing PP_BRIDGE_URL http://127.0.0.1:18080/api/ingest
+append_if_missing PHILLY_PULSE_LLM_AUTO 1
+append_if_missing PHILLY_PULSE_STORE firestore
+append_if_missing GOOGLE_APPLICATION_CREDENTIALS "$REPO_DIR/.secrets/firebase-service-account.json"
+append_if_missing LLM_BASE_URL http://127.0.0.1:11434/v1
+append_if_missing LLM_API_KEY ollama
+append_if_missing LLM_MODEL qwen2.5:7b-instruct-q5_K_M
+append_if_missing LLM_PROVIDER_NAME ollama-local
+
+echo "==> 5. systemd: local ingest API ($INGEST_API_SERVICE_FILE)"
+sudo tee "$INGEST_API_SERVICE_FILE" >/dev/null <<EOF
 [Unit]
-Description=CityPulse backfill runner (Lambda)
+Description=CityPulse local ingest API (Lambda loopback)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=$(id -un)
 WorkingDirectory=$REPO_DIR
 EnvironmentFile=$ENV_FILE
-# faster-whisper picks up libcudnn from the venv via this LD path.
-Environment=LD_LIBRARY_PATH=/opt/nvidia-cudnn-lib:$REPO_DIR/.venv/lib/python3.10/site-packages/nvidia/cudnn/lib
-ExecStart=$REPO_DIR/.venv/bin/python $REPO_DIR/scripts/lambda_backfill_runner.py
+ExecStart=$REPO_DIR/scripts/run_lambda_ingest_api.sh
 Restart=on-failure
-RestartSec=30
-# Don't fight Ollama for VRAM; if Whisper OOMs, restart and try again.
-# Whisper large-v3-turbo (~3-5 GB) + qwen2.5:7b (~5.6 GB) should both
-# fit comfortably in 24 GB. If it doesn't, swap WHISPER_MODEL_SIZE to
-# "small" or "medium" in the env file.
-StandardOutput=append:/var/log/citypulse-backfill.log
-StandardError=append:/var/log/citypulse-backfill.log
-StartLimitIntervalSec=600
-StartLimitBurst=10
+RestartSec=5
+StandardOutput=append:/var/log/citypulse-ingest-api.log
+StandardError=append:/var/log/citypulse-ingest-api.log
 
 [Install]
 WantedBy=multi-user.target
 EOF
-sudo touch /var/log/citypulse-backfill.log
-sudo chown "$(id -un)" /var/log/citypulse-backfill.log
+
+echo "==> 6. systemd: backfill runner ($SERVICE_FILE)"
+sudo tee "$SERVICE_FILE" >/dev/null <<EOF
+[Unit]
+Description=CityPulse backfill runner (Lambda)
+After=network-online.target citypulse-ingest-api.service
+Wants=network-online.target citypulse-ingest-api.service
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=$(id -un)
+WorkingDirectory=$REPO_DIR
+EnvironmentFile=$ENV_FILE
+Environment=LD_LIBRARY_PATH=/opt/nvidia-cudnn-lib:$VENV_CUDNN_LIB
+ExecStart=$REPO_DIR/.venv/bin/python $REPO_DIR/scripts/lambda_backfill_runner.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:/var/log/citypulse-backfill.log
+StandardError=append:/var/log/citypulse-backfill.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo chmod +x "$REPO_DIR/scripts/run_lambda_ingest_api.sh"
+sudo touch /var/log/citypulse-backfill.log /var/log/citypulse-ingest-api.log
+sudo chown "$(id -un)" /var/log/citypulse-backfill.log /var/log/citypulse-ingest-api.log
 sudo systemctl daemon-reload
 
 echo
 echo "==> Install complete."
 echo
+if [[ ! -f "$REPO_DIR/.secrets/firebase-service-account.json" ]]; then
+    echo "    REQUIRED: copy Firebase service account JSON to:"
+    echo "      $REPO_DIR/.secrets/firebase-service-account.json"
+    echo "    (deploy_lambda_backfill.sh does this automatically when the file exists locally.)"
+fi
 if grep -q '^BROADCASTIFY_USERNAME=$' "$ENV_FILE" 2>/dev/null; then
     echo "    NEXT: fill in $ENV_FILE then run:"
-    echo "      sudo systemctl enable --now citypulse-backfill"
+    echo "      sudo systemctl enable --now citypulse-ingest-api citypulse-backfill"
 else
-    echo "    NEXT: sudo systemctl enable --now citypulse-backfill"
+    echo "    NEXT: sudo systemctl enable --now citypulse-ingest-api citypulse-backfill"
 fi
-echo "    Watch:    journalctl -fu citypulse-backfill   (or)   tail -f /var/log/citypulse-backfill.log"
+echo "    Logs: tail -f /var/log/citypulse-ingest-api.log /var/log/citypulse-backfill.log"
 echo "    Heartbeat: cat $HEARTBEAT"

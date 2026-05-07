@@ -13,7 +13,8 @@ Usage:
 Requires:
     - config.yaml with Broadcastify credentials
     - faster-whisper, requests, numpy, scipy
-    - The FastAPI server running (for /api/ingest)
+    - An ingest API reachable at PP_BRIDGE_URL (loopback FastAPI on Lambda
+      or remote). See scripts/install_lambda_backfill.sh.
 """
 
 from __future__ import annotations
@@ -112,6 +113,128 @@ os.makedirs(RAW_CLIPS_FOLDER, exist_ok=True)
 
 PROGRESS_DIR = "backfill_progress"
 os.makedirs(PROGRESS_DIR, exist_ok=True)
+
+FAILED_INGEST_PATH = os.environ.get(
+    "BACKFILL_FAILED_INGEST_QUEUE",
+    os.path.join(PROGRESS_DIR, "failed_ingest.jsonl"),
+)
+
+
+def _append_failed_ingest(payload: dict, err: str) -> None:
+    """Persist a payload for later replay (API/Firestore blips)."""
+    os.makedirs(os.path.dirname(FAILED_INGEST_PATH) or ".", exist_ok=True)
+    rec = {
+        "payload": payload,
+        "error": err[:800],
+        "failed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+    with open(FAILED_INGEST_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def post_transcript_payload(
+    payload: dict,
+    *,
+    deadletter_on_failure: bool = True,
+) -> bool:
+    """POST one transcript to BRIDGE_URL. Returns True if ingest returned 200.
+
+    Retries on 429/502/503/504 and transient RequestException. On total
+    failure, optionally appends to FAILED_INGEST_PATH for drain_failed_ingest_queue.
+    """
+    max_attempts = int(os.environ.get("BACKFILL_INGEST_MAX_ATTEMPTS", "8"))
+    base_backoff = float(os.environ.get("BACKFILL_INGEST_BACKOFF_BASE", "4.0"))
+    timeout = float(os.environ.get("BACKFILL_INGEST_TIMEOUT_SEC", "120"))
+    last_err = ""
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.post(BRIDGE_URL, json=payload, timeout=timeout)
+            sc = resp.status_code
+            if sc == 200:
+                return True
+            if sc in (429, 502, 503, 504):
+                last_err = f"HTTP {sc}: {resp.text[:200]}"
+                if attempt == max_attempts:
+                    print(
+                        f"    [INGEST {sc}] gave up after {attempt} attempts: {resp.text[:80]}",
+                        flush=True,
+                    )
+                    break
+                wait = min(60.0, base_backoff * (2 ** (attempt - 1))) + random.uniform(0, 1.5)
+                print(f"    [INGEST {sc}] backoff {wait:.1f}s ({attempt}/{max_attempts})", flush=True)
+                time.sleep(wait)
+                continue
+            last_err = f"HTTP {sc}: {resp.text[:200]}"
+            print(f"    [INGEST {sc}] {resp.text[:100]}", flush=True)
+            break
+        except requests.exceptions.RequestException as e:
+            last_err = repr(e)
+            if attempt == max_attempts:
+                print(f"    [INGEST ERROR] gave up after {attempt} attempts: {e}", flush=True)
+                break
+            wait = min(60.0, base_backoff * (2 ** (attempt - 1))) + random.uniform(0, 1.5)
+            print(
+                f"    [INGEST ERROR] {e!s} — backoff {wait:.1f}s ({attempt}/{max_attempts})",
+                flush=True,
+            )
+            time.sleep(wait)
+        except Exception as e:
+            last_err = repr(e)
+            print(f"    [INGEST ERROR] non-retryable: {e}", flush=True)
+            break
+
+    if deadletter_on_failure:
+        _append_failed_ingest(payload, last_err or "unknown failure")
+    return False
+
+
+def drain_failed_ingest_queue(max_items: int = 200) -> tuple[int, int]:
+    """Replay JSONL dead-letter file. Returns (success_count, remaining_lines)."""
+    if not os.path.isfile(FAILED_INGEST_PATH):
+        return (0, 0)
+    try:
+        with open(FAILED_INGEST_PATH, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError as e:
+        print(f"  [INGEST QUEUE] read error: {e}", flush=True)
+        return (0, 0)
+    if not lines:
+        return (0, 0)
+
+    remaining: list[str] = []
+    success = 0
+    attempts = 0
+    for line in lines:
+        raw = line.strip()
+        if not raw:
+            continue
+        if attempts >= max_items:
+            remaining.append(line if line.endswith("\n") else line + "\n")
+            continue
+        attempts += 1
+        try:
+            rec = json.loads(raw)
+            payload = rec.get("payload")
+            if not isinstance(payload, dict):
+                remaining.append(line if line.endswith("\n") else line + "\n")
+                continue
+        except json.JSONDecodeError:
+            remaining.append(line if line.endswith("\n") else line + "\n")
+            continue
+
+        if post_transcript_payload(payload, deadletter_on_failure=False):
+            success += 1
+        else:
+            remaining.append(line if line.endswith("\n") else line + "\n")
+
+    try:
+        with open(FAILED_INGEST_PATH, "w", encoding="utf-8") as f:
+            f.writelines(remaining)
+    except OSError as e:
+        print(f"  [INGEST QUEUE] write error: {e}", flush=True)
+    return (success, len(remaining))
+
 
 # ── Rate limiting / backoff ─────────────────────────────────────────
 # Broadcastify enforces an undocumented per-account daily download cap.
@@ -550,46 +673,13 @@ def transcribe_and_post(
                 "city": city,
             }
 
-            # Retry on transient backend pressure. The Hetzner box only has
-            # 2GB RAM and the philly-pulse-api uvicorn process can briefly
-            # OOM-kill itself when backfill traffic stacks up on top of
-            # live ingest, returning 502/504 from nginx for a few seconds
-            # while systemd restarts it. Without this retry every transcript
-            # caught in that window was dropped on the floor permanently
-            # (see /var/log/citypulse-backfill.log "[INGEST 502]" runs).
-            max_attempts = 6
-            base_backoff = 4.0
-            for attempt in range(1, max_attempts + 1):
-                try:
-                    resp = requests.post(BRIDGE_URL, json=payload, timeout=60)
-                    sc = resp.status_code
-                    if sc == 200:
-                        transcribed += 1
-                        break
-                    if sc in (429, 502, 503, 504):
-                        if attempt == max_attempts:
-                            print(f"    [INGEST {sc}] gave up after {attempt} attempts: {resp.text[:80]}")
-                            break
-                        wait = min(60.0, base_backoff * (2 ** (attempt - 1))) + random.uniform(0, 1.5)
-                        print(f"    [INGEST {sc}] backoff {wait:.1f}s ({attempt}/{max_attempts})")
-                        time.sleep(wait)
-                        continue
-                    print(f"    [INGEST {sc}] {resp.text[:100]}")
-                    break
-                except requests.exceptions.RequestException as e:
-                    if attempt == max_attempts:
-                        print(f"    [INGEST ERROR] gave up after {attempt} attempts: {e}")
-                        break
-                    wait = min(60.0, base_backoff * (2 ** (attempt - 1))) + random.uniform(0, 1.5)
-                    print(f"    [INGEST ERROR] {e!s} — backoff {wait:.1f}s ({attempt}/{max_attempts})")
-                    time.sleep(wait)
-                except Exception as e:
-                    print(f"    [INGEST ERROR] non-retryable: {e}")
-                    break
+            # post_transcript_payload: retries + optional dead-letter JSONL
+            # (BACKFILL_FAILED_INGEST_QUEUE) when the ingest API is down.
+            if post_transcript_payload(payload):
+                transcribed += 1
 
-            # Tiny inter-transcript delay so a single archive's 50-100
-            # transcripts don't slam the 2GB Hetzner box all at once.
-            time.sleep(0.6)
+            # Light pacing so we do not stack concurrent LLM work on Ollama.
+            time.sleep(float(os.environ.get("BACKFILL_INGEST_PACE_S", "0.6")))
 
         except Exception as e:
             print(f"    [CHUNK ERROR {ci}] {e}")
@@ -675,6 +765,14 @@ def main():
     print("Logging into Broadcastify...")
     session = get_broadcastify_session()
     print("Logged in.")
+
+    dq_ok, dq_left = drain_failed_ingest_queue()
+    if dq_ok or dq_left:
+        print(
+            f"  [INGEST QUEUE] replayed {dq_ok} queued payload(s); "
+            f"{dq_left} line(s) still in {FAILED_INGEST_PATH}",
+            flush=True,
+        )
 
     total_transcribed = 0
     total_archives = 0
@@ -793,6 +891,12 @@ def main():
 
         if not quota_exhausted:
             print(f"\n=== Feed {feed_label} complete ===")
+            dq_ok, dq_left = drain_failed_ingest_queue(400)
+            if dq_ok or dq_left:
+                print(
+                    f"  [INGEST QUEUE] replayed {dq_ok}; {dq_left} remaining",
+                    flush=True,
+                )
             cooldown = _jittered_delay(90, 0.3)
             print(f"  Cooling down {cooldown:.0f}s before next feed...")
             time.sleep(cooldown)
