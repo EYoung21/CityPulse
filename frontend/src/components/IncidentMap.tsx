@@ -25,6 +25,7 @@ import type { Incident } from "@/lib/api";
 import { heatmapWeight } from "@/lib/severity";
 import type { RouteData } from "@/components/RoutePanel";
 import { DISTRICTS, type District, incidentsInDistrict } from "@/lib/districts";
+import { districtFillsGreedy } from "@/lib/district-fill-colors";
 import { useCityDistricts } from "@/hooks/useCityDistricts";
 import { getCurrentCity } from "@/lib/pulse-cities";
 import { spawnSnapPulse } from "@/lib/snap-pulse";
@@ -1902,6 +1903,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     const ordered = DISTRICTS.map((n, idx) => ({ n, idx, area: approxArea(n) })).sort(
       (x, y) => y.area - x.area
     );
+    const fillByDistrictIndex = districtFillsGreedy(DISTRICTS, DISTRICT_FILLS);
     const labelCandidates: Array<{
       area: number;
       count: number;
@@ -1909,7 +1911,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }> = [];
 
     for (const { n, idx } of ordered) {
-      const fillColor = DISTRICT_FILLS[idx % DISTRICT_FILLS.length];
+      const fillColor = fillByDistrictIndex[idx];
       const nIncidents = incidentsInDistrict(incidents, n.slug);
       const fillOpacity = BASE_FILL_OPACITY;
       labelCandidates.push({
