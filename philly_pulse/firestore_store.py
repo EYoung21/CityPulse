@@ -372,14 +372,15 @@ def list_incidents(
     try:
         for doc in col.order_by("reported_at", direction=firestore.Query.DESCENDING).stream():
             row = _doc_to_row(doc.id, doc.to_dict() or {})
+            reported_at = row.get("reported_at") or ""
+            if since and reported_at < since:
+                break
             if not include_blocked and row.get("inhibitor_status") == "blocked":
                 continue
             # Soft-hidden incidents (e.g. backfill_geocode_repair couldn't
             # map them) are filtered out of public reads but preserved on
             # disk so stable IDs / shared URLs / vote history still resolve.
             if not include_hidden and row.get("hidden") is True:
-                continue
-            if since and (row.get("reported_at") or "") < since:
                 continue
             if category and row.get("severity_category") != category:
                 continue
