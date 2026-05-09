@@ -178,3 +178,107 @@
 .lp-login-citynav {
   margin-top: 18px;
 }
+
+.lp-admin-shell {
+  width: 100%;
+  max-width: 760px;
+  position: relative;
+  z-index: 2;
+}
+
+.lp-admin-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.lp-admin-option {
+  min-height: 156px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  padding: 18px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--option-border);
+  color: rgba(255, 255, 255, 0.9);
+  text-align: left;
+  transition: transform 0.15s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.lp-admin-option::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 18% 0%, var(--option-bg), transparent 62%);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.lp-admin-option:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: color-mix(in srgb, var(--option-color) 50%, rgba(255,255,255,0.18));
+}
+
+.lp-admin-optionIcon {
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  border-radius: 12px;
+  background: var(--option-bg);
+  color: var(--option-color);
+}
+
+.lp-admin-option h2,
+.lp-admin-option p,
+.lp-admin-chevron {
+  position: relative;
+}
+
+.lp-admin-option h2 {
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.lp-admin-option p {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.48);
+}
+
+.lp-admin-chevron {
+  align-self: flex-end;
+  margin-top: auto;
+  color: rgba(255, 255, 255, 0.34);
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.lp-admin-option:hover .lp-admin-chevron {
+  color: var(--option-color);
+  transform: translateX(2px);
+}
+
+@media (max-width: 720px) {
+  .lp-admin-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lp-admin-option {
+    min-height: 0;
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .lp-admin-chevron {
+    margin-top: 0;
+  }
+}
