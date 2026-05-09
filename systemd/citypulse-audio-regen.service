@@ -1,0 +1,19 @@
+[Unit]
+Description=CityPulse regenerate missing incident audio from Broadcastify archives
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/citypulse-backfill
+EnvironmentFile=/etc/citypulse-backfill.env
+Environment=PYTHONPATH=/opt/citypulse-backfill
+Environment=GOOGLE_APPLICATION_CREDENTIALS=/opt/citypulse-backfill/.secrets/firebase-service-account.json
+Environment=FIREBASE_STORAGE_BUCKET=phlpulse.firebasestorage.app
+ExecStart=/usr/bin/flock -n /tmp/citypulse-audio-regen.lock /opt/citypulse-backfill/.venv/bin/python /opt/citypulse-backfill/scripts/regenerate_missing_audio_from_archives.py --apply --older-than-minutes 180 --page-size 250 --max-attempts 80 --max-repairs 40 --sleep 5
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+StandardOutput=append:/var/log/citypulse-audio-regen.log
+StandardError=append:/var/log/citypulse-audio-regen.log
