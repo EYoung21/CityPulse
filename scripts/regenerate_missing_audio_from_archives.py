@@ -209,6 +209,7 @@ def main() -> int:
     parser.add_argument("--bucket", default=os.environ.get("FIREBASE_STORAGE_BUCKET", "phlpulse.firebasestorage.app"))
     parser.add_argument("--limit", type=int, default=1000, help="Max incidents to scan; 0 means all.")
     parser.add_argument("--max-repairs", type=int, default=25, help="Max clips to repair in this run; 0 means no cap.")
+    parser.add_argument("--max-attempts", type=int, default=100, help="Max missing-audio incidents to attempt in this run; 0 means no cap.")
     parser.add_argument("--page-size", type=int, default=500)
     parser.add_argument("--older-than-minutes", type=int, default=180, help="Skip very recent incidents whose archives may not exist yet.")
     parser.add_argument("--apply", action="store_true")
@@ -223,9 +224,13 @@ def main() -> int:
 
     counts: defaultdict[str, int] = defaultdict(int)
     repaired = 0
+    attempts = 0
     for snap, data in iter_missing_incidents(db, cities, args.limit, args.page_size, args.older_than_minutes):
         if args.max_repairs and repaired >= args.max_repairs:
             break
+        if args.max_attempts and attempts >= args.max_attempts:
+            break
+        attempts += 1
         if not args.apply:
             counts["would_attempt"] += 1
             print(

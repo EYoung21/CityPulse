@@ -1,0 +1,11 @@
+[Unit]
+Description=Run CityPulse missing-audio regeneration in small batches
+
+[Timer]
+OnBootSec=20min
+OnUnitInactiveSec=30min
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
