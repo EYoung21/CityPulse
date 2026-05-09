@@ -1,0 +1,39 @@
+name: Server Repair Audio URLs
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Max Firestore incidents to scan; 0 means all"
+        required: false
+        default: "0"
+      page_size:
+        description: "Firestore page size"
+        required: false
+        default: "250"
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repair missing incident audio URLs on Hetzner
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 60m
+          script: |
+            set -euo pipefail
+            cd /root/PhillyPulse
+            git pull origin main
+            mkdir -p .secrets
+            cp /root/firebase-sa.json .secrets/firebase-service-account.json
+            source venv/bin/activate
+            GOOGLE_APPLICATION_CREDENTIALS=/root/PhillyPulse/.secrets/firebase-service-account.json \
+            FIREBASE_STORAGE_BUCKET=phlpulse.firebasestorage.app \
+              python scripts/repair_missing_audio_urls.py \
+                --clip-dir audio_clips \
+                --apply \
+                --limit "${{ github.event.inputs.limit }}" \
+                --page-size "${{ github.event.inputs.page_size }}"
