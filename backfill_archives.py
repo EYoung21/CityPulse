@@ -20,6 +20,7 @@ Requires:
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime
 import json
 import os
@@ -130,6 +131,19 @@ def _append_failed_ingest(payload: dict, err: str) -> None:
     }
     with open(FAILED_INGEST_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def _read_clip_b64(clip_id: str | None, folder: str) -> str | None:
+    """Read a saved WAV clip and return base64 for /api/ingest audio_data."""
+    if not clip_id or not re.fullmatch(r"[a-f0-9]{12}", clip_id):
+        return None
+    path = os.path.join(folder, f"{clip_id}.wav")
+    try:
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode("ascii")
+    except OSError as e:
+        print(f"    [CLIP READ ERROR {clip_id}] {e}", flush=True)
+        return None
 
 
 def post_transcript_payload(
@@ -672,6 +686,18 @@ def transcribe_and_post(
                 "variants": variants_list,
                 "city": city,
             }
+
+            audio_payload: dict[str, str] = {}
+            raw_b64 = _read_clip_b64(raw_clip_id, RAW_CLIPS_FOLDER)
+            if raw_b64 and raw_clip_id:
+                audio_payload[f"{raw_clip_id}_raw"] = raw_b64
+            for variant in variants_list:
+                variant_clip_id = variant.get("audio_clip")
+                clip_b64 = _read_clip_b64(variant_clip_id, AUDIO_CLIPS_FOLDER)
+                if clip_b64 and variant_clip_id:
+                    audio_payload[variant_clip_id] = clip_b64
+            if audio_payload:
+                payload["audio_data"] = audio_payload
 
             # post_transcript_payload: retries + optional dead-letter JSONL
             # (BACKFILL_FAILED_INGEST_QUEUE) when the ingest API is down.

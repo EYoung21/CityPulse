@@ -113,6 +113,7 @@ def configure_llm(
 
 
 _LLM_LOCAL_MAX_CHARS = int(os.environ.get("LLM_LOCAL_CONTEXT_MAX_CHARS", "1700"))
+_LLM_TIMEOUT_SEC = float(os.environ.get("LLM_TIMEOUT_SEC", "30"))
 
 
 def _truncate_local_context(blob: str, max_chars: int = _LLM_LOCAL_MAX_CHARS) -> str:
@@ -299,7 +300,7 @@ async def extract_incident(
             messages,
             temperature=0.0,
             max_tokens=300,
-            timeout=30.0,
+            timeout=_LLM_TIMEOUT_SEC,
             response_format=response_format,
         )
     except llm_client.LLMHTTPError as e:
@@ -310,17 +311,21 @@ async def extract_incident(
                     messages,
                     temperature=0.0,
                     max_tokens=300,
-                    timeout=30.0,
+                    timeout=_LLM_TIMEOUT_SEC,
                     response_format=None,
                 )
             except llm_client.LLMHTTPError as e2:
                 raise LLMError(str(e2)) from e2
             except llm_client.LLMConfigError as e2:
                 raise LLMError(str(e2)) from e2
+            except Exception as e2:
+                raise LLMError(f"LLM request failed: {e2}") from e2
         else:
             raise LLMError(str(e)) from e
     except llm_client.LLMConfigError as e:
         raise LLMError(str(e)) from e
+    except Exception as e:
+        raise LLMError(f"LLM request failed: {e}") from e
 
     content = content.strip()
 
