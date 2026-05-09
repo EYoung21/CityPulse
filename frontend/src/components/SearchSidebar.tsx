@@ -1,7 +1,29 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Navigation, Flame, Radio, Shield, TrendingUp, TrendingDown, MapPin, Minus } from "lucide-react";
+import {
+  Navigation,
+  Flame,
+  Radio,
+  Shield,
+  TrendingUp,
+  TrendingDown,
+  MapPin,
+  Minus,
+  Menu,
+  X,
+  Bookmark,
+  History,
+  Bell,
+  Settings,
+  Share2,
+  Printer,
+  CircleHelp,
+  Layers,
+  Sparkles,
+  Database,
+  type LucideIcon,
+} from "lucide-react";
 import Sparkline from "@/components/charts/Sparkline";
 import {
   getMultiStopRoute,
@@ -42,6 +64,7 @@ const MAP_SIDEBAR_WIDTH_LS = "pp:map-sidebar-width";
 const MAP_SIDEBAR_DEFAULT = 380;
 const MAP_SIDEBAR_MIN = 280;
 const MAP_SIDEBAR_MAX = 560;
+const MAP_RAIL_WIDTH = 72;
 
 function readSavedSidebarWidth(): number {
   if (typeof window === "undefined") return MAP_SIDEBAR_DEFAULT;
@@ -68,6 +91,7 @@ function haversineM(aLat: number, aLng: number, bLat: number, bLng: number): num
 }
 
 type View = "search" | "directions" | "trip";
+type DesktopPanel = "menu" | "feed" | "saved" | "recents" | "directions" | null;
 
 interface StopLoc {
   display_name: string;
@@ -149,18 +173,23 @@ export default function SearchSidebar({
 }: Props) {
   const isMobile = useIsMobile();
   const [sidebarWidthPx, setSidebarWidthPx] = useState(readSavedSidebarWidth);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [activeDesktopPanel, setActiveDesktopPanel] = useState<DesktopPanel>(null);
+  const [view, setView] = useState<View>("search");
   const { user } = useAuth();
+  const desktopPanelVisible = !isMobile && (drawerOpen || activeDesktopPanel !== null || view === "directions" || view === "trip");
+  const desktopOccupiedWidth = desktopPanelVisible ? MAP_RAIL_WIDTH + sidebarWidthPx : MAP_RAIL_WIDTH;
 
   useEffect(() => {
     if (isMobile) {
       document.documentElement.style.removeProperty("--pp-map-sidebar-width");
       return;
     }
-    document.documentElement.style.setProperty("--pp-map-sidebar-width", `${sidebarWidthPx}px`);
+    document.documentElement.style.setProperty("--pp-map-sidebar-width", `${desktopOccupiedWidth}px`);
     return () => {
       document.documentElement.style.removeProperty("--pp-map-sidebar-width");
     };
-  }, [sidebarWidthPx, isMobile]);
+  }, [desktopOccupiedWidth, isMobile]);
 
   const onSidebarResizePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -209,7 +238,6 @@ export default function SearchSidebar({
   useEffect(() => {
     senderDisplayName.current = user?.displayName?.trim() || "";
   }, [user?.displayName]);
-  const [view, setView] = useState<View>("search");
   const [originQuery, setOriginQuery] = useState("");
   const [destQuery, setDestQuery] = useState("");
   const [originLoc, setOriginLoc] = useState<StopLoc | null>(null);
@@ -359,6 +387,8 @@ export default function SearchSidebar({
   const openDirections = useCallback(
     (destName?: string, destCoords?: { lat: number; lng: number }) => {
       setView("directions");
+      setDrawerOpen(true);
+      setActiveDesktopPanel("directions");
       if (destName && destCoords) {
         setDestQuery(destName);
         setDestLoc({ display_name: destName, ...destCoords });
@@ -397,6 +427,8 @@ export default function SearchSidebar({
       }
       if (transport) setActiveMode(transport);
       setView("directions");
+      setDrawerOpen(true);
+      setActiveDesktopPanel("directions");
     }
     window.addEventListener("pp:plan-route", handler);
     return () => window.removeEventListener("pp:plan-route", handler);
@@ -439,6 +471,8 @@ export default function SearchSidebar({
       // Make sure the directions view is open so the user actually
       // sees their stop appear and can rearrange/remove it.
       setView("directions");
+      setDrawerOpen(true);
+      setActiveDesktopPanel("directions");
     }
     window.addEventListener("pp:add-stop", handler);
     return () => window.removeEventListener("pp:add-stop", handler);
@@ -465,6 +499,8 @@ export default function SearchSidebar({
       setStops(detail.stops);
       setActiveMode(detail.mode);
       setView("directions");
+      setDrawerOpen(true);
+      setActiveDesktopPanel("directions");
       pendingResumeRef.current = true;
     }
     window.addEventListener("pp:resume-trip", handler);
@@ -552,6 +588,8 @@ export default function SearchSidebar({
     });
     setRerouteAlert(null);
     setView("trip");
+    setDrawerOpen(true);
+    setActiveDesktopPanel(null);
     const active = routeData.chosen ?? routeData.safe ?? routeData.normal;
     const geom = active?.geometry;
     activeRouteRef.current = geom ?? null;
@@ -682,6 +720,8 @@ export default function SearchSidebar({
     setDestQuery("");
     setStops([]);
     setView("search");
+    setActiveDesktopPanel(null);
+    setDrawerOpen(false);
     onRoutesChange(null);
     onTripActive?.(false);
     clearTripSnapshot();
@@ -905,6 +945,8 @@ export default function SearchSidebar({
             gpsStatus={gpsStatus}
             onBack={() => {
               setView("search");
+              setActiveDesktopPanel(null);
+              setDrawerOpen(false);
               setDestLoc(null);
               setDestQuery("");
               setStops([]);
@@ -987,32 +1029,384 @@ export default function SearchSidebar({
     );
   }
 
-  return (
-    <div className="absolute top-0 left-0 bottom-0 z-[1000] flex pointer-events-none">
-      <div
-        className="h-full flex flex-col pointer-events-auto backdrop-blur-xl shadow-2xl shrink-0 relative"
-        style={{
-          width: sidebarWidthPx,
-          background: "var(--panel-bg)",
-          borderRight: "1px solid var(--panel-border)",
-          boxShadow: "4px 0 24px var(--panel-shadow)",
-        }}
-      >
-        {innerContent}
+  const selectDesktopPanel = (panel: Exclude<DesktopPanel, null>) => {
+    setActiveDesktopPanel(panel);
+    setDrawerOpen(true);
+    if (panel === "directions" && view !== "trip") setView("directions");
+  };
+
+  const closeDesktopDrawer = () => {
+    if (view === "directions") {
+      setView("search");
+      setDestLoc(null);
+      setDestQuery("");
+      setStops([]);
+      handleRoutesChange(null);
+      onPreviewPins?.(originLoc, null);
+      onPreviewWaypoints?.(null);
+    }
+    setActiveDesktopPanel(null);
+    setDrawerOpen(false);
+  };
+
+  const railItems: { id: Exclude<DesktopPanel, null>; label: string; Icon: LucideIcon }[] = [
+    { id: "menu", label: "Ask Pulse", Icon: Sparkles },
+    { id: "saved", label: "Saved", Icon: Bookmark },
+    { id: "recents", label: "Recents", Icon: History },
+    { id: "feed", label: "Live feed", Icon: Radio },
+    { id: "directions", label: "Routes", Icon: Navigation },
+  ];
+
+  const drawerTitle =
+    view === "directions" ? "Directions" :
+    view === "trip" ? "Trip" :
+    activeDesktopPanel === "feed" ? "Live incidents" :
+    activeDesktopPanel === "saved" ? "Saved" :
+    activeDesktopPanel === "recents" ? "Recents" :
+    "CityPulse";
+
+  const menuRow = (Icon: LucideIcon, label: string, onClick: () => void, hint?: string) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full flex items-center gap-4 px-5 py-3 text-sm transition-colors text-left"
+      style={{ color: "var(--panel-text-secondary)" }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+    >
+      <Icon className="w-5 h-5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {hint && <span className="text-[11px] shrink-0" style={{ color: "var(--panel-text-muted)" }}>{hint}</span>}
+    </button>
+  );
+
+  const desktopStatsStrip = (
+    <div className="px-4 py-3 space-y-3" style={{ borderBottom: "1px solid var(--panel-border)" }}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+          <span className="text-[11px] text-green-500 font-medium">LIVE</span>
+          <span className="text-[11px]" style={{ color: "var(--panel-text-muted)" }}>·</span>
+          <span className="text-[11px] font-semibold" style={{ color: "var(--panel-text)" }}>{incidents.length}</span>
+          <span className="text-[11px]" style={{ color: "var(--panel-text-secondary)" }}>incidents</span>
+        </div>
         <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize sidebar"
-          title="Drag to resize"
-          className="absolute top-0 right-0 z-20 w-2 h-full cursor-col-resize touch-none pointer-events-auto flex justify-center -mr-px"
-          onPointerDown={onSidebarResizePointerDown}
+          className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${
+            trendPct > 0 ? "bg-red-500/10 text-red-400" : trendPct < 0 ? "bg-green-500/10 text-green-400" : ""
+          }`}
+          style={trendPct === 0 ? { background: "var(--panel-input-bg)", color: "var(--panel-text-muted)" } : undefined}
         >
-          <span
-            className="w-px h-[min(100%,12rem)] self-center rounded-full bg-white/25 opacity-80 hover:opacity-100 hover:bg-white/40 transition-[opacity,background-color]"
-            aria-hidden
-          />
+          {trendPct > 0 ? <TrendingUp className="w-3 h-3" /> : trendPct < 0 ? <TrendingDown className="w-3 h-3" /> : <Minus className="w-3 h-3" />}
+          {trendPct > 0 ? "+" : ""}{trendPct}%
         </div>
       </div>
+      {highCount > 0 && (
+        <div className="flex items-center gap-1.5">
+          <Flame className="w-3 h-3 text-amber-500" />
+          <span className="text-[10px] text-amber-500 font-medium">{highCount} critical</span>
+        </div>
+      )}
+      {hourlyData.length > 0 && hourlyData.some((v) => v > 0) && (
+        <div>
+          <p className="text-[9px] font-semibold uppercase tracking-wider mb-1" style={{ color: "var(--panel-text-muted)" }}>
+            Today&apos;s Activity
+          </p>
+          <Sparkline data={hourlyData} color="#3b82f6" width={340} height={28} filled />
+        </div>
+      )}
+    </div>
+  );
+
+  const desktopIncidentFeed = (
+    <>
+      {desktopStatsStrip}
+      <div className="flex-1 overflow-y-auto">
+        <div className="px-4 py-2">
+          <h3 className="text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1.5" style={{ color: "var(--panel-text-muted)" }}>
+            <Radio className="w-3 h-3" /> {timeFilterLabel ? `Incidents · ${timeFilterLabel}` : "Recent Incidents"}
+          </h3>
+        </div>
+        <IncidentFeed
+          incidents={incidents}
+          selectedId={selectedId ?? null}
+          onSelect={(id) => {
+            onSelectIncident?.(id);
+            const inc = incidents.find((i) => i.id === id);
+            if (inc?.lat && inc?.lng) onFlyTo(inc.lat, inc.lng);
+          }}
+        />
+      </div>
+    </>
+  );
+
+  const desktopDrawerContent = (() => {
+    if (view === "directions") {
+      return (
+        <DirectionsPanel
+          incidents={incidents}
+          originLoc={originLoc}
+          setOriginLoc={setOriginLoc}
+          originQuery={originQuery}
+          setOriginQuery={setOriginQuery}
+          destLoc={destLoc}
+          setDestLoc={setDestLoc}
+          destQuery={destQuery}
+          setDestQuery={setDestQuery}
+          stops={stops}
+          setStops={setStops}
+          activeMode={activeMode}
+          setActiveMode={setActiveMode}
+          userPos={userPos}
+          gpsStatus={gpsStatus}
+          onBack={closeDesktopDrawer}
+          onFlyTo={onFlyTo}
+          onRoutesChange={handleRoutesChange}
+          onPreviewPins={onPreviewPins}
+          onPreviewWaypoints={onPreviewWaypoints}
+          onStartTrip={startTrip}
+          avoidPrefs={avoidPrefs}
+          onAvoidPrefsChange={setAvoidPrefs}
+          timeFilterHours={timeFilterHours ?? 24}
+        />
+      );
+    }
+
+    if (view === "trip" && routeInfo) {
+      return (
+        <>
+          {rerouteAlert && (
+            <div
+              className="mx-3 mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium animate-pulse"
+              style={{
+                background: "rgba(245,158,11,0.12)",
+                border: "1px solid rgba(245,158,11,0.25)",
+                color: "#f59e0b",
+              }}
+            >
+              <Navigation className="w-3.5 h-3.5 shrink-0" />
+              {rerouteAlert}
+            </div>
+          )}
+          <TripHUD
+            routeInfo={routeInfo}
+            originQuery={originQuery}
+            destQuery={destQuery}
+            stops={stops}
+            activeMode={activeMode}
+            tripProgress={tripProgress}
+            onResetTrip={resetTrip}
+            recentIncidents={incidents.slice(0, 12)}
+            onSelectIncident={(id) => onSelectIncident?.(id)}
+            onFlyTo={onFlyTo}
+            onShareEta={async () => {
+              const dest = destLocRef.current;
+              const geom = activeRouteRef.current;
+              if (!dest || !geom || geom.length < 2 || !routeInfo) return false;
+              const remainingMin = Math.max(1, Math.ceil(routeInfo.durationMin * (1 - tripProgress)));
+              const url = buildTripShareUrl({
+                name: senderDisplayName.current || undefined,
+                destination: [dest.lat, dest.lng],
+                mode: activeMode,
+                etaEpochMs: Date.now() + remainingMin * 60_000,
+                sentAtEpochMs: Date.now(),
+                geometry: geom,
+              });
+              return nativeShare({
+                title: "Live ETA",
+                text: `On my way · ETA ${remainingMin} min`,
+                url,
+                dialogTitle: "Share live ETA",
+              });
+            }}
+          />
+        </>
+      );
+    }
+
+    if (activeDesktopPanel === "feed") return desktopIncidentFeed;
+    if (activeDesktopPanel === "saved") {
+      return (
+        <div className="overflow-y-auto pb-4">
+          <SavedPlaces onFlyTo={onFlyTo} onDirections={openDirections} userPos={userPos} />
+        </div>
+      );
+    }
+    if (activeDesktopPanel === "recents") {
+      return (
+        <div className="overflow-y-auto pb-4">
+          <TripHistory
+            onReplay={(entry) => {
+              if (!entry.origin || !entry.dest) return;
+              window.dispatchEvent(
+                new CustomEvent("pp:resume-trip", {
+                  detail: {
+                    origin: entry.origin,
+                    dest: entry.dest,
+                    stops: [],
+                    mode: entry.mode,
+                  },
+                })
+              );
+            }}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div className="overflow-y-auto pb-4">
+        <div className="px-5 py-4" style={{ borderBottom: "1px solid var(--panel-border)" }}>
+          <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--panel-text-muted)" }}>Navigation</p>
+        </div>
+        {menuRow(Sparkles, "Ask Pulse", () => {
+          setDrawerOpen(false);
+          setActiveDesktopPanel(null);
+          window.dispatchEvent(new CustomEvent("pp:focus-search"));
+        })}
+        {menuRow(Bookmark, "Saved places", () => selectDesktopPanel("saved"))}
+        {menuRow(History, "Recent trips", () => selectDesktopPanel("recents"))}
+        {menuRow(Radio, "Live incident feed", () => selectDesktopPanel("feed"), incidents.length > 0 ? String(incidents.length) : undefined)}
+        {menuRow(Navigation, "Get safe directions", () => openDirections())}
+        {menuRow(Bell, "Alerts inbox", () => {
+          const url = new URL(window.location.href);
+          url.searchParams.set("inbox", "list");
+          window.history.replaceState({}, "", url.toString());
+          window.dispatchEvent(new PopStateEvent("popstate"));
+        })}
+        <div className="h-px my-2" style={{ background: "var(--panel-border)" }} />
+        {menuRow(Layers, "Layers and basemap", () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "l", bubbles: true })))}
+        {menuRow(Settings, "Search settings", () => window.dispatchEvent(new CustomEvent("pp:focus-search")))}
+        {menuRow(Database, "Your data in CityPulse", () => selectDesktopPanel("saved"))}
+        <div className="h-px my-2" style={{ background: "var(--panel-border)" }} />
+        {menuRow(Share2, "Share map", () => {
+          void nativeShare({
+            title: "CityPulse",
+            text: "Live safety-aware map",
+            url: window.location.href,
+            dialogTitle: "Share CityPulse",
+          });
+        })}
+        {menuRow(Printer, "Print", () => window.print())}
+        {menuRow(CircleHelp, "Help and feedback", () => window.dispatchEvent(new CustomEvent("pp:open-feedback")))}
+      </div>
+    );
+  })();
+
+  return (
+    <div className="absolute top-0 left-0 bottom-0 z-[1000] pointer-events-none">
+      <div
+        className="absolute top-0 left-0 bottom-0 w-[72px] flex flex-col items-center pointer-events-auto shadow-xl"
+        style={{
+          background: "var(--panel-bg)",
+          borderRight: "1px solid var(--panel-border)",
+          boxShadow: "2px 0 14px var(--panel-shadow)",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => {
+            if (desktopPanelVisible && activeDesktopPanel === "menu") closeDesktopDrawer();
+            else selectDesktopPanel("menu");
+          }}
+          className="mt-5 mb-4 w-10 h-10 flex items-center justify-center rounded-full transition-colors"
+          style={{ color: "var(--panel-text-secondary)" }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
+          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+          aria-label={desktopPanelVisible && activeDesktopPanel === "menu" ? "Close menu" : "Open menu"}
+        >
+          {desktopPanelVisible && activeDesktopPanel === "menu" ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+        </button>
+
+        <div className="flex-1 w-full flex flex-col items-center gap-1">
+          {railItems.map(({ id, label, Icon }) => {
+            const active = activeDesktopPanel === id || (id === "directions" && (view === "directions" || view === "trip"));
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => selectDesktopPanel(id)}
+                className="w-full min-h-[58px] px-1 flex flex-col items-center justify-center gap-1 transition-colors text-[11px] font-medium"
+                style={{
+                  color: active ? "#3b82f6" : "var(--panel-text-secondary)",
+                  background: active ? "rgba(59,130,246,0.10)" : "transparent",
+                }}
+                title={label}
+                aria-label={label}
+              >
+                <Icon className="w-5 h-5" />
+                <span className="max-w-full truncate">{label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {view === "search" && (
+        <div
+          className="absolute top-0 z-10 pointer-events-auto"
+          style={{
+            left: `calc(var(--pp-map-sidebar-width, ${MAP_RAIL_WIDTH}px) + 0.25rem)`,
+            width: "min(440px, calc(100vw - var(--pp-map-sidebar-width, 72px) - 2rem))",
+          }}
+        >
+          <SearchInput
+            onFlyTo={onFlyTo}
+            onDirections={openDirections}
+            timeFilterHours={timeFilterHours}
+            onSelectIncident={onSelectIncident}
+          />
+        </div>
+      )}
+
+      {desktopPanelVisible && (
+        <div
+          className="absolute top-0 bottom-0 left-[72px] flex flex-col pointer-events-auto backdrop-blur-xl shadow-2xl"
+          style={{
+            width: sidebarWidthPx,
+            background: "var(--panel-bg)",
+            borderRight: "1px solid var(--panel-border)",
+            boxShadow: "4px 0 24px var(--panel-shadow)",
+          }}
+        >
+          {view !== "directions" && (
+            <div className="h-16 px-5 flex items-center justify-between shrink-0" style={{ borderBottom: "1px solid var(--panel-border)" }}>
+              <div className="min-w-0">
+                <p className="text-base font-semibold truncate" style={{ color: "var(--panel-text)" }}>{drawerTitle}</p>
+                {view === "search" && (
+                  <p className="text-[11px] truncate" style={{ color: "var(--panel-text-muted)" }}>
+                    {activeDesktopPanel === "feed" ? "Scanner incidents and map pins" : "Map tools and saved places"}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={closeDesktopDrawer}
+                className="w-9 h-9 flex items-center justify-center rounded-full transition-colors shrink-0"
+                style={{ color: "var(--panel-text-secondary)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                aria-label="Close drawer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          )}
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">{desktopDrawerContent}</div>
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+            title="Drag to resize"
+            className="absolute top-0 right-0 z-20 w-2 h-full cursor-col-resize touch-none pointer-events-auto flex justify-center -mr-px"
+            onPointerDown={onSidebarResizePointerDown}
+          >
+            <span
+              className="w-px h-[min(100%,12rem)] self-center rounded-full bg-white/25 opacity-80 hover:opacity-100 hover:bg-white/40 transition-[opacity,background-color]"
+              aria-hidden
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

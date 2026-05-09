@@ -1630,7 +1630,7 @@ function MapHome() {
       />
 
       {/* Top category pills */}
-      <div className="absolute top-3 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] right-3 z-[999] pointer-events-none">
+      <div className="absolute top-3 left-3 md:left-[calc(var(--pp-map-sidebar-width,72px)+28.5rem)] right-3 z-[999] pointer-events-none">
         <div className="flex flex-col gap-1.5 md:flex-row md:items-center md:gap-2 overflow-x-auto no-scrollbar pointer-events-auto">
           <div
             className="flex items-center rounded-full overflow-hidden shadow-lg shrink-0 backdrop-blur-md"
