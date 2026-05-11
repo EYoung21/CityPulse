@@ -21,6 +21,14 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "city", "order": "ASCENDING" },
+        { "fieldPath": "reported_at", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "incidents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "city", "order": "ASCENDING" },
         { "fieldPath": "geocode_status", "order": "ASCENDING" }
       ]
     },

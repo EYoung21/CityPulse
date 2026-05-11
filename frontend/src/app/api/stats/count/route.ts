@@ -86,9 +86,18 @@ export async function GET(req: NextRequest) {
     // also returned in the body so curl-from-the-frontend debugging
     // surfaces it without needing host log access.
     console.error("[/api/stats/count] failed:", { city, hoursParam, error: msg });
+    const building = /currently building|cannot be used yet/i.test(msg);
+    const status = building ? 503 : 500;
+    const headers: Record<string, string> = {};
+    if (building) {
+      headers["Retry-After"] = "45";
+    }
     return NextResponse.json(
-      { error: "count failed", detail: msg },
-      { status: 500 },
+      {
+        error: building ? "count temporarily unavailable (index building)" : "count failed",
+        detail: msg,
+      },
+      { status, headers },
     );
   }
 }
