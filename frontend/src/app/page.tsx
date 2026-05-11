@@ -109,7 +109,12 @@ import {
 import { useTheme } from "@/lib/theme";
 import AuthBar from "@/components/AuthBar";
 import { isFirebaseConfigured } from "@/lib/firebase";
-import { fetchIncidentsSnapshotOnce, subscribeIncidents } from "@/lib/firestore";
+import {
+  fetchExtendedHistoryPage,
+  fetchIncidentCount,
+  fetchIncidentsSnapshotOnce,
+  subscribeIncidents,
+} from "@/lib/firestore";
 import { enrichIncidents } from "@/lib/incident-weights";
 import { apiUrl, fetchPublicApi } from "@/lib/public-api-base";
 import { buildLocalSummary } from "@/lib/local-summary";
@@ -252,6 +257,17 @@ function MapHome() {
   }, [cityFromEnv, pathname, searchParams]);
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  /** Older incidents pulled on-demand when the user picks a 1w+ time
+   *  filter. Kept separate from the live `incidents` slice so the live
+   *  Firestore listener doesn't clobber them on every snapshot tick. */
+  const [extendedIncidents, setExtendedIncidents] = useState<Incident[]>([]);
+  /** Server-side count of all incidents in the current extended window
+   *  (uses Firestore's count() aggregation — 1 read regardless of N).
+   *  null when no extended fetch is active; -1 if the count query
+   *  itself fails. Drives the "X / Y loaded" progress badge. */
+  const [extendedTotal, setExtendedTotal] = useState<number | null>(null);
+  /** True while paged extended fetch is still streaming pages. */
+  const [extendedLoading, setExtendedLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [summary, setSummary] = useState<string>("");
   const [stats, setStats] = useState<StatsResponse | null>(null);
@@ -987,6 +1003,75 @@ function MapHome() {
     return () => clearInterval(id);
   }, []);
 
+  /** When the global time filter exceeds the live-listener's coverage
+   *  (1w+), kick off a Firestore aggregate count + paged historical
+   *  read so the count actually grows. We fetch in 2k-doc chunks so the
+   *  cost is paid progressively and the UI can paint as pages arrive;
+   *  changing the filter (or unmounting) cancels mid-stream. Short
+   *  windows clear the slice so we don't keep stale history merged in. */
+  useEffect(() => {
+    if (!useFirestoreData) {
+      setExtendedIncidents([]);
+      setExtendedTotal(null);
+      setExtendedLoading(false);
+      return;
+    }
+    const EXTENDED_THRESHOLD_HOURS = 168; // 1w
+    if (timeFilter < EXTENDED_THRESHOLD_HOURS) {
+      setExtendedIncidents([]);
+      setExtendedTotal(null);
+      setExtendedLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const sinceISO = new Date(
+      Date.now() - timeFilter * 3600_000,
+    ).toISOString();
+
+    setExtendedIncidents([]);
+    setExtendedTotal(null);
+    setExtendedLoading(true);
+
+    // Cheap accurate total via the CDN-cached count endpoint — typically
+    // 0 Firestore reads per visitor when the cache is warm.
+    fetchIncidentCount({ hours: timeFilter })
+      .then((total) => {
+        if (!cancelled) setExtendedTotal(total);
+      })
+      .catch((e) => {
+        console.warn("Incident count fetch failed", e);
+        if (!cancelled) setExtendedTotal(-1);
+      });
+
+    // Stream pages until exhausted or cancelled. We append to state
+    // each page so the user can start interacting with partial data.
+    (async () => {
+      let cursor: string | null = null;
+      try {
+        do {
+          const { rows, nextCursor } = await fetchExtendedHistoryPage({
+            sinceISO,
+            cursor,
+          });
+          if (cancelled) return;
+          if (rows.length > 0) {
+            setExtendedIncidents((prev) => prev.concat(rows));
+          }
+          cursor = nextCursor;
+        } while (cursor && !cancelled);
+      } catch (e) {
+        console.warn("Extended history paged fetch failed", e);
+      } finally {
+        if (!cancelled) setExtendedLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [timeFilter, useFirestoreData]);
+
   // Off-screen incident detection. The first time we receive an incident
   // batch we silently seed `seenIncidentIdsRef` so the user isn't bombed
   // with chips for already-loaded data; after that, any newly-arrived
@@ -1209,7 +1294,27 @@ function MapHome() {
     });
   }, []);
 
-  const filteredIncidents = incidents.filter((inc) => {
+  /** Live + extended history merged, deduped by id. Extended is empty
+   *  for short time-filter windows so this is identity-cheap on the hot
+   *  path. */
+  const allIncidents = useMemo(() => {
+    if (extendedIncidents.length === 0) return incidents;
+    const seen = new Set<string>();
+    const merged: Incident[] = [];
+    for (const inc of incidents) {
+      if (seen.has(inc.id)) continue;
+      seen.add(inc.id);
+      merged.push(inc);
+    }
+    for (const inc of extendedIncidents) {
+      if (seen.has(inc.id)) continue;
+      seen.add(inc.id);
+      merged.push(inc);
+    }
+    return merged;
+  }, [incidents, extendedIncidents]);
+
+  const filteredIncidents = allIncidents.filter((inc) => {
     if (inc.hidden) return false;
     const cutoff = Date.now() - timeFilter * 60 * 60 * 1000;
     if (new Date(inc.reported_at).getTime() < cutoff) return false;
@@ -2579,8 +2684,22 @@ function MapHome() {
             </div>
             <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>·</span>
             <span className="text-[10px]" style={{ color: "var(--panel-text-secondary)" }}>
-              {filteredIncidents.length} incident{filteredIncidents.length !== 1 ? "s" : ""}{activeTimeLabel ? ` (${activeTimeLabel.toLowerCase()})` : ""} in {cityDisplayName} metro
+              {filteredIncidents.length}
+              {extendedTotal != null && extendedTotal > 0
+                ? ` / ${extendedTotal.toLocaleString()}`
+                : ""}
+              {" "}incident{filteredIncidents.length !== 1 ? "s" : ""}{activeTimeLabel ? ` (${activeTimeLabel.toLowerCase()})` : ""} in {cityDisplayName} metro
             </span>
+            {extendedLoading && (
+              <span
+                className="text-[10px] flex items-center gap-1"
+                style={{ color: "rgb(59, 130, 246)" }}
+                aria-live="polite"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                loading history…
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3">
             {activeFeeds.length > 0 && (

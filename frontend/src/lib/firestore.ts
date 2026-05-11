@@ -18,6 +18,11 @@ const COLLECTION = "incidents";
 /** Map + live listener: cap sync size for fast first paint. Recent
  *  incidents dominate the viewport; 5000 docs was routinely 4–5s cold. */
 const MAP_SYNC_LIMIT = 1200;
+/** Hard ceiling for the one-shot extended-history fetch (used when the
+ *  user picks a multi-week/month time window). Above this the read cost
+ *  and client memory both balloon; the global filter shouldn't yank in
+ *  unbounded history anyway. */
+const EXTENDED_HISTORY_LIMIT = 8000;
 
 function toISOString(val: unknown): string {
   if (!val) return new Date().toISOString();
@@ -84,6 +89,71 @@ function mapDoc(id: string, data: Record<string, unknown>): Incident {
     hidden: data.hidden === true,
     word_timings: Array.isArray(data.word_timings) ? data.word_timings : null,
   };
+}
+
+/** Cheap accurate total via the server-cached /api/stats/count endpoint.
+ *
+ *  The server uses Firestore's count aggregation (1 read regardless of
+ *  N docs) AND sets `Cache-Control: s-maxage=300` so a CDN serves most
+ *  requests with zero Firestore hits per visitor. New users typically
+ *  pay nothing for this count.
+ *
+ *  Pass `hours` (matching the global timeFilter) rather than an ISO
+ *  cutoff so the endpoint URL is stable for a 5-minute window — that's
+ *  what makes CDN caching effective. Times computed inside the server
+ *  handler from the same hours value. */
+export async function fetchIncidentCount(opts: {
+  hours: number;
+}): Promise<number> {
+  const city = getCurrentCity().slug;
+  const url = `/api/stats/count?city=${encodeURIComponent(city)}&hours=${opts.hours}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`count endpoint returned ${res.status}`);
+  }
+  const data = (await res.json()) as { count: number };
+  return data.count;
+}
+
+/** One page of historical incidents in the (sinceISO, cursor?] window.
+ *  Caller chains pages until `nextCursor` is null (window fully loaded)
+ *  or stops early on user intent change. Each page is bounded by
+ *  `pageSize` so cost is paid in chunks instead of a single megafetch.
+ *
+ *  Skips the `inhibitor`/`hidden`/`llm_fallback` rows the same way
+ *  `subscribeIncidents` does, so the merged set stays renderable. */
+export async function fetchExtendedHistoryPage(opts: {
+  /** Inclusive lower bound for `reported_at`. ISO string. */
+  sinceISO: string;
+  /** Previous page's `nextCursor` — ISO string of the last doc in the
+   *  prior page. Omit on the first call. */
+  cursor?: string | null;
+  /** Page size; defaults to 2000. Stays well under EXTENDED_HISTORY_LIMIT
+   *  so several pages fit per hard ceiling. */
+  pageSize?: number;
+}): Promise<{ rows: Incident[]; nextCursor: string | null }> {
+  const db = getFirestore(getFirebaseApp());
+  const size = Math.max(1, Math.min(opts.pageSize ?? 2000, EXTENDED_HISTORY_LIMIT));
+  const clauses = [
+    where("city", "==", getCurrentCity().slug),
+    where("reported_at", ">=", opts.sinceISO),
+    orderBy("reported_at", "desc"),
+  ];
+  const q = opts.cursor
+    ? query(collection(db, COLLECTION), ...clauses, startAfter(opts.cursor), limitFn(size))
+    : query(collection(db, COLLECTION), ...clauses, limitFn(size));
+  const snap = await getDocs(q);
+  const list: Incident[] = [];
+  let lastReportedAt: string | null = null;
+  snap.forEach((d) => {
+    const row = mapDoc(d.id, d.data());
+    lastReportedAt = row.reported_at;
+    if (shouldRenderIncident(row)) list.push(row);
+  });
+  // If we got a full page, there may be more; otherwise we hit the
+  // window's tail.
+  const nextCursor = snap.size === size ? lastReportedAt : null;
+  return { rows: enrichIncidents(list), nextCursor };
 }
 
 /** Same query slice as `subscribeIncidents`, one `getDocs` read.
