@@ -261,6 +261,16 @@ function MapHome() {
    *  filter. Kept separate from the live `incidents` slice so the live
    *  Firestore listener doesn't clobber them on every snapshot tick. */
   const [extendedIncidents, setExtendedIncidents] = useState<Incident[]>([]);
+  /** Current map viewport. Used only to scope the badge counter to
+   *  what's actually on screen — every other downstream consumer
+   *  (clusters, district counts, alerts) still uses the city-wide
+   *  filtered set. */
+  const [mapBounds, setMapBounds] = useState<{
+    north: number;
+    south: number;
+    east: number;
+    west: number;
+  } | null>(null);
   /** Server-side count of all incidents in the current extended window
    *  (uses Firestore's count() aggregation — 1 read regardless of N).
    *  null when no extended fetch is active; -1 if the count query
@@ -1003,6 +1013,36 @@ function MapHome() {
     return () => clearInterval(id);
   }, []);
 
+  /** Seed `mapBounds` once the map handle is ready. Without this the
+   *  viewport-scoped badge stays unscoped until the user pans/zooms,
+   *  which would make the initial counter look "wrong" (whole city
+   *  instead of what's on screen). Polls briefly because `getBounds()`
+   *  returns null before MapLibre/Leaflet has measured the container. */
+  useEffect(() => {
+    if (mapBounds) return;
+    let stopped = false;
+    let tries = 0;
+    const id = window.setInterval(() => {
+      if (stopped) return;
+      tries++;
+      const b = mapRef.current?.getBounds();
+      if (b) {
+        setMapBounds(b);
+        stopped = true;
+        window.clearInterval(id);
+      } else if (tries > 25) {
+        // ~5s with no map ready — give up; the next move event will
+        // seed bounds eventually.
+        stopped = true;
+        window.clearInterval(id);
+      }
+    }, 200);
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
+    };
+  }, [mapBounds]);
+
   /** When the global time filter exceeds the live-listener's coverage
    *  (1w+), kick off a Firestore aggregate count + paged historical
    *  read so the count actually grows. We fetch in 2k-doc chunks so the
@@ -1325,6 +1365,24 @@ function MapHome() {
     return true;
   });
 
+  /** Subset of `filteredIncidents` whose pin sits inside the current
+   *  map viewport. Drives the badge numerator so the on-screen count
+   *  matches what the user can actually see. Falls back to the full
+   *  city-wide set when bounds haven't been measured yet. */
+  const visibleIncidents = useMemo(() => {
+    if (!mapBounds) return filteredIncidents;
+    const { north, south, east, west } = mapBounds;
+    return filteredIncidents.filter((inc) => {
+      if (inc.lat == null || inc.lng == null) return false;
+      return (
+        inc.lat >= south &&
+        inc.lat <= north &&
+        inc.lng >= west &&
+        inc.lng <= east
+      );
+    });
+  }, [filteredIncidents, mapBounds]);
+
   const selected = filteredIncidents.find((i) => i.id === selectedId) || null;
 
   const clusterIncidents = useMemo(() => {
@@ -1461,6 +1519,13 @@ function MapHome() {
         }}
         measurePoints={measureMode ? measurePoints : null}
         onMapMove={(_lat, _lng, zoom) => {
+          // Keep the badge's viewport-bounded counter in sync. Read
+          // bounds via the imperative handle (not lat/lng) so we get
+          // the full {N,S,E,W} rectangle the badge needs. The
+          // dispatchMove inside IncidentMap is already debounced 250ms.
+          const moveBounds = mapRef.current?.getBounds();
+          if (moveBounds) setMapBounds(moveBounds);
+
           // Persistent Safety-POI overlay: refetch when the viewport
           // shifts meaningfully *and* at least one category is on. We
           // gate on zoom ≥ 12 to avoid pulling thousands of POIs at
@@ -2687,11 +2752,26 @@ function MapHome() {
             </div>
             <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>·</span>
             <span className="text-[10px]" style={{ color: "var(--panel-text-secondary)" }}>
-              {filteredIncidents.length}
-              {extendedTotal != null && extendedTotal > 0
-                ? ` / ${extendedTotal.toLocaleString()}`
-                : ""}
-              {" "}incident{filteredIncidents.length !== 1 ? "s" : ""}{activeTimeLabel ? ` (${activeTimeLabel.toLowerCase()})` : ""} in {cityDisplayName} metro
+              {/* Numerator: incidents inside the current map viewport
+                  (subject to time + category filters). Denominator:
+                  total in the time window across the whole city —
+                  uses the server-aggregated count when available
+                  (long windows), falls back to the client-known set
+                  otherwise. */}
+              {(() => {
+                const visible = visibleIncidents.length;
+                const windowed = filteredIncidents.length;
+                const total =
+                  extendedTotal != null && extendedTotal > windowed
+                    ? extendedTotal
+                    : windowed;
+                const noun = `incident${total !== 1 ? "s" : ""}`;
+                const window = activeTimeLabel ? ` (${activeTimeLabel.toLowerCase()})` : "";
+                if (!mapBounds || visible === total) {
+                  return `${total.toLocaleString()} ${noun}${window} in ${cityDisplayName} metro`;
+                }
+                return `${visible.toLocaleString()} visible / ${total.toLocaleString()} ${noun}${window} in ${cityDisplayName} metro`;
+              })()}
             </span>
             {extendedLoading && (
               <span
