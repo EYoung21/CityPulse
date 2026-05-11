@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { motion, useScroll, useTransform, useInView } from "framer-motion";
 import {
   PULSE_CITIES,
@@ -536,7 +537,7 @@ export default function LandingPage() {
               Google Maps tells you the fastest way.
             </span>
             <span className="lp-hero-sub-pulse">
-              {city.brand} tells you the safest.
+              {city.brand} tells you what&rsquo;s actually happening.
             </span>
           </motion.p>
           <motion.div
@@ -547,6 +548,24 @@ export default function LandingPage() {
             <a href="/login" className="lp-hero-cta">
               Create Account / Sign In
             </a>
+          </motion.div>
+          <motion.div
+            className="lp-hero-personas"
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 1, delay: 0.7, ease: [0.22, 1, 0.36, 1] }}
+            aria-label="Also used for"
+          >
+            <span className="lp-hero-personas-label">Also used for</span>
+            <Link href="/use-cases/logistics" className="lp-hero-persona-pill">Logistics</Link>
+            <Link href="/use-cases/newsroom" className="lp-hero-persona-pill">
+              Newsroom<span className="lp-hero-persona-pro">Pro</span>
+            </Link>
+            <Link href="/use-cases/venue" className="lp-hero-persona-pill">Venue security</Link>
+            <Link href="/use-cases/research" className="lp-hero-persona-pill">Research</Link>
+            <Link href="/use-cases/api" className="lp-hero-persona-pill">
+              API<span className="lp-hero-persona-pro">Pro</span>
+            </Link>
           </motion.div>
         </div>
         <div className="lp-scroll-cue">
