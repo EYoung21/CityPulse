@@ -1,0 +1,136 @@
+name: Server Add Swap + Cap Transcriber Memory
+
+# One-shot relief for the 2GB Hetzner box: add a 2GB swapfile (absorbs
+# spikes instead of OOM-killing philly-pulse-api) and drop the per-city
+# pulse-live@.service MemoryMax from 2G to 400M (forces the four live
+# transcribers to cooperate inside the available RAM rather than each
+# laying claim to the entire box).
+#
+# Idempotent. Re-running is a no-op if /swapfile is already on and the
+# drop-in already exists at the target MemoryMax.
+
+on:
+  workflow_dispatch:
+    inputs:
+      memory_max:
+        description: "Per-transcriber MemoryMax (e.g. 400M, 350M)"
+        required: false
+        default: "400M"
+      swap_size:
+        description: "Swapfile size (e.g. 2G, 4G)"
+        required: false
+        default: "2G"
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add swap and cap pulse-live MemoryMax
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 10m
+          envs: MEMORY_MAX,SWAP_SIZE
+          script: |
+            set -e
+            MEMORY_MAX="${MEMORY_MAX:-400M}"
+            SWAP_SIZE="${SWAP_SIZE:-2G}"
+
+            echo "######################################################"
+            echo "# Pre-state"
+            echo "######################################################"
+            free -h | head -3
+            swapon --show || echo "(no swap)"
+
+            echo ""
+            echo "######################################################"
+            echo "# 1. Swapfile at /swapfile (size=$SWAP_SIZE)"
+            echo "######################################################"
+            if swapon --show=NAME --noheadings | grep -qx /swapfile; then
+              echo "swapfile already active — skipping create"
+            else
+              if [ ! -f /swapfile ]; then
+                echo "creating /swapfile ($SWAP_SIZE)…"
+                # fallocate is faster, dd is the fallback when the FS
+                # doesn't support sparse allocation (some Hetzner images).
+                fallocate -l "$SWAP_SIZE" /swapfile 2>/dev/null \
+                  || dd if=/dev/zero of=/swapfile bs=1M \
+                       count=$(numfmt --from=iec --to=none "$SWAP_SIZE" | awk '{print $1/1024/1024}') \
+                       status=progress
+                chmod 600 /swapfile
+                mkswap /swapfile
+              else
+                echo "/swapfile exists; (re)formatting and enabling"
+                chmod 600 /swapfile
+                mkswap -f /swapfile
+              fi
+              swapon /swapfile
+            fi
+
+            # Persist across reboot. Use a unique marker so re-runs
+            # don't duplicate the line.
+            if ! grep -qE '^/swapfile\s' /etc/fstab; then
+              echo "/swapfile none swap sw 0 0" >> /etc/fstab
+              echo "added /swapfile to /etc/fstab"
+            fi
+
+            # Tune swappiness toward "use swap only under pressure";
+            # default 60 is too eager for a server workload.
+            sysctl -w vm.swappiness=10 >/dev/null
+            grep -qE '^vm\.swappiness' /etc/sysctl.conf \
+              && sed -i 's/^vm\.swappiness.*/vm.swappiness=10/' /etc/sysctl.conf \
+              || echo 'vm.swappiness=10' >> /etc/sysctl.conf
+
+            echo ""
+            echo "######################################################"
+            echo "# 2. Lower pulse-live@.service MemoryMax to $MEMORY_MAX"
+            echo "######################################################"
+            # Drop-in override — leaves the repo's systemd unit file
+            # untouched, easy to revert via `rm -rf` + daemon-reload.
+            mkdir -p /etc/systemd/system/pulse-live@.service.d
+            cat > /etc/systemd/system/pulse-live@.service.d/memory-cap.conf <<EOF
+            # Managed by .github/workflows/server-add-swap-and-cap-memory.yml.
+            # Override the repo's MemoryMax=2G — that 2G was sized for a
+            # box of its own, but four of these run on a 2GB shared host.
+            # 400M each + ~400M API headroom fits comfortably under the
+            # 2GB+swap ceiling.
+            [Service]
+            MemoryMax=$MEMORY_MAX
+            EOF
+
+            systemctl daemon-reload
+
+            echo ""
+            echo "Restarting transcribers so the new cap takes effect…"
+            for city in sf nyc philly chattanooga; do
+              if systemctl is-active "pulse-live@${city}" >/dev/null 2>&1; then
+                systemctl restart "pulse-live@${city}"
+                echo "  restarted pulse-live@${city}"
+              else
+                echo "  pulse-live@${city} not active — skipping"
+              fi
+            done
+
+            echo ""
+            echo "######################################################"
+            echo "# Post-state"
+            echo "######################################################"
+            free -h | head -3
+            echo ""
+            swapon --show
+            echo ""
+            for city in sf nyc philly chattanooga; do
+              echo -n "pulse-live@${city}: "
+              systemctl is-active "pulse-live@${city}" || true
+              cat /sys/fs/cgroup/system.slice/system-pulse\\x2dlive.slice/pulse-live@${city}.service/memory.max 2>/dev/null \
+                | awk -v c="$city" '{printf "  memory.max(cgroup) for %s: %s bytes\n", c, $1}' \
+                || true
+            done
+            echo ""
+            systemctl is-active philly-pulse-api && echo "API: still running" \
+              || echo "API: NOT RUNNING — investigate"
+        env:
+          MEMORY_MAX: ${{ inputs.memory_max }}
+          SWAP_SIZE: ${{ inputs.swap_size }}
