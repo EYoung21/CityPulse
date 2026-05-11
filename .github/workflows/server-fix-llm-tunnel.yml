@@ -108,14 +108,14 @@ jobs:
 
             echo ""
             echo "######################################################"
-            echo "# 7. Watch /api/ingest for 60s and report counts"
+            echo "# 7. Watch /api/ingest for 15s and report counts"
             echo "######################################################"
-            sleep 60
-            echo "  -- ingest activity in the last 60 seconds --"
-            journalctl -u philly-pulse-api --no-pager --since "60 sec ago" 2>/dev/null \
+            sleep 15
+            echo "  -- ingest activity in the last 20 seconds --"
+            journalctl -u philly-pulse-api --no-pager --since "20 sec ago" 2>/dev/null \
               | grep -E 'POST /api/ingest' \
               | awk '{print $NF}' | sort | uniq -c | sort -rn | head -10
             echo "  -- recent errors (should be empty if fix worked) --"
-            journalctl -u philly-pulse-api --no-pager --since "60 sec ago" 2>/dev/null \
+            journalctl -u philly-pulse-api --no-pager --since "20 sec ago" 2>/dev/null \
               | grep -iE 'ConnectTimeout|ConnectionRefused|read timed out|httpx\.|exception' \
-              | tail -10 || echo "(no errors in last 60s)"
+              | tail -10 || echo "(no errors in last 20s)"
