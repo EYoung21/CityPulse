@@ -99,6 +99,14 @@ echo "==> 4. Log/heartbeat dirs"
 sudo touch "$LOG_DIR/pulse-live.log"
 sudo chown "$(id -un)" "$LOG_DIR/pulse-live.log"
 
+echo "==> 4b. Audio clip dirs (multi_transcriber writes WAVs here; the"
+echo "    bridge base64-encodes them into the /api/ingest payload)"
+# Without these, _save_wav() raises ENOENT, the inline try/except sets
+# clip_id=None, the bridge has no clips to ship, and incidents arrive
+# at the API with audio_clip=null → "Audio not available" in the UI.
+mkdir -p "$REPO_DIR/audio_clips" "$REPO_DIR/audio_clips_raw"
+chmod 755 "$REPO_DIR/audio_clips" "$REPO_DIR/audio_clips_raw"
+
 echo "==> 5. systemd template unit at $SERVICE_FILE"
 # Note vs Hetzner unit:
 #   - User=<lambda_user>      (Hetzner ran as root)
