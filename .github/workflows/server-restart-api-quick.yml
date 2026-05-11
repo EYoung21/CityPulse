@@ -12,6 +12,8 @@ on:
 jobs:
   restart:
     runs-on: ubuntu-latest
+    # If SSH never completes (wedged host), fail the job instead of burning Actions hours.
+    timeout-minutes: 8
     steps:
       - name: Restart philly-pulse-api + nginx (localhost health only)
         uses: appleboy/ssh-action@v1
@@ -19,6 +21,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: root
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          timeout: 90s
           command_timeout: 3m
           script: |
             set -euo pipefail
