@@ -70,6 +70,57 @@ export function apiUrl(path: string): string {
   return base ? `${base}${p}` : p;
 }
 
+/**
+ * If `url` is a Firebase / GCS object URL for a clip under `audio/{id}.wav`,
+ * return the 12-char hex clip id (lowercase). Otherwise null.
+ *
+ * Used so `fetch()` + `decodeAudioData` never hits `storage.googleapis.com`
+ * directly from Pulse city origins — those responses omit CORS headers.
+ */
+export function storageAudioUrlToClipId(url: string): string | null {
+  const s = url.trim();
+  if (!s) return null;
+  try {
+    const u = new URL(s);
+    if (u.hostname === "storage.googleapis.com") {
+      const m = u.pathname.match(/\/[^/]+\/audio\/([a-f0-9]{12})\.wav$/i);
+      if (m) return m[1].toLowerCase();
+    }
+    if (u.hostname === "firebasestorage.googleapis.com") {
+      const mPath = u.pathname.match(/^\/v0\/b\/[^/]+\/o\/(.+)$/i);
+      if (mPath) {
+        const decoded = decodeURIComponent(mPath[1].replace(/\+/g, " "));
+        const m = decoded.match(/^audio\/([a-f0-9]{12})\.wav$/i);
+        if (m) return m[1].toLowerCase();
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function appendClipProxyCandidates(out: string[], clipId: string): void {
+  if (!/^[a-f0-9]{12}$/i.test(clipId)) return;
+  const id = clipId.toLowerCase();
+  const path = `/api/audio/${id}`;
+  const sameOrigin = apiUrl(path);
+  if (!out.includes(sameOrigin)) out.push(sameOrigin);
+  if (typeof window !== "undefined") {
+    const explicit = effectivePublicApiBase();
+    if (explicit && crossOriginFallbackAllowed(explicit)) {
+      try {
+        if (new URL(explicit).origin !== window.location.origin) {
+          const crossOrigin = `${explicit}${path}`;
+          if (crossOrigin !== sameOrigin && !out.includes(crossOrigin)) out.push(crossOrigin);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
 /** URL to play an incident clip in the browser (same-origin when possible).
  *
  * Prefer ``/api/audio/{clip}`` over a bare ``audio_url`` pointing at GCS: the
@@ -98,9 +149,10 @@ export function incidentAudioSrc(inc: {
  *       direct hit on the explicit API host, side-steps any local
  *       proxy/rewrite confusion. Only included on Pulse origins where
  *       CORS is permitted.
- *    3. Raw `audio_url` — usually a signed GCS URL when present;
- *       independent of the backend's health entirely. Last because it
- *       can short-circuit if the row has both fields set.
+ *    3. Raw `audio_url` — last resort for signed or third-party URLs. Rows
+ *       whose `audio_url` is our public GCS path get `/api/audio/{clip}`
+ *       candidates derived from that URL *before* the raw link so
+ *       `fetch()` never depends on Storage CORS.
  */
 export function incidentAudioSources(inc: {
   audio_clip?: string | null;
@@ -108,26 +160,16 @@ export function incidentAudioSources(inc: {
 }): string[] {
   const out: string[] = [];
   const clip = inc.audio_clip?.trim();
-  if (clip) {
-    const path = `/api/audio/${clip}`;
-    const sameOrigin = apiUrl(path);
-    out.push(sameOrigin);
-    if (typeof window !== "undefined") {
-      const explicit = effectivePublicApiBase();
-      if (explicit && crossOriginFallbackAllowed(explicit)) {
-        try {
-          if (new URL(explicit).origin !== window.location.origin) {
-            const crossOrigin = `${explicit}${path}`;
-            if (crossOrigin !== sameOrigin) out.push(crossOrigin);
-          }
-        } catch {
-          /* fall through */
-        }
-      }
-    }
-  }
+  if (clip) appendClipProxyCandidates(out, clip);
+
   const u = inc.audio_url?.trim();
-  if (u && !out.includes(u)) out.push(u);
+  if (u) {
+    const fromStorage = storageAudioUrlToClipId(u);
+    if (fromStorage && fromStorage !== clip?.toLowerCase()) {
+      appendClipProxyCandidates(out, fromStorage);
+    }
+    if (!out.includes(u)) out.push(u);
+  }
   return out;
 }
 
@@ -207,6 +249,10 @@ export async function fetchUrlWithPublicApiFallback(
 ): Promise<Response> {
   if (typeof window === "undefined") {
     return await fetch(url, init);
+  }
+  const gcsClip = storageAudioUrlToClipId(url);
+  if (gcsClip) {
+    return await fetchPublicApi(`/api/audio/${gcsClip}`, init);
   }
   try {
     const u = new URL(url, window.location.origin);
