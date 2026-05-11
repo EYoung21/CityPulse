@@ -257,6 +257,13 @@ function MapHome() {
   }, [cityFromEnv, pathname, searchParams]);
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  /** Latest map pins for API summary/stats fallbacks when Firestore owns the map. */
+  const incidentsForStatsRef = useRef<Incident[]>([]);
+  /** After Firestore paints pins, re-fetch summary/stats once (initial API call saw ref []). */
+  const statsAfterFirestoreRef = useRef(false);
+  useEffect(() => {
+    incidentsForStatsRef.current = incidents;
+  }, [incidents]);
   /** Older incidents pulled on-demand when the user picks a 1w+ time
    *  filter. Kept separate from the live `incidents` slice so the live
    *  Firestore listener doesn't clobber them on every snapshot tick. */
@@ -952,8 +959,29 @@ function MapHome() {
   }, [basemapStyle, recenterCity]);
 
   const loadFromApi = useCallback(async () => {
-    // Never block pins on summary/stats: apply incidents as soon as the
-    // incidents fetch settles (Firestore-off path and API-first paints).
+    if (useFirestoreData) {
+      // Firestore listener + snapshot own `incidents`. A parallel REST pull
+      // that calls `setIncidents` can wipe pins when the Python API returns
+      // 200 with an empty list, errors, or races behind Firestore — and
+      // 502 retries to api.phlpulse.com hit nginx error pages without CORS,
+      // surfacing as misleading "CORS" noise while the map goes blank.
+      const [sr, tr] = await Promise.allSettled([fetchSummary(), fetchStats()]);
+      if (sr.status === "fulfilled") {
+        setSummary(sr.value.summary);
+      } else {
+        const cur = incidentsForStatsRef.current;
+        if (cur.length) setSummary(buildLocalSummary(cur));
+      }
+      if (tr.status === "fulfilled") {
+        setStats(tr.value);
+      } else {
+        const cur = incidentsForStatsRef.current;
+        if (cur.length) setStats(statsFromIncidents(cur));
+      }
+      return;
+    }
+
+    // API-only mode: pins + summary/stats all come from the backend.
     const incPromise = fetchIncidents()
       .then((rows) => {
         setIncidents(rows);
@@ -977,7 +1005,14 @@ function MapHome() {
     } else if (inc) {
       setStats(statsFromIncidents(inc));
     }
-  }, []);
+  }, [useFirestoreData]);
+
+  useEffect(() => {
+    if (!useFirestoreData || statsAfterFirestoreRef.current) return;
+    if (incidents.length === 0) return;
+    statsAfterFirestoreRef.current = true;
+    void loadFromApi();
+  }, [useFirestoreData, incidents.length, loadFromApi]);
 
   useEffect(() => {
     if (useFirestoreData) {
