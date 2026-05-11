@@ -1056,7 +1056,13 @@ function MapHome() {
       setExtendedLoading(false);
       return;
     }
-    const EXTENDED_THRESHOLD_HOURS = 168; // 1w
+    // Trigger extended history whenever the user picks a window the
+    // live listener (MAP_SYNC_LIMIT docs) may not fully cover. For
+    // high-ingest cities the 1200-doc cap can be exhausted in well
+    // under a day, so we kick in at 3h+ — short windows still pay
+    // nothing because the page.tsx state stays at [] and the
+    // shouldRenderIncident guard drops anything irrelevant.
+    const EXTENDED_THRESHOLD_HOURS = 3;
     if (timeFilter < EXTENDED_THRESHOLD_HOURS) {
       setExtendedIncidents([]);
       setExtendedTotal(null);

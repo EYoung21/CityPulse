@@ -128,8 +128,11 @@ export async function fetchIncidentCount(opts: {
  *  `subscribeIncidents` does, so the merged set stays renderable. */
 export async function fetchExtendedHistoryPage(opts: {
   /** Inclusive lower bound for `reported_at`. ISO string. `null` =
-   *  "no lower bound", used by the "All" pill so we don't try to
-   *  serialize a -Infinity Date. */
+   *  "no lower bound" (the "All" pill). Used to STOP paging once we
+   *  walk past the window, NOT included as a Firestore `where` clause
+   *  — adding it would require a composite index that often isn't
+   *  provisioned yet, and we already have `(city, reported_at desc)`
+   *  from the live listener which is the index this query DOES use. */
   sinceISO: string | null;
   /** Previous page's `nextCursor` — ISO string of the last doc in the
    *  prior page. Omit on the first call. */
@@ -140,9 +143,11 @@ export async function fetchExtendedHistoryPage(opts: {
 }): Promise<{ rows: Incident[]; nextCursor: string | null }> {
   const db = getFirestore(getFirebaseApp());
   const size = Math.max(1, Math.min(opts.pageSize ?? 2000, EXTENDED_HISTORY_LIMIT));
+  // Note: NO `where("reported_at", ">=", …)` clause. Sorting desc and
+  // walking the cursor is enough — once a page's last row is older than
+  // `sinceISO`, we set `nextCursor = null` and stop paging.
   const clauses = [
     where("city", "==", getCurrentCity().slug),
-    ...(opts.sinceISO ? [where("reported_at", ">=", opts.sinceISO)] : []),
     orderBy("reported_at", "desc"),
   ];
   const q = opts.cursor
@@ -151,14 +156,23 @@ export async function fetchExtendedHistoryPage(opts: {
   const snap = await getDocs(q);
   const list: Incident[] = [];
   let lastReportedAt: string | null = null;
+  let crossedCutoff = false;
   snap.forEach((d) => {
     const row = mapDoc(d.id, d.data());
     lastReportedAt = row.reported_at;
+    // Stop including rows once we cross the lower bound. We still walk
+    // the rest of the page so the cursor advances, but we don't keep
+    // rows the user didn't ask for.
+    if (opts.sinceISO && row.reported_at < opts.sinceISO) {
+      crossedCutoff = true;
+      return;
+    }
     if (shouldRenderIncident(row)) list.push(row);
   });
-  // If we got a full page, there may be more; otherwise we hit the
-  // window's tail.
-  const nextCursor = snap.size === size ? lastReportedAt : null;
+  // Stop paging when (a) we got a partial page (no more data) OR (b)
+  // we walked past the time window.
+  const nextCursor =
+    !crossedCutoff && snap.size === size ? lastReportedAt : null;
   return { rows: enrichIncidents(list), nextCursor };
 }
 
