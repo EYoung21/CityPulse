@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Shield, ShieldAlert, ShieldCheck } from "lucide-react";
+import { ChevronDown, Clock, Shield, ShieldAlert, ShieldCheck } from "lucide-react";
 import {
   AVOIDANCE_CATEGORIES,
   LEAF_LABELS,
@@ -20,6 +20,16 @@ const FLOOR_PILLS: { id: SeverityFloor; label: string }[] = [
   { id: "low", label: "Low+" },
   { id: "medium", label: "Medium+" },
   { id: "high", label: "High+" },
+];
+
+/** Routing-only time horizon. `null` = follow the global map window (the
+ *  current default); explicit values further constrain it. */
+const AGE_PILLS: { id: number | null; label: string }[] = [
+  { id: null, label: "Map window" },
+  { id: 0.25, label: "15m" },
+  { id: 1, label: "1h" },
+  { id: 6, label: "6h" },
+  { id: 24, label: "24h" },
 ];
 
 /** Detailed avoidance picker: a row of expandable bucket pills (each
@@ -244,6 +254,52 @@ export default function AvoidancePrefsPicker({ prefs, onChange }: Props) {
             ? `${totalActive} cat${totalActive === 1 ? "" : "s"} ≥ ${(SEVERITY_FLOORS[prefs.minSeverity] * 100).toFixed(0)}%`
             : "off"}
         </span>
+      </div>
+
+      {/* Routing time horizon — how far back to consider incidents when
+          building avoid zones. Independent of the global map filter so
+          users can route conservatively (e.g. "avoid anything in the
+          last 6h") even while viewing a tighter window. */}
+      <div className="px-4 py-2.5 flex items-center gap-2 overflow-x-auto no-scrollbar">
+        <Clock className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
+        <span
+          className="text-[10px] font-semibold uppercase tracking-wider shrink-0"
+          style={{ color: "var(--panel-text-muted)" }}
+        >
+          Within
+        </span>
+        <div
+          className="flex items-center rounded-full overflow-hidden shrink-0"
+          style={{ border: "1px solid var(--panel-border)" }}
+          role="radiogroup"
+          aria-label="Routing time horizon"
+        >
+          {AGE_PILLS.map((p) => {
+            const active =
+              (p.id == null && prefs.maxAgeHours == null) ||
+              (p.id != null && prefs.maxAgeHours === p.id);
+            return (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() =>
+                  onChange({ ...prefs, maxAgeHours: p.id ?? undefined })
+                }
+                role="radio"
+                aria-checked={active}
+                className={`px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                  active ? "" : "opacity-70 hover:opacity-100"
+                }`}
+                style={{
+                  background: active ? "rgba(59,130,246,0.15)" : "transparent",
+                  color: active ? "#3b82f6" : "var(--panel-text-secondary)",
+                }}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
