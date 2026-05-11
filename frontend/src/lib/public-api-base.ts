@@ -80,25 +80,55 @@ export function incidentAudioSrc(inc: {
   audio_clip?: string | null;
   audio_url?: string | null;
 }): string | null {
+  const sources = incidentAudioSources(inc);
+  return sources[0] ?? null;
+}
+
+/** All audio source URLs we know about for an incident, in priority
+ *  order. The waveform player should try them sequentially until one
+ *  resolves — when the backend is unhealthy and the cross-origin
+ *  `/api/audio/{clip}` flow times out, this gives us at least the
+ *  raw `audio_url` (typically a direct GCS link) as a working fallback.
+ *
+ *  Order:
+ *    1. Same-origin `/api/audio/{clip}` — routed through Next rewrite;
+ *       benefits from `fetchPublicApi`'s 404/502 fallback logic, and
+ *       avoids CORS preflight on healthy stacks.
+ *    2. Cross-origin `${effectivePublicApiBase()}/api/audio/{clip}` —
+ *       direct hit on the explicit API host, side-steps any local
+ *       proxy/rewrite confusion. Only included on Pulse origins where
+ *       CORS is permitted.
+ *    3. Raw `audio_url` — usually a signed GCS URL when present;
+ *       independent of the backend's health entirely. Last because it
+ *       can short-circuit if the row has both fields set.
+ */
+export function incidentAudioSources(inc: {
+  audio_clip?: string | null;
+  audio_url?: string | null;
+}): string[] {
+  const out: string[] = [];
   const clip = inc.audio_clip?.trim();
   if (clip) {
     const path = `/api/audio/${clip}`;
+    const sameOrigin = apiUrl(path);
+    out.push(sameOrigin);
     if (typeof window !== "undefined") {
       const explicit = effectivePublicApiBase();
       if (explicit && crossOriginFallbackAllowed(explicit)) {
         try {
           if (new URL(explicit).origin !== window.location.origin) {
-            return `${explicit}${path}`;
+            const crossOrigin = `${explicit}${path}`;
+            if (crossOrigin !== sameOrigin) out.push(crossOrigin);
           }
         } catch {
           /* fall through */
         }
       }
     }
-    return apiUrl(path);
   }
   const u = inc.audio_url?.trim();
-  return u || null;
+  if (u && !out.includes(u)) out.push(u);
+  return out;
 }
 
 /** Fetch a Python API endpoint with a safe fallback.

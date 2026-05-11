@@ -18,6 +18,7 @@ import {
 import PlaceActions from "@/components/PlaceActions";
 import {
   incidentAudioSrc,
+  incidentAudioSources,
   fetchUrlWithPublicApiFallback,
 } from "@/lib/public-api-base";
 
@@ -51,7 +52,11 @@ function WaveformPlayer({
   transcript,
   wordTimings,
 }: {
-  src: string;
+  /** One or more candidate URLs, tried in order. When the backend is
+   *  unhealthy and the primary times out, the player falls back to
+   *  the next candidate (e.g. raw `audio_url` → GCS) without surfacing
+   *  the error to the user until everything is exhausted. */
+  src: string | string[];
   transcript: string;
   wordTimings?: { word: string; start: number; end: number }[] | null;
 }) {
@@ -79,12 +84,35 @@ function WaveformPlayer({
     audio.addEventListener("ended", () => setPlaying(false));
     audio.addEventListener("error", () => setPlaying(false));
 
-    fetchUrlWithPublicApiFallback(src)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.arrayBuffer().then((buf) => ({ buf, mime: r.headers.get("content-type") }));
-      })
-      .then(async ({ buf, mime }) => {
+    const candidates = Array.isArray(src) ? src.filter(Boolean) : [src];
+    let cancelled = false;
+
+    /** Try each candidate URL in order. Resolves with the first
+     *  successful response; the rejection only fires after every
+     *  candidate has failed. Logs each individual failure so the
+     *  fallback chain is visible in DevTools. */
+    const fetchFirstAvailable = async () => {
+      let lastErr: unknown = null;
+      for (const url of candidates) {
+        if (cancelled) return null;
+        try {
+          const r = await fetchUrlWithPublicApiFallback(url);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const buf = await r.arrayBuffer();
+          return { url, buf, mime: r.headers.get("content-type") };
+        } catch (err) {
+          lastErr = err;
+          const msg = err instanceof Error ? err.message : "network error";
+          console.warn("[WaveformPlayer] candidate failed", { url, error: msg });
+        }
+      }
+      throw lastErr ?? new Error("no audio sources available");
+    };
+
+    fetchFirstAvailable()
+      .then(async (res) => {
+        if (cancelled || !res) return;
+        const { buf, mime } = res;
         const ctx = new AudioContext();
         const decoded = await ctx.decodeAudioData(buf.slice(0));
         const raw = decoded.getChannelData(0);
@@ -107,12 +135,17 @@ function WaveformPlayer({
         audio.src = objectUrl;
       })
       .catch((err: unknown) => {
+        if (cancelled) return;
         const msg = err instanceof Error ? err.message : "network error";
-        console.warn("[WaveformPlayer] audio load failed", { src, error: msg });
+        console.warn("[WaveformPlayer] all audio sources failed", {
+          tried: candidates,
+          error: msg,
+        });
         setLoadError(msg);
       });
 
     return () => {
+      cancelled = true;
       audio.pause();
       audio.src = "";
       if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -312,7 +345,13 @@ interface Props {
 export default function IncidentDetail({ incident, onClose }: Props) {
   const sev = getSeverity(incident.severity_category);
   const confidencePct = Math.round(incident.confidence * 100);
-  const audioSrc = incidentAudioSrc(incident);
+  // Memoize the candidate list so a parent re-render doesn't hand the
+  // player a fresh array reference and trigger a re-fetch on every tick.
+  const audioSources = useMemo(
+    () => incidentAudioSources(incident),
+    [incident],
+  );
+  const audioSrc = audioSources[0] ?? null;
   const hasAudio = !!audioSrc;
 
   // Mentions are appended chronologically by the dedup pipeline. We
@@ -409,7 +448,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
 
           {hasAudio ? (
             <WaveformPlayer
-              src={audioSrc!}
+              src={audioSources}
               transcript={incident.raw_text}
               wordTimings={incident.word_timings}
             />
