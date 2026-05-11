@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Navigation, Radio, Shield, BookOpen, Code2, Lock } from "lucide-react";
+import { Compass, Navigation, Radio, Shield, BookOpen, Code2, Lock } from "lucide-react";
 
-type PersonaId = "routing" | "newsroom" | "security" | "research" | "api";
+type PersonaId = "browse" | "routing" | "newsroom" | "security" | "research" | "api";
 
 interface Persona {
   id: PersonaId;
@@ -19,12 +19,19 @@ interface Persona {
 
 const PERSONAS: Persona[] = [
   {
+    id: "browse",
+    label: "Browse",
+    icon: Compass,
+    href: () => "/",
+    isActive: (pathname, mode) =>
+      pathname === "/" && (mode === null || mode === "browse"),
+  },
+  {
     id: "routing",
     label: "Routing",
     icon: Navigation,
     href: () => "/?mode=routing",
-    isActive: (pathname, mode) =>
-      pathname === "/" && (mode === null || mode === "routing"),
+    isActive: (pathname, mode) => pathname === "/" && mode === "routing",
   },
   {
     id: "newsroom",
