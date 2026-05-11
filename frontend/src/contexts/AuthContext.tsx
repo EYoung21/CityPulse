@@ -76,6 +76,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // to fire at the exact `proUntil` moment whenever it changes.
   const [, setExpiryTick] = useState(0);
 
+  const isAdmin = useMemo(
+    () => !!user?.email && ADMIN_EMAILS.includes(user.email.toLowerCase()),
+    [user]
+  );
+
   // Cross-domain auth: if we arrived with a __pulse_token param, exchange it
   useEffect(() => {
     if (!isFirebaseConfigured()) return;
@@ -217,18 +222,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [proUntil]);
 
   // Mirror tier to localStorage so non-React libs (alerts-inbox prune,
-  // saved-place limit, etc.) can read it synchronously without prop
-  // drilling through hooks. Also dispatch an event so listeners can
-  // react to upgrades/downgrades within a single tab session.
+  // etc.) can read it synchronously without prop drilling. Admins are
+  // always Pro in the UI/API — if their Firestore doc is still `free`,
+  // mirror at least `pro` here so those libs match `isPro`.
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const mirrored: UserTier = isAdmin && tier === "free" ? "pro" : tier;
     try {
-      window.localStorage.setItem("pp:tier", tier);
+      window.localStorage.setItem("pp:tier", mirrored);
     } catch {
       /* storage blocked — non-fatal */
     }
-    window.dispatchEvent(new CustomEvent("pp:tier-changed", { detail: { tier } }));
-  }, [tier]);
+    window.dispatchEvent(new CustomEvent("pp:tier-changed", { detail: { tier: mirrored } }));
+  }, [tier, isAdmin]);
 
   useEffect(() => {
     if (!isFirebaseConfigured() || !user || user.isAnonymous) return;
@@ -375,7 +381,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const isAdmin = !!user?.email && ADMIN_EMAILS.includes(user.email.toLowerCase());
   // A user is Pro if any of three are true: their persistent tier is
   // a paid one, they're a hard-coded admin, or they hold an unexpired
   // finite-duration pass. The pass check is `>` so a proUntil exactly
