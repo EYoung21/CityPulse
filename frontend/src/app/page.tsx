@@ -1025,9 +1025,12 @@ function MapHome() {
     }
 
     let cancelled = false;
-    const sinceISO = new Date(
-      Date.now() - timeFilter * 3600_000,
-    ).toISOString();
+    // The "All" pill sets timeFilter to Infinity (TIME_FILTERS table) —
+    // serialize that as `null` (no lower bound) instead of trying to
+    // build a -Infinity Date, which throws on `.toISOString()`.
+    const sinceISO = Number.isFinite(timeFilter)
+      ? new Date(Date.now() - timeFilter * 3600_000).toISOString()
+      : null;
 
     setExtendedIncidents([]);
     setExtendedTotal(null);
