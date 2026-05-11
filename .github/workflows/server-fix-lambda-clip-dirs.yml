@@ -1,0 +1,118 @@
+name: Server Fix Lambda Audio Clip Dirs
+
+# On Hetzner the live transcriber wrote audio chunks to <repo>/audio_clips/
+# and the bridge base64-encoded them into the /api/ingest POST. On
+# Lambda the repo at /opt/citypulse-backfill/ never had those dirs
+# created, so multi_transcriber.py's _save_wav() raises ENOENT, the
+# inline try/except sets clip_id=None, the bridge has no clips to ship,
+# and incidents land in Firestore with audio_clip=null → UI shows
+# "Audio not available". This workflow:
+#   1. Probes Lambda for the dirs + recent WAV count (diagnostic).
+#   2. Creates audio_clips/ and audio_clips_raw/ if missing.
+#   3. Restarts pulse-live@<city> so future transcripts pick up the
+#      new working dirs.
+#   4. Re-probes to confirm clips are being written.
+#
+# Idempotent. Safe to re-run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lambda_user:
+        description: "SSH user on Lambda"
+        required: false
+        default: "ubuntu"
+      lambda_ip:
+        description: "Lambda IP"
+        required: false
+        default: "150.230.182.19"
+      active_cities:
+        description: "Cities to restart"
+        required: false
+        default: "sf nyc philly chattanooga"
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create clip dirs on Lambda + restart transcribers
+        uses: appleboy/ssh-action@v1
+        env:
+          LAMBDA_USER: ${{ inputs.lambda_user }}
+          LAMBDA_IP: ${{ inputs.lambda_ip }}
+          ACTIVE_CITIES: ${{ inputs.active_cities }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 5m
+          envs: LAMBDA_USER,LAMBDA_IP,ACTIVE_CITIES
+          script: |
+            set -euo pipefail
+            SSH_OPTS="-i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+            REPO=/opt/citypulse-backfill
+
+            echo "######################################################"
+            echo "# 1. Pre-state: do the dirs exist? any WAVs in them?"
+            echo "######################################################"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "
+              echo \"REPO=$REPO\"
+              for d in audio_clips audio_clips_raw; do
+                if [ -d \"$REPO/\$d\" ]; then
+                  echo \"  $REPO/\$d: exists, \$(ls \"$REPO/\$d\" 2>/dev/null | wc -l) files\"
+                else
+                  echo \"  $REPO/\$d: MISSING (this is why audio_clip is null)\"
+                fi
+              done
+            "
+
+            echo ""
+            echo "######################################################"
+            echo "# 2. Create dirs (idempotent)"
+            echo "######################################################"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "
+              mkdir -p $REPO/audio_clips $REPO/audio_clips_raw
+              chmod 755 $REPO/audio_clips $REPO/audio_clips_raw
+              ls -ld $REPO/audio_clips $REPO/audio_clips_raw
+            "
+
+            echo ""
+            echo "######################################################"
+            echo "# 3. Restart pulse-live@<city> to pick up the new dirs"
+            echo "######################################################"
+            for city in $ACTIVE_CITIES; do
+              echo "  restart pulse-live@$city"
+              ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "sudo systemctl restart pulse-live@$city.service"
+            done
+
+            echo ""
+            echo "######################################################"
+            echo "# 4. Wait 60s for first new transcripts, then re-probe"
+            echo "######################################################"
+            sleep 60
+
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "
+              for d in audio_clips audio_clips_raw; do
+                n=\$(ls $REPO/\$d 2>/dev/null | wc -l)
+                echo \"  $REPO/\$d: \$n files\"
+              done
+              echo \"  newest WAV (audio_clips):\"
+              ls -lt $REPO/audio_clips 2>/dev/null | head -3
+            "
+
+            echo ""
+            echo "######################################################"
+            echo "# 5. Confirm via Hetzner API: most recent incident has audio_clip"
+            echo "######################################################"
+            # Sample the most-recent incident from /api/incidents and
+            # check whether audio_clip is populated.
+            curl -s 'http://127.0.0.1:8765/api/incidents?limit=3' \
+              | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+items = data if isinstance(data, list) else data.get('incidents', [])
+for inc in items[:3]:
+    print('  id=%s audio_clip=%r audio_url=%r reported_at=%s'
+          % (inc.get('id','?'), inc.get('audio_clip'),
+             (inc.get('audio_url') or '')[:60], inc.get('reported_at')))
+" || echo "(curl/json failed; check manually)"

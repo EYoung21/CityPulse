@@ -338,6 +338,19 @@ def transcriber_worker(worker_id):
             if standard_text is None:
                 standard_text = variants_list[0]["transcript"]
 
+            # Top-level audio_clip helps ingest + logs; bridge still ships
+            # per-variant clips in audio_data from disk.
+            primary_clip = None
+            for v in variants_list:
+                if v.get("name") == "standard" and v.get("audio_clip"):
+                    primary_clip = v["audio_clip"]
+                    break
+            if not primary_clip:
+                for v in variants_list:
+                    if v.get("audio_clip"):
+                        primary_clip = v["audio_clip"]
+                        break
+
             output = f"[{timestamp}] [{feed_label}] {len(variants_list)} variants — {standard_text[:80]}"
             print(output)
 
@@ -350,6 +363,7 @@ def transcriber_worker(worker_id):
                 PP_BRIDGE_URL, standard_text, timestamp,
                 feed_id=feed_id,
                 feed_label=feed_label,
+                audio_clip=primary_clip,
                 raw_audio_clip=raw_clip_id,
                 variants=variants_list,
                 city=CITY_SLUG,
@@ -460,6 +474,10 @@ def feed_capture_thread(feed_id, feed_label):
 def main():
     num_workers = min(3, max(1, os.cpu_count() or 2))
     print(f"Starting {num_workers} transcription workers + {len(FEEDS)} feed threads")
+    print(
+        f"   Clip dirs (cwd={os.getcwd()}): "
+        f"{os.path.abspath(AUDIO_CLIPS_FOLDER)} | {os.path.abspath(RAW_CLIPS_FOLDER)}"
+    )
 
     if PP_ENABLED:
         print(f"PhillyPulse bridge enabled → {PP_BRIDGE_URL}")
