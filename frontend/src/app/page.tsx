@@ -119,6 +119,7 @@ import { getCurrentCity } from "@/lib/pulse-cities";
 import { assessSafety } from "@/lib/search";
 import Sparkline from "@/components/charts/Sparkline";
 import PulseNetworkNav from "@/components/PulseNetworkNav";
+import PersonaTabs from "@/components/PersonaTabs";
 import { useAuth } from "@/contexts/AuthContext";
 import UpgradePrompt, { ProBadge } from "@/components/UpgradePrompt";
 import { onUpgradeRequested } from "@/lib/upgrade";
@@ -1632,6 +1633,7 @@ function MapHome() {
       {/* Top category pills */}
       <div className="absolute top-3 left-3 md:left-[calc(var(--pp-map-sidebar-width,72px)+28.5rem)] right-3 z-[999] pointer-events-none">
         <div className="flex flex-col gap-1.5 md:flex-row md:items-center md:gap-2 overflow-x-auto no-scrollbar pointer-events-auto">
+          <PersonaTabs />
           <div
             className="flex items-center rounded-full overflow-hidden shadow-lg shrink-0 backdrop-blur-md"
             style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)" }}

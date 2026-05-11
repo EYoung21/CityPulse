@@ -490,6 +490,56 @@
   filter: brightness(1.1);
 }
 
+.lp-hero-personas {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 1.5rem;
+  max-width: 640px;
+  position: relative;
+  z-index: 10;
+}
+.lp-hero-personas-label {
+  font-family: var(--font-geist-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.4);
+  margin-right: 4px;
+}
+.lp-hero-persona-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 100px;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+.lp-hero-persona-pill:hover {
+  color: rgb(var(--accent-rgb));
+  border-color: rgba(var(--accent-rgb), 0.5);
+  background: rgba(var(--accent-rgb), 0.08);
+}
+.lp-hero-persona-pro {
+  display: inline-block;
+  padding: 1px 6px;
+  font-family: var(--font-geist-mono);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: rgb(var(--accent-rgb));
+  background: rgba(var(--accent-rgb), 0.12);
+  border-radius: 100px;
+}
+
 .lp-scroll-cue {
   position: absolute;
   bottom: 40px;
