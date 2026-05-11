@@ -14,6 +14,10 @@ import { CitySkylineSvg } from "./CitySkylineSvg";
 import { CitySwitcher } from "./CitySwitcher";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { SafeRouteSection } from "./SafeRouteSection";
+import { NewsroomSection } from "./NewsroomSection";
+import { SecuritySection } from "./SecuritySection";
+import { ResearchSection } from "./ResearchSection";
+import { ApiSection } from "./ApiSection";
 import { navigateToCity } from "@/lib/pulse-navigate";
 import { useCityStats } from "@/hooks/useCityStats";
 import "./landing.css";
@@ -533,11 +537,12 @@ export default function LandingPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 1, delay: 0.35, ease: [0.22, 1, 0.36, 1] }}
           >
-            <span className="lp-hero-sub-gmaps">
-              Google Maps tells you the fastest way.
-            </span>
             <span className="lp-hero-sub-pulse">
-              {city.brand} tells you what&rsquo;s actually happening.
+              What&rsquo;s actually happening in {city.name}, live.
+            </span>
+            <span className="lp-hero-sub-gmaps">
+              For logistics, newsrooms, event security, research, developers
+              &mdash; and anyone who just wants to know.
             </span>
           </motion.p>
           <motion.div
@@ -554,18 +559,30 @@ export default function LandingPage() {
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 1, delay: 0.7, ease: [0.22, 1, 0.36, 1] }}
-            aria-label="Also used for"
+            aria-label="Jump to a use case"
           >
-            <span className="lp-hero-personas-label">Also used for</span>
-            <Link href="/use-cases/logistics" className="lp-hero-persona-pill">Logistics</Link>
-            <Link href="/use-cases/newsroom" className="lp-hero-persona-pill">
-              Newsroom<span className="lp-hero-persona-pro">Pro</span>
-            </Link>
-            <Link href="/use-cases/venue" className="lp-hero-persona-pill">Venue security</Link>
-            <Link href="/use-cases/research" className="lp-hero-persona-pill">Research</Link>
-            <Link href="/use-cases/api" className="lp-hero-persona-pill">
-              API<span className="lp-hero-persona-pro">Pro</span>
-            </Link>
+            <a href="#logistics" className="lp-hero-persona-pill">
+              <span className="lp-hero-persona-icon" aria-hidden="true">⟶</span>
+              <span>Logistics</span>
+            </a>
+            <a href="#newsroom" className="lp-hero-persona-pill">
+              <span className="lp-hero-persona-icon" aria-hidden="true">◉</span>
+              <span>Newsroom</span>
+              <span className="lp-hero-persona-pro">Pro</span>
+            </a>
+            <a href="#security" className="lp-hero-persona-pill">
+              <span className="lp-hero-persona-icon" aria-hidden="true">▣</span>
+              <span>Security</span>
+            </a>
+            <a href="#research" className="lp-hero-persona-pill">
+              <span className="lp-hero-persona-icon" aria-hidden="true">▤</span>
+              <span>Research</span>
+            </a>
+            <a href="#api" className="lp-hero-persona-pill">
+              <span className="lp-hero-persona-icon" aria-hidden="true">{"</>"}</span>
+              <span>API</span>
+              <span className="lp-hero-persona-pro">Pro</span>
+            </a>
           </motion.div>
         </div>
         <div className="lp-scroll-cue">
@@ -574,8 +591,12 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ═══ Safer-routing demo — animated routes + picker mockup ═══ */}
+      {/* ═══ Persona deep-dives — co-equal, anchored from hero pills ═══ */}
       <SafeRouteSection city={city} />
+      <NewsroomSection city={city} />
+      <SecuritySection city={city} />
+      <ResearchSection city={city} />
+      <ApiSection city={city} />
 
       {/* ═══ Neighborhood marquee — "we cover ..." ═══ */}
       <NeighborhoodMarquee city={city} />
@@ -588,82 +609,28 @@ export default function LandingPage() {
         <StatsStrip city={city} />
       </section>
 
-      {/* ═══ Use cases — what the platform supports today ═══ */}
-      <section className="lp-usecases" aria-label="Who uses CityPulse">
+      {/* ═══ Cross-links + disclaimer (replaces the old use-cases grid;
+              the persona deep-dives above cover each card in depth) ═══ */}
+      <section className="lp-usecases" aria-label="Disclaimer and cross-links">
         <div className="lp-usecases-inner">
-          <div className="lp-stat-label">Teams & Partners</div>
-          <h2 className="lp-usecases-title">Built for more than the map.</h2>
-          <p className="lp-usecases-sub">
-            CityPulse turns live scanner traffic into structured, geocoded incident data you can use for routing, alerts, and situational awareness.
-          </p>
-          <div className="lp-usecases-grid">
-            <div className="lp-usecase-card">
-              <div className="lp-usecase-top">
-                <div className="lp-usecase-name">Logistics & delivery detours</div>
-              </div>
-              <div className="lp-usecase-body">
-                Route around active scenes before traffic apps catch up, including crashes, closures, and violent incidents.
-              </div>
-            </div>
-            <div className="lp-usecase-card">
-              <div className="lp-usecase-top">
-                <div className="lp-usecase-name">Press / newsroom alerting</div>
-                <span className="lp-usecase-badge">Pro</span>
-              </div>
-              <div className="lp-usecase-body">
-                Keyword-based alerts for “shots fired”, “structure fire”, “officer down”, and more.
-              </div>
-            </div>
-            <div className="lp-usecase-card">
-              <div className="lp-usecase-top">
-                <div className="lp-usecase-name">Event security monitoring</div>
-              </div>
-              <div className="lp-usecase-body">
-                Situational awareness on the <strong>same live map</strong> with heatmap, time window, and layers. Not a separate venue dashboard.
-              </div>
-            </div>
-            <div className="lp-usecase-card">
-              <div className="lp-usecase-top">
-                <div className="lp-usecase-name">Research / public-good analysis</div>
-              </div>
-              <div className="lp-usecase-body">
-                Searchable, paginated stream with a normalized schema (location, category, times). The public API window is about the <strong>last hour</strong> without Pro; Pro unlocks longer history for analysis.
-              </div>
-            </div>
-            <div className="lp-usecase-card">
-              <div className="lp-usecase-top">
-                <div className="lp-usecase-name">API access (pilot)</div>
-                <span className="lp-usecase-badge">Pro</span>
-              </div>
-              <div className="lp-usecase-body">
-                Authenticated Pro reads for structured incidents in integrations. <strong>Limited pilot.</strong> Talk to us before production loads.{" "}
-                <a
-                  href="/use-cases/api"
-                  style={{ color: "rgb(var(--accent-rgb))", textDecoration: "underline", textUnderlineOffset: 3 }}
-                >
-                  Developer docs →
-                </a>
-              </div>
-            </div>
-          </div>
           <div className="lp-usecases-foot" style={{ flexDirection: "column", gap: "14px" }}>
             <span className="lp-usecases-note">
-              Data is scanner-derived and not verified as fact—see <strong>About</strong> on the map for the full disclaimer. Without signing in, incident reads are about the <strong>last hour</strong>; <strong>Pro</strong> adds deeper history, <strong>keyword push alerts</strong>, and <strong>programmatic access</strong>.{" "}
-              <a
+              Data is scanner-derived and not verified as fact&mdash;see <strong>About</strong> on the map for the full disclaimer. Without signing in, incident reads are about the <strong>last hour</strong>; <strong>Pro</strong> adds deeper history, <strong>keyword push alerts</strong>, and <strong>programmatic access</strong>.{" "}
+              <Link
                 href="/teams"
                 className="lp-usecases-teams-link"
                 style={{ color: "rgb(var(--accent-rgb))", textDecoration: "underline", textUnderlineOffset: 3 }}
               >
                 Teams &amp; app links
-              </a>
+              </Link>
               {" · "}
-              <a
+              <Link
                 href="/use-cases"
                 className="lp-usecases-teams-link"
                 style={{ color: "rgb(var(--accent-rgb))", textDecoration: "underline", textUnderlineOffset: 3 }}
               >
                 Campaign URLs
-              </a>
+              </Link>
             </span>
           </div>
         </div>

@@ -21,6 +21,7 @@ import {
   signInAnonymously,
   signInWithCustomToken as fbSignInWithCustomToken,
   signInWithEmailAndPassword,
+  signInWithPopup,
   signInWithRedirect,
   signOut,
   updateProfile,
@@ -31,6 +32,25 @@ import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
 
 const ADMIN_EMAILS = ["eliyoung4now@gmail.com", "kethansany@gmail.com", "rickywhy@gmail.com"];
 
+function formatFirebaseAuthError(e: unknown): string {
+  const code =
+    typeof e === "object" && e !== null && "code" in e ? String((e as { code: string }).code) : "";
+  switch (code) {
+    case "auth/unauthorized-domain":
+      return "This domain is not allowed for sign-in. In Firebase Console → Authentication → Settings, add it under Authorized domains (include your production host and any Vercel preview host you use).";
+    case "auth/operation-not-allowed":
+      return "Google sign-in is turned off. Enable the Google provider in Firebase Console → Authentication → Sign-in method.";
+    case "auth/network-request-failed":
+      return "Network error while signing in. Check your connection and try again.";
+    case "auth/web-storage-unsupported":
+      return "This browser blocks storage needed for sign-in. Try another browser or turn off strict tracking / private mode.";
+    case "auth/redirect-cancelled-by-user":
+      return "";
+    default:
+      return code ? `Sign-in error (${code}). Try again or use email.` : "Google sign-in failed. Try again.";
+  }
+}
+
 export type UserTier = "free" | "pro" | "enterprise";
 
 type AuthState = {
@@ -39,6 +59,9 @@ type AuthState = {
   isAdmin: boolean;
   tier: UserTier;
   isPro: boolean;
+  /** Set when Google redirect/popup fails; cleared on success or via clearLastAuthError. */
+  lastAuthError: string | null;
+  clearLastAuthError: () => void;
   signInWithGoogle: () => Promise<void>;
   signUpWithEmail: (email: string, password: string) => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
@@ -75,6 +98,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // requiring a Firestore write. Bumped by a setTimeout scheduled
   // to fire at the exact `proUntil` moment whenever it changes.
   const [, setExpiryTick] = useState(0);
+  const [lastAuthError, setLastAuthError] = useState<string | null>(null);
+
+  const clearLastAuthError = useCallback(() => setLastAuthError(null), []);
 
   const isAdmin = useMemo(
     () => !!user?.email && ADMIN_EMAILS.includes(user.email.toLowerCase()),
@@ -132,11 +158,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void getRedirectResult(auth)
       .catch((e) => {
         console.warn("getRedirectResult:", e);
+        const msg = formatFirebaseAuthError(e);
+        if (msg) setLastAuthError(msg);
       })
       .finally(() => {
         if (cancelled) return;
         authUnsub = onAuthStateChanged(auth, (u) => {
           setUser(u);
+          if (u) setLastAuthError(null);
 
           // Always clean up any previous user-doc listener before we
           // either subscribe to the new one or settle into the
@@ -255,9 +284,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signInWithGoogle = useCallback(async () => {
     const auth = getAuth(getFirebaseApp());
     const provider = new GoogleAuthProvider();
-    // Redirect avoids popup/opener COOP issues on some browsers and hosts
-    // (Chrome logging `window.closed` / `window.close` blocked under strict COOP).
-    await signInWithRedirect(auth, provider);
+    setLastAuthError(null);
+    // Popup is more reliable than full-page redirect on Safari, iOS, and some
+    // privacy modes. COOP is `same-origin-allow-popups` (middleware + next.config).
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (code === "auth/popup-blocked") {
+        await signInWithRedirect(auth, provider);
+        return;
+      }
+      if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+        return;
+      }
+      setLastAuthError(formatFirebaseAuthError(e));
+      throw e;
+    }
   }, []);
 
   const signUpWithEmail = useCallback(async (email: string, password: string) => {
@@ -399,6 +442,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAdmin,
       tier,
       isPro,
+      lastAuthError,
+      clearLastAuthError,
       signInWithGoogle,
       signUpWithEmail,
       signInWithEmail,
@@ -408,7 +453,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updateDisplayName,
       deleteAccount,
     }),
-    [user, loading, isAdmin, tier, isPro, signInWithGoogle, signUpWithEmail, signInWithEmail, resendVerification, signOutUser, continueAsGuest, updateDisplayName, deleteAccount]
+    [
+      user,
+      loading,
+      isAdmin,
+      tier,
+      isPro,
+      lastAuthError,
+      clearLastAuthError,
+      signInWithGoogle,
+      signUpWithEmail,
+      signInWithEmail,
+      resendVerification,
+      signOutUser,
+      continueAsGuest,
+      updateDisplayName,
+      deleteAccount,
+    ]
   );
 
   if (!isFirebaseConfigured()) {
@@ -420,6 +481,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           isAdmin: false,
           tier: "free",
           isPro: false,
+          lastAuthError: null,
+          clearLastAuthError: () => {},
           signInWithGoogle: noop,
           signUpWithEmail: noop,
           signInWithEmail: noop,

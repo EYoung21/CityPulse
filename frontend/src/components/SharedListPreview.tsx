@@ -25,7 +25,7 @@ type ImportState = "idle" | "importing" | "done" | "error";
  *  would balloon the share-page bundle and these previews are usually
  *  10-30 items, perfectly readable as a list. */
 export default function SharedListPreview({ snapshot }: Props) {
-  const { user, signInWithGoogle } = useAuth();
+  const { user, signInWithGoogle, lastAuthError } = useAuth();
   const { canSave, lists, createList, addDestination } = useSavedDestinations();
   const [state, setState] = useState<ImportState>("idle");
   const [errMsg, setErrMsg] = useState<string | null>(null);
@@ -49,7 +49,7 @@ export default function SharedListPreview({ snapshot }: Props) {
         return; // The next render after auth state settles will show
                 // the import button enabled; user re-taps.
       } catch {
-        setErrMsg("Sign-in cancelled");
+        // Popup cancel is silent; other failures set lastAuthError in context.
         return;
       }
     }
@@ -222,6 +222,9 @@ export default function SharedListPreview({ snapshot }: Props) {
           )}
           {errMsg && (
             <p className="text-xs text-rose-400 text-center mt-2">{errMsg}</p>
+          )}
+          {lastAuthError && (
+            <p className="text-xs text-rose-400 text-center mt-2">{lastAuthError}</p>
           )}
           {importedListId && state !== "done" && (
             <p className="text-[11px] text-slate-500 text-center">

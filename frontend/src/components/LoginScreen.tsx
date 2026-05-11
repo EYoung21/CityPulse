@@ -19,6 +19,7 @@ export default function LoginScreen() {
     signInWithEmail,
     resendVerification,
     continueAsGuest,
+    lastAuthError,
   } = useAuth();
 
   const [mode, setMode] = useState<Mode>("login");
@@ -144,8 +145,10 @@ export default function LoginScreen() {
         <button
           onClick={async () => {
             setError("");
-            try { await signInWithGoogle(); } catch (err: unknown) {
-              if (err instanceof Error && !err.message.includes("popup-closed")) setError("Google sign-in failed.");
+            try {
+              await signInWithGoogle();
+            } catch {
+              // Detailed message is in lastAuthError from AuthContext
             }
           }}
           className="lp-login-btn lp-login-btnGhost flex items-center justify-center gap-3"
@@ -158,6 +161,13 @@ export default function LoginScreen() {
           </svg>
           Continue with Google
         </button>
+
+        {lastAuthError && (
+          <div className="flex items-start gap-2 text-xs text-red-400 -mt-1">
+            <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            {lastAuthError}
+          </div>
+        )}
 
         <button
           type="button"

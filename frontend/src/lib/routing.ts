@@ -151,12 +151,18 @@ export interface AvoidancePrefs {
   /** Floor on `w_eff`. Defaults to `"low"` (0.25), which matches the
    *  threshold the legacy `buildAvoidZones` baked in implicitly. */
   minSeverity: SeverityFloor;
+  /** Optional time-window for routing avoidance, in hours. When set,
+   *  `buildAvoidZones` drops any incident older than `Date.now() -
+   *  maxAgeHours * 3600 * 1000`. Undefined = follow whatever window the
+   *  caller already passed in (typically the global time filter). */
+  maxAgeHours?: number;
 }
 
 export function defaultAvoidancePrefs(): AvoidancePrefs {
   return {
     leaves: new Set(DEFAULT_AVOID_LEAVES),
     minSeverity: "low",
+    maxAgeHours: undefined,
   };
 }
 
@@ -186,6 +192,10 @@ export function buildAvoidZones(
     prefs = prefsOrCats;
   }
   const floor = SEVERITY_FLOORS[prefs.minSeverity];
+  const ageCutoffMs =
+    prefs.maxAgeHours != null
+      ? Date.now() - prefs.maxAgeHours * 3600_000
+      : null;
 
   return incidents
     .filter(
@@ -193,7 +203,9 @@ export function buildAvoidZones(
         inc.lat != null &&
         inc.lng != null &&
         (inc.w_eff ?? 0) >= floor &&
-        (prefs.leaves.size === 0 || prefs.leaves.has(inc.severity_category))
+        (prefs.leaves.size === 0 || prefs.leaves.has(inc.severity_category)) &&
+        (ageCutoffMs == null ||
+          new Date(inc.reported_at).getTime() >= ageCutoffMs)
     )
     .map((inc) => ({
       center: [inc.lat!, inc.lng!] as [number, number],

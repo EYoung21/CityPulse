@@ -108,7 +108,7 @@ export function SafeRouteSection({ city }: Props) {
   const pair = pairs[idx];
 
   return (
-    <section className="lp-route-section" aria-label="Safer routing demo">
+    <section id="logistics" className="lp-route-section lp-persona-section" aria-label="Safer routing demo">
       <div className="lp-route-section-inner">
         <header className="lp-route-section-head">
           <div
