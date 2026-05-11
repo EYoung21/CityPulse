@@ -17,8 +17,9 @@ const COLLECTION = "incidents";
 const ALLOWED_HOURS = new Set([
   // Mirror the TIME_FILTERS table in src/app/page.tsx — restrict the
   // accepted values so an attacker can't burn reads with arbitrary
-  // queries.
-  5 / 60, 10 / 60, 0.5, 1, 3, 6, 24, 72, 168, 720, 2160, 4320, 8760, 87600,
+  // queries. The "All" pill (hours = Infinity client-side) is encoded
+  // as the literal string "all" and is handled separately below.
+  5 / 60, 10 / 60, 0.5, 1, 3, 6, 24, 72, 168, 720, 2160, 4320, 8760,
 ]);
 // Slug-safe city: lowercase letters + dashes only; nothing weird leaks
 // into the Firestore query.
@@ -41,29 +42,31 @@ function getAdminDb() {
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const city = (searchParams.get("city") ?? "").trim().toLowerCase();
-  const hoursRaw = Number(searchParams.get("hours"));
+  const hoursParam = (searchParams.get("hours") ?? "").trim().toLowerCase();
+  const isAll = hoursParam === "all";
+  const hoursRaw = isAll ? null : Number(hoursParam);
 
   if (!CITY_RE.test(city)) {
     return NextResponse.json({ error: "invalid city" }, { status: 400 });
   }
-  if (!Number.isFinite(hoursRaw) || !ALLOWED_HOURS.has(hoursRaw)) {
+  if (!isAll && (hoursRaw == null || !Number.isFinite(hoursRaw) || !ALLOWED_HOURS.has(hoursRaw))) {
     return NextResponse.json({ error: "invalid hours" }, { status: 400 });
   }
 
-  const sinceISO = new Date(Date.now() - hoursRaw * 3600_000).toISOString();
+  const sinceISO =
+    hoursRaw != null
+      ? new Date(Date.now() - hoursRaw * 3600_000).toISOString()
+      : null;
 
   try {
     const db = getAdminDb();
-    const snap = await db
-      .collection(COLLECTION)
-      .where("city", "==", city)
-      .where("reported_at", ">=", sinceISO)
-      .count()
-      .get();
+    const base = db.collection(COLLECTION).where("city", "==", city);
+    const q = sinceISO ? base.where("reported_at", ">=", sinceISO) : base;
+    const snap = await q.count().get();
     const count = snap.data().count;
 
     return NextResponse.json(
-      { city, hours: hoursRaw, sinceISO, count },
+      { city, hours: isAll ? "all" : hoursRaw, sinceISO, count },
       {
         headers: {
           // CDN caches for 5 min; serves stale for an extra 10 min
@@ -77,6 +80,12 @@ export async function GET(req: NextRequest) {
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "unknown error";
+    // Log to server-side stdout (visible in Vercel/host logs) so the
+    // root cause — missing FIREBASE_ADMIN_KEY, missing composite index,
+    // permissioning, etc. — isn't hidden behind the 500. The detail is
+    // also returned in the body so curl-from-the-frontend debugging
+    // surfaces it without needing host log access.
+    console.error("[/api/stats/count] failed:", { city, hoursParam, error: msg });
     return NextResponse.json(
       { error: "count failed", detail: msg },
       { status: 500 },

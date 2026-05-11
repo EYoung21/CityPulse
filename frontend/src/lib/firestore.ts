@@ -106,7 +106,11 @@ export async function fetchIncidentCount(opts: {
   hours: number;
 }): Promise<number> {
   const city = getCurrentCity().slug;
-  const url = `/api/stats/count?city=${encodeURIComponent(city)}&hours=${opts.hours}`;
+  // "All" comes through as Infinity from the TIME_FILTERS table — encode
+  // as the literal "all" sentinel so the URL is well-formed and the
+  // server can choose to skip the `reported_at` clause entirely.
+  const hoursParam = Number.isFinite(opts.hours) ? String(opts.hours) : "all";
+  const url = `/api/stats/count?city=${encodeURIComponent(city)}&hours=${hoursParam}`;
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`count endpoint returned ${res.status}`);
@@ -123,8 +127,10 @@ export async function fetchIncidentCount(opts: {
  *  Skips the `inhibitor`/`hidden`/`llm_fallback` rows the same way
  *  `subscribeIncidents` does, so the merged set stays renderable. */
 export async function fetchExtendedHistoryPage(opts: {
-  /** Inclusive lower bound for `reported_at`. ISO string. */
-  sinceISO: string;
+  /** Inclusive lower bound for `reported_at`. ISO string. `null` =
+   *  "no lower bound", used by the "All" pill so we don't try to
+   *  serialize a -Infinity Date. */
+  sinceISO: string | null;
   /** Previous page's `nextCursor` — ISO string of the last doc in the
    *  prior page. Omit on the first call. */
   cursor?: string | null;
@@ -136,7 +142,7 @@ export async function fetchExtendedHistoryPage(opts: {
   const size = Math.max(1, Math.min(opts.pageSize ?? 2000, EXTENDED_HISTORY_LIMIT));
   const clauses = [
     where("city", "==", getCurrentCity().slug),
-    where("reported_at", ">=", opts.sinceISO),
+    ...(opts.sinceISO ? [where("reported_at", ">=", opts.sinceISO)] : []),
     orderBy("reported_at", "desc"),
   ];
   const q = opts.cursor
