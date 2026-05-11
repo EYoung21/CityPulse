@@ -1,0 +1,199 @@
+name: Server Migrate Live Transcribers to Lambda
+
+# One-shot orchestrator that finishes the half-done "Lambda-only"
+# cutover: pulse-live@<city> currently runs on the 2 GB Hetzner host
+# and OOM-kills the API repeatedly. Lambda already runs the archive
+# transcriber + ollama and has GPU + 60 GB RAM — the live path belongs
+# there. Broadcastify's 429 rate-limit is only on archive downloads,
+# not live streams, so this doesn't re-trigger the original split.
+#
+# What it does, in order:
+#   1. Hetzner: pull latest repo (gets the new install script).
+#   2. Hetzner -> Lambda: rsync multi_transcriber.py, philly_pulse/,
+#      cities/, config.yaml, and the new installer.
+#   3. Lambda: run install_lambda_live_transcribers.sh which writes the
+#      pulse-live@.service unit, patches config.yaml's bridge_url to
+#      the public API, and starts a service per active city.
+#   4. Wait + smoke-test: are pulse-live@<city> active on Lambda? Is
+#      Hetzner /api/ingest seeing POSTs from Lambda's IP?
+#   5. Cutover: stop + disable Hetzner's pulse-live@<city>.
+#   6. Cleanup: remove the 400M MemoryMax drop-in we added when the
+#      transcribers still ran on Hetzner — no longer applicable.
+#
+# Idempotent. Re-running rsyncs latest + restarts the units; the
+# install script is itself idempotent.
+
+on:
+  workflow_dispatch:
+    inputs:
+      active_cities:
+        description: "Cities to run live on Lambda (space-separated)"
+        required: false
+        default: "sf nyc philly chattanooga"
+      bridge_url:
+        description: "Where Lambda POSTs transcripts"
+        required: false
+        default: "https://api.phlpulse.com/api/ingest"
+      lambda_user:
+        description: "SSH user on the Lambda host"
+        required: false
+        default: "ubuntu"
+      lambda_ip:
+        description: "Lambda host IP"
+        required: false
+        default: "150.230.182.19"
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Orchestrate from Hetzner
+        uses: appleboy/ssh-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTIVE_CITIES: ${{ inputs.active_cities }}
+          BRIDGE_URL: ${{ inputs.bridge_url }}
+          LAMBDA_USER: ${{ inputs.lambda_user }}
+          LAMBDA_IP: ${{ inputs.lambda_ip }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 25m
+          envs: GITHUB_TOKEN,ACTIVE_CITIES,BRIDGE_URL,LAMBDA_USER,LAMBDA_IP
+          script: |
+            set -euo pipefail
+
+            LAMBDA_USER="${LAMBDA_USER:-ubuntu}"
+            LAMBDA_IP="${LAMBDA_IP:-150.230.182.19}"
+            ACTIVE_CITIES="${ACTIVE_CITIES:-sf nyc philly chattanooga}"
+            BRIDGE_URL="${BRIDGE_URL:-https://api.phlpulse.com/api/ingest}"
+            SSH_OPTS="-i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+
+            echo "######################################################"
+            echo "# 1. Pull latest repo on Hetzner"
+            echo "######################################################"
+            cd /root/PhillyPulse
+            if [ -n "${GITHUB_TOKEN:-}" ]; then
+              git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/EYoung21/CityPulse.git"
+            fi
+            git fetch origin main
+            git reset --hard origin/main
+            git remote set-url origin https://github.com/EYoung21/CityPulse.git
+            ls scripts/install_lambda_live_transcribers.sh multi_transcriber.py config.yaml
+
+            echo ""
+            echo "######################################################"
+            echo "# 2. Sanity: Hetzner -> Lambda SSH"
+            echo "######################################################"
+            ssh $SSH_OPTS -o ConnectTimeout=10 "$LAMBDA_USER@$LAMBDA_IP" 'echo "Lambda reachable: $(hostname); GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"' \
+              || { echo "ERROR: Hetzner cannot SSH to Lambda"; exit 1; }
+
+            echo ""
+            echo "######################################################"
+            echo "# 3. Rsync live-transcriber artefacts to Lambda"
+            echo "######################################################"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" 'mkdir -p /opt/citypulse-backfill/scripts /opt/citypulse-backfill/cities /opt/citypulse-backfill/philly_pulse'
+
+            for path in \
+              multi_transcriber.py \
+              config.yaml \
+              scripts/install_lambda_live_transcribers.sh
+            do
+              echo "  rsync $path"
+              rsync -az -e "ssh $SSH_OPTS" "/root/PhillyPulse/${path}" "$LAMBDA_USER@$LAMBDA_IP:/opt/citypulse-backfill/${path}"
+            done
+
+            echo "  rsync philly_pulse/ (need bridge.py + preprocess + friends)"
+            rsync -az --delete -e "ssh $SSH_OPTS" \
+              /root/PhillyPulse/philly_pulse/ \
+              "$LAMBDA_USER@$LAMBDA_IP:/opt/citypulse-backfill/philly_pulse/"
+
+            echo "  rsync cities/ (need per-city configs + initial prompts)"
+            rsync -az --delete -e "ssh $SSH_OPTS" \
+              /root/PhillyPulse/cities/ \
+              "$LAMBDA_USER@$LAMBDA_IP:/opt/citypulse-backfill/cities/"
+
+            echo ""
+            echo "######################################################"
+            echo "# 4. Run install_lambda_live_transcribers.sh on Lambda"
+            echo "######################################################"
+            ssh $SSH_OPTS -o ServerAliveInterval=30 "$LAMBDA_USER@$LAMBDA_IP" \
+              "set -e; chmod +x /opt/citypulse-backfill/scripts/install_lambda_live_transcribers.sh; \
+               BRIDGE_URL='$BRIDGE_URL' ACTIVE_CITIES='$ACTIVE_CITIES' \
+               bash /opt/citypulse-backfill/scripts/install_lambda_live_transcribers.sh 2>&1 | tail -120"
+
+            echo ""
+            echo "######################################################"
+            echo "# 5. Wait 90s for Whisper model load + first feed audio"
+            echo "######################################################"
+            sleep 90
+
+            echo "-- Lambda: per-service status --"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "
+              for city in $ACTIVE_CITIES; do
+                echo -n \"  pulse-live@\${city}: \"
+                sudo systemctl is-active \"pulse-live@\${city}.service\" || true
+              done
+            "
+
+            echo ""
+            echo "-- Lambda: tail /var/log/pulse-live.log --"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" 'tail -40 /var/log/pulse-live.log 2>/dev/null || echo "(no log yet)"'
+
+            echo ""
+            echo "-- Hetzner: /api/ingest activity (last 90s, by source IP) --"
+            # Lambda's NAT IP should now show up alongside the existing
+            # local 127.0.0.1 from Hetzner's still-running transcribers.
+            journalctl -u philly-pulse-api --since '90 sec ago' --no-pager 2>/dev/null \
+              | grep -E 'POST /api/ingest' \
+              | awk -F: '{print $5}' | awk '{print $NF}' \
+              | sort | uniq -c | sort -rn | head -10
+
+            echo ""
+            echo "######################################################"
+            echo "# 6. Cutover — stop + disable Hetzner pulse-live@<city>"
+            echo "######################################################"
+            for city in $ACTIVE_CITIES; do
+              echo "  stopping pulse-live@${city} on Hetzner"
+              systemctl stop "pulse-live@${city}" || true
+              systemctl disable "pulse-live@${city}" || true
+            done
+            # Also clean up the legacy single-feed unit if it's still hanging around.
+            systemctl stop philly-pulse-live 2>/dev/null || true
+            systemctl disable philly-pulse-live 2>/dev/null || true
+
+            echo ""
+            echo "######################################################"
+            echo "# 7. Remove the 400M MemoryMax drop-in (no longer needed)"
+            echo "######################################################"
+            if [ -f /etc/systemd/system/pulse-live@.service.d/memory-cap.conf ]; then
+              rm -f /etc/systemd/system/pulse-live@.service.d/memory-cap.conf
+              rmdir /etc/systemd/system/pulse-live@.service.d 2>/dev/null || true
+              systemctl daemon-reload
+              echo "  drop-in removed"
+            else
+              echo "  no drop-in present"
+            fi
+
+            echo ""
+            echo "######################################################"
+            echo "# 8. Final state"
+            echo "######################################################"
+            echo "-- Hetzner memory --"
+            free -h | head -3
+            echo ""
+            echo "-- Hetzner API: still running? --"
+            systemctl is-active philly-pulse-api && echo "  API: active" || echo "  API: NOT ACTIVE"
+            echo ""
+            echo "-- Hetzner pulse-live@* (should all be inactive) --"
+            for city in $ACTIVE_CITIES; do
+              echo "  pulse-live@${city}: active=$(systemctl is-active pulse-live@${city} 2>/dev/null) enabled=$(systemctl is-enabled pulse-live@${city} 2>/dev/null)"
+            done
+            echo ""
+            echo "-- Lambda pulse-live@* (should all be active) --"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "
+              for city in $ACTIVE_CITIES; do
+                echo \"  pulse-live@\${city}: active=\$(sudo systemctl is-active pulse-live@\${city} 2>/dev/null) enabled=\$(sudo systemctl is-enabled pulse-live@\${city} 2>/dev/null)\"
+              done
+            "
