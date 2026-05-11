@@ -112,6 +112,10 @@ export async function fetchIncidentCount(opts: {
   const hoursParam = Number.isFinite(opts.hours) ? String(opts.hours) : "all";
   const url = `/api/stats/count?city=${encodeURIComponent(city)}&hours=${hoursParam}`;
   const res = await fetch(url);
+  // 503: Firestore aggregate index still building — same sentinel as other failures.
+  if (res.status === 503) {
+    return -1;
+  }
   if (!res.ok) {
     throw new Error(`count endpoint returned ${res.status}`);
   }

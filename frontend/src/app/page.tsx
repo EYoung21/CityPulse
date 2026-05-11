@@ -994,8 +994,13 @@ function MapHome() {
         (next) => setIncidents(next),
         (e) => {
           console.error("Firestore incidents:", e);
-          // If realtime Firestore fails at runtime (bad key, rules, missing index),
-          // gracefully fall back to REST polling so live data still renders.
+          // Missing/building composite index or other precondition: do NOT
+          // flip to API-only — BACKEND may be 502 and we'd paint an empty map.
+          const code = (e as { code?: string }).code;
+          if (code === "failed-precondition") {
+            return;
+          }
+          // Bad key, permission, etc.: fall back to REST polling.
           setFirestoreAvailable(false);
         }
       );
