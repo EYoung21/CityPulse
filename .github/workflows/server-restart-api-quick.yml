@@ -1,0 +1,33 @@
+name: Server Restart API (quick)
+
+# Minimal blast: restart FastAPI + nginx on Hetzner, verify localhost only.
+# Use when api.phlpulse.com is timing out / 502 and the full "Fix LLM Tunnel"
+# workflow is too slow or hangs on public curl.
+#
+#   gh workflow run "Server Restart API (quick)" --repo EYoung21/CityPulse
+
+on:
+  workflow_dispatch:
+
+jobs:
+  restart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restart philly-pulse-api + nginx (localhost health only)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 3m
+          script: |
+            set -euo pipefail
+            echo "### Before"
+            systemctl is-active philly-pulse-api nginx 2>/dev/null || true
+            systemctl restart philly-pulse-api
+            systemctl restart nginx || true
+            sleep 2
+            echo "### After"
+            systemctl is-active philly-pulse-api nginx 2>/dev/null || true
+            echo "### Local /api/health (must be fast)"
+            timeout 6 curl -sS http://127.0.0.1:8765/api/health | head -c 500 || echo "LOCAL_HEALTH_FAILED"
