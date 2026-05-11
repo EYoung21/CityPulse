@@ -62,6 +62,7 @@ function WaveformPlayer({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [waveformData, setWaveformData] = useState<number[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const transcriptContainerRef = useRef<HTMLDivElement | null>(null);
 
   const hasTimings = wordTimings && wordTimings.length > 0;
@@ -80,7 +81,7 @@ function WaveformPlayer({
 
     fetchUrlWithPublicApiFallback(src)
       .then((r) => {
-        if (!r.ok) throw new Error(String(r.status));
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.arrayBuffer().then((buf) => ({ buf, mime: r.headers.get("content-type") }));
       })
       .then(async ({ buf, mime }) => {
@@ -99,12 +100,17 @@ function WaveformPlayer({
         }
         const max = Math.max(...samples, 0.01);
         setWaveformData(samples.map((s) => s / max));
+        setLoadError(null);
 
         const type = mime && mime.startsWith("audio/") ? mime : "audio/mpeg";
         objectUrl = URL.createObjectURL(new Blob([buf], { type }));
         audio.src = objectUrl;
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : "network error";
+        console.warn("[WaveformPlayer] audio load failed", { src, error: msg });
+        setLoadError(msg);
+      });
 
     return () => {
       audio.pause();
@@ -167,11 +173,17 @@ function WaveformPlayer({
 
   const togglePlay = () => {
     if (!audioRef.current) return;
+    if (loadError || !audioRef.current.src) return;
     if (playing) {
       audioRef.current.pause();
       setPlaying(false);
     } else {
-      audioRef.current.play().catch(() => setPlaying(false));
+      audioRef.current.play().catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : "playback blocked";
+        console.warn("[WaveformPlayer] audio.play() failed", { error: msg });
+        setLoadError(msg);
+        setPlaying(false);
+      });
       setPlaying(true);
     }
   };
@@ -218,7 +230,8 @@ function WaveformPlayer({
       <div className="flex items-center gap-2">
         <button
           onClick={restart}
-          className="p-1.5 rounded-full transition-colors"
+          disabled={!!loadError}
+          className="p-1.5 rounded-full transition-colors disabled:opacity-40"
           style={{ color: "var(--panel-text-muted)" }}
           title="Restart"
         >
@@ -226,9 +239,11 @@ function WaveformPlayer({
         </button>
         <button
           onClick={togglePlay}
-          className={`p-2 rounded-full transition-all ${
+          disabled={!!loadError}
+          className={`p-2 rounded-full transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
             playing ? "bg-blue-500 text-white" : "bg-blue-500/15 text-blue-400 hover:bg-blue-500/25"
           }`}
+          title={loadError ? `Audio unavailable: ${loadError}` : undefined}
         >
           {playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
         </button>
@@ -241,6 +256,20 @@ function WaveformPlayer({
           {fmtTime(currentTime)} / {fmtTime(duration)}
         </span>
       </div>
+
+      {loadError && (
+        <div
+          className="text-[11px] px-2 py-1 rounded"
+          style={{
+            color: "rgb(252, 165, 165)",
+            background: "rgba(239, 68, 68, 0.08)",
+            border: "1px solid rgba(239, 68, 68, 0.25)",
+          }}
+          role="alert"
+        >
+          Audio unavailable &middot; {loadError}
+        </div>
+      )}
 
       {words.length > 0 && (
         <div
