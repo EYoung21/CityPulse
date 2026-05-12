@@ -8,7 +8,7 @@ import {
   forwardRef,
 } from "react";
 import L from "leaflet";
-import "leaflet.heat";
+import "@/lib/leaflet-heat.js";
 import "leaflet.markercluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
