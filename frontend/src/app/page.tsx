@@ -32,6 +32,7 @@ import {
   Lock,
   Bell,
   Search,
+  Crosshair,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import IncidentFeed from "@/components/IncidentFeed";
@@ -405,6 +406,30 @@ function MapHome() {
   // average across all hours of the day.
   const [todOverlayEnabled, setTodOverlayEnabled] = useState(false);
   const [todHourFocus, setTodHourFocus] = useState<number | null>(null);
+
+  const [feedSortMode, setFeedSortMode] = useState<"recent" | "near">("recent");
+  const [feedUserLoc, setFeedUserLoc] = useState<{ lat: number; lng: number } | null>(null);
+  const [feedLocating, setFeedLocating] = useState(false);
+
+  const requestFeedLocation = useCallback(() => {
+    if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
+      alert("Geolocation is not supported in this browser");
+      return;
+    }
+    setFeedLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setFeedUserLoc({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setFeedSortMode("near");
+        setFeedLocating(false);
+      },
+      (err) => {
+        setFeedLocating(false);
+        alert(err.message || "Could not get your location");
+      },
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 }
+    );
+  }, []);
 
   // Persistent Safety-POI overlay state. Each enabled category triggers
   // a viewport-bbox Overpass fetch; results are de-duplicated across
@@ -3293,6 +3318,52 @@ function MapHome() {
             )}
           </div>
 
+          {/* Sort toggle (Recent / Near Me) */}
+          <div
+            className="px-3 py-2 flex items-center gap-2"
+            style={{ borderBottom: "1px solid var(--panel-border)" }}
+          >
+            <div
+              className="inline-flex rounded-full p-0.5 text-xs"
+              style={{
+                background: "var(--panel-input-bg)",
+                border: "1px solid var(--panel-border)",
+              }}
+              role="tablist"
+              aria-label="Feed sorting"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={feedSortMode === "recent"}
+                onClick={() => setFeedSortMode("recent")}
+                className="px-3 py-1 rounded-full font-medium flex items-center gap-1.5 transition-colors"
+                style={{
+                  background: feedSortMode === "recent" ? "rgba(59,130,246,0.15)" : "transparent",
+                  color: feedSortMode === "recent" ? "#3b82f6" : "var(--panel-text-muted)",
+                }}
+              >
+                <Clock className="w-3 h-3" /> Recent
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={feedSortMode === "near"}
+                onClick={requestFeedLocation}
+                disabled={feedLocating}
+                className="px-3 py-1 rounded-full font-medium flex items-center gap-1.5 transition-colors"
+                style={{
+                  background: feedSortMode === "near" ? "rgba(59,130,246,0.15)" : "transparent",
+                  color: feedSortMode === "near" ? "#3b82f6" : "var(--panel-text-muted)",
+                  opacity: feedLocating ? 0.6 : 1,
+                }}
+              >
+                <Crosshair className={`w-3 h-3 ${feedLocating ? "animate-spin" : ""}`} /> 
+                {feedLocating ? "Locating..." : "Near me"}
+              </button>
+            </div>
+          </div>
+
           {/* Filter row within feed (time + category) */}
           <div
             className="px-3 py-2 flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0"
@@ -3364,6 +3435,8 @@ function MapHome() {
                 }
               }}
               showMapThumbnail
+              sortMode={feedSortMode}
+              userLoc={feedUserLoc}
             />
           </div>
         </div>
