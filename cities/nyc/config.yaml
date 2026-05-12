@@ -4,15 +4,50 @@ city:
   short: "NYC"
   domain: "newyorkcitypulse.com"
 
+# Live audio sources (Broadcastify feed IDs).
+#
+# NYPD context (2026): the NYPD has been progressively encrypting precinct
+# dispatch on its UHF/T-Band system since mid-2023 (Brooklyn first, then
+# Bronx, Queens, Manhattan). The "NYPD Citywide" channels below still
+# exist but transmit mostly silence to the public; they're kept in case
+# a borough partially reverts or a citywide event is broadcast in clear.
+#
+# Most productive NYC sources today are FDNY borough dispatch, which is
+# still on unencrypted UHF (482 MHz family). The previous standalone
+# "FDNY Manhattan Dispatch" feed (Broadcastify #46122) has been offline
+# since ~Jan 2026, so we route Manhattan coverage through the FDNY
+# Citywide feed instead.
 feeds:
+  # NYPD — mostly encrypted, kept as a fallback only.
   - feed_id: "40184"
     label: "NYPD Citywide 1"
   - feed_id: "40185"
     label: "NYPD Citywide 2"
   - feed_id: "40186"
     label: "NYPD Citywide 3"
-  - feed_id: "46122"
-    label: "FDNY Manhattan Dispatch"
+
+  # FDNY borough dispatch — primary source of NYC incidents.
+  - feed_id: "8534"
+    label: "FDNY Bronx Dispatch"
+  - feed_id: "8585"
+    label: "FDNY Queens Dispatch"
+  - feed_id: "8749"
+    label: "FDNY Staten Island Dispatch"
+  - feed_id: "9466"
+    label: "FDNY Citywide"
+
+  # Brooklyn no longer has a standalone FDNY borough feed on Broadcastify.
+  # This combo carries Brooklyn fire alarms plus Hatzolah EMS dispatch
+  # (the largest volunteer EMS in the country, covering most of southern
+  # Brooklyn — Boro Park, Flatbush, Crown Heights, Williamsburg, Midwood).
+  - feed_id: "7392"
+    label: "Brooklyn Fire & Hatzolah EMS"
+
+  # Manhattan FDNY dispatch (482.10625 MHz) — Broadcastify provider's
+  # standalone feed has been offline since ~Jan 2026. Re-enable when the
+  # provider brings it back: https://www.broadcastify.com/listen/feed/46122
+  # - feed_id: "46122"
+  #   label: "FDNY Manhattan Dispatch"
 
 geocode:
   viewbox: "-74.26,40.49,-73.70,40.92"
@@ -21,33 +56,60 @@ geocode:
 
 tuning:
   initial_prompt: >-
-    New York City police radio dispatch. NYPD precincts 1 through 123. Five boroughs:
-    Manhattan, Brooklyn, Queens, Bronx, Staten Island. Manhattan neighborhoods:
-    Harlem, East Harlem, Upper West Side, Upper East Side, Midtown, Chelsea,
-    Greenwich Village, East Village, Lower East Side, Tribeca, SoHo, Chinatown,
-    Financial District, Hell's Kitchen, Murray Hill, Gramercy, Washington Heights,
+    New York City fire and EMS radio dispatch. FDNY borough dispatchers in
+    Manhattan, Brooklyn, Queens, Bronx, Staten Island. Hatzolah EMS dispatch.
+    Box numbers, 10-codes (10-75 working fire, 10-77 high-rise fire, 10-45
+    fatality, 10-92 unfounded, 10-84 on scene). Engine companies (Engine 1
+    through Engine 332), Ladder companies (Ladder 1 through Ladder 175),
+    Battalion chiefs (Battalion 1 through 58), Squad and Rescue companies.
+    EMS units (Boro 1, 2, 3, 4, 5; Conditions car). FDNY tour numbers.
+    Phrases: probable cause, all hands, working fire, second alarm, third
+    alarm, 10-75, 10-77, taking the air, taking up, unfounded, transmit a
+    second source, AFA automatic fire alarm, gas leak, person trapped,
+    auto accident with injuries, MVA pin in, jumper, EDP emotionally
+    disturbed person, cardiac arrest, CFR-D certified first responder,
+    BLS, ALS, transport to. Plus NYPD: precincts 1 through 123, central,
+    responding, 10-4, 10-13, 10-85, shots fired, robbery, assault, in
+    pursuit, on the scene. Five boroughs: Manhattan, Brooklyn, Queens,
+    Bronx, Staten Island. Manhattan neighborhoods: Harlem, East Harlem,
+    Upper West Side, Upper East Side, Midtown, Chelsea, Greenwich Village,
+    East Village, Lower East Side, Tribeca, SoHo, Chinatown, Financial
+    District, Hell's Kitchen, Murray Hill, Gramercy, Washington Heights,
     Inwood. Brooklyn: Bed-Stuy, Brownsville, East New York, Crown Heights,
     Flatbush, Bushwick, Williamsburg, Park Slope, Sunset Park, Bay Ridge,
-    Coney Island, Canarsie. Bronx: South Bronx, Mott Haven, Fordham, Pelham Bay,
-    Tremont, Kingsbridge. Queens: Jamaica, Flushing, Astoria, Long Island City,
-    Far Rockaway, Jackson Heights. Avenues, streets, Broadway, FDR Drive, BQE,
-    Cross Bronx, Grand Central, LIE, Henry Hudson, West Side Highway.
-    Hospitals: Bellevue, Mount Sinai, NYU Langone, Columbia Presbyterian,
-    Lincoln, Jacobi, Kings County, Maimonides, Elmhurst.
-    Phrases: central, responding, 10-4, 10-13, 10-85, shots fired, robbery,
-    assault, in pursuit, on the scene. Short dispatch. Numbers spoken separately.
+    Coney Island, Canarsie, Boro Park, Midwood. Bronx: South Bronx, Mott
+    Haven, Fordham, Pelham Bay, Tremont, Kingsbridge. Queens: Jamaica,
+    Flushing, Astoria, Long Island City, Far Rockaway, Jackson Heights.
+    Staten Island: St George, Tottenville, New Dorp. Roads: Broadway, FDR
+    Drive, BQE, Cross Bronx, Grand Central, LIE, Henry Hudson, West Side
+    Highway, Belt Parkway. Hospitals: Bellevue, Mount Sinai, NYU Langone,
+    Columbia Presbyterian, Lincoln, Jacobi, Kings County, Maimonides,
+    Elmhurst, Methodist, Coney Island Hospital, Staten Island University.
+    Short dispatch. Numbers spoken separately.
   llm_local_context: >-
-    New York City five boroughs: Manhattan, Brooklyn, Queens, Bronx, Staten
-    Island. NYPD precincts 1–123; FDNY borough dispatch names. Prefer the
-    borough actually named on the radio over defaulting to “Manhattan.”
-    Manhattan: Harlem, East Harlem, UWS, UES, Midtown, Chelsea, Village,
-    LES, Chinatown, FiDi, Hell’s Kitchen, Inwood, Washington Heights.
-    Brooklyn: Bed-Stuy, Brownsville, East New York, Crown Heights, Flatbush,
-    Bushwick, Williamsburg, Park Slope, Sunset Park, Bay Ridge, Coney Island.
-    Queens: Jamaica, Flushing, Astoria, LIC, Jackson Heights, Far Rockaway.
-    Bronx: South Bronx, Mott Haven, Fordham, Pelham Bay. Staten Island:
-    St George, South Shore.
-    Major roads: Broadway, FDR, BQE, Cross Bronx, Bruckner, LIE I-495,
-    Grand Central, Henry Hudson, West Side Highway, Belt Parkway.
-    Hospitals: Bellevue, Mount Sinai, NYU Langone, NewYork-Presbyterian,
-    Jacobi, Lincoln, Kings County, Elmhurst, Maimonides.
+    Most NYC traffic on this pipeline is FDNY fire and Hatzolah EMS
+    dispatch (NYPD precinct dispatch is largely encrypted in 2026).
+    Common FDNY incident types: working fires, AFA automatic fire alarms,
+    gas leaks, person trapped, MVAs with injuries (pin in / extrication),
+    CFR-D and BLS/ALS medical calls, EDP holds, cardiac arrests, water
+    rescues. EMS units are organized by Boro 1–5; FDNY Engines 1–332,
+    Ladders 1–175, Battalions 1–58, Squads, Rescues. Five boroughs:
+    Manhattan, Brooklyn, Queens, Bronx, Staten Island. Prefer the
+    borough actually named on the radio (or implied by the dispatch
+    channel — FDNY Bronx Dispatch ⇒ Bronx, FDNY Queens Dispatch ⇒
+    Queens, etc.) over defaulting to "Manhattan." If the channel is
+    Brooklyn Fire & Hatzolah EMS, the location is Brooklyn unless
+    explicitly stated otherwise. NYPD precincts 1–123; FDNY borough
+    dispatch names. Manhattan: Harlem, East Harlem, UWS, UES, Midtown,
+    Chelsea, Village, LES, Chinatown, FiDi, Hell's Kitchen, Inwood,
+    Washington Heights. Brooklyn: Bed-Stuy, Brownsville, East New York,
+    Crown Heights, Flatbush, Bushwick, Williamsburg, Park Slope, Sunset
+    Park, Bay Ridge, Coney Island, Boro Park, Midwood. Queens: Jamaica,
+    Flushing, Astoria, LIC, Jackson Heights, Far Rockaway. Bronx: South
+    Bronx, Mott Haven, Fordham, Pelham Bay. Staten Island: St George,
+    Tottenville, New Dorp. Major roads: Broadway, FDR, BQE, Cross Bronx,
+    Bruckner, LIE I-495, Grand Central, Henry Hudson, West Side Highway,
+    Belt Parkway. Hospitals: Bellevue, Mount Sinai, NYU Langone,
+    NewYork-Presbyterian, Jacobi, Lincoln, Kings County, Elmhurst,
+    Maimonides, Methodist, Coney Island Hospital, Staten Island
+    University.
