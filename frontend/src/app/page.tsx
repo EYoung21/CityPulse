@@ -2477,7 +2477,6 @@ function MapHome() {
           <button
             onClick={() => {
               setShowInbox(!showInbox);
-              setShowTheme(false);
               setShowLayers(false);
             }}
             className="w-12 h-12 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
