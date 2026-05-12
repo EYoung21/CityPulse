@@ -292,12 +292,12 @@ function MapHome() {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [routes, setRoutes] = useState<RouteData | null>(null);
   /** Top-level view tab: "map" shows the map + sidebar, "feed" shows
-   *  a full-screen scrollable incident feed. */
-  const [viewTab, setViewTab] = useState<"map" | "feed">("map");
+   *  a full-screen scrollable incident feed, and "analytics" shows city data. */
+  const [viewTab, setViewTab] = useState<"map" | "feed" | "analytics">("map");
 
   useEffect(() => {
     const saved = sessionStorage.getItem("pulse_view_tab");
-    if (saved === "map" || saved === "feed") {
+    if (saved === "map" || saved === "feed" || saved === "analytics") {
       setViewTab(saved);
     }
   }, []);
@@ -682,7 +682,7 @@ function MapHome() {
   // don't burn battery on the search screen.
   const speedTracked = Boolean(tripGeometry && (tripMode === "driving-car" || tripMode === "cycling-regular"));
   const { mps: tripSpeedMps } = useGpsSpeed(speedTracked);
-  const [showAnalytics, setShowAnalytics] = useState(false);
+
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     if (typeof window === "undefined") return true;
     return window.innerWidth >= 768;
@@ -1595,20 +1595,26 @@ function MapHome() {
           boxShadow: "0 2px 12px var(--panel-shadow, rgba(0,0,0,0.25))",
         }}
       >
-        {(["map", "feed"] as const).map((tab) => {
+        {(["map", "feed", "analytics"] as const).map((tab) => {
           const active = viewTab === tab;
           return (
             <button
               key={tab}
-              onClick={() => setViewTab(tab)}
+              onClick={() => {
+                if (tab === "analytics" && !isPro) {
+                  setShowUpgrade("Analytics");
+                  return;
+                }
+                setViewTab(tab);
+              }}
               className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold tracking-wide uppercase transition-all relative"
               style={{
                 color: active ? "#3b82f6" : "var(--panel-text-secondary)",
                 background: active ? "rgba(59,130,246,0.06)" : "transparent",
               }}
             >
-              {tab === "map" ? <MapIcon className="w-4 h-4" /> : <Radio className="w-4 h-4" />}
-              {tab === "map" ? "Map" : "Feed"}
+              {tab === "map" ? <MapIcon className="w-4 h-4" /> : tab === "feed" ? <Radio className="w-4 h-4" /> : <BarChart3 className="w-4 h-4" />}
+              {tab === "map" ? "Map" : tab === "feed" ? "Feed" : "Analytics"}
               {tab === "feed" && filteredIncidents.length > 0 && (
                 <span
                   className="text-[10px] font-mono px-1.5 py-0.5 rounded-full"
@@ -2453,61 +2459,9 @@ function MapHome() {
         <AuthBar />
         <PulseNetworkNav />
 
-        {/* Desktop: explicit Feed / Map — mobile uses `MobileBottomNav`. */}
-        <div className="hidden md:flex flex-col gap-2" style={{ pointerEvents: "auto" }}>
-          <Link
-            href="/feed"
-            className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
-            style={{
-              background: pathname.startsWith("/feed") ? "rgba(59,130,246,0.15)" : "var(--pill-bg)",
-              border: `1px solid ${pathname.startsWith("/feed") ? "rgba(59,130,246,0.3)" : "var(--pill-border)"}`,
-              color: pathname.startsWith("/feed") ? "#3b82f6" : "var(--pill-text)",
-            }}
-            title="Incident feed"
-            aria-label="Open full-screen incident feed"
-            aria-current={pathname.startsWith("/feed") ? "page" : undefined}
-          >
-            <List className="w-4 h-4" />
-          </Link>
-          <Link
-            href="/?view=map"
-            replace
-            className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
-            style={{
-              background: pathname === "/" ? "rgba(59,130,246,0.15)" : "var(--pill-bg)",
-              border: `1px solid ${pathname === "/" ? "rgba(59,130,246,0.3)" : "var(--pill-border)"}`,
-              color: pathname === "/" ? "#3b82f6" : "var(--pill-text)",
-            }}
-            title="Safety map"
-            aria-label="Open safety map"
-          >
-            <MapIcon className="w-4 h-4" />
-          </Link>
-        </div>
 
-        {/* Analytics toggle */}
-        <div className="relative">
-          <button
-            onClick={() => {
-              if (!isPro) { setShowUpgrade("Analytics"); return; }
-              setShowAnalytics(!showAnalytics);
-            }}
-            className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
-            style={{
-              background: showAnalytics ? "rgba(59,130,246,0.15)" : "var(--pill-bg)",
-              border: `1px solid ${showAnalytics ? "rgba(59,130,246,0.3)" : "var(--pill-border)"}`,
-              color: showAnalytics ? "#3b82f6" : "var(--pill-text)",
-            }}
-            title={isPro ? "Analytics" : "Analytics (Pro)"}
-          >
-            <BarChart3 className="w-4 h-4" />
-          </button>
-          {!isPro && (
-            <span className="absolute -top-1 -right-1 w-3.5 h-3.5 flex items-center justify-center rounded-full" style={{ background: "rgba(139,92,246,0.9)" }}>
-              <Lock className="w-2 h-2 text-white" />
-            </span>
-          )}
-        </div>
+
+
 
         {/* Alerts inbox bell — surfaces persisted off-screen / on-route
             alerts so users can scroll back through what they may have
@@ -3200,7 +3154,7 @@ function MapHome() {
 
       {/* Safety Score Card */}
       <AnimatePresence>
-        {mapTap && !selected && !showAnalytics && (
+        {mapTap && !selected && viewTab !== "analytics" && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -3237,24 +3191,18 @@ function MapHome() {
         )}
       </AnimatePresence>
 
-      {/* Analytics Panel */}
-      <AnimatePresence>
-        {showAnalytics && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
-          >
+      {/* ──── Analytics View ──── */}
+      {viewTab === "analytics" && (
+        <div className="absolute inset-0 z-[10] bg-[var(--map-bg)] overflow-y-auto">
+          <div className="max-w-5xl mx-auto p-4 md:p-8">
             <AnalyticsPanel
               incidents={filteredIncidents}
-              areaIncidents={analyticsAreaIncidents}
-              areaName={analyticsAreaName}
-              onClose={() => setShowAnalytics(false)}
+              city={city}
+              onClose={() => setViewTab("map")}
             />
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </div>
+        </div>
+      )}
 
       {/* District Stats Card */}
       <AnimatePresence>
