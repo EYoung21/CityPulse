@@ -1621,8 +1621,19 @@ function MapHome() {
         })}
       </div>
 
+      {/* ──── Content Area ──── */}
+      <div className="relative flex-1 min-h-0 w-full overflow-hidden">
+
       {/* ──── Map view ──── */}
-      <div className="relative flex-1 min-h-0" style={{ display: viewTab === "map" ? "block" : "none" }}>
+      <div
+        className="absolute inset-0 flex flex-col"
+        style={{
+          visibility: viewTab === "map" ? "visible" : "hidden",
+          pointerEvents: viewTab === "map" ? "auto" : "none",
+          opacity: viewTab === "map" ? 1 : 0,
+          zIndex: viewTab === "map" ? 10 : 1,
+        }}
+      >
       <IncidentMap
         ref={mapRef}
         incidents={filteredIncidents}
@@ -3301,7 +3312,10 @@ function MapHome() {
 
       {/* ──── Feed view ──── */}
       {viewTab === "feed" && (
-        <div className="flex-1 min-h-0 flex flex-col overflow-hidden" style={{ background: "var(--panel-bg)" }}>
+        <div 
+          className="absolute inset-0 flex flex-col overflow-hidden z-20" 
+          style={{ background: "var(--panel-bg)" }}
+        >
           {/* Feed stats header */}
           <div
             className="px-5 py-3 flex items-center justify-between shrink-0"
@@ -3475,6 +3489,8 @@ function MapHome() {
           </div>
         </div>
       )}
+      
+      </div>{/* end content area wrapper */}
 
       {/* Upgrade prompt overlay */}
       <AnimatePresence>
