@@ -294,6 +294,17 @@ function MapHome() {
   /** Top-level view tab: "map" shows the map + sidebar, "feed" shows
    *  a full-screen scrollable incident feed. */
   const [viewTab, setViewTab] = useState<"map" | "feed">("map");
+
+  useEffect(() => {
+    const saved = sessionStorage.getItem("pulse_view_tab");
+    if (saved === "map" || saved === "feed") {
+      setViewTab(saved);
+    }
+  }, []);
+
+  useEffect(() => {
+    sessionStorage.setItem("pulse_view_tab", viewTab);
+  }, [viewTab]);
   const [timeFilter, setTimeFilter] = useState(1);
   const [activeCats, setActiveCats] = useState<Set<string>>(new Set());
   const [mapTap, setMapTap] = useState<{ lat: number; lng: number } | null>(null);
