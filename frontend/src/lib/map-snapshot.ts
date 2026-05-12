@@ -59,7 +59,7 @@ async function detectMissingTiles(blob: Blob): Promise<boolean> {
         const c = document.createElement("canvas");
         c.width = 64;
         c.height = 64;
-        const ctx = c.getContext("2d");
+        const ctx = c.getContext("2d", { willReadFrequently: true });
         if (!ctx) { resolve(false); return; }
         ctx.drawImage(img, 0, 0, 64, 64);
         const data = ctx.getImageData(0, 0, 64, 64).data;
@@ -97,7 +97,7 @@ async function addWatermark(
         const c = document.createElement("canvas");
         c.width = img.width;
         c.height = img.height + WATERMARK_HEIGHT;
-        const ctx = c.getContext("2d");
+        const ctx = c.getContext("2d", { willReadFrequently: true });
         if (!ctx) { reject(new Error("no-canvas-ctx")); URL.revokeObjectURL(url); return; }
         ctx.drawImage(img, 0, 0);
         ctx.fillStyle = "#0f172a";

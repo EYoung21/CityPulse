@@ -158,7 +158,7 @@ function WaveformPlayer({
     const audio = audioRef.current;
     if (!canvas || !audio || waveformData.length === 0) return;
 
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return;
 
     const dpr = window.devicePixelRatio || 1;

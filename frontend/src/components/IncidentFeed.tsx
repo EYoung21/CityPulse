@@ -17,8 +17,7 @@ import {
   Play,
   Pause,
 } from "lucide-react";
-
-import { incidentAudioSrc } from "@/lib/public-api-base";
+import { incidentAudioSources } from "@/lib/public-api-base";
 import { resolveBlipKind, monoGlyphSvg } from "./IncidentMap";
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
@@ -115,19 +114,46 @@ function IncidentCard({
 
   const toggleAudio = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const audioSrc = incidentAudioSrc(inc);
-    if (!audioSrc) return;
+    const sources = incidentAudioSources(inc);
+    if (sources.length === 0) return;
+    
     if (!audioRef.current) {
-      audioRef.current = new Audio(audioSrc);
-      audioRef.current.addEventListener("ended", () => setPlaying(false));
-      audioRef.current.addEventListener("error", () => setPlaying(false));
-    }
-    if (playing) {
-      audioRef.current.pause();
-      setPlaying(false);
+      const audio = new Audio(sources[0]);
+      let currentIdx = 0;
+
+      const attemptPlay = () => {
+        audio.play().then(() => setPlaying(true)).catch(() => {
+          currentIdx++;
+          if (currentIdx < sources.length) {
+            audio.src = sources[currentIdx];
+            attemptPlay();
+          } else {
+            setPlaying(false);
+          }
+        });
+      };
+
+      audio.addEventListener("ended", () => setPlaying(false));
+      audio.addEventListener("error", () => {
+        currentIdx++;
+        if (currentIdx < sources.length) {
+          audio.src = sources[currentIdx];
+          attemptPlay();
+        } else {
+          setPlaying(false);
+        }
+      });
+
+      audioRef.current = audio;
+      attemptPlay();
     } else {
-      audioRef.current.play().catch(() => setPlaying(false));
-      setPlaying(true);
+      if (playing) {
+        audioRef.current.pause();
+        setPlaying(false);
+      } else {
+        audioRef.current.play().catch(() => setPlaying(false));
+        setPlaying(true);
+      }
     }
   };
 
