@@ -1,0 +1,23 @@
+import firebase_admin
+from firebase_admin import credentials, firestore
+import json, os
+from dotenv import load_dotenv
+
+load_dotenv()
+def get_stats():
+    cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    json_str = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+    if cred_path and os.path.isfile(cred_path):
+        cred = credentials.Certificate(cred_path)
+    elif json_str:
+        cred = credentials.Certificate(json.loads(json_str))
+    firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    
+    stats = {}
+    for status in ["passed", "blocked"]:
+        agg = db.collection("incidents").where("inhibitor_status", "==", status).count().get()
+        stats[status] = agg[0][0].value
+    return stats
+
+print(get_stats())
