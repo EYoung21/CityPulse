@@ -33,11 +33,9 @@ interface Props {
   height?: number;
   zoom?: number;
   /**
-   * Color for the marker dot painted on top of the tile. Wire this
-   * to the row's severity color so the thumbnail visually echoes the
-   * row's category accent.
+   * Raw SVG HTML string to render on top of the map.
    */
-  markerColor?: string;
+  svgGlyph?: string;
   variant?: StaticMapVariant;
   className?: string;
   /** Forwarded to the wrapping div for extra style overrides. */
@@ -50,7 +48,7 @@ export default function IncidentThumbnail({
   width = 110,
   height = 72,
   zoom = 15,
-  markerColor = "#ef4444",
+  svgGlyph,
   variant = "dark",
   className,
   style,
@@ -152,20 +150,34 @@ export default function IncidentThumbnail({
        * tile load lifecycle — there's always *something* anchored
        * at the viewport center so the row reads as "a place" even
        * before any tile arrives. */}
-      <div
-        style={{
-          position: "absolute",
-          left: width / 2 - 7,
-          top: height / 2 - 7,
-          width: 14,
-          height: 14,
-          borderRadius: "50%",
-          background: markerColor,
-          border: "2px solid white",
-          boxShadow: `0 1px 4px rgba(0,0,0,0.6), 0 0 8px ${markerColor}66`,
-          pointerEvents: "none",
-        }}
-      />
+      {svgGlyph ? (
+        <div
+          className="absolute drop-shadow-md"
+          style={{
+            left: width / 2 - 11,
+            top: height / 2 - 11,
+            width: 22,
+            height: 22,
+            pointerEvents: "none",
+          }}
+          dangerouslySetInnerHTML={{ __html: svgGlyph }}
+        />
+      ) : (
+        <div
+          style={{
+            position: "absolute",
+            left: width / 2 - 7,
+            top: height / 2 - 7,
+            width: 14,
+            height: 14,
+            borderRadius: "50%",
+            background: "#ef4444",
+            border: "2px solid white",
+            boxShadow: `0 1px 4px rgba(0,0,0,0.6), 0 0 8px #ef444466`,
+            pointerEvents: "none",
+          }}
+        />
+      )}
     </div>
   );
 }

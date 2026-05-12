@@ -59,8 +59,7 @@ function incidentNarrative(inc: Incident): string {
   return `${inc.raw_text} ${inc.description ?? ""} ${inc.location_text ?? ""}`.toLowerCase();
 }
 
-/** GTA-style blip “kind” from category + transcript keywords (gun vs knife vs melee). */
-function resolveBlipKind(inc: Incident): string {
+export function resolveBlipKind(inc: Incident): string {
   const t = incidentNarrative(inc);
   const c = inc.severity_category;
   if (c === "shots_heard") return "gun_shots";
@@ -85,7 +84,7 @@ function monoColor(kind: string): MonoColor {
   return MONO[kind] ?? MONO.default;
 }
 
-function gid(uid: number, name: string): string {
+function gid(uid: string | number, name: string): string {
   return `ppig_${uid}_${name}`;
 }
 
@@ -94,7 +93,7 @@ function gid(uid: number, name: string): string {
  * Monochrome silhouette per sub-type.  All violence kinds share RED,
  * medical shares BLUE, etc.  Each sub-type has a unique shape.
  */
-function monoGlyphSvg(kind: string, uid: number): string {
+export function monoGlyphSvg(kind: string, uid: string | number): string {
   const g = (n: string) => gid(uid, n);
   const c = monoColor(kind);
   const f = c.fill;

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { incidentAudioSrc } from "@/lib/public-api-base";
+import { resolveBlipKind, monoGlyphSvg } from "./IncidentMap";
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
   violent_weapon: <ShieldAlert className="w-3.5 h-3.5" />,
@@ -88,6 +89,8 @@ interface Props {
    * lives next to a real map) keeps the placeholder to save space.
    */
   showMapThumbnail?: boolean;
+  sortMode?: "recent" | "near";
+  userLoc?: { lat: number; lng: number } | null;
 }
 
 function IncidentCard({
@@ -237,7 +240,7 @@ function IncidentCard({
               lng={inc.lng}
               width={110}
               height={72}
-              markerColor={sev.markerColor}
+              svgGlyph={monoGlyphSvg(resolveBlipKind(inc), inc.id)}
             />
           )}
           <div
@@ -282,9 +285,21 @@ function timeAgo(isoStr: string): string {
   return `${Math.floor(hrs / 24)}d`;
 }
 
-export default function IncidentFeed({ incidents, selectedId, onSelect, showMapThumbnail }: Props) {
+export default function IncidentFeed({ incidents, selectedId, onSelect, showMapThumbnail, sortMode = "recent", userLoc }: Props) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const blocks = useMemo(() => groupByTimeBlocks(incidents), [incidents]);
+  
+  const blocks = useMemo(() => {
+    if (sortMode === "near" && userLoc) {
+      const distSq = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+        return (lat1 - lat2) ** 2 + (lng1 - lng2) ** 2;
+      };
+      const sorted = [...incidents].filter(i => i.lat != null && i.lng != null).sort((a, b) => {
+        return distSq(a.lat!, a.lng!, userLoc.lat, userLoc.lng) - distSq(b.lat!, b.lng!, userLoc.lat, userLoc.lng);
+      });
+      return [{ label: "Nearest to You", incidents: sorted }];
+    }
+    return groupByTimeBlocks(incidents);
+  }, [incidents, sortMode, userLoc]);
 
   if (incidents.length === 0) {
     return (
