@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Shield,
@@ -33,7 +33,6 @@ import {
   Bell,
   Search,
   Crosshair,
-  Code,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import IncidentFeed from "@/components/IncidentFeed";
@@ -253,7 +252,6 @@ export default function Home() {
 function MapHome() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const router = useRouter();
   const { mode, resolved, setMode, colorBlindSafe, setColorBlindSafe } = useTheme();
   const { destinations: savedDestinations, lists: savedLists } = useSavedDestinations();
   const isDark = resolved === "dark";
@@ -1640,7 +1638,10 @@ function MapHome() {
       />
       <AlertToast incidents={incidents} />
 
-      {/* ──── Top Tab Bar (Map / Feed) ──── */}
+      {/* ──── Top Tab Bar (Map / Feed / Analytics) ──── */}
+      {/* API Docs lives at /use-cases/api and is reachable from the More menu
+          and from the Analytics header — surfacing it as a fourth top-bar tab
+          is redundant and crowds the bar on mobile. */}
       <div
         className="relative z-[1100] flex items-stretch shrink-0"
         style={{
@@ -1649,7 +1650,7 @@ function MapHome() {
           boxShadow: "0 2px 12px var(--panel-shadow, rgba(0,0,0,0.25))",
         }}
       >
-        {(["map", "feed", "analytics", "api"] as const).map((tab) => {
+        {(["map", "feed", "analytics"] as const).map((tab) => {
           const active = viewTab === tab;
           return (
             <button
@@ -1657,10 +1658,6 @@ function MapHome() {
               onClick={() => {
                 if (tab === "analytics" && !isPro) {
                   setShowUpgrade("Analytics");
-                  return;
-                }
-                if (tab === "api") {
-                  router.push("/use-cases/api");
                   return;
                 }
                 setViewTab(tab);
@@ -1671,8 +1668,14 @@ function MapHome() {
                 background: active ? "rgba(59,130,246,0.06)" : "transparent",
               }}
             >
-              {tab === "map" ? <MapIcon className="w-4.5 h-4.5" /> : tab === "feed" ? <Radio className="w-4.5 h-4.5" /> : tab === "api" ? <Code className="w-4.5 h-4.5" /> : <BarChart3 className="w-4.5 h-4.5" />}
-              {tab === "map" ? "Map" : tab === "feed" ? "Feed" : tab === "api" ? "API Docs" : "Analytics"}
+              {tab === "map" ? (
+                <MapIcon className="w-4.5 h-4.5" />
+              ) : tab === "feed" ? (
+                <Radio className="w-4.5 h-4.5" />
+              ) : (
+                <BarChart3 className="w-4.5 h-4.5" />
+              )}
+              {tab === "map" ? "Map" : tab === "feed" ? "Feed" : "Analytics"}
               {tab === "analytics" && !isPro && <Lock className="w-2.5 h-2.5 text-purple-400 ml-1" />}
               {tab === "feed" && filteredIncidents.length > 0 && (
                 <span

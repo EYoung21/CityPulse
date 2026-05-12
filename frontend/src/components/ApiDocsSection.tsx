@@ -1,4 +1,4 @@
-import Link from "next/link";
+import UseCaseCtas from "@/components/UseCaseCtas";
 
 /**
  * Developer reference for the existing FastAPI JSON endpoints exposed by
@@ -273,18 +273,18 @@ export default function ApiDocsSection() {
       </SubNote>
 
       {/* ── Next steps ───────────────────────────────────────── */}
+      {/* "Sign in for Pro" auto-hides for already-signed-in users (handled
+          inside <UseCaseCtas>) so Pro users don't see a redundant prompt. */}
       <h3 style={H3_STYLE}>Next steps</h3>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", marginTop: 4 }}>
-        <Link href="/login" className="lp-hero-cta" style={{ display: "inline-block", marginTop: 0 }}>
-          Sign in for Pro
-        </Link>
-        <Link href="/" className="lp-hero-cta" style={{ display: "inline-block", marginTop: 0 }}>
-          Open the live map
-        </Link>
-        <Link href="/teams" className="lp-hero-cta" style={{ display: "inline-block", marginTop: 0 }}>
-          Teams hub
-        </Link>
-      </div>
+      <UseCaseCtas
+        ctas={[
+          { label: "Sign in for Pro", href: "/login" },
+          { label: "Open the live map", href: "/" },
+          { label: "Teams hub", href: "/teams" },
+        ]}
+        containerStyle={{ display: "flex", flexWrap: "wrap", gap: "10px", marginTop: 4 }}
+        itemStyle={{ display: "inline-block", marginTop: 0 }}
+      />
     </section>
   );
 }

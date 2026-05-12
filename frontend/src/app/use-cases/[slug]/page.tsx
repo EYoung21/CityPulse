@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import MarketingPageShell from "@/components/MarketingPageShell";
 import ApiDocsSection from "@/components/ApiDocsSection";
+import UseCaseCtas from "@/components/UseCaseCtas";
 import { USE_CASE_SLUGS, getCampaign } from "@/lib/use-case-campaigns";
 
 interface PageProps {
@@ -74,13 +75,11 @@ export default async function UseCaseCampaignPage({ params }: PageProps) {
         {c.paragraphs.map((p, i) => (
           <RichParagraph key={i} text={p} />
         ))}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", marginTop: 8, marginBottom: 16 }}>
-          {c.ctas.map((cta) => (
-            <Link key={cta.href + cta.label} href={cta.href} className="lp-hero-cta" style={{ display: "inline-block", marginTop: 0 }}>
-              {cta.label}
-            </Link>
-          ))}
-        </div>
+        <UseCaseCtas
+          ctas={c.ctas}
+          containerStyle={{ display: "flex", flexWrap: "wrap", gap: "12px", marginTop: 8, marginBottom: 16 }}
+          itemStyle={{ display: "inline-block", marginTop: 0 }}
+        />
         {c.footnote && (
           <p className="lp-usecases-note" style={{ textAlign: "left", marginTop: 8 }}>
             {c.footnote}
