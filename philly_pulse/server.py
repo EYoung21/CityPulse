@@ -1752,6 +1752,7 @@ _ADMIN_EMAILS = {
 }
 
 
+_TIER_CACHE: dict[str, tuple[float, str]] = {}
 def _user_tier(uid: str) -> str:
     """Read the calling user's billing tier from `users/{uid}.tier`.
 
@@ -1759,15 +1760,22 @@ def _user_tier(uid: str) -> str:
     the AuthContext writes from the frontend. Anything unrecognised
     or any read failure falls back to "free" so the caller never
     accidentally grants Pro on a Firestore outage."""
+    import time
+    now = time.time()
+    if uid in _TIER_CACHE and _TIER_CACHE[uid][0] > now:
+        return _TIER_CACHE[uid][1]
+
     try:
         from .firestore_store import _ensure_client
         snap = _ensure_client().collection("users").document(uid).get()
         if snap.exists:
             t = ((snap.to_dict() or {}).get("tier") or "free")
             if t in ("free", "pro", "enterprise"):
+                _TIER_CACHE[uid] = (now + 300, t)
                 return t
     except Exception as e:
         logger.debug("_user_tier read failed for %s: %s", uid, e)
+    _TIER_CACHE[uid] = (now + 60, "free")
     return "free"
 
 
@@ -1788,6 +1796,7 @@ def _require_pro(decoded: dict) -> None:
         raise HTTPException(status_code=402, detail="Pro subscription required")
 
 
+_TOKEN_CACHE: dict[str, tuple[float, dict]] = {}
 def _try_verify_firebase_token(authorization: Optional[str]) -> dict | None:
     """Best-effort Firebase token verification.
 
@@ -1800,6 +1809,12 @@ def _try_verify_firebase_token(authorization: Optional[str]) -> dict | None:
     token = authorization.split(" ", 1)[1].strip()
     if not token:
         return None
+        
+    import time
+    now = time.time()
+    if token in _TOKEN_CACHE and _TOKEN_CACHE[token][0] > now:
+        return _TOKEN_CACHE[token][1]
+
     try:
         from firebase_admin import auth as fb_auth
         decoded = fb_auth.verify_id_token(token, check_revoked=False)
@@ -1807,6 +1822,8 @@ def _try_verify_firebase_token(authorization: Optional[str]) -> dict | None:
         return None
     if not decoded or not decoded.get("uid"):
         return None
+        
+    _TOKEN_CACHE[token] = (now + 300, decoded)
     return decoded
 
 
