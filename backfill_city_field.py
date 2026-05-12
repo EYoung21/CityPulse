@@ -36,7 +36,13 @@ FEED_TO_CITY: dict[str, str] = {
     # San Francisco
     "46180": "sf", "6336": "sf",
     # New York City
+    # NYPD Citywide (mostly encrypted) + FDNY borough dispatch (active in 2026)
     "40184": "nyc", "40185": "nyc", "40186": "nyc", "46122": "nyc",
+    "8534": "nyc",   # FDNY Bronx Dispatch
+    "8585": "nyc",   # FDNY Queens Dispatch
+    "8749": "nyc",   # FDNY Staten Island Dispatch
+    "9466": "nyc",   # FDNY Citywide
+    "7392": "nyc",   # Brooklyn Fire & Hatzolah EMS
     # Chattanooga
     "45708": "chattanooga", "34716": "chattanooga", "45709": "chattanooga",
     "45707": "chattanooga", "44571": "chattanooga", "21572": "chattanooga",
