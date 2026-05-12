@@ -49,6 +49,28 @@ function AuthGate({ children }: { children: ReactNode }) {
   // they roam across the user's devices.
   usePrefsSync();
   const [adminMode, setAdminMode] = useState<"launcher" | "dashboard" | "admin" | "moderation" | null>(null);
+  const [adminModeInitialized, setAdminModeInitialized] = useState(false);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setAdminModeInitialized(true);
+      return;
+    }
+    const saved = sessionStorage.getItem("pulse_admin_mode");
+    if (saved) {
+      setAdminMode(saved as any);
+    }
+    setAdminModeInitialized(true);
+  }, [isAdmin]);
+
+  const changeAdminMode = (mode: "launcher" | "dashboard" | "admin" | "moderation") => {
+    setAdminMode(mode);
+    if (mode === "launcher") {
+      sessionStorage.removeItem("pulse_admin_mode");
+    } else {
+      sessionStorage.setItem("pulse_admin_mode", mode);
+    }
+  };
 
   // Skip auth for public routes (e.g. /landing, /teams, /use-cases/*).
   // These render the same content for signed-out visitors, signed-in users,
@@ -83,18 +105,20 @@ function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (isAdmin) {
+    if (!adminModeInitialized) return null;
+
     if (!adminMode || adminMode === "launcher") {
       return (
         <AdminLauncher
-          onChoose={(mode) => setAdminMode(mode)}
+          onChoose={(mode) => changeAdminMode(mode)}
         />
       );
     }
     if (adminMode === "admin") {
-      return <AdminPanel onBack={() => setAdminMode("launcher")} />;
+      return <AdminPanel onBack={() => changeAdminMode("launcher")} />;
     }
     if (adminMode === "moderation") {
-      return <ModerationPanel onBack={() => setAdminMode("launcher")} />;
+      return <ModerationPanel onBack={() => changeAdminMode("launcher")} />;
     }
   }
 
