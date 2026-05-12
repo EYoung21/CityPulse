@@ -1445,6 +1445,15 @@ function MapHome() {
     return true;
   });
 
+  const feedIncidents = useMemo(() => {
+    if (!feedSearchQuery.trim()) return filteredIncidents;
+    const q = feedSearchQuery.toLowerCase();
+    return filteredIncidents.filter(inc => {
+      const text = `${inc.raw_text || ""} ${inc.description || ""} ${inc.location_text || ""}`.toLowerCase();
+      return text.includes(q);
+    });
+  }, [filteredIncidents, feedSearchQuery]);
+
   /** Subset of `filteredIncidents` whose pin sits inside the current
    *  map viewport. Drives the badge numerator so the on-screen count
    *  matches what the user can actually see. Falls back to the full
@@ -3446,14 +3455,7 @@ function MapHome() {
           {/* Scrollable feed body */}
           <div className="flex-1 overflow-y-auto">
             <IncidentFeed
-              incidents={useMemo(() => {
-                if (!feedSearchQuery.trim()) return filteredIncidents;
-                const q = feedSearchQuery.toLowerCase();
-                return filteredIncidents.filter(inc => {
-                  const text = `${inc.raw_text || ""} ${inc.description || ""} ${inc.location_text || ""}`.toLowerCase();
-                  return text.includes(q);
-                });
-              }, [filteredIncidents, feedSearchQuery])}
+              incidents={feedIncidents}
               selectedId={selectedId}
               onSelect={(id) => {
                 setSelectedId(id);
