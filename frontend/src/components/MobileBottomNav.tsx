@@ -27,23 +27,26 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import { Map as MapIcon, List, Bell, Settings as SettingsIcon } from "lucide-react";
+import { Map as MapIcon, List, Bell, Settings as SettingsIcon, BarChart3, Lock } from "lucide-react";
 import { subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
+import { useAuth } from "@/contexts/AuthContext";
 
-type TabId = "map" | "feed" | "inbox" | "settings";
+type TabId = "map" | "feed" | "analytics" | "inbox" | "settings";
 
 interface Tab {
   id: TabId;
   label: string;
   href: string;
   Icon: React.ComponentType<{ className?: string }>;
+  pro?: boolean;
 }
 
 const TABS: Tab[] = [
-  { id: "map",      label: "Map",      href: "/?view=map",                Icon: MapIcon },
-  { id: "feed",     label: "Feed",     href: "/feed",                     Icon: List },
-  { id: "inbox",    label: "Inbox",    href: "/?view=map&inbox=1",        Icon: Bell },
-  { id: "settings", label: "Settings", href: "/?view=map&inbox=settings", Icon: SettingsIcon },
+  { id: "map",       label: "Map",       href: "/?view=map",                Icon: MapIcon },
+  { id: "feed",      label: "Feed",      href: "/feed",                     Icon: List },
+  { id: "analytics", label: "Analytics", href: "/?view=analytics",          Icon: BarChart3, pro: true },
+  { id: "inbox",     label: "Inbox",     href: "/?view=map&inbox=1",        Icon: Bell },
+  { id: "settings",  label: "Settings",  href: "/?view=map&inbox=settings", Icon: SettingsIcon },
 ];
 
 /** Standard iOS-style tab bar height (excluding the safe-area inset
@@ -82,17 +85,21 @@ function MobileBottomNavInner() {
     return subscribeAlerts(() => setUnread(unreadCount()));
   }, []);
 
+  const { isPro } = useAuth();
   if (!show) return null;
 
   const inboxParam = searchParams?.get("inbox") ?? null;
+  const viewParam = searchParams?.get("view") ?? null;
   const onFeed = pathname?.startsWith("/feed") ?? false;
   const activeId: TabId = onFeed
     ? "feed"
-    : inboxParam === "settings"
-      ? "settings"
-      : inboxParam
-        ? "inbox"
-        : "map";
+    : viewParam === "analytics"
+      ? "analytics"
+      : inboxParam === "settings"
+        ? "settings"
+        : inboxParam
+          ? "inbox"
+          : "map";
 
   return (
     <nav
@@ -119,6 +126,7 @@ function MobileBottomNavInner() {
     >
       {TABS.map((tab) => {
         const active = activeId === tab.id;
+        const showPro = tab.pro && !isPro;
         return (
           <button
             key={tab.id}
@@ -147,6 +155,25 @@ function MobileBottomNavInner() {
           >
             <span style={{ position: "relative", lineHeight: 0 }}>
               <tab.Icon className="w-5 h-5" />
+              {showPro && (
+                <span
+                  style={{
+                    position: "absolute",
+                    top: -4,
+                    right: -10,
+                    width: 12,
+                    height: 12,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: "50%",
+                    background: "rgba(139,92,246,0.9)",
+                    color: "#fff",
+                  }}
+                >
+                  <Lock className="w-2 h-2" />
+                </span>
+              )}
               {tab.id === "inbox" && unread > 0 && (
                 <span
                   aria-hidden="true"

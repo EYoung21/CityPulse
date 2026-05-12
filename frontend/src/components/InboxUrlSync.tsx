@@ -16,19 +16,30 @@ import { Suspense, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 
 export type InboxPanel = "list" | "settings" | null;
+export type ViewTab = "map" | "feed" | "analytics" | null;
 
 interface Props {
-  onChange: (panel: InboxPanel) => void;
+  onInboxChange: (panel: InboxPanel) => void;
+  onViewChange: (view: ViewTab) => void;
 }
 
-function Inner({ onChange }: Props) {
+function Inner({ onInboxChange, onViewChange }: Props) {
   const sp = useSearchParams();
-  const v = sp?.get("inbox") ?? null;
+  const inbox = sp?.get("inbox") ?? null;
+  const view = sp?.get("view") ?? null;
+
   useEffect(() => {
-    if (v === "settings") onChange("settings");
-    else if (v) onChange("list");
-    else onChange(null);
-  }, [v, onChange]);
+    if (inbox === "settings") onInboxChange("settings");
+    else if (inbox) onInboxChange("list");
+    else onInboxChange(null);
+  }, [inbox, onInboxChange]);
+
+  useEffect(() => {
+    if (view === "map" || view === "feed" || view === "analytics") {
+      onViewChange(view);
+    }
+  }, [view, onViewChange]);
+
   return null;
 }
 

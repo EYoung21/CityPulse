@@ -44,6 +44,7 @@ import AlertToast from "@/components/AlertToast";
 import IncidentDetail from "@/components/IncidentDetail";
 import ClusterListPanel from "@/components/ClusterListPanel";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
+import MoreMenu from "@/components/MoreMenu";
 import DistrictCard from "@/components/DistrictCard";
 import OfflineTilesPanel from "@/components/OfflineTilesPanel";
 import MeasureToolPanel from "@/components/MeasureToolPanel";
@@ -96,7 +97,7 @@ import { useGpsSpeed } from "@/hooks/useGpsSpeed";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useMobileHomeRedirect } from "@/hooks/useMobileHomeRedirect";
 import MobileBottomNav from "@/components/MobileBottomNav";
-import InboxUrlSync, { type InboxPanel } from "@/components/InboxUrlSync";
+import InboxUrlSync, { type InboxPanel, type ViewTab } from "@/components/InboxUrlSync";
 import { decodeTripToken, type DecodedTripToken } from "@/lib/share-trip";
 import type { ManeuverStep } from "@/lib/routing";
 import type { MapHandle, WaypointPin, BasemapStyle } from "@/components/IncidentMap";
@@ -398,7 +399,6 @@ function MapHome() {
   const [previewDest, setPreviewDest] = useState<{ lat: number; lng: number } | null>(null);
   const [previewWaypoints, setPreviewWaypoints] = useState<WaypointPin[] | null>(null);
   const [showAbout, setShowAbout] = useState(false);
-  const [showLayers, setShowLayers] = useState(false);
   // Map measurement tool. When `measureMode` is on, every map tap
   // appends a vertex to `measurePoints` and the SafetyScoreCard /
   // dropped-pin codepaths are bypassed.
@@ -611,7 +611,6 @@ function MapHome() {
     if (typeof window !== "undefined") setPref("pp:basemap", basemapStyle);
   }, [basemapStyle]);
   const [vectorTilesEnabled, setVectorTilesEnabled] = useVectorTiles();
-  const [showTheme, setShowTheme] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
   // Which AlertsInbox sub-panel should be visible when it opens. Set
   // by the bottom-nav URL hint (`?inbox=settings` → "settings"); the
@@ -720,13 +719,11 @@ function MapHome() {
       if (peekAnchor)             { setPeekAnchor(null);         ev.preventDefault(); return; }
       if (mapTap)                 { setMapTap(null);             ev.preventDefault(); return; }
       if (showInbox)              { setShowInbox(false);         ev.preventDefault(); return; }
-      if (showLayers)             { setShowLayers(false);        ev.preventDefault(); return; }
       if (showAbout)              { setShowAbout(false);         ev.preventDefault(); return; }
-      if (showTheme)              { setShowTheme(false);         ev.preventDefault(); return; }
     }
     window.addEventListener("pp:native-back", onBack);
     return () => window.removeEventListener("pp:native-back", onBack);
-  }, [selectedId, clusterIncidentIds, selectedDistrict, mapTap, showLayers, showAbout, showTheme, showInbox, safetyEscapeOpen, peekAnchor]);
+  }, [selectedId, clusterIncidentIds, selectedDistrict, mapTap, showAbout, showInbox, safetyEscapeOpen, peekAnchor]);
 
   // Auto-dismiss the long-press peek when any competing bottom-left
   // overlay opens. Cheap effect — runs once per state transition.
@@ -1583,7 +1580,10 @@ function MapHome() {
   return (
     <div className="relative w-full h-screen overflow-hidden flex flex-col" style={{ background: "var(--map-bg)" }}>
       <MobileBottomNav />
-      <InboxUrlSync onChange={handleInboxUrlChange} />
+      <InboxUrlSync 
+        onInboxChange={handleInboxUrlChange} 
+        onViewChange={(v) => { if (v) setViewTab(v); }} 
+      />
       <AlertToast incidents={incidents} />
 
       {/* ──── Top Tab Bar (Map / Feed) ──── */}
@@ -1615,6 +1615,7 @@ function MapHome() {
             >
               {tab === "map" ? <MapIcon className="w-4 h-4" /> : tab === "feed" ? <Radio className="w-4 h-4" /> : <BarChart3 className="w-4 h-4" />}
               {tab === "map" ? "Map" : tab === "feed" ? "Feed" : "Analytics"}
+              {tab === "analytics" && !isPro && <Lock className="w-2.5 h-2.5 text-purple-400 ml-1" />}
               {tab === "feed" && filteredIncidents.length > 0 && (
                 <span
                   className="text-[10px] font-mono px-1.5 py-0.5 rounded-full"
@@ -2514,450 +2515,26 @@ function MapHome() {
           />
         </div>
 
-        {/* Theme toggle */}
-        <div className="relative">
-          <button
-            onClick={() => { setShowTheme(!showTheme); setShowLayers(false); setShowInbox(false); }}
-            className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
-            style={{
-              background: "var(--pill-bg)",
-              border: "1px solid var(--pill-border)",
-              color: "var(--pill-text)",
-            }}
-            title={`Theme: ${mode}`}
-          >
-            {mode === "auto" ? <Monitor className="w-4 h-4" /> : isDark ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
-          </button>
-          <AnimatePresence>
-            {showTheme && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 8 }}
-                className="fixed z-[1002] right-3 w-40 max-h-[min(24rem,calc(100dvh-1rem-env(safe-area-inset-top,0px)))] overflow-y-auto rounded-xl shadow-2xl backdrop-blur-md max-md:bottom-[calc(env(safe-area-inset-bottom,0px)+56px+9.5rem)] md:bottom-[calc(4.5rem+5.5rem)]"
-                style={{ background: "var(--panel-bg)", border: "1px solid var(--panel-border)" }}
-              >
-                <p className="text-[10px] font-semibold uppercase tracking-wider px-3 py-2" style={{ color: "var(--panel-text-muted)" }}>Theme</p>
-                {THEME_OPTIONS.map((opt) => {
-                  const Icon = opt.icon;
-                  const isActive = mode === opt.id;
-                  return (
-                    <button
-                      key={opt.id}
-                      onClick={() => { setMode(opt.id); setShowTheme(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium transition-colors ${
-                        isActive ? "bg-blue-500/10 text-blue-500" : ""
-                      }`}
-                      style={!isActive ? { color: "var(--panel-text-secondary)" } : {}}
-                      onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "var(--panel-hover)"; }}
-                      onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = isActive ? "" : "transparent"; }}
-                    >
-                      <Icon className="w-4 h-4" />
-                      {opt.label}
-                      {opt.id === "auto" && (
-                        <span className="ml-auto text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
-                          ({resolved})
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-                {/* IBM-derived blue/orange/yellow/purple palette that
-                    distinguishes well across the most common forms of
-                    color-vision deficiency. The toggle flips a runtime
-                    flag so every getSeverity() consumer (markers, pills,
-                    heatmap legend, OG card) updates in lockstep. */}
-                <div className="px-3 pt-2.5 pb-3 border-t" style={{ borderColor: "var(--panel-border)" }}>
-                  <label className="flex items-center justify-between gap-2 cursor-pointer text-xs font-medium" style={{ color: "var(--panel-text-secondary)" }}>
-                    <span>Color-blind safe</span>
-                    <input
-                      type="checkbox"
-                      checked={colorBlindSafe}
-                      onChange={(e) => setColorBlindSafe(e.target.checked)}
-                      className="w-3.5 h-3.5 rounded accent-blue-500"
-                    />
-                  </label>
-                  <p className="text-[10px] leading-snug mt-1" style={{ color: "var(--panel-text-muted)" }}>
-                    IBM palette for badges & alerts. Map glyphs stay shape-coded.
-                  </p>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* Layers toggle */}
-        <div className="relative">
-          <button
-            onClick={() => { setShowLayers(!showLayers); setShowTheme(false); setShowInbox(false); }}
-            className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
-            style={{
-              background: "var(--pill-bg)",
-              border: "1px solid var(--pill-border)",
-              color: "var(--pill-text)",
-            }}
-            title="Layers"
-          >
-            <Layers className="w-4.5 h-4.5" />
-          </button>
-          <AnimatePresence>
-            {showLayers && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 10 }}
-                className="fixed z-[1002] right-3 w-48 max-w-[min(12rem,calc(100vw-1.5rem))] flex flex-col overflow-hidden rounded-xl shadow-2xl backdrop-blur-md top-[max(0.5rem,env(safe-area-inset-top,0px))] max-md:bottom-[calc(env(safe-area-inset-bottom,0px)+56px+9.5rem)] md:bottom-[calc(4.5rem+6.5rem)]"
-                style={{ background: "var(--panel-bg)", border: "1px solid var(--panel-border)" }}
-              >
-                <div className="min-h-0 flex-1 overflow-y-auto p-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Map Layers</p>
-                <button
-                  onClick={() => setHeatmapEnabled(!heatmapEnabled)}
-                  className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
-                  style={{ color: "var(--panel-text-secondary)" }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                >
-                  <span>Heatmap</span>
-                  <div className={`w-8 h-4 rounded-full transition-colors relative ${heatmapEnabled ? "bg-blue-500" : ""}`}
-                    style={!heatmapEnabled ? { background: "var(--panel-input-bg)" } : {}}>
-                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${heatmapEnabled ? "left-4" : "left-0.5"}`} />
-                  </div>
-                </button>
-                <button
-                  onClick={() => setDistrictsEnabled(!districtsEnabled)}
-                  className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
-                  style={{ color: "var(--panel-text-secondary)" }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                >
-                  <span>Districts</span>
-                  <div className={`w-8 h-4 rounded-full transition-colors relative ${districtsEnabled ? "bg-blue-500" : ""}`}
-                    style={!districtsEnabled ? { background: "var(--panel-input-bg)" } : {}}>
-                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${districtsEnabled ? "left-4" : "left-0.5"}`} />
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => setTodOverlayEnabled(!todOverlayEnabled)}
-                  className="w-full flex items-start justify-between gap-2 px-2 py-2 rounded-lg transition-colors text-xs"
-                  style={{ color: "var(--panel-text-secondary)" }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                  title="Highlight hotspots that peak around the current hour-of-day. Best with a week+ time filter."
-                >
-                  <span className="flex flex-col items-start gap-0.5 min-w-0">
-                    <span>This hour&apos;s hotspots</span>
-                    {todOverlayEnabled && todHourFocus != null && (
-                      <span className="text-[9px] tabular-nums" style={{ color: "var(--panel-text-muted)" }}>
-                        Peaks near {todHourFocus.toString().padStart(2, "0")}:00
-                      </span>
-                    )}
-                  </span>
-                  <div
-                    className={`w-8 h-4 rounded-full transition-colors relative shrink-0 mt-0.5 ${todOverlayEnabled ? "bg-blue-500" : ""}`}
-                    style={!todOverlayEnabled ? { background: "var(--panel-input-bg)" } : {}}
-                  >
-                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${todOverlayEnabled ? "left-4" : "left-0.5"}`} />
-                  </div>
-                </button>
-
-                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
-                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Tools</p>
-                <button
-                  onClick={() => {
-                    // Toggling on closes the menu so the user can
-                    // immediately tap the map; toggling off clears
-                    // any in-progress vertices for symmetry with the
-                    // X button on the readout panel.
-                    if (measureMode) {
-                      setMeasureMode(false);
-                      setMeasurePoints([]);
-                    } else {
-                      setMeasureMode(true);
-                      setShowLayers(false);
-                    }
-                  }}
-                  className="w-full flex items-start justify-between gap-2 px-2 py-2 rounded-lg transition-colors text-xs"
-                  style={{ color: "var(--panel-text-secondary)" }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                  aria-pressed={measureMode}
-                  title="Tap two or more points on the map to read distance + bearing"
-                >
-                  <span className="flex flex-col items-start gap-0.5 min-w-0">
-                    <span>Measure distance</span>
-                    <span className="text-[9px]" style={{ color: "var(--panel-text-muted)" }}>
-                      Tap points to read distance + bearing
-                    </span>
-                  </span>
-                  <div
-                    className={`w-8 h-4 rounded-full transition-colors relative shrink-0 mt-0.5 ${measureMode ? "bg-amber-500" : ""}`}
-                    style={!measureMode ? { background: "var(--panel-input-bg)" } : {}}
-                  >
-                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${measureMode ? "left-4" : "left-0.5"}`} />
-                  </div>
-                </button>
-
-                {/* Draw perimeter — event security tool that counts
-                    incidents within a user-drawn polygon. */}
-                <button
-                  onClick={() => {
-                    if (perimeterMode) {
-                      setPerimeterMode(false);
-                      setPerimeterPoints([]);
-                    } else {
-                      setPerimeterMode(true);
-                      // Turn off measure if on, they share tap behavior
-                      setMeasureMode(false);
-                      setMeasurePoints([]);
-                      setShowLayers(false);
-                    }
-                  }}
-                  className="w-full flex items-start justify-between gap-2 px-2 py-2 rounded-lg transition-colors text-xs"
-                  style={{ color: "var(--panel-text-secondary)" }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                  aria-pressed={perimeterMode}
-                  title="Tap points on the map to draw a security perimeter and count incidents inside"
-                >
-                  <span className="flex flex-col items-start gap-0.5 min-w-0">
-                    <span>Draw perimeter</span>
-                    <span className="text-[9px]" style={{ color: "var(--panel-text-muted)" }}>
-                      Tap to form polygon · count incidents inside
-                    </span>
-                  </span>
-                  <div
-                    className={`w-8 h-4 rounded-full transition-colors relative shrink-0 mt-0.5 ${perimeterMode ? "bg-purple-500" : ""}`}
-                    style={!perimeterMode ? { background: "var(--panel-input-bg)" } : {}}
-                  >
-                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${perimeterMode ? "left-4" : "left-0.5"}`} />
-                  </div>
-                </button>
-                {/* Map screenshot — captures the visible map (with overlays
-                    and markers) as a watermarked PNG and routes through the
-                    Web Share API on mobile or a download fallback on
-                    desktop. Lives in the Tools section so it sits next to
-                    the other "do something with the current view"
-                    actions. */}
-                <MapSnapshotButton
-                  variant="row"
-                  getMapElement={() => mapRef.current?.getContainer?.() ?? null}
-                  caption={
-                    tripGeometry && tripStatsRef.current?.dest
-                      ? `PhillyPulse · ${tripStatsRef.current.dest.display_name.split(",")[0] || "trip"}`
-                      : "PhillyPulse · safe routes"
-                  }
-                />
-
-                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
-                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Saved places</p>
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!isPro) {
-                        setShowUpgrade("Pin saved places");
-                        return;
-                      }
-                      setSavedPlacesOverlay((v) => !v);
-                    }}
-                    className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
-                    style={{ color: "var(--panel-text-secondary)" }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
-                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                    aria-pressed={isPro ? savedPlacesOverlay : false}
-                    title={isPro ? "Show saved places on the map" : "Pin saved places (Pro)"}
-                  >
-                    <span className="flex items-center gap-2">
-                      <span aria-hidden="true">📍</span>
-                      <span>Pin saved places{savedDestinations.length > 0 ? ` (${savedDestinations.length})` : ""}</span>
-                    </span>
-                    <div
-                      className={`w-8 h-4 rounded-full transition-colors relative ${isPro && savedPlacesOverlay ? "bg-amber-500" : ""}`}
-                      style={!isPro || !savedPlacesOverlay ? { background: "var(--panel-input-bg)" } : {}}
-                    >
-                      <div
-                        className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${isPro && savedPlacesOverlay ? "left-4" : "left-0.5"}`}
-                      />
-                    </div>
-                  </button>
-                  {!isPro && (
-                    <span
-                      className="absolute top-1.5 right-2 w-3.5 h-3.5 flex items-center justify-center rounded-full pointer-events-none"
-                      style={{ background: "rgba(139,92,246,0.9)" }}
-                      aria-hidden
-                    >
-                      <Lock className="w-2 h-2 text-white" />
-                    </span>
-                  )}
-                </div>
-                {isPro && savedPlacesOverlay && savedDestinations.length === 0 && (
-                  <p className="text-[9px] px-2 pb-1 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
-                    Save a place from the sidebar to see it pinned here.
-                  </p>
-                )}
-
-                {/* Personal avoid-area UI lives in `AvoidAreasManager.tsx`;
-                    routing merge is gated by USER_DRAWN_AVOID_AREAS_ENABLED in
-                    `lib/avoid-areas.ts` (currently off). */}
-
-                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
-                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Offline tiles</p>
-                <OfflineTilesPanel
-                  isPro={isPro}
-                  getBounds={() => mapRef.current?.getBounds() ?? null}
-                  tileTemplate={(() => {
-                    // Mirror IncidentMap.basemapUrl(): cache the same
-                    // template the Leaflet tile layer is currently
-                    // requesting, so cache hits line up exactly.
-                    const dark = (typeof document !== "undefined") && document.documentElement.classList.contains("dark");
-                    switch (basemapStyle) {
-                      case "dark":     return "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
-                      case "voyager":  return "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
-                      case "positron": return "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
-                      case "streets":  return "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
-                      case "auto":
-                      default:         return dark
-                        ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                        : "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
-                    }
-                  })()}
-                />
-
-                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
-                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Safety POIs</p>
-                {SAFETY_POI_CATEGORIES.map((c) => {
-                  const on = safetyPoiCats.has(c.id);
-                  return (
-                    <button
-                      key={c.id}
-                      onClick={() => toggleSafetyCat(c.id)}
-                      className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
-                      style={{ color: "var(--panel-text-secondary)" }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
-                      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                    >
-                      <span className="flex items-center gap-2">
-                        <span aria-hidden="true">{c.emoji}</span>
-                        <span>{c.label}</span>
-                      </span>
-                      <div
-                        className={`w-8 h-4 rounded-full transition-colors relative ${on ? "" : ""}`}
-                        style={on ? { background: c.color } : { background: "var(--panel-input-bg)" }}
-                      >
-                        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${on ? "left-4" : "left-0.5"}`} />
-                      </div>
-                    </button>
-                  );
-                })}
-                {safetyPoiCats.size > 0 && (
-                  <p className="text-[9px] px-2 pb-1 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
-                    Zoom in to street level for full coverage. Loaded: {safetyPois.length}.
-                  </p>
-                )}
-
-                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
-                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Nearby</p>
-                {NEARBY_POI_CATEGORIES.map((c) => {
-                  const on = nearbyPoiCats.has(c.id);
-                  return (
-                    <button
-                      key={c.id}
-                      onClick={() => toggleNearbyCat(c.id)}
-                      className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
-                      style={{ color: "var(--panel-text-secondary)" }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
-                      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                    >
-                      <span className="flex items-center gap-2">
-                        <span aria-hidden="true">{c.emoji}</span>
-                        <span>{c.label}</span>
-                      </span>
-                      <div
-                        className="w-8 h-4 rounded-full transition-colors relative"
-                        style={on ? { background: c.color } : { background: "var(--panel-input-bg)" }}
-                      >
-                        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${on ? "left-4" : "left-0.5"}`} />
-                      </div>
-                    </button>
-                  );
-                })}
-                {nearbyPoiCats.size > 0 && (
-                  <p className="text-[9px] px-2 pb-1 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
-                    Zoom in past street level — these are denser than safety POIs. Loaded: {nearbyPois.length}.
-                  </p>
-                )}
-
-                <div className="h-px my-1.5" style={{ background: "var(--panel-border)" }} />
-                <p className="text-[10px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: "var(--panel-text-muted)" }}>Basemap</p>
-                {(
-                  [
-                    { id: "auto",     label: "Auto",     hint: "Theme" },
-                    { id: "voyager",  label: "Voyager",  hint: "Color" },
-                    { id: "positron", label: "Positron", hint: "Light" },
-                    { id: "dark",     label: "Dark",     hint: "Dark"  },
-                    { id: "streets",  label: "Streets",  hint: "OSM"   },
-                  ] as { id: BasemapStyle; label: string; hint: string }[]
-                ).map((opt) => {
-                  const active = basemapStyle === opt.id;
-                  return (
-                    <button
-                      key={opt.id}
-                      onClick={() => setBasemapStyle(opt.id)}
-                      className={`w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs ${active ? "bg-blue-500/10 text-blue-500" : ""}`}
-                      style={!active ? { color: "var(--panel-text-secondary)" } : {}}
-                      onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "var(--panel-hover)"; }}
-                      onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
-                    >
-                      <span>{opt.label}</span>
-                      <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>{opt.hint}</span>
-                    </button>
-                  );
-                })}
-                <button
-                  onClick={() => setVectorTilesEnabled(!vectorTilesEnabled)}
-                  className="w-full flex items-center justify-between px-2 py-2 rounded-lg transition-colors text-xs"
-                  style={{ color: "var(--panel-text-secondary)" }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                  title="Render the basemap with MapLibre WebGL for sharper labels and smoother zoom. Beta: markers and overlays are unaffected."
-                >
-                  <span className="flex items-center gap-2">
-                    <span>Vector tiles</span>
-                    <span
-                      className="text-[9px] px-1 py-0.5 rounded"
-                      style={{ background: "rgba(59,130,246,0.18)", color: "#3b82f6" }}
-                    >
-                      BETA
-                    </span>
-                  </span>
-                  <div
-                    className="w-8 h-4 rounded-full transition-colors relative"
-                    style={vectorTilesEnabled ? { background: "#3b82f6" } : { background: "var(--panel-input-bg)" }}
-                  >
-                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-md transition-transform ${vectorTilesEnabled ? "left-4" : "left-0.5"}`} />
-                  </div>
-                </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* Info / About */}
-        <button
-          onClick={() => setShowAbout(!showAbout)}
-          className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
-          style={{
-            background: "var(--pill-bg)",
-            border: "1px solid var(--pill-border)",
-            color: "var(--pill-text)",
-          }}
-          title={`About ${cityDisplayName} Pulse`}
-        >
-          {showAbout ? <X className="w-4 h-4" /> : <Shield className="w-4 h-4" />}
-        </button>
+        <MoreMenu
+          mode={mode}
+          setMode={setMode}
+          heatmapEnabled={heatmapEnabled}
+          setHeatmapEnabled={setHeatmapEnabled}
+          districtsEnabled={districtsEnabled}
+          setDistrictsEnabled={setDistrictsEnabled}
+          todOverlayEnabled={todOverlayEnabled}
+          setTodOverlayEnabled={setTodOverlayEnabled}
+          todHourFocus={todHourFocus}
+          vectorTilesEnabled={vectorTilesEnabled}
+          setVectorTilesEnabled={setVectorTilesEnabled}
+          savedPlacesOverlay={savedPlacesOverlay}
+          setSavedPlacesOverlay={setSavedPlacesOverlay}
+          colorBlindSafe={colorBlindSafe}
+          setColorBlindSafe={setColorBlindSafe}
+          isPro={isPro}
+          onShowAbout={() => setShowAbout(true)}
+          onShowUpgrade={(feature) => setShowUpgrade(feature)}
+        />
       </div>
 
       {/* Bottom status bar */}

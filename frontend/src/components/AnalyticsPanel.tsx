@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { X, TrendingUp, Grid3X3, BarChart3 } from "lucide-react";
+import { X, TrendingUp, Grid3X3, BarChart3, ExternalLink } from "lucide-react";
 import type { Incident } from "@/lib/api";
 import { trendByDay, timeGrid, areaVsCityComparison } from "@/lib/analytics";
 import Sparkline from "@/components/charts/Sparkline";
@@ -39,13 +39,25 @@ export default function AnalyticsPanel({
         className="flex items-center justify-between px-4 py-3"
         style={{ borderBottom: "1px solid var(--panel-border)" }}
       >
-        <h3
-          className="text-sm font-semibold flex items-center gap-2"
-          style={{ color: "var(--panel-text)" }}
-        >
-          <BarChart3 className="w-4 h-4 text-blue-500" />
-          {areaName ? `${areaName} Analytics` : "City Analytics"}
-        </h3>
+        <div className="flex items-center gap-3">
+          <h3
+            className="text-sm font-semibold flex items-center gap-2"
+            style={{ color: "var(--panel-text)" }}
+          >
+            <BarChart3 className="w-4 h-4 text-blue-500" />
+            {areaName ? `${areaName} Analytics` : "City Analytics"}
+          </h3>
+          <a
+            href="/api"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-colors hover:bg-blue-500/10"
+            style={{ border: "1px solid rgba(59,130,246,0.3)", color: "#3b82f6" }}
+          >
+            Developer API
+            <ExternalLink className="w-3 h-3" />
+          </a>
+        </div>
         <button
           onClick={onClose}
           className="p-1 -m-1 transition-colors"
