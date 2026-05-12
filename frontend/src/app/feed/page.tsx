@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Map as MapIcon, Crosshair, Download } from "lucide-react";
+import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Map as MapIcon, Crosshair, Download, Code, Zap } from "lucide-react";
 import IncidentFeed from "@/components/IncidentFeed";
 import MobileBottomNav, { MOBILE_NAV_HEIGHT_PX } from "@/components/MobileBottomNav";
 import { fetchIncidentPage, type Incident } from "@/lib/api";
@@ -258,17 +258,31 @@ export default function FeedPage() {
             {headerSubtitle}
           </p>
         </div>
-        <Link
-          href="/?view=map"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
-          style={{
-            background: "rgba(59,130,246,0.12)",
-            color: "#3b82f6",
-            border: "1px solid rgba(59,130,246,0.35)",
-          }}
-        >
-          <MapIcon className="w-3.5 h-3.5" /> Map
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/api-docs"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all hover:bg-white/10"
+            style={{
+              background: "rgba(148,163,184,0.1)",
+              color: "var(--panel-text-secondary)",
+              border: "1px solid rgba(148,163,184,0.2)",
+            }}
+          >
+            <Code className="w-3.5 h-3.5" /> API
+          </Link>
+          {!isPro && (
+            <button
+              onClick={() => window.location.href = "/?view=map&inbox=settings"}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium shadow-lg shadow-purple-500/20"
+              style={{
+                background: "linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)",
+                color: "#fff",
+              }}
+            >
+              <Zap className="w-3.5 h-3.5 fill-current" /> Upgrade
+            </button>
+          )}
+        </div>
       </header>
 
       <div
@@ -340,14 +354,21 @@ export default function FeedPage() {
           <button
             type="button"
             onClick={downloadCsv}
-            className="inline-flex items-center gap-1 text-[11px]"
-            style={{ color: "var(--panel-text-muted)" }}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors hover:bg-white/5"
+            style={{ color: "var(--panel-text-muted)", border: "1px solid var(--panel-border)" }}
             title={`Download ${incidents.length} incidents as CSV`}
           >
-            <Download className="w-3 h-3" /> CSV
+            <Download className="w-3.5 h-3.5" /> CSV
           </button>
         )}
       </div>
+
+      {!isPro && (
+        <div className="px-4 py-2 text-[10px] md:text-xs font-medium flex items-center justify-center gap-2 bg-purple-500/10 border-y border-purple-500/20 text-purple-400">
+          <Zap className="w-3 h-3 fill-current" />
+          Showing last 60 minutes of activity. Upgrade to Pro for full history.
+        </div>
+      )}
 
       <main className="flex-1">
         {error && (

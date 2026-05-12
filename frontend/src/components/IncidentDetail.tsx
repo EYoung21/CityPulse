@@ -382,9 +382,9 @@ export default function IncidentDetail({ incident, onClose }: Props) {
       <div className="p-4 space-y-3">
         <div className="flex items-start justify-between">
           <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1.5">
+            <div className="flex items-center gap-2 mb-2">
               <span
-                className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md"
+                className="text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md"
                 style={{ backgroundColor: sev.markerColor + "20", color: sev.markerColor }}
               >
                 {sev.label}
@@ -398,7 +398,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
                 {incident.location_text || "Unknown Location"}
               </h3>
               {incident.location_confidence === "context" && (
-                <span className="text-[8px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-500">
+                <span className="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-500">
                   Nearby Context
                 </span>
               )}
@@ -406,24 +406,24 @@ export default function IncidentDetail({ incident, onClose }: Props) {
           </div>
           <button
             onClick={onClose}
-            className="transition-colors p-1 -m-1"
+            className="transition-colors p-1.5 -m-1.5"
             style={{ color: "var(--panel-text-muted)" }}
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
 
         <div
-          className="flex items-center gap-3 text-[11px] font-mono"
+          className="flex items-center gap-4 text-xs font-mono"
           style={{ color: "var(--panel-text-secondary)" }}
         >
-          <span className="flex items-center gap-1">
-            <Clock className="w-3 h-3" />
+          <span className="flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5" />
             {formatTime(incident.reported_at)}
           </span>
           <span style={{ color: "var(--panel-border)" }}>|</span>
-          <span className="flex items-center gap-1">
-            <MapPin className="w-3 h-3" />
+          <span className="flex items-center gap-1.5">
+            <MapPin className="w-3.5 h-3.5" />
             {incident.lat?.toFixed(4)}, {incident.lng?.toFixed(4)}
           </span>
         </div>
@@ -431,19 +431,19 @@ export default function IncidentDetail({ incident, onClose }: Props) {
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 
         {incident.description && (
-          <div className="rounded-lg p-3" style={{ background: "var(--panel-input-bg)" }}>
-            <p className="text-[10px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-2">
+          <div className="rounded-lg p-3.5" style={{ background: "var(--panel-input-bg)" }}>
+            <p className="text-[11px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-2">
               SUMMARY
             </p>
-            <p className="text-xs leading-relaxed" style={{ color: "var(--panel-text)" }}>
+            <p className="text-sm leading-relaxed" style={{ color: "var(--panel-text)" }}>
               {incident.description}
             </p>
           </div>
         )}
 
-        <div className="rounded-lg p-3" style={{ background: "var(--panel-input-bg)" }}>
-          <p className="text-[10px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-2">
-            <Radio className="w-3 h-3" /> SCANNER TRANSCRIPT
+        <div className="rounded-lg p-3.5" style={{ background: "var(--panel-input-bg)" }}>
+          <p className="text-[11px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-2">
+            <Radio className="w-3.5 h-3.5" /> SCANNER TRANSCRIPT
           </p>
 
           {hasAudio ? (
@@ -454,7 +454,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
             />
           ) : (
             <p
-              className="text-xs leading-relaxed italic"
+              className="text-sm leading-relaxed italic"
               style={{ color: "var(--panel-text-secondary)" }}
             >
               &ldquo;{incident.raw_text}&rdquo;
@@ -462,8 +462,8 @@ export default function IncidentDetail({ incident, onClose }: Props) {
           )}
 
           {!hasAudio && (
-            <div className="mt-2 flex items-center gap-1.5 text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
-              <Volume2 className="w-3 h-3" />
+            <div className="mt-2 flex items-center gap-1.5 text-[11px]" style={{ color: "var(--panel-text-muted)" }}>
+              <Volume2 className="w-3.5 h-3.5" />
               Audio not available
             </div>
           )}
@@ -490,16 +490,16 @@ export default function IncidentDetail({ incident, onClose }: Props) {
           ].map((stat) => (
             <div
               key={stat.label}
-              className="flex-1 rounded-lg p-2.5 text-center"
+              className="flex-1 rounded-lg p-3 text-center"
               style={{ background: "var(--panel-input-bg)" }}
             >
               <p
-                className="text-[9px] font-mono mb-0.5"
+                className="text-[10px] font-mono mb-0.5"
                 style={{ color: "var(--panel-text-muted)" }}
               >
                 {stat.label}
               </p>
-              <p className="text-sm font-bold font-mono" style={{ color: stat.color }}>
+              <p className="text-base font-bold font-mono" style={{ color: stat.color }}>
                 {stat.value}
               </p>
             </div>

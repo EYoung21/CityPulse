@@ -1595,26 +1595,30 @@ function MapHome() {
           boxShadow: "0 2px 12px var(--panel-shadow, rgba(0,0,0,0.25))",
         }}
       >
-        {(["map", "feed", "analytics"] as const).map((tab) => {
+        {(["map", "feed", "analytics", "api"] as const).map((tab) => {
           const active = viewTab === tab;
           return (
             <button
               key={tab}
               onClick={() => {
+                if (tab === "api") {
+                  window.location.href = "/api-docs";
+                  return;
+                }
                 if (tab === "analytics" && !isPro) {
                   setShowUpgrade("Analytics");
                   return;
                 }
                 setViewTab(tab);
               }}
-              className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold tracking-wide uppercase transition-all relative"
+              className="flex-1 flex items-center justify-center gap-2.5 py-3.5 text-xs font-bold tracking-widest uppercase transition-all relative"
               style={{
                 color: active ? "#3b82f6" : "var(--panel-text-secondary)",
                 background: active ? "rgba(59,130,246,0.06)" : "transparent",
               }}
             >
-              {tab === "map" ? <MapIcon className="w-4 h-4" /> : tab === "feed" ? <Radio className="w-4 h-4" /> : <BarChart3 className="w-4 h-4" />}
-              {tab === "map" ? "Map" : tab === "feed" ? "Feed" : "Analytics"}
+              {tab === "map" ? <MapIcon className="w-4.5 h-4.5" /> : tab === "feed" ? <Radio className="w-4.5 h-4.5" /> : tab === "api" ? <Code className="w-4.5 h-4.5" /> : <BarChart3 className="w-4.5 h-4.5" />}
+              {tab === "map" ? "Map" : tab === "feed" ? "Feed" : tab === "api" ? "API Docs" : "Analytics"}
               {tab === "analytics" && !isPro && <Lock className="w-2.5 h-2.5 text-purple-400 ml-1" />}
               {tab === "feed" && filteredIncidents.length > 0 && (
                 <span
@@ -1980,10 +1984,10 @@ function MapHome() {
       <div className="absolute top-1.5 left-3 md:left-[calc(var(--pp-map-sidebar-width,72px)+28.5rem)] right-3 z-[999] pointer-events-none">
         <div className="flex flex-col gap-1.5 md:flex-row md:flex-wrap md:items-center md:gap-2 no-scrollbar pointer-events-auto">
           <div
-            className="flex items-center rounded-full overflow-hidden shadow-lg shrink-0 backdrop-blur-md"
+            className="flex items-center rounded-full shadow-lg shrink-0 backdrop-blur-md overflow-x-auto no-scrollbar"
             style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)" }}
           >
-            <Clock className="w-3.5 h-3.5 ml-2 md:ml-3 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
+            <Clock className="w-4 h-4 ml-3 md:ml-4 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
             {TIME_FILTERS.map((tf) => {
               const locked = tf.pro && !isPro;
               return (
@@ -1993,14 +1997,14 @@ function MapHome() {
                     if (locked) { setShowUpgrade("Extended History"); return; }
                     setTimeFilter(tf.hours);
                   }}
-                  className={`px-1.5 md:px-3 py-1.5 md:py-2 text-[10px] md:text-xs font-medium transition-all relative ${
+                  className={`px-3 md:px-4 py-2 md:py-2.5 text-xs md:text-sm font-medium transition-all relative shrink-0 ${
                     timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
                   } ${locked ? "opacity-50" : ""}`}
                   style={timeFilter !== tf.hours ? { color: locked ? "var(--panel-text-muted)" : "var(--pill-text)" } : {}}
                   title={locked ? "Pro feature · upgrade to unlock" : undefined}
                 >
                   {tf.label}
-                  {locked && <Lock className="w-2.5 h-2.5 absolute -top-0.5 -right-0.5 text-purple-400" />}
+                  {locked && <Lock className="w-3 h-3 absolute -top-0.5 -right-0.5 text-purple-400" />}
                 </button>
               );
             })}
@@ -2030,7 +2034,7 @@ function MapHome() {
 
             <button
               onClick={() => setActiveCats(new Set())}
-              className={`flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 md:py-2 rounded-full text-[10px] md:text-xs font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
+              className={`flex items-center gap-1.5 px-3 md:px-4 py-2 md:py-2.5 rounded-full text-xs md:text-sm font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
                 activeCats.size === 0 ? "bg-blue-500/15 text-blue-500 ring-1 ring-blue-500/30" : "opacity-70 hover:opacity-100"
               }`}
               style={activeCats.size > 0 ? { background: "var(--pill-bg)", border: "1px solid var(--pill-border)", color: "var(--pill-text)" } : { background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.3)" }}
@@ -2046,7 +2050,7 @@ function MapHome() {
                 <button
                   key={pill.label}
                   onClick={() => toggleCat(pill.cats)}
-                  className={`flex items-center gap-1.5 md:gap-2 px-2.5 md:px-3 py-1.5 md:py-2 rounded-full text-[10px] md:text-xs font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
+                  className={`flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 md:py-2.5 rounded-full text-xs md:text-sm font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
                     isActive ? "ring-1" : "opacity-70 hover:opacity-100"
                   }`}
                   style={{
@@ -2055,10 +2059,10 @@ function MapHome() {
                     color: isActive ? pill.color : "var(--pill-text)",
                   }}
                 >
-                  <Icon className="w-3.5 h-3.5" />
+                  <Icon className="w-4 h-4 md:w-4.5 md:h-4.5" />
                   <span className="hidden md:inline">{pill.label}</span>
                   {count > 0 && (
-                    <span className="text-[10px] font-mono" style={{ opacity: isActive ? 1 : 0.5 }}>{count}</span>
+                    <span className="text-[11px] font-mono" style={{ opacity: isActive ? 1 : 0.5 }}>{count}</span>
                   )}
                 </button>
               );
@@ -2434,28 +2438,28 @@ function MapHome() {
           onClick={goToMyLocation}
           title="My location"
           aria-label="Center map on my location"
-          className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-opacity hover:opacity-90 active:scale-95"
+          className="w-12 h-12 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-opacity hover:opacity-90 active:scale-95"
           style={{
             background: "var(--pill-bg)",
             border: "1px solid var(--pill-border)",
             color: "var(--panel-text)",
           }}
         >
-          <LocateFixed className="w-4 h-4" />
+          <LocateFixed className="w-5 h-5" />
         </button>
         <button
           type="button"
           onClick={recenterCity}
           title="City overview"
           aria-label={`Recenter map on ${cityDisplayName}`}
-          className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-opacity hover:opacity-90 active:scale-95"
+          className="w-12 h-12 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-opacity hover:opacity-90 active:scale-95"
           style={{
             background: "var(--pill-bg)",
             border: "1px solid var(--pill-border)",
             color: "var(--panel-text)",
           }}
         >
-          <House className="w-4 h-4" />
+          <House className="w-5 h-5" />
         </button>
         <AuthBar />
         <PulseNetworkNav />
@@ -2474,7 +2478,7 @@ function MapHome() {
               setShowTheme(false);
               setShowLayers(false);
             }}
-            className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
+            className="w-12 h-12 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
             style={{
               background: showInbox ? "rgba(59,130,246,0.15)" : "var(--pill-bg)",
               border: `1px solid ${showInbox ? "rgba(59,130,246,0.3)" : "var(--pill-border)"}`,
@@ -2483,10 +2487,10 @@ function MapHome() {
             title={`Alerts (${unreadAlerts} unread)`}
             aria-label={`Alerts inbox, ${unreadAlerts} unread`}
           >
-            <Bell className="w-4 h-4" />
+            <Bell className="w-5 h-5" />
             {unreadAlerts > 0 && (
               <span
-                className="absolute -top-0.5 -right-0.5 min-w-[1rem] h-4 px-1 flex items-center justify-center text-[9px] font-bold rounded-full tabular-nums"
+                className="absolute -top-0.5 -right-0.5 min-w-[1.25rem] h-5 px-1.5 flex items-center justify-center text-[10px] font-bold rounded-full tabular-nums"
                 style={{ background: "#ef4444", color: "#fff" }}
                 aria-hidden="true"
               >

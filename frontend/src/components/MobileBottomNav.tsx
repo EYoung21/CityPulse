@@ -27,7 +27,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import { Map as MapIcon, List, Bell, Settings as SettingsIcon, BarChart3, Lock } from "lucide-react";
+import { Map as MapIcon, List, Bell, Settings as SettingsIcon, BarChart3, Lock, Code } from "lucide-react";
 import { subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -45,14 +45,15 @@ const TABS: Tab[] = [
   { id: "map",       label: "Map",       href: "/?view=map",                Icon: MapIcon },
   { id: "feed",      label: "Feed",      href: "/feed",                     Icon: List },
   { id: "analytics", label: "Analytics", href: "/?view=analytics",          Icon: BarChart3, pro: true },
+  { id: "api",       label: "API",       href: "/api-docs",                 Icon: Code },
   { id: "inbox",     label: "Inbox",     href: "/?view=map&inbox=1",        Icon: Bell },
-  { id: "settings",  label: "Settings",  href: "/?view=map&inbox=settings", Icon: SettingsIcon },
+  { id: "settings",  label: "More",      href: "/?view=map&inbox=settings", Icon: SettingsIcon },
 ];
 
 /** Standard iOS-style tab bar height (excluding the safe-area inset
  *  for the home indicator, which we add on top). Exported so the map
  *  page can pad the bottom of any UI it doesn't want overlapped. */
-export const MOBILE_NAV_HEIGHT_PX = 56;
+export const MOBILE_NAV_HEIGHT_PX = 64;
 
 // Inner component that uses `useSearchParams` — extracted so we can
 // wrap *only this slice* in <Suspense>. Next.js requires a Suspense
@@ -93,13 +94,15 @@ function MobileBottomNavInner() {
   const onFeed = pathname?.startsWith("/feed") ?? false;
   const activeId: TabId = onFeed
     ? "feed"
-    : viewParam === "analytics"
-      ? "analytics"
-      : inboxParam === "settings"
-        ? "settings"
-        : inboxParam
-          ? "inbox"
-          : "map";
+    : pathname === "/api-docs"
+      ? "api"
+      : viewParam === "analytics"
+        ? "analytics"
+        : inboxParam === "settings"
+          ? "settings"
+          : inboxParam
+            ? "inbox"
+            : "map";
 
   return (
     <nav
@@ -154,7 +157,7 @@ function MobileBottomNavInner() {
             }}
           >
             <span style={{ position: "relative", lineHeight: 0 }}>
-              <tab.Icon className="w-5 h-5" />
+              <tab.Icon className="w-5.5 h-5.5" />
               {showPro && (
                 <span
                   style={{
@@ -200,9 +203,9 @@ function MobileBottomNavInner() {
             </span>
             <span
               style={{
-                fontSize: 10,
+                fontSize: 11,
                 fontWeight: active ? 700 : 500,
-                letterSpacing: 0.2,
+                letterSpacing: 0.1,
               }}
             >
               {tab.label}

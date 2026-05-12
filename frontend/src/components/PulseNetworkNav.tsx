@@ -69,14 +69,14 @@ export default function PulseNetworkNav() {
         style={{
           display: "flex",
           alignItems: "center",
-          gap: "6px",
-          padding: "6px 12px",
+          gap: "8px",
+          padding: "8px 16px",
           border: "1px solid rgba(255,255,255,0.15)",
-          borderRadius: "8px",
+          borderRadius: "10px",
           background: "rgba(255,255,255,0.06)",
           color: "rgba(255,255,255,0.8)",
           cursor: "pointer",
-          fontSize: "13px",
+          fontSize: "14px",
           fontWeight: 500,
           transition: "all 0.2s ease",
           backdropFilter: "blur(8px)",
@@ -90,11 +90,11 @@ export default function PulseNetworkNav() {
           e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)";
         }}
       >
-        <span style={{ fontSize: "15px" }}>🌐</span>
+        <span style={{ fontSize: "18px" }}>🌐</span>
         <span>Pulse Network</span>
         <span
           style={{
-            fontSize: "10px",
+            fontSize: "11px",
             transition: "transform 0.2s ease",
             transform: open ? "rotate(180deg)" : "rotate(0deg)",
           }}
@@ -123,8 +123,8 @@ export default function PulseNetworkNav() {
         >
           <div
             style={{
-              padding: "8px 14px 6px",
-              fontSize: "10px",
+              padding: "10px 16px 8px",
+              fontSize: "11px",
               fontWeight: 600,
               textTransform: "uppercase",
               letterSpacing: "1px",
@@ -205,10 +205,10 @@ function CityRow({
         display: "flex",
         alignItems: "center",
         gap: "10px",
-        padding: "8px 14px",
+        padding: "10px 16px",
         textDecoration: "none",
         color: isCurrent ? "#60a5fa" : "rgba(255,255,255,0.8)",
-        fontSize: "14px",
+        fontSize: "15px",
         fontWeight: isCurrent ? 600 : 400,
         transition: "background 0.15s ease",
         cursor: isCurrent ? "default" : "pointer",

@@ -21,17 +21,17 @@ import { incidentAudioSources } from "@/lib/public-api-base";
 import { resolveBlipKind, monoGlyphSvg } from "./IncidentMap";
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
-  violent_weapon: <ShieldAlert className="w-3.5 h-3.5" />,
-  violent_no_weapon: <ShieldAlert className="w-3.5 h-3.5" />,
-  shots_heard: <Volume2 className="w-3.5 h-3.5" />,
-  robbery: <AlertTriangle className="w-3.5 h-3.5" />,
-  burglary_in_progress: <AlertTriangle className="w-3.5 h-3.5" />,
-  medical_priority: <Heart className="w-3.5 h-3.5" />,
-  medical_other: <Heart className="w-3.5 h-3.5" />,
-  fire_hazmat: <Flame className="w-3.5 h-3.5" />,
-  traffic_crash_injury: <Car className="w-3.5 h-3.5" />,
-  traffic_crash_no_injury: <Car className="w-3.5 h-3.5" />,
-  disorder: <CircleDot className="w-3.5 h-3.5" />,
+  violent_weapon: <ShieldAlert className="w-4 h-4" />,
+  violent_no_weapon: <ShieldAlert className="w-4 h-4" />,
+  shots_heard: <Volume2 className="w-4 h-4" />,
+  robbery: <AlertTriangle className="w-4 h-4" />,
+  burglary_in_progress: <AlertTriangle className="w-4 h-4" />,
+  medical_priority: <Heart className="w-4 h-4" />,
+  medical_other: <Heart className="w-4 h-4" />,
+  fire_hazmat: <Flame className="w-4 h-4" />,
+  traffic_crash_injury: <Car className="w-4 h-4" />,
+  traffic_crash_no_injury: <Car className="w-4 h-4" />,
+  disorder: <CircleDot className="w-4 h-4" />,
 };
 
 interface TimeBlock {
@@ -176,31 +176,31 @@ function IncidentCard({
       style={{ opacity: rowOpacity }}
     >
       <div
-        className="absolute left-0 top-2 bottom-2 w-[2px] rounded-full transition-opacity"
+        className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full transition-opacity"
         style={{ backgroundColor: sev.markerColor, opacity: isSelected ? 1 : 0.4 }}
       />
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 mb-0.5">
           <span
-            className="text-[10px] font-bold uppercase tracking-wider"
+            className="text-[11px] font-bold uppercase tracking-wider"
             style={{ color: sev.markerColor }}
           >
             {sev.label}
           </span>
           {isHighSev && (
-            <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+            <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
           )}
         </div>
 
-        <div className="flex items-center gap-1 text-xs truncate" style={{ color: "var(--panel-text, rgba(255,255,255,0.7))" }}>
-          <MapPin className="w-3 h-3 shrink-0" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }} />
+        <div className="flex items-center gap-1.5 text-sm truncate" style={{ color: "var(--panel-text, rgba(255,255,255,0.7))" }}>
+          <MapPin className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }} />
           <span className="truncate">{inc.location_text || "Unknown"}</span>
         </div>
 
         {snippet && (
           <p
-            className="mt-1 text-[11px] leading-snug italic line-clamp-2"
+            className="mt-1 text-xs leading-snug italic line-clamp-2"
             style={{ color: "var(--panel-text-secondary, rgba(255,255,255,0.5))" }}
           >
             &ldquo;{snippet}&rdquo;
@@ -211,13 +211,13 @@ function IncidentCard({
           {(inc.audio_url || inc.audio_clip) && (
             <button
               onClick={toggleAudio}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium transition-all ${
                 playing
                   ? "bg-blue-500 text-white"
                   : "bg-blue-500/15 text-blue-400 hover:bg-blue-500/25"
               }`}
             >
-              {playing ? <Pause className="w-2.5 h-2.5" /> : <Play className="w-2.5 h-2.5" />}
+              {playing ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
               {playing ? "Playing" : "Listen"}
             </button>
           )}
@@ -254,7 +254,7 @@ function IncidentCard({
               style={{ width: `${confidencePct}%`, backgroundColor: confColor }}
             />
           </div>
-          <span className="text-[9px] font-mono shrink-0" style={{ color: confColor }}>
+          <span className="text-[10px] font-mono shrink-0" style={{ color: confColor }}>
             {confidencePct}%
           </span>
         </div>
@@ -272,7 +272,7 @@ function IncidentCard({
             />
           )}
           <div
-            className="mt-0.5 w-7 h-7 rounded-md flex items-center justify-center shrink-0"
+            className="mt-0.5 w-8 h-8 rounded-md flex items-center justify-center shrink-0"
             style={{
               background: "var(--panel-input-bg, rgba(255,255,255,0.06))",
               color: "var(--panel-text-secondary, rgba(255,255,255,0.55))",
@@ -280,15 +280,15 @@ function IncidentCard({
             title={sev.label}
             aria-label={`Type: ${sev.label}`}
           >
-            {CATEGORY_ICONS[inc.severity_category] || <CircleDot className="w-3.5 h-3.5" />}
+            {CATEGORY_ICONS[inc.severity_category] || <CircleDot className="w-4 h-4" />}
           </div>
         </div>
-        <span className="text-[10px] font-mono" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }}>
+        <span className="text-[11px] font-mono" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }}>
           {timeAgo(inc.reported_at)}
         </span>
         {(inc.mention_count ?? 0) > 1 && inc.last_mention_at && (
           <span
-            className="text-[9px] font-mono px-1 py-px rounded"
+            className="text-[10px] font-mono px-1.5 py-0.5 rounded"
             style={{
               background: "rgba(59,130,246,0.15)",
               color: "#60a5fa",
@@ -335,7 +335,7 @@ export default function IncidentFeed({ incidents, selectedId, onSelect, showMapT
         <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "var(--panel-input-bg, rgba(255,255,255,0.05))" }}>
           <RadioIcon className="w-5 h-5" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }} />
         </div>
-        <p className="text-xs font-mono" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }}>AWAITING INCIDENTS</p>
+        <p className="text-sm font-mono" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }}>AWAITING INCIDENTS</p>
       </div>
     );
   }
@@ -358,11 +358,11 @@ export default function IncidentFeed({ incidents, selectedId, onSelect, showMapT
               <ChevronDown
                 className={`w-3.5 h-3.5 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
               />
-              <span className="text-[10px] font-bold uppercase tracking-wider flex-1">
+              <span className="text-[11px] font-bold uppercase tracking-wider flex-1">
                 {block.label}
               </span>
               <span
-                className="text-[10px] font-mono px-1.5 py-0.5 rounded-full"
+                className="text-[11px] font-mono px-2 py-0.5 rounded-full"
                 style={{ background: "var(--panel-input-bg, rgba(255,255,255,0.05))" }}
               >
                 {block.incidents.length}
