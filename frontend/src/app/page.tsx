@@ -2774,7 +2774,7 @@ function MapHome() {
 
       {/* ──── Analytics View ──── */}
       {viewTab === "analytics" && (
-        <div className="absolute inset-0 z-[50] bg-[var(--map-bg)] overflow-y-auto">
+        <div className="fixed inset-0 top-[57px] z-[1000] bg-[var(--map-bg)] overflow-y-auto">
           <div className="max-w-5xl mx-auto p-4 md:p-8">
             <AnalyticsPanel
               incidents={incidents}
@@ -2787,7 +2787,7 @@ function MapHome() {
 
       {/* ──── API Docs View ──── */}
       {viewTab === "api" && (
-        <div className="absolute inset-0 z-[50] bg-[var(--map-bg)] overflow-y-auto">
+        <div className="fixed inset-0 top-[57px] z-[1000] bg-[var(--map-bg)] overflow-y-auto">
           <div className="max-w-4xl mx-auto p-4 md:p-8">
             <div
               className="rounded-xl overflow-hidden backdrop-blur-xl shadow-2xl p-6 md:p-10 border border-white/5"
