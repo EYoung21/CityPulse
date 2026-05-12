@@ -333,6 +333,9 @@ interface Props {
    *  the array; tapping the map while measure mode is on appends a
    *  new point via the standard onMapTap callback. */
   measurePoints?: [number, number][] | null;
+  /** Sequence of points dropped via the perimeter tool. When
+   *  non-null, forms a closed polygon on the map. */
+  perimeterPoints?: [number, number][] | null;
   /** Read-only polyline rendered when the user opens a shared-trip link
    *  (`?trip=<token>`). Visually distinct from `tripRouteGeometry` to
    *  signal that it's someone *else's* route, not the viewer's. */
@@ -911,6 +914,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     savedPlaces = null,
     onSavedPlaceClick,
     measurePoints = null,
+    perimeterPoints = null,
   },
   ref
 ) {
@@ -924,6 +928,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const savedPlacesLayerRef = useRef<L.LayerGroup | null>(null);
   const userAvoidLayerRef = useRef<L.LayerGroup | null>(null);
   const measureLayerRef = useRef<L.LayerGroup | null>(null);
+  const perimeterLayerRef = useRef<L.LayerGroup | null>(null);
   // Latest click handler — kept in a ref so the layer effect can stay
   // dependent only on `savedPlaces` and not re-create markers every
   // time the parent rebinds its callback.
@@ -1143,6 +1148,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     savedPlacesLayerRef.current = L.layerGroup().addTo(map);
     userAvoidLayerRef.current = L.layerGroup().addTo(map);
     measureLayerRef.current = L.layerGroup().addTo(map);
+    perimeterLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
     const setZoomCSSVar = (z: number) => {
@@ -1742,6 +1748,55 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       }).addTo(layer);
     });
   }, [measurePoints]);
+
+  // Perimeter-tool overlay: forms a filled polygon to visually represent
+  // the area being checked for incidents.
+  useEffect(() => {
+    const layer = perimeterLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (!perimeterPoints || perimeterPoints.length === 0) return;
+
+    if (perimeterPoints.length >= 2) {
+      // If <3 points, draw a line. If >=3 points, draw a closed polygon.
+      if (perimeterPoints.length === 2) {
+        L.polyline(perimeterPoints, {
+          color: "#a855f7",
+          weight: 3,
+          opacity: 0.95,
+          dashArray: "6 6",
+          interactive: false,
+        }).addTo(layer);
+      } else {
+        L.polygon(perimeterPoints, {
+          color: "#a855f7",
+          weight: 2,
+          opacity: 0.8,
+          fillColor: "#a855f7",
+          fillOpacity: 0.15,
+          interactive: false,
+        }).addTo(layer);
+      }
+    }
+
+    perimeterPoints.forEach(([lat, lng], i) => {
+      const icon = L.divIcon({
+        className: "pp-perimeter-vertex",
+        iconSize: [12, 12],
+        iconAnchor: [6, 6],
+        html:
+          `<div style="width:12px;height:12px;border-radius:50%;` +
+          `background:#a855f7;border:2px solid #fff;` +
+          `box-shadow:0 1px 4px rgba(0,0,0,0.4);"></div>`,
+      });
+      L.marker([lat, lng], {
+        icon,
+        keyboard: false,
+        interactive: false,
+        zIndexOffset: 700,
+      }).addTo(layer);
+    });
+  }, [perimeterPoints]);
 
   useEffect(() => {
     const highlight = selectedHighlightRef.current;

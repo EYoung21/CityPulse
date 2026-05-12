@@ -35,6 +35,7 @@ import { notificationsSupported } from "@/lib/notifications";
 import { useAuth } from "@/contexts/AuthContext";
 import { requestUpgrade } from "@/lib/upgrade";
 import { requestInstallPrompt } from "@/components/InstallPrompt";
+import { highlightTerms } from "@/lib/highlight-keywords";
 
 interface Props {
   open: boolean;
@@ -522,10 +523,27 @@ export default function AlertsInbox({ open, onClose, onJump, defaultPanel = "lis
                             )}
                           </div>
                           <p
-                            className="text-[11px] leading-snug truncate mt-0.5"
+                            className="text-[11px] leading-snug mt-0.5"
                             style={{ color: "var(--panel-text-muted)" }}
                           >
-                            {a.body}
+                            {highlightTerms(a.body).map((seg, i) =>
+                              seg.highlight ? (
+                                <span
+                                  key={i}
+                                  style={{
+                                    color: "#f59e0b",
+                                    fontWeight: 600,
+                                    background: "rgba(245,158,11,0.12)",
+                                    borderRadius: "2px",
+                                    padding: "0 2px",
+                                  }}
+                                >
+                                  {seg.text}
+                                </span>
+                              ) : (
+                                <span key={i}>{seg.text}</span>
+                              )
+                            )}
                           </p>
                           <div className="flex items-center justify-between gap-2 mt-1">
                             <span

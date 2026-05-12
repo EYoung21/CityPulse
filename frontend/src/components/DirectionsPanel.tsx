@@ -21,6 +21,9 @@ import {
   Calendar,
   Bell,
   BellOff,
+  TrainFront,
+  TramFront,
+  Info,
 } from "lucide-react";
 import { downloadIcs } from "@/lib/ics";
 import { addReminder, removeReminder } from "@/lib/scheduled-reminders";
@@ -32,6 +35,7 @@ import {
   buildAvoidPolygons,
   filterRouteOptionsForSafestOnlyUi,
   SAFEST_ROUTE_ONLY_UI,
+  isTransitMode,
   type TransportMode,
   type AvoidancePrefs,
   type RouteOption,
@@ -117,13 +121,15 @@ const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
 
 const MODES: { id: TransportMode; label: string; icon: typeof Footprints }[] = [
-  { id: "foot-walking", label: "Walking", icon: Footprints },
-  { id: "cycling-regular", label: "Cycling", icon: Bike },
-  { id: "driving-car", label: "Driving", icon: Car },
+  { id: "foot-walking", label: "Walk", icon: Footprints },
+  { id: "cycling-regular", label: "Bike", icon: Bike },
+  { id: "driving-car", label: "Drive", icon: Car },
+  { id: "transit-train", label: "Train", icon: TrainFront },
+  { id: "transit-subway", label: "Subway", icon: TramFront },
   // Wheelchair routing leans on ORS's `wheelchair` profile, which
   // adds curb-ramp and surface-quality preferences. Same response
   // shape as the others, so no special-casing downstream.
-  { id: "wheelchair", label: "Accessible", icon: Accessibility },
+  { id: "wheelchair", label: "Access", icon: Accessibility },
 ];
 
 const STOP_COLORS = ["#f97316", "#a855f7", "#06b6d4", "#ec4899", "#84cc16"];
@@ -564,6 +570,24 @@ export default function DirectionsPanel({
           );
         })}
       </div>
+
+      {/* Transit mode info note */}
+      {isTransitMode(activeMode) && (
+        <div
+          className="flex items-start gap-2 mx-3 mt-2 px-3 py-2.5 rounded-lg text-[11px] leading-relaxed"
+          style={{
+            background: "rgba(59,130,246,0.08)",
+            border: "1px solid rgba(59,130,246,0.15)",
+            color: "var(--panel-text-secondary)",
+          }}
+        >
+          <Info className="w-3.5 h-3.5 shrink-0 mt-0.5 text-blue-400" />
+          <span>
+            Transit routing shows <strong style={{ color: "var(--panel-text)" }}>walking directions</strong> to and from the nearest station.
+            Full SEPTA integration coming soon.
+          </span>
+        </div>
+      )}
 
       {/* Avoidance preferences (per-leaf categories + severity floor) */}
       <AvoidancePrefsPicker prefs={avoidPrefs} onChange={onAvoidPrefsChange} />
