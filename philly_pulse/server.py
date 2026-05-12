@@ -941,7 +941,7 @@ async def ingest(req: IngestRequest):
 
 
 @app.get("/api/incidents")
-async def get_incidents(
+def get_incidents(
     response: Response,
     since: str | None = Query(None, description="ISO timestamp filter"),
     category: str | None = Query(None, description="Severity category filter"),
@@ -991,7 +991,7 @@ def _incident_matches_query(inc: dict, terms: list[str]) -> bool:
 
 
 @app.get("/api/incidents/page")
-async def page_incidents(
+def page_incidents(
     response: Response,
     cursor: str | None = Query(None, description="Opaque cursor: ISO reported_at of the last row from the prior page"),
     limit: int = Query(20, ge=1, le=50, description="Page size"),
@@ -1115,7 +1115,7 @@ def _haversine_km_inline(lat1: float, lng1: float, lat2: float, lng2: float) -> 
 
 
 @app.get("/api/incidents/search")
-async def search_incidents(
+def search_incidents(
     response: Response,
     q: str = Query(..., description="Free-text query"),
     since: str | None = Query(None, description="ISO lower bound (default: today-3h)"),
@@ -1211,7 +1211,12 @@ async def summary(
     if not is_pro:
         response.headers["X-Pulse-Free-Window-Sec"] = str(FREE_INCIDENT_WINDOW_SECONDS)
 
-    incidents = store.list_incidents(since=effective_since) if not is_pro else store.list_incidents()
+    import starlette.concurrency
+    
+    if not is_pro:
+        incidents = await starlette.concurrency.run_in_threadpool(store.list_incidents, since=effective_since)
+    else:
+        incidents = await starlette.concurrency.run_in_threadpool(store.list_incidents)
     recent = incidents[:20]
 
     if not recent:
@@ -1292,7 +1297,7 @@ async def summary(
 
 
 @app.get("/api/stats")
-async def stats():
+def stats():
     """Inhibitor audit stats for the transparency page."""
     return {
         "total_incidents": store.incident_count(),
@@ -1301,7 +1306,7 @@ async def stats():
 
 
 @app.get("/api/city-stats/{slug}")
-async def city_stats(slug: str):
+def city_stats(slug: str):
     """Landing-page numbers for a single city.
 
     Returns scanner feed count (from that city's config.yaml), incident
@@ -1361,7 +1366,7 @@ async def admin_ws(ws: WebSocket):
 
 
 @app.get("/api/admin/feeds")
-async def admin_feeds(
+def admin_feeds(
     request: Request,
     city: str | None = Query(
         None,
