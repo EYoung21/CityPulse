@@ -84,7 +84,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} dark h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} dark min-h-dvh antialiased`}
       suppressHydrationWarning
     >
       <head>
@@ -94,7 +94,7 @@ export default function RootLayout({
           crossOrigin=""
         />
       </head>
-      <body className="min-h-full flex flex-col">
+      <body className="min-h-dvh flex flex-col">
         <Providers><ThemeProvider>{children}</ThemeProvider></Providers>
         <ServiceWorkerRegister />
         <NativeBoot />
