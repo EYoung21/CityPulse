@@ -1641,7 +1641,7 @@ function MapHome() {
           );
         })}
       </div>
-      {(() => { console.log("Current viewTab:", viewTab); return null; })()}
+      {(() => { console.log("Current viewTab:", viewTab, "isPro:", isPro); return null; })()}
 
       {/* ──── Content Area ──── */}
       <div className="relative flex-1 min-h-0 w-full overflow-hidden">
@@ -2775,22 +2775,31 @@ function MapHome() {
 
       {/* ──── Analytics View ──── */}
       {viewTab === "analytics" && (
-        <div className="fixed inset-0 z-[9999] bg-red-600 p-20 border-[20px] border-white">
-          {(() => { console.log("Rendering Analytics Diagnostic View (FIXED)"); return null; })()}
-          <div className="bg-white p-10 rounded-xl shadow-2xl">
-            <h1 className="text-6xl font-bold text-black">ANALYTICS FIXED ACTIVE</h1>
-            <p className="text-black text-2xl">If you don't see this RED screen with WHITE border, something is very wrong.</p>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 99999, backgroundColor: 'red', border: '20px solid white', padding: '100px', pointerEvents: 'auto' }}>
+          {(() => { 
+            console.log("Rendering Analytics Diagnostic View (FIXED INLINE)"); 
+            if (typeof window !== "undefined") window.alert("ANALYTICS RENDERED");
+            return null; 
+          })()}
+          <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '20px', color: 'black' }}>
+            <h1 style={{ fontSize: '40px', fontWeight: 'bold' }}>ANALYTICS FIXED ACTIVE</h1>
+            <p>isPro: {isPro ? "TRUE" : "FALSE"}</p>
+            <button onClick={() => setViewTab("map")} style={{ marginTop: '20px', padding: '10px 20px', backgroundColor: '#3b82f6', color: 'white', borderRadius: '8px' }}>Close</button>
           </div>
         </div>
       )}
 
       {/* ──── API Docs View ──── */}
       {viewTab === "api" && (
-        <div className="fixed inset-0 z-[9999] bg-blue-600 p-20 border-[20px] border-white">
-          {(() => { console.log("Rendering API Diagnostic View (FIXED)"); return null; })()}
-          <div className="bg-white p-10 rounded-xl shadow-2xl">
-            <h1 className="text-6xl font-bold text-black">API DOCS FIXED ACTIVE</h1>
-            <p className="text-black text-2xl">If you don't see this BLUE screen with WHITE border, something is very wrong.</p>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 99999, backgroundColor: 'blue', border: '20px solid white', padding: '100px', pointerEvents: 'auto' }}>
+          {(() => { 
+            console.log("Rendering API Diagnostic View (FIXED INLINE)"); 
+            if (typeof window !== "undefined") window.alert("API RENDERED");
+            return null; 
+          })()}
+          <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '20px', color: 'black' }}>
+            <h1 style={{ fontSize: '40px', fontWeight: 'bold' }}>API DOCS FIXED ACTIVE</h1>
+            <button onClick={() => setViewTab("map")} style={{ marginTop: '20px', padding: '10px 20px', backgroundColor: '#3b82f6', color: 'white', borderRadius: '8px' }}>Close</button>
           </div>
         </div>
       )}
