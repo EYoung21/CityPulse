@@ -211,6 +211,34 @@ export default function RouteOptionPicker({
                     Lowest exposure
                   </span>
                 )}
+                {/* "Hot zone" badge — routes crossing incident-dense corridors */}
+                {score && !opt.isSafer && (score.weighted >= 3 || score.count >= 3) && (
+                  <span
+                    className="inline-flex items-center gap-1 mt-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                    style={{
+                      background: "rgba(239,68,68,0.14)",
+                      color: "#ef4444",
+                    }}
+                    title={`Cuts through ${score.count} active incident${score.count === 1 ? "" : "s"}`}
+                  >
+                    <AlertTriangle className="w-2.5 h-2.5" />
+                    Cuts through hot zone
+                  </span>
+                )}
+                {/* "Routed around" badge — safer routes that avoid all incidents */}
+                {opt.isSafer && score && score.count === 0 && (
+                  <span
+                    className="inline-flex items-center gap-1 mt-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                    style={{
+                      background: "rgba(34,197,94,0.14)",
+                      color: "#22c55e",
+                    }}
+                    title="This route avoids all reported incidents"
+                  >
+                    <ShieldCheck className="w-2.5 h-2.5" />
+                    Routed around
+                  </span>
+                )}
               </div>
             </button>
           );

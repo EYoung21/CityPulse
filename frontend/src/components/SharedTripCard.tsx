@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Navigation, X, Footprints, Bike, Car, Clock, MapPin, Accessibility } from "lucide-react";
+import { Navigation, X, Footprints, Bike, Car, Clock, MapPin, Accessibility, TrainFront, TramFront } from "lucide-react";
 import type { DecodedTripToken } from "@/lib/share-trip";
 import type { TransportMode } from "@/lib/routing";
 
@@ -15,6 +15,8 @@ const MODE_ICON: Record<TransportMode, typeof Footprints> = {
   "cycling-regular": Bike,
   "driving-car":    Car,
   "wheelchair":     Accessibility,
+  "transit-train":  TrainFront,
+  "transit-subway": TramFront,
 };
 
 function fmtRemaining(ms: number): string {

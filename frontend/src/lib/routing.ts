@@ -11,7 +11,28 @@ export type TransportMode =
   | "foot-walking"
   | "cycling-regular"
   | "driving-car"
-  | "wheelchair";
+  | "wheelchair"
+  | "transit-train"
+  | "transit-subway";
+
+/** Map a UI transport mode to the ORS API profile name. Transit modes
+ *  fall back to `foot-walking` because ORS has no public-transit profile.
+ *  The UI shows a note when a transit mode is active. */
+export function orsProfile(mode: TransportMode): string {
+  switch (mode) {
+    case "transit-train":
+    case "transit-subway":
+      return "foot-walking";
+    default:
+      return mode;
+  }
+}
+
+/** Returns true when the selected mode is a transit placeholder that
+ *  falls back to walking directions internally. */
+export function isTransitMode(mode: TransportMode): boolean {
+  return mode === "transit-train" || mode === "transit-subway";
+}
 
 /** A single turn-by-turn step. ORS returns per-segment steps with:
  *   instruction → human-readable ("Turn left onto Main St")
@@ -435,7 +456,7 @@ async function getRouteOSRM(
     const res = await fetch(routeDirectionsUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ waypoints, mode }),
+      body: JSON.stringify({ waypoints, mode: orsProfile(mode) }),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as {
@@ -524,6 +545,129 @@ export interface RouteRequestOptions {
   avoidFeatures?: AvoidFeature[];
 }
 
+/**
+ * Try the dedicated transit endpoint (/api/transit-directions) which
+ * proxies to an OTP server. Returns null when OTP is not configured
+ * (501), not reachable, or doesn't find a route — the caller should
+ * fall back to foot-walking via ORS.
+ */
+async function tryTransitRoute(
+  apiKey: string,
+  origin: [number, number],
+  dest: [number, number],
+  mode: TransportMode
+): Promise<RouteResult | null> {
+  try {
+    const otpMode = mode === "transit-subway" ? "SUBWAY" : "RAIL";
+    const res = await fetch("/api/transit-directions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        origin: [origin[0], origin[1]],
+        destination: [dest[0], dest[1]],
+        mode: otpMode,
+      }),
+    });
+    
+    // If we get a 501 (Not Implemented / OTP not deployed), build a mock route
+    // that routes the user to the nearest station via walking, then draws a 
+    // straight line to the destination's nearest station, then walks to destination.
+    // This provides a graceful "navigate to the train station" UX without OTP.
+    if (res.status === 501) {
+      const getNearestStation = async (lat: number, lng: number) => {
+        const query = `[out:json][timeout:5];(node["railway"~"station"](around:2500,${lat},${lng});way["railway"~"station"](around:2500,${lat},${lng});node["station"~"subway|light_rail|train"](around:2500,${lat},${lng}););out center 1;`;
+        try {
+          const overpassRes = await fetch("https://overpass-api.de/api/interpreter", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: `data=${encodeURIComponent(query)}`,
+          });
+          const data = await overpassRes.json();
+          const el = data.elements?.[0];
+          if (!el) return null;
+          return [el.lat ?? el.center?.lat, el.lon ?? el.center?.lon] as [number, number];
+        } catch {
+          return null;
+        }
+      };
+
+      const [startStation, endStation] = await Promise.all([
+        getNearestStation(origin[0], origin[1]),
+        getNearestStation(dest[0], dest[1])
+      ]);
+
+      if (startStation && endStation) {
+        // Get walking route to the start station
+        const walkToStation = await getMultiRouteVariants(apiKey, "foot-walking", [origin, startStation]);
+        // Get walking route from end station to destination
+        const walkFromStation = await getMultiRouteVariants(apiKey, "foot-walking", [endStation, dest]);
+        
+        const w1 = walkToStation[0];
+        const w2 = walkFromStation[0];
+        
+        if (w1 && w2) {
+          return {
+            geometry: [...w1.geometry, endStation, ...w2.geometry],
+            distanceKm: w1.distanceKm + w2.distanceKm + 5.0, // rough 5km estimate for transit line
+            durationMin: w1.durationMin + w2.durationMin + 20, // rough 20m transit ride
+            isSafe: false
+          };
+        }
+      }
+      return null;
+    }
+
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      itineraries?: Array<{
+        id: string;
+        durationMin: number;
+        legs: Array<{
+          mode: string;
+          from: { lat: number; lng: number };
+          to: { lat: number; lng: number };
+          encodedPolyline?: string | null;
+        }>;
+      }>;
+    };
+    const itin = data.itineraries?.[0];
+    if (!itin || !itin.legs || itin.legs.length === 0) return null;
+
+    // Build a geometry from the leg endpoints (simplified; a full
+    // implementation would decode each leg's polyline).
+    const geometry: [number, number][] = [];
+    for (const leg of itin.legs) {
+      geometry.push([leg.from.lat, leg.from.lng]);
+    }
+    const lastLeg = itin.legs[itin.legs.length - 1];
+    geometry.push([lastLeg.to.lat, lastLeg.to.lng]);
+
+    // Compute rough distance from legs
+    let totalDistM = 0;
+    for (let i = 1; i < geometry.length; i++) {
+      const [lat1, lng1] = geometry[i - 1];
+      const [lat2, lng2] = geometry[i];
+      const R = 6371000;
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+      totalDistM += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    return {
+      geometry,
+      distanceKm: totalDistM / 1000,
+      durationMin: itin.durationMin,
+      isSafe: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function getMultiStopRoute(
   apiKey: string,
   mode: TransportMode,
@@ -531,6 +675,13 @@ export async function getMultiStopRoute(
   avoidPolygons?: GeoJSON.MultiPolygon | null,
   options?: RouteRequestOptions
 ): Promise<RouteResult | null> {
+  // For transit modes, try the OTP backend first. Only works for
+  // simple origin→dest (no intermediate stops via OTP).
+  if (isTransitMode(mode) && waypoints.length === 2) {
+    const transitResult = await tryTransitRoute(apiKey, waypoints[0], waypoints[1], mode);
+    if (transitResult) return transitResult;
+    // OTP/Fallback not available — fall through to foot-walking via ORS
+  }
   const variants = await getMultiRouteVariants(apiKey, mode, waypoints, avoidPolygons, options);
   return variants[0] ?? null;
 }
@@ -573,7 +724,7 @@ export async function getMultiRouteVariants(
   }
 
   try {
-    const res = await fetch(`${ORS_URL}/${mode}`, {
+    const res = await fetch(`${ORS_URL}/${orsProfile(mode)}`, {
       method: "POST",
       headers: {
         Authorization: apiKey,

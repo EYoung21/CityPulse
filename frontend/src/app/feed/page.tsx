@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Map as MapIcon, Crosshair } from "lucide-react";
+import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Map as MapIcon, Crosshair, Download } from "lucide-react";
 import IncidentFeed from "@/components/IncidentFeed";
 import MobileBottomNav, { MOBILE_NAV_HEIGHT_PX } from "@/components/MobileBottomNav";
 import { fetchIncidentPage, type Incident } from "@/lib/api";
@@ -201,6 +201,33 @@ export default function FeedPage() {
     return `Latest scanner activity in ${city.name}`;
   }, [mode, userLoc, city.name]);
 
+  /** Download currently loaded incidents as a CSV file. */
+  const downloadCsv = useCallback(() => {
+    if (incidents.length === 0) return;
+    const escape = (s: string) => {
+      if (/[,"\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+    const headers = ["reported_at", "category", "location", "lat", "lng", "description", "confidence"];
+    const rows = incidents.map((inc) => [
+      inc.reported_at,
+      inc.severity_category,
+      escape(inc.location_text || ""),
+      String(inc.lat ?? ""),
+      String(inc.lng ?? ""),
+      escape(inc.description || ""),
+      String(Math.round(inc.confidence * 100)),
+    ]);
+    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `citypulse-${city.slug}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [incidents, city.slug]);
+
   return (
     <div
       className="min-h-screen flex flex-col"
@@ -309,6 +336,17 @@ export default function FeedPage() {
         >
           <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} /> Refresh
         </button>
+        {incidents.length > 0 && (
+          <button
+            type="button"
+            onClick={downloadCsv}
+            className="inline-flex items-center gap-1 text-[11px]"
+            style={{ color: "var(--panel-text-muted)" }}
+            title={`Download ${incidents.length} incidents as CSV`}
+          >
+            <Download className="w-3 h-3" /> CSV
+          </button>
+        )}
       </div>
 
       <main className="flex-1">
