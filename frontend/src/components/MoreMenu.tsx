@@ -31,6 +31,8 @@ interface Props {
   colorBlindSafe: boolean;
   setColorBlindSafe: (v: boolean) => void;
   isPro: boolean;
+  open: boolean;
+  setOpen: (v: boolean) => void;
   onShowAbout: () => void;
   onShowUpgrade: (feature: string) => void;
 }
@@ -52,10 +54,11 @@ export default function MoreMenu({
   colorBlindSafe,
   setColorBlindSafe,
   isPro,
+  open,
+  setOpen,
   onShowAbout,
   onShowUpgrade,
 }: Props) {
-  const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

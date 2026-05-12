@@ -399,6 +399,7 @@ function MapHome() {
   const [previewDest, setPreviewDest] = useState<{ lat: number; lng: number } | null>(null);
   const [previewWaypoints, setPreviewWaypoints] = useState<WaypointPin[] | null>(null);
   const [showAbout, setShowAbout] = useState(false);
+  const [showLayers, setShowLayers] = useState(false);
   // Map measurement tool. When `measureMode` is on, every map tap
   // appends a vertex to `measurePoints` and the SafetyScoreCard /
   // dropped-pin codepaths are bypassed.
@@ -2536,6 +2537,8 @@ function MapHome() {
           colorBlindSafe={colorBlindSafe}
           setColorBlindSafe={setColorBlindSafe}
           isPro={isPro}
+          open={showLayers}
+          setOpen={setShowLayers}
           onShowAbout={() => setShowAbout(true)}
           onShowUpgrade={(feature) => setShowUpgrade(feature)}
         />
