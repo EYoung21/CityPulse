@@ -2847,7 +2847,7 @@ function MapHome() {
                       <p className="text-xs opacity-70 mb-3">Fetch the most recent incidents within a given radius or bounding box.</p>
                       <div className="rounded-lg bg-black/5 p-3 font-mono text-[11px] border border-black/5">
                         <span className="opacity-40">// Request</span><br />
-                        curl https://api.citypulse.io/v1/incidents/live?city=phl\u0026limit=10
+                        curl https://api.citypulse.io/v1/incidents/live?city=phl&limit=10
                       </div>
                     </div>
 
@@ -2868,8 +2868,8 @@ function MapHome() {
                     and expanded rate limits for production applications.
                   </p>
                   <button
-                    onClick={() => setShowUpgrade(\"API Enterprise\")}
-                    className=\"px-6 py-2.5 rounded-full bg-blue-500 text-white text-xs font-bold transition-transform hover:scale-105 active:scale-95\"
+                    onClick={() => setShowUpgrade("API Enterprise")}
+                    className="px-6 py-2.5 rounded-full bg-blue-500 text-white text-xs font-bold transition-transform hover:scale-105 active:scale-95"
                   >
                     Upgrade to Pro
                   </button>
