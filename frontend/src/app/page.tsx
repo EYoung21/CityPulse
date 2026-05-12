@@ -1641,6 +1641,7 @@ function MapHome() {
           );
         })}
       </div>
+      {console.log("Current viewTab:", viewTab)}
 
       {/* ──── Content Area ──── */}
       <div className="relative flex-1 min-h-0 w-full overflow-hidden">
@@ -2774,7 +2775,8 @@ function MapHome() {
 
       {/* ──── Analytics View ──── */}
       {viewTab === "analytics" && (
-        <div className="absolute inset-0 z-[100] bg-red-500/20 p-20">
+        <div className="absolute inset-0 z-[1200] bg-red-500 p-20">
+          {console.log("Rendering Analytics Diagnostic View")}
           <div className="bg-white p-10 rounded-xl shadow-2xl">
             <h1 className="text-4xl font-bold text-black">ANALYTICS VIEW ACTIVE</h1>
             <p className="text-black">If you see this, the tab logic is working.</p>
@@ -2784,7 +2786,8 @@ function MapHome() {
 
       {/* ──── API Docs View ──── */}
       {viewTab === "api" && (
-        <div className="absolute inset-0 z-[100] bg-blue-500/20 p-20">
+        <div className="absolute inset-0 z-[1200] bg-blue-500 p-20">
+          {console.log("Rendering API Diagnostic View")}
           <div className="bg-white p-10 rounded-xl shadow-2xl">
             <h1 className="text-4xl font-bold text-black">API DOCS VIEW ACTIVE</h1>
             <p className="text-black">If you see this, the tab logic is working.</p>
