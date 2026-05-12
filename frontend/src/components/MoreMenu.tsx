@@ -201,7 +201,7 @@ export default function MoreMenu({
 
             <div className="p-1 bg-[var(--panel-input-bg)]/50 space-y-0.5">
               <button
-                onClick={() => { window.location.href = "/api-docs"; setOpen(false); }}
+                onClick={() => { window.location.href = "/use-cases/api"; setOpen(false); }}
                 className="w-full flex items-center justify-between px-3 py-2.5 rounded-md transition-colors hover:bg-[var(--panel-input-bg)] group"
               >
                 <div className="flex items-center gap-2.5 text-[var(--panel-text-secondary)] group-hover:text-[var(--panel-text)]">

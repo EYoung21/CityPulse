@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Shield,
@@ -98,7 +98,7 @@ import { useGpsSpeed } from "@/hooks/useGpsSpeed";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useMobileHomeRedirect } from "@/hooks/useMobileHomeRedirect";
 import MobileBottomNav from "@/components/MobileBottomNav";
-import InboxUrlSync, { type InboxPanel, type ViewTab } from "@/components/InboxUrlSync";
+import InboxUrlSync, { type InboxPanel } from "@/components/InboxUrlSync";
 import { decodeTripToken, type DecodedTripToken } from "@/lib/share-trip";
 import type { ManeuverStep } from "@/lib/routing";
 import type { MapHandle, WaypointPin, BasemapStyle } from "@/components/IncidentMap";
@@ -122,8 +122,19 @@ import {
 import { enrichIncidents } from "@/lib/incident-weights";
 import { apiUrl, fetchPublicApi } from "@/lib/public-api-base";
 import { buildLocalSummary } from "@/lib/local-summary";
-import { getNeighborhood, incidentsInNeighborhood, NEIGHBORHOODS, type Neighborhood } from "@/lib/neighborhoods";
-import { DISTRICTS, type District } from "@/lib/districts";
+import {
+  getNeighborhood,
+  getNeighborhoodBySlug,
+  incidentsInNeighborhood,
+  NEIGHBORHOODS,
+  type Neighborhood,
+} from "@/lib/neighborhoods";
+import {
+  DISTRICTS,
+  getDistrictBySlug,
+  incidentsInDistrict,
+  type District,
+} from "@/lib/districts";
 import { getCurrentCity } from "@/lib/pulse-cities";
 import { assessSafety } from "@/lib/search";
 import Sparkline from "@/components/charts/Sparkline";
@@ -242,6 +253,7 @@ export default function Home() {
 function MapHome() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { mode, resolved, setMode, colorBlindSafe, setColorBlindSafe } = useTheme();
   const { destinations: savedDestinations, lists: savedLists } = useSavedDestinations();
   const isDark = resolved === "dark";
@@ -293,14 +305,16 @@ function MapHome() {
   const [summary, setSummary] = useState<string>("");
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [routes, setRoutes] = useState<RouteData | null>(null);
-  /** Top-level view tab: "map" shows the map + sidebar, "feed" shows
-   *  a full-screen scrollable incident feed, "analytics" shows city data,
-   *  and "api" shows developer documentation. */
-  const [viewTab, setViewTab] = useState<"map" | "feed" | "analytics" | "api">("map");
+  /** Top-level view tab: "map", "feed", "analytics". Developer API docs live at `/use-cases/api`. */
+  const [viewTab, setViewTab] = useState<"map" | "feed" | "analytics">("map");
 
   useEffect(() => {
     const saved = sessionStorage.getItem("pulse_view_tab");
-    if (saved === "map" || saved === "feed" || saved === "analytics" || saved === "api") {
+    if (saved === "api") {
+      sessionStorage.setItem("pulse_view_tab", "map");
+      return;
+    }
+    if (saved === "map" || saved === "feed" || saved === "analytics") {
       setViewTab(saved);
     }
   }, []);
@@ -709,6 +723,43 @@ function MapHome() {
     window.addEventListener("pp:plan-route", handler);
     return () => window.removeEventListener("pp:plan-route", handler);
   }, []);
+
+  // Click-throughs from the AnalyticsPanel: jump back to the map and focus the
+  // selected scope. Kept event-driven so the panel never needs a callback ref
+  // into MapHome (which would force a re-mount on every analytics interaction).
+  useEffect(() => {
+    function onScope(ev: Event) {
+      const detail = (ev as CustomEvent).detail as
+        | { kind: "district"; slug: string }
+        | { kind: "neighborhood"; slug: string }
+        | { kind: "point"; lat: number; lng: number }
+        | undefined;
+      if (!detail) return;
+      setViewTab("map");
+      if (detail.kind === "district") {
+        const district = getDistrictBySlug(detail.slug);
+        if (!district) return;
+        const incs = incidentsInDistrict(incidents, detail.slug);
+        setSelectedDistrict({ district, incidents: incs });
+        requestAnimationFrame(() =>
+          mapRef.current?.flyTo(district.center.lat, district.center.lng, 13)
+        );
+      } else if (detail.kind === "neighborhood") {
+        const n = getNeighborhoodBySlug(detail.slug);
+        if (!n) return;
+        requestAnimationFrame(() =>
+          mapRef.current?.flyTo(n.center.lat, n.center.lng, 14)
+        );
+      } else if (detail.kind === "point") {
+        setMapTap({ lat: detail.lat, lng: detail.lng });
+        requestAnimationFrame(() =>
+          mapRef.current?.flyTo(detail.lat, detail.lng, 16)
+        );
+      }
+    }
+    window.addEventListener("pp:analytics-scope", onScope);
+    return () => window.removeEventListener("pp:analytics-scope", onScope);
+  }, [incidents]);
 
   // Native (Android) hardware back-button: pop the topmost overlay before
   // letting Capacitor exit the app. Calling preventDefault() consumes the
@@ -1606,6 +1657,10 @@ function MapHome() {
               onClick={() => {
                 if (tab === "analytics" && !isPro) {
                   setShowUpgrade("Analytics");
+                  return;
+                }
+                if (tab === "api") {
+                  router.push("/use-cases/api");
                   return;
                 }
                 setViewTab(tab);
@@ -2844,103 +2899,9 @@ function MapHome() {
             <AnalyticsPanel
               incidents={incidents}
               areaName={cityDisplayName}
+              feedLabels={feedLabels}
               onClose={() => setViewTab("map")}
             />
-          </div>
-        </div>
-      )}
-
-      {/* ──── API Docs View (same stacking as analytics / feed) ──── */}
-      {viewTab === "api" && (
-        <div className="absolute inset-0 z-20 bg-[var(--map-bg)] overflow-y-auto">
-          <div className="max-w-4xl mx-auto p-4 md:p-8">
-            <div
-              className="rounded-xl overflow-hidden backdrop-blur-xl shadow-2xl p-6 md:p-10 border border-white/5"
-              style={{ background: "var(--panel-bg)", border: "1px solid var(--panel-border)" }}
-            >
-              <div className="flex items-center justify-between mb-8">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-blue-500/10">
-                    <Code className="w-6 h-6 text-blue-500" />
-                  </div>
-                  <div>
-                    <h1 className="text-2xl font-bold" style={{ color: "var(--panel-text)" }}>Developer API</h1>
-                    <p className="text-sm" style={{ color: "var(--panel-text-muted)" }}>Build on top of the Pulse Network</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setViewTab("map")}
-                  className="p-2 rounded-full transition-colors hover:bg-white/5"
-                  style={{ color: "var(--panel-text-muted)" }}
-                >
-                  <X className="w-6 h-6" />
-                </button>
-              </div>
-
-              <div className="space-y-8" style={{ color: "var(--panel-text)" }}>
-                <section>
-                  <h2 className="text-lg font-semibold mb-3">Introduction</h2>
-                  <p className="text-sm leading-relaxed opacity-80 mb-4">
-                    The CityPulse API provides programmatic access to real-time incident data across the Pulse Network.
-                    Our mission is to enable developers, researchers, and public safety organizations to build
-                    tools that make cities safer and more transparent.
-                  </p>
-                  <div className="p-4 rounded-lg bg-blue-500/5 border border-blue-500/10">
-                    <p className="text-xs font-medium text-blue-500 mb-1 uppercase tracking-wider">Base URL</p>
-                    <code className="text-sm font-mono break-all">https://api.citypulse.io/v1</code>
-                  </div>
-                </section>
-
-                <section>
-                  <h2 className="text-lg font-semibold mb-3">Authentication</h2>
-                  <p className="text-sm leading-relaxed opacity-80">
-                    API access is currently in public beta. High-frequency polling and historical data exports
-                    require a Pulse Pro subscription. For enterprise volume, please contact our developer relations team.
-                  </p>
-                </section>
-
-                <div className="h-px w-full" style={{ background: "var(--panel-border)" }} />
-
-                <section>
-                  <h3 className="text-base font-semibold mb-4">Endpoints</h3>
-                  <div className="space-y-6">
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-green-500/20 text-green-500 uppercase">GET</span>
-                        <code className="text-sm font-mono font-bold">/incidents/live</code>
-                      </div>
-                      <p className="text-xs opacity-70 mb-3">Fetch the most recent incidents within a given radius or bounding box.</p>
-                      <div className="rounded-lg bg-black/5 p-3 font-mono text-[11px] border border-black/5">
-                        <span className="opacity-40">// Request</span><br />
-                        curl "https://api.citypulse.io/v1/incidents/live?city=phl&limit=10"
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-green-500/20 text-green-500 uppercase">GET</span>
-                        <code className="text-sm font-mono font-bold">/stats/summary</code>
-                      </div>
-                      <p className="text-xs opacity-70 mb-3">Get real-time safety metrics and incident distributions for a city.</p>
-                    </div>
-                  </div>
-                </section>
-
-                <div className="p-6 rounded-2xl bg-gradient-to-br from-blue-500/10 to-purple-500/10 border border-blue-500/20 text-center">
-                  <h3 className="text-sm font-bold uppercase tracking-widest mb-2" style={{ color: "#3b82f6" }}>Need more power?</h3>
-                  <p className="text-sm opacity-80 mb-4 mx-auto max-w-md">
-                    Pulse Pro users get early access to our WebSocket stream, historical data API,
-                    and expanded rate limits for production applications.
-                  </p>
-                  <button
-                    onClick={() => setShowUpgrade("API Enterprise")}
-                    className="px-6 py-2.5 rounded-full bg-blue-500 text-white text-xs font-bold transition-transform hover:scale-105 active:scale-95"
-                  >
-                    Upgrade to Pro
-                  </button>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       )}
