@@ -31,7 +31,7 @@ import { Map as MapIcon, List, Bell, Settings as SettingsIcon, BarChart3, Lock, 
 import { subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
 import { useAuth } from "@/contexts/AuthContext";
 
-type TabId = "map" | "feed" | "analytics" | "inbox" | "settings";
+type TabId = "map" | "feed" | "analytics" | "api" | "inbox" | "settings";
 
 interface Tab {
   id: TabId;
