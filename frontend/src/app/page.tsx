@@ -33,6 +33,7 @@ import {
   Bell,
   Search,
   Crosshair,
+  Code,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import IncidentFeed from "@/components/IncidentFeed";
