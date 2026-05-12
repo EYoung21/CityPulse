@@ -144,37 +144,7 @@ export default function PulseNetworkNav() {
             />
           ))}
 
-          {PULSE_CITIES.some((c) => c.previewOnly) && (
-            <>
-              <div
-                style={{
-                  borderTop: "1px solid rgba(255,255,255,0.06)",
-                  margin: "6px 0",
-                }}
-              />
-              <div
-                style={{
-                  padding: "8px 14px 6px",
-                  fontSize: "10px",
-                  fontWeight: 600,
-                  textTransform: "uppercase",
-                  letterSpacing: "1px",
-                  color: "rgba(255,255,255,0.4)",
-                }}
-              >
-                Preview (no domain yet)
-              </div>
-              {PULSE_CITIES.filter((c) => c.previewOnly).map((city) => (
-                <CityRow
-                  key={city.slug}
-                  city={city}
-                  isCurrent={city.slug === current.slug}
-                  onNavigate={navigateToCity}
-                  onClose={() => setOpen(false)}
-                />
-              ))}
-            </>
-          )}
+
 
           <div
             style={{
