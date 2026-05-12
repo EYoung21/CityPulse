@@ -320,39 +320,11 @@ def _infer_firebase_project_id() -> str | None:
 
 
 def _discover_storage_buckets() -> list[str]:
-    """List candidate GCS buckets for the Firebase project once per process."""
-    global _DISCOVERED_STORAGE_BUCKETS
-    if _DISCOVERED_STORAGE_BUCKETS is not None:
-        return _DISCOVERED_STORAGE_BUCKETS
-
-    project_id = _infer_firebase_project_id()
-    if not project_id:
-        _DISCOVERED_STORAGE_BUCKETS = []
-        return _DISCOVERED_STORAGE_BUCKETS
-
-    try:
-        from google.cloud import storage as gcs_storage
-
-        client = gcs_storage.Client(project=project_id)
-        names = [b.name for b in client.list_buckets(max_results=50)]
-        # Prefer canonical Firebase/GCS bucket patterns first.
-        names.sort(
-            key=lambda n: (
-                0 if n.endswith(".firebasestorage.app") else
-                1 if n.endswith(".appspot.com") else
-                2
-            )
-        )
-        _DISCOVERED_STORAGE_BUCKETS = list(dict.fromkeys(names))
-        if _DISCOVERED_STORAGE_BUCKETS:
-            logger.info("Discovered storage buckets for project %s: %s", project_id, _DISCOVERED_STORAGE_BUCKETS)
-        else:
-            logger.warning("No storage buckets discovered for Firebase project %s", project_id)
-    except Exception as e:
-        logger.warning("Failed to discover Firebase storage buckets: %s", e)
-        _DISCOVERED_STORAGE_BUCKETS = []
-
-    return _DISCOVERED_STORAGE_BUCKETS
+    """List candidate GCS buckets for the Firebase project once per process.
+    (Disabled: synchronous gcs_storage.Client initialization without 
+    GOOGLE_APPLICATION_CREDENTIALS hangs the ASGI event loop waiting for GCE metadata.)
+    """
+    return []
 
 
 def _storage_bucket_candidates() -> list[str]:
