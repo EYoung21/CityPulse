@@ -458,10 +458,10 @@ def inhibitor_stats() -> dict:
     db = _ensure_client()
     stats: dict[str, int] = {}
     try:
-        for doc in db.collection("incidents").select(["inhibitor_status"]).stream():
-            data = doc.to_dict() or {}
-            s = str(data.get("inhibitor_status", "unknown"))
-            stats[s] = stats.get(s, 0) + 1
+        for status in ["passed", "blocked"]:
+            agg = db.collection("incidents").where("inhibitor_status", "==", status).count().get()
+            if agg:
+                stats[status] = agg[0][0].value
     except Exception:
         pass
     return stats
