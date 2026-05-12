@@ -68,9 +68,11 @@ function groupByTimeBlocks(incidents: Incident[]): TimeBlock[] {
   }
 
   for (const block of blocks) {
-    // Within each time block: sort by severity.
+    // Within each time block: sort by most recent to least recent
     block.incidents.sort((a, b) => {
-      return b.s_base - a.s_base;
+      const ta = new Date(a.reported_at).getTime();
+      const tb = new Date(b.reported_at).getTime();
+      return tb - ta;
     });
   }
 
