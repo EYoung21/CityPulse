@@ -10,7 +10,11 @@ import {
   Info, 
   ChevronRight, 
   Clock,
-  Code
+  Code,
+  Lock,
+  Database,
+  Map as MapIcon,
+  CircleDot
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
