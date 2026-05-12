@@ -2775,22 +2775,22 @@ function MapHome() {
 
       {/* ──── Analytics View ──── */}
       {viewTab === "analytics" && (
-        <div className="absolute inset-0 z-[1200] bg-red-500 p-20">
-          {(() => { console.log("Rendering Analytics Diagnostic View"); return null; })()}
+        <div className="fixed inset-0 z-[9999] bg-red-600 p-20 border-[20px] border-white">
+          {(() => { console.log("Rendering Analytics Diagnostic View (FIXED)"); return null; })()}
           <div className="bg-white p-10 rounded-xl shadow-2xl">
-            <h1 className="text-4xl font-bold text-black">ANALYTICS VIEW ACTIVE</h1>
-            <p className="text-black">If you see this, the tab logic is working.</p>
+            <h1 className="text-6xl font-bold text-black">ANALYTICS FIXED ACTIVE</h1>
+            <p className="text-black text-2xl">If you don't see this RED screen with WHITE border, something is very wrong.</p>
           </div>
         </div>
       )}
 
       {/* ──── API Docs View ──── */}
       {viewTab === "api" && (
-        <div className="absolute inset-0 z-[1200] bg-blue-500 p-20">
-          {(() => { console.log("Rendering API Diagnostic View"); return null; })()}
+        <div className="fixed inset-0 z-[9999] bg-blue-600 p-20 border-[20px] border-white">
+          {(() => { console.log("Rendering API Diagnostic View (FIXED)"); return null; })()}
           <div className="bg-white p-10 rounded-xl shadow-2xl">
-            <h1 className="text-4xl font-bold text-black">API DOCS VIEW ACTIVE</h1>
-            <p className="text-black">If you see this, the tab logic is working.</p>
+            <h1 className="text-6xl font-bold text-black">API DOCS FIXED ACTIVE</h1>
+            <p className="text-black text-2xl">If you don't see this BLUE screen with WHITE border, something is very wrong.</p>
           </div>
         </div>
       )}
