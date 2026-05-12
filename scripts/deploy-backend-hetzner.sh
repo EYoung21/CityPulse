@@ -39,30 +39,7 @@ is_active_city() {
   return 1
 }
 
-if systemctl list-unit-files 'pulse-live@.service' &>/dev/null; then
-  for cfg in cities/*/config.yaml; do
-    [ -f "$cfg" ] || continue
-    city="$(basename "$(dirname "$cfg")")"
-    if is_active_city "$city"; then
-      if ! systemctl is-enabled "pulse-live@${city}" &>/dev/null; then
-        echo "Enabling new city: pulse-live@${city}"
-        systemctl enable "pulse-live@${city}" || {
-          echo "WARNING: failed to enable pulse-live@${city}, skipping"
-          continue
-        }
-      fi
-      systemctl restart "pulse-live@${city}"
-      sleep 1
-      systemctl is-active "pulse-live@${city}" || echo "WARNING: pulse-live@${city} failed to start"
-    else
-      if systemctl is-enabled --quiet "pulse-live@${city}" 2>/dev/null \
-          || systemctl is-active --quiet "pulse-live@${city}" 2>/dev/null; then
-        echo "Stopping pulse-live@${city} (not on active allowlist)"
-        systemctl stop "pulse-live@${city}" || true
-        systemctl disable "pulse-live@${city}" || true
-      fi
-    fi
-  done
+  # Transcribers run on Lambda now. Do not start them on Hetzner.
 
   # Hetzner-side backfill is retired. Backfill is Lambda-only now.
   for legacy in pulse-backfill.timer pulse-backfill.service; do
