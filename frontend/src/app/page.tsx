@@ -410,6 +410,7 @@ function MapHome() {
   const [feedSortMode, setFeedSortMode] = useState<"recent" | "near">("recent");
   const [feedUserLoc, setFeedUserLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [feedLocating, setFeedLocating] = useState(false);
+  const [feedSearchQuery, setFeedSearchQuery] = useState("");
 
   const requestFeedLocation = useCallback(() => {
     if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
@@ -3318,13 +3319,13 @@ function MapHome() {
             )}
           </div>
 
-          {/* Sort toggle (Recent / Near Me) */}
+          {/* Sort toggle (Recent / Near Me) & Search */}
           <div
-            className="px-3 py-2 flex items-center gap-2"
+            className="px-3 py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
             style={{ borderBottom: "1px solid var(--panel-border)" }}
           >
             <div
-              className="inline-flex rounded-full p-0.5 text-xs"
+              className="inline-flex rounded-full p-0.5 text-xs shrink-0 self-start"
               style={{
                 background: "var(--panel-input-bg)",
                 border: "1px solid var(--panel-border)",
@@ -3361,6 +3362,30 @@ function MapHome() {
                 <Crosshair className={`w-3 h-3 ${feedLocating ? "animate-spin" : ""}`} /> 
                 {feedLocating ? "Locating..." : "Near me"}
               </button>
+            </div>
+
+            <div className="relative flex-1 w-full max-w-sm shrink-0">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5" style={{ color: "var(--panel-text-muted)" }} />
+              <input
+                type="text"
+                placeholder="Search feed..."
+                value={feedSearchQuery}
+                onChange={(e) => setFeedSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-8 py-1.5 text-xs rounded-full transition-colors focus:outline-none"
+                style={{
+                  background: "var(--panel-input-bg)",
+                  border: "1px solid var(--panel-border)",
+                  color: "var(--panel-text)"
+                }}
+              />
+              {feedSearchQuery && (
+                <button
+                  onClick={() => setFeedSearchQuery("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2"
+                >
+                  <X className="w-3.5 h-3.5 hover:opacity-80 transition-opacity" style={{ color: "var(--panel-text-muted)" }} />
+                </button>
+              )}
             </div>
           </div>
 
@@ -3421,7 +3446,14 @@ function MapHome() {
           {/* Scrollable feed body */}
           <div className="flex-1 overflow-y-auto">
             <IncidentFeed
-              incidents={filteredIncidents}
+              incidents={useMemo(() => {
+                if (!feedSearchQuery.trim()) return filteredIncidents;
+                const q = feedSearchQuery.toLowerCase();
+                return filteredIncidents.filter(inc => {
+                  const text = `${inc.raw_text || ""} ${inc.description || ""} ${inc.location_text || ""}`.toLowerCase();
+                  return text.includes(q);
+                });
+              }, [filteredIncidents, feedSearchQuery])}
               selectedId={selectedId}
               onSelect={(id) => {
                 setSelectedId(id);
