@@ -260,7 +260,7 @@ export default function FeedPage() {
         </div>
         <div className="flex items-center gap-2">
           <Link
-            href="/api-docs"
+            href="/use-cases/api"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all hover:bg-white/10"
             style={{
               background: "rgba(148,163,184,0.1)",

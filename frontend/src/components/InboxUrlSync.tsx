@@ -13,10 +13,10 @@
  */
 
 import { Suspense, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export type InboxPanel = "list" | "settings" | null;
-export type ViewTab = "map" | "feed" | "analytics" | "api" | null;
+export type ViewTab = "map" | "feed" | "analytics" | null;
 
 interface Props {
   onInboxChange: (panel: InboxPanel) => void;
@@ -24,6 +24,7 @@ interface Props {
 }
 
 function Inner({ onInboxChange, onViewChange }: Props) {
+  const router = useRouter();
   const sp = useSearchParams();
   const inbox = sp?.get("inbox") ?? null;
   const view = sp?.get("view") ?? null;
@@ -35,10 +36,14 @@ function Inner({ onInboxChange, onViewChange }: Props) {
   }, [inbox, onInboxChange]);
 
   useEffect(() => {
-    if (view === "map" || view === "feed" || view === "analytics" || view === "api") {
+    if (view === "api") {
+      router.replace("/use-cases/api");
+      return;
+    }
+    if (view === "map" || view === "feed" || view === "analytics") {
       onViewChange(view);
     }
-  }, [view, onViewChange]);
+  }, [view, onViewChange, router]);
 
   return null;
 }

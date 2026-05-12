@@ -45,7 +45,7 @@ const TABS: Tab[] = [
   { id: "map",       label: "Map",       href: "/?view=map",                Icon: MapIcon },
   { id: "feed",      label: "Feed",      href: "/feed",                     Icon: List },
   { id: "analytics", label: "Analytics", href: "/?view=analytics",          Icon: BarChart3, pro: true },
-  { id: "api",       label: "API",       href: "/api-docs",                 Icon: Code },
+  { id: "api",       label: "API",       href: "/use-cases/api",             Icon: Code },
   { id: "inbox",     label: "Inbox",     href: "/?view=map&inbox=1",        Icon: Bell },
   { id: "settings",  label: "More",      href: "/?view=map&inbox=settings", Icon: SettingsIcon },
 ];
@@ -94,7 +94,7 @@ function MobileBottomNavInner() {
   const onFeed = pathname?.startsWith("/feed") ?? false;
   const activeId: TabId = onFeed
     ? "feed"
-    : pathname === "/api-docs"
+    : pathname?.startsWith("/use-cases/api")
       ? "api"
       : viewParam === "analytics"
         ? "analytics"

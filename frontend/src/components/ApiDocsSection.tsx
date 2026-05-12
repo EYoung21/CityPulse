@@ -2,9 +2,8 @@ import Link from "next/link";
 
 /**
  * Developer reference for the existing FastAPI JSON endpoints exposed by
- * `philly_pulse/server.py`. Colocated as a server component under
- * `/use-cases/api` so marketing copy and the reference live on the same
- * public URL (no separate `/docs/api` route to keep sitemaps tight).
+ * `philly_pulse/server.py`. Canonical URL: `/use-cases/api` (marketing shell
+ * + this section). Legacy `/api-docs` permanently redirects there.
  *
  * Keep this in sync with real handler signatures — free vs Pro behavior is
  * driven server-side by `_apply_free_since` and the `X-Pulse-Clamped` /
