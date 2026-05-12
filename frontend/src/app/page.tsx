@@ -2772,9 +2772,74 @@ function MapHome() {
         )}
       </AnimatePresence>
 
-      {/* ──── Analytics View ──── */}
+      {/* District Stats Card */}
+      <AnimatePresence>
+        {selectedDistrict && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
+          >
+            <DistrictCard
+              district={selectedDistrict.district}
+              incidents={selectedDistrict.incidents}
+              color={(() => {
+                const DISTRICT_COLORS = [
+                  "#22c55e", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6",
+                  "#ec4899", "#14b8a6", "#f97316", "#06b6d4", "#a3e635",
+                  "#e879f9", "#fb923c", "#34d399", "#818cf8", "#fbbf24",
+                  "#f87171", "#2dd4bf", "#c084fc", "#4ade80", "#38bdf8",
+                ];
+                const idx = DISTRICTS.findIndex((n) => n.slug === selectedDistrict.district.slug);
+                return DISTRICT_COLORS[idx >= 0 ? idx % DISTRICT_COLORS.length : 0];
+              })()}
+              onClose={() => setSelectedDistrict(null)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Cluster List */}
+      <AnimatePresence>
+        {clusterIncidents && clusterIncidents.length > 0 && !selected && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
+          >
+            <ClusterListPanel
+              incidents={clusterIncidents}
+              onSelect={(id) => { setClusterIncidentIds(null); setSelectedId(id); }}
+              onClose={() => setClusterIncidentIds(null)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Incident Detail */}
+      <AnimatePresence>
+        {selected && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
+          >
+            <IncidentDetail
+              incident={selected}
+              onClose={() => setSelectedId(null)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      </div>{/* end map view wrapper */}
+
+      {/* Analytics: outside map shell so parent opacity/visibility does not hide it */}
       {viewTab === "analytics" && (
-        <div className="fixed inset-0 top-[57px] z-[1000] bg-[var(--map-bg)] overflow-y-auto">
+        <div className="absolute inset-0 z-20 bg-[var(--map-bg)] overflow-y-auto">
           <div className="max-w-5xl mx-auto p-4 md:p-8">
             <AnalyticsPanel
               incidents={incidents}
@@ -2785,9 +2850,9 @@ function MapHome() {
         </div>
       )}
 
-      {/* ──── API Docs View ──── */}
+      {/* ──── API Docs View (same stacking as analytics / feed) ──── */}
       {viewTab === "api" && (
-        <div className="fixed inset-0 top-[57px] z-[1000] bg-[var(--map-bg)] overflow-y-auto">
+        <div className="absolute inset-0 z-20 bg-[var(--map-bg)] overflow-y-auto">
           <div className="max-w-4xl mx-auto p-4 md:p-8">
             <div
               className="rounded-xl overflow-hidden backdrop-blur-xl shadow-2xl p-6 md:p-10 border border-white/5"
@@ -2879,71 +2944,6 @@ function MapHome() {
           </div>
         </div>
       )}
-
-      {/* District Stats Card */}
-      <AnimatePresence>
-        {selectedDistrict && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
-          >
-            <DistrictCard
-              district={selectedDistrict.district}
-              incidents={selectedDistrict.incidents}
-              color={(() => {
-                const DISTRICT_COLORS = [
-                  "#22c55e", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6",
-                  "#ec4899", "#14b8a6", "#f97316", "#06b6d4", "#a3e635",
-                  "#e879f9", "#fb923c", "#34d399", "#818cf8", "#fbbf24",
-                  "#f87171", "#2dd4bf", "#c084fc", "#4ade80", "#38bdf8",
-                ];
-                const idx = DISTRICTS.findIndex((n) => n.slug === selectedDistrict.district.slug);
-                return DISTRICT_COLORS[idx >= 0 ? idx % DISTRICT_COLORS.length : 0];
-              })()}
-              onClose={() => setSelectedDistrict(null)}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Cluster List */}
-      <AnimatePresence>
-        {clusterIncidents && clusterIncidents.length > 0 && !selected && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
-          >
-            <ClusterListPanel
-              incidents={clusterIncidents}
-              onSelect={(id) => { setClusterIncidentIds(null); setSelectedId(id); }}
-              onClose={() => setClusterIncidentIds(null)}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Incident Detail */}
-      <AnimatePresence>
-        {selected && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
-          >
-            <IncidentDetail
-              incident={selected}
-              onClose={() => setSelectedId(null)}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      </div>{/* end map view wrapper */}
 
       {/* ──── Feed view ──── */}
       {viewTab === "feed" && (
