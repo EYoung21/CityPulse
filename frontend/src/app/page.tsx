@@ -2774,108 +2774,20 @@ function MapHome() {
 
       {/* ──── Analytics View ──── */}
       {viewTab === "analytics" && (
-        <div className="absolute inset-0 z-[10] bg-[var(--map-bg)] overflow-y-auto">
-          <div className="max-w-5xl mx-auto p-4 md:p-8">
-            <AnalyticsPanel
-              incidents={incidents}
-              areaName={cityDisplayName}
-              onClose={() => setViewTab("map")}
-            />
+        <div className="absolute inset-0 z-[100] bg-red-500/20 p-20">
+          <div className="bg-white p-10 rounded-xl shadow-2xl">
+            <h1 className="text-4xl font-bold text-black">ANALYTICS VIEW ACTIVE</h1>
+            <p className="text-black">If you see this, the tab logic is working.</p>
           </div>
         </div>
       )}
 
       {/* ──── API Docs View ──── */}
       {viewTab === "api" && (
-        <div className="absolute inset-0 z-[10] bg-[var(--map-bg)] overflow-y-auto">
-          <div className="max-w-4xl mx-auto p-4 md:p-8">
-            <div
-              className="rounded-xl overflow-hidden backdrop-blur-xl shadow-2xl p-6 md:p-10"
-              style={{ background: "var(--panel-bg)", border: "1px solid var(--panel-border)" }}
-            >
-              <div className="flex items-center justify-between mb-8">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-blue-500/10">
-                    <Code className="w-6 h-6 text-blue-500" />
-                  </div>
-                  <div>
-                    <h1 className="text-2xl font-bold" style={{ color: "var(--panel-text)" }}>Developer API</h1>
-                    <p className="text-sm" style={{ color: "var(--panel-text-muted)" }}>Build on top of the Pulse Network</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setViewTab("map")}
-                  className="p-2 rounded-full transition-colors hover:bg-black/5"
-                  style={{ color: "var(--panel-text-muted)" }}
-                >
-                  <X className="w-6 h-6" />
-                </button>
-              </div>
-
-              <div className="space-y-8" style={{ color: "var(--panel-text)" }}>
-                <section>
-                  <h2 className="text-lg font-semibold mb-3">Introduction</h2>
-                  <p className="text-sm leading-relaxed opacity-80 mb-4">
-                    The CityPulse API provides programmatic access to real-time incident data across the Pulse Network.
-                    Our mission is to enable developers, researchers, and public safety organizations to build
-                    tools that make cities safer and more transparent.
-                  </p>
-                  <div className="p-4 rounded-lg bg-blue-500/5 border border-blue-500/10">
-                    <p className="text-xs font-medium text-blue-500 mb-1 uppercase tracking-wider">Base URL</p>
-                    <code className="text-sm font-mono break-all">https://api.citypulse.io/v1</code>
-                  </div>
-                </section>
-
-                <section>
-                  <h2 className="text-lg font-semibold mb-3">Authentication</h2>
-                  <p className="text-sm leading-relaxed opacity-80">
-                    API access is currently in public beta. High-frequency polling and historical data exports
-                    require a Pulse Pro subscription. For enterprise volume, please contact our developer relations team.
-                  </p>
-                </section>
-
-                <div className="h-px w-full" style={{ background: "var(--panel-border)" }} />
-
-                <section>
-                  <h3 className="text-base font-semibold mb-4">Endpoints</h3>
-                  <div className="space-y-6">
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-green-500/20 text-green-500 uppercase">GET</span>
-                        <code className="text-sm font-mono font-bold">/incidents/live</code>
-                      </div>
-                      <p className="text-xs opacity-70 mb-3">Fetch the most recent incidents within a given radius or bounding box.</p>
-                      <div className="rounded-lg bg-black/5 p-3 font-mono text-[11px] border border-black/5">
-                        <span className="opacity-40">// Request</span><br />
-                        curl https://api.citypulse.io/v1/incidents/live?city=phl&limit=10
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-green-500/20 text-green-500 uppercase">GET</span>
-                        <code className="text-sm font-mono font-bold">/stats/summary</code>
-                      </div>
-                      <p className="text-xs opacity-70 mb-3">Get real-time safety metrics and incident distributions for a city.</p>
-                    </div>
-                  </div>
-                </section>
-
-                <div className="p-6 rounded-2xl bg-gradient-to-br from-blue-500/10 to-purple-500/10 border border-blue-500/20 text-center">
-                  <h3 className="text-sm font-bold uppercase tracking-widest mb-2" style={{ color: "#3b82f6" }}>Need more power?</h3>
-                  <p className="text-sm opacity-80 mb-4 mx-auto max-w-md">
-                    Pulse Pro users get early access to our WebSocket stream, historical data API,
-                    and expanded rate limits for production applications.
-                  </p>
-                  <button
-                    onClick={() => setShowUpgrade("API Enterprise")}
-                    className="px-6 py-2.5 rounded-full bg-blue-500 text-white text-xs font-bold transition-transform hover:scale-105 active:scale-95"
-                  >
-                    Upgrade to Pro
-                  </button>
-                </div>
-              </div>
-            </div>
+        <div className="absolute inset-0 z-[100] bg-blue-500/20 p-20">
+          <div className="bg-white p-10 rounded-xl shadow-2xl">
+            <h1 className="text-4xl font-bold text-black">API DOCS VIEW ACTIVE</h1>
+            <p className="text-black">If you see this, the tab logic is working.</p>
           </div>
         </div>
       )}
