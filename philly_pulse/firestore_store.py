@@ -370,7 +370,8 @@ def list_incidents(
     col = db.collection("incidents")
     rows: list[dict] = []
     try:
-        for doc in col.order_by("reported_at", direction=firestore.Query.DESCENDING).stream():
+        query = col.order_by("reported_at", direction=firestore.Query.DESCENDING).limit(1000)
+        for doc in query.stream():
             row = _doc_to_row(doc.id, doc.to_dict() or {})
             reported_at = row.get("reported_at") or ""
             if since and reported_at < since:
