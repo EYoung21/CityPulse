@@ -62,6 +62,7 @@ import CompassIndicator from "@/components/CompassIndicator";
 import SafetyEscapePanel from "@/components/SafetyEscapePanel";
 import UndoToastHost from "@/components/UndoToastHost";
 import KeyboardShortcutsHelp from "@/components/KeyboardShortcutsHelp";
+import InstallPrompt from "@/components/InstallPrompt";
 import MapGesturesTour from "@/components/MapGesturesTour";
 import FeedbackForm from "@/components/FeedbackForm";
 import CommuteNotifier from "@/components/CommuteNotifier";
@@ -1630,7 +1631,7 @@ function MapHome() {
     : undefined;
 
   return (
-    <div className="relative w-full h-screen overflow-hidden flex flex-col" style={{ background: "var(--map-bg)" }}>
+    <div className="relative w-full h-dvh min-h-0 overflow-hidden flex flex-col" style={{ background: "var(--map-bg)" }}>
       <MobileBottomNav />
       <InboxUrlSync 
         onInboxChange={handleInboxUrlChange} 
@@ -2164,6 +2165,10 @@ function MapHome() {
           sheet. The component owns its own open state and listens for
           the key directly — page only mounts it. */}
       <KeyboardShortcutsHelp />
+
+      {/* PWA install / iOS Add to Home Screen — must be mounted for
+          `requestInstallPrompt()` (push settings, alerts) to work. */}
+      <InstallPrompt />
 
       {/* Scheduled-trip reminder runner + banner. Runner is headless
           (renders nothing); it sweeps localStorage on mount, arms

@@ -101,6 +101,18 @@ function isIos(): boolean {
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
+/** Exported for push settings and other flows that need the same
+ *  iOS-vs-iPadOS sniff without duplicating UA logic. */
+export function isIosLikeClient(): boolean {
+  return isIos();
+}
+
+/** True when the app is running as an installed PWA (home screen /
+ *  store-installed shell), not a regular browser tab. */
+export function isStandaloneWebApp(): boolean {
+  return isStandalone();
+}
+
 export default function InstallPrompt() {
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [iosHint, setIosHint] = useState(false);
@@ -125,7 +137,9 @@ export default function InstallPrompt() {
       e.preventDefault();
       setDeferred(e as BeforeInstallPromptEvent);
     };
-    window.addEventListener("beforeinstallprompt", onBeforeInstall);
+    // Capture phase so we still see the event if another listener calls
+    // preventDefault on bubble (Chromium only fires once per engagement).
+    window.addEventListener("beforeinstallprompt", onBeforeInstall, true);
 
     // iOS Safari: no event, but we can still nudge the user. Defer to
     // the engagement timeout so first-paint is uncluttered.
@@ -161,7 +175,7 @@ export default function InstallPrompt() {
     window.addEventListener("appinstalled", onInstalled);
 
     return () => {
-      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+      window.removeEventListener("beforeinstallprompt", onBeforeInstall, true);
       window.removeEventListener(INSTALL_PROMPT_EVENT, onManualRequest);
       window.removeEventListener("appinstalled", onInstalled);
       window.clearTimeout(showTimer);
@@ -214,10 +228,7 @@ export default function InstallPrompt() {
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 80, opacity: 0 }}
         transition={{ type: "spring", stiffness: 320, damping: 28 }}
-        className="fixed inset-x-0 z-[1080] flex justify-center px-3 pointer-events-none"
-        // Sit above the bottom navigation but below blocking modals
-        // (KeyboardShortcutsHelp uses z-1100; UndoToastHost ~ 1095).
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }}
+        className="fixed inset-x-0 z-[10060] flex justify-center px-3 pointer-events-none max-md:bottom-[calc(env(safe-area-inset-bottom,0px)+5rem)] md:bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)]"
         role="dialog"
         aria-label={`Install ${brand}`}
       >

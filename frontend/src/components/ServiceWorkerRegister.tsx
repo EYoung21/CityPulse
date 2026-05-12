@@ -7,6 +7,8 @@
  * only. The service worker is what powers offline tile caching, push
  * notifications, and the home-screen PWA experience.
  *
+ * See `docs/MOBILE-PWA.md` for a concise device smoke checklist.
+ *
  * The install-prompt UI used to live here too, but it duplicated the
  * dedicated `InstallPrompt` component (engagement timer, dismiss memory,
  * dynamic city branding) and even fired on the marketing landing page

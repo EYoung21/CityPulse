@@ -20,7 +20,7 @@
  *      think the feature is broken in production builds.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bell,
   BellOff,
@@ -66,7 +66,8 @@ import {
   type CommuteScheduleSummary,
 } from "@/lib/commute-schedule-sync";
 import KeywordWatchSettings from "@/components/KeywordWatchSettings";
-import { requestInstallPrompt } from "@/components/InstallPrompt";
+import { requestInstallPrompt, isIosLikeClient, isStandaloneWebApp } from "@/components/InstallPrompt";
+import { getCurrentCity } from "@/lib/pulse-cities";
 
 const DEFAULT_RADIUS_LABEL = "3";
 
@@ -126,6 +127,14 @@ export default function PushSettings() {
   const [schedules, setSchedules] = useState<CommuteScheduleSummary[] | null>(null);
   const [showSchedules, setShowSchedules] = useState(false);
   const [revokingSchedule, setRevokingSchedule] = useState<string | null>(null);
+
+  const brand = useMemo(() => {
+    try {
+      return getCurrentCity().brand ?? "CityPulse";
+    } catch {
+      return "CityPulse";
+    }
+  }, []);
 
   const refresh = async () => {
     setStatus(await getPushStatus());
@@ -217,13 +226,13 @@ export default function PushSettings() {
         {isIos ? (
           <>
             <p className="text-[10px] leading-snug mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
-              Apple requires installing CityPulse to your home screen
+              Apple requires installing {brand} to your home screen
               before it can send alerts (iOS 16.4+).
             </p>
             <button
               type="button"
               onClick={() => requestInstallPrompt()}
-              className="mt-1.5 px-2.5 py-1 rounded-md text-[10px] font-semibold"
+              className="mt-2 px-3 py-2.5 rounded-lg text-[11px] font-semibold touch-manipulation"
               style={{ background: "#3b82f6", color: "white" }}
             >
               Show install steps
@@ -250,8 +259,18 @@ export default function PushSettings() {
       // below, and the next push test still works regardless.
       const result = await subscribePush(undefined);
       setStatus(result.status);
-      if (!result.ok) setError(result.reason);
-      else setInfo("Subscribed. We'll buzz this device for high-priority alerts.");
+      if (!result.ok) {
+        setError(result.reason);
+        if (
+          isIosLikeClient() &&
+          !isStandaloneWebApp() &&
+          /push|PushManager|subscribe|service worker|not supported|Load failed|InvalidState/i.test(
+            result.reason
+          )
+        ) {
+          requestInstallPrompt();
+        }
+      } else setInfo("Subscribed. We'll buzz this device for high-priority alerts.");
     } finally {
       setBusy(false);
     }

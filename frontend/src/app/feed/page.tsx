@@ -22,9 +22,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Map as MapIcon, Crosshair, Download, Code, Zap } from "lucide-react";
+import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Crosshair, Download, Code, Zap } from "lucide-react";
 import IncidentFeed from "@/components/IncidentFeed";
 import MobileBottomNav, { MOBILE_NAV_HEIGHT_PX } from "@/components/MobileBottomNav";
+import InstallPrompt from "@/components/InstallPrompt";
 import { fetchIncidentPage, type Incident } from "@/lib/api";
 import { fetchIncidentPageFromFirestore } from "@/lib/firestore";
 import { getCurrentCity } from "@/lib/pulse-cities";
@@ -230,7 +231,7 @@ export default function FeedPage() {
 
   return (
     <div
-      className="min-h-screen flex flex-col"
+      className="min-h-dvh flex flex-col"
       style={{ background: "var(--page-bg, #0b1120)", color: "var(--panel-text, #e2e8f0)" }}
     >
       <header
@@ -416,6 +417,7 @@ export default function FeedPage() {
         />
       </main>
       <MobileBottomNav />
+      <InstallPrompt />
     </div>
   );
 }

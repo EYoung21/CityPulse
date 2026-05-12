@@ -1,5 +1,10 @@
 /* PhillyPulse service worker — minimal, safety-conscious cache strategy.
  *
+ * Manual PWA smoke checklist (run on real devices after SW changes):
+ *  - Production build only (`npm run build && npm start`) — SW is skipped in dev.
+ *  - Android Chrome: install prompt / installed app opens same origin; offline tiles.
+ *  - iOS Safari: Add to Home Screen → standalone; push after install (16.4+).
+ *
  * Strategies:
  *  - HTML / Next-built JS+CSS:    network-first, fall back to cache (so we
  *                                  never serve stale safety data when online).
@@ -17,7 +22,7 @@
  *   {type:"CLEAR_TILE_CACHE"}                     // empties just the tiles
  */
 
-const CACHE_VERSION = "pp-v3";
+const CACHE_VERSION = "pp-v4";
 const SHELL_CACHE   = `${CACHE_VERSION}-shell`;
 const TILE_CACHE    = `${CACHE_VERSION}-tiles`;
 const ASSET_CACHE   = `${CACHE_VERSION}-assets`;

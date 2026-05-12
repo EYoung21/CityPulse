@@ -1072,7 +1072,11 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
     const map = L.map("incident-map", {
       zoomControl: false,
-    }).setView(initialCenter, initialZoom);
+      // Slightly more forgiving than Leaflet default (15) for dense
+      // marker clusters and gloved / shaky touch on phones. Runtime
+      // option; @types/leaflet MapOptions omits it on some versions.
+      tapTolerance: 22,
+    } as L.MapOptions).setView(initialCenter, initialZoom);
 
     L.control.zoom({ position: "topright" }).addTo(map);
 
