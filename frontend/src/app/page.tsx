@@ -1582,6 +1582,33 @@ function MapHome() {
 
   return (
     <div className="relative w-full h-screen overflow-hidden flex flex-col" style={{ background: "var(--map-bg)" }}>
+      {/* ──── Root Diagnostics ──── */}
+      {viewTab === "analytics" && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 99999, backgroundColor: 'red', border: '20px solid white', padding: '100px', pointerEvents: 'auto' }}>
+          {(() => { 
+            console.log("ROOT Rendering Analytics (FIXED)"); 
+            if (typeof window !== "undefined") window.alert("ROOT ANALYTICS");
+            return null; 
+          })()}
+          <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '20px', color: 'black' }}>
+            <h1 style={{ fontSize: '40px', fontWeight: 'bold' }}>ROOT ANALYTICS ACTIVE</h1>
+            <button onClick={() => setViewTab("map")} style={{ marginTop: '20px', padding: '10px 20px', backgroundColor: '#3b82f6', color: 'white', borderRadius: '8px' }}>Close</button>
+          </div>
+        </div>
+      )}
+      {viewTab === "api" && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 99999, backgroundColor: 'blue', border: '20px solid white', padding: '100px', pointerEvents: 'auto' }}>
+          {(() => { 
+            console.log("ROOT Rendering API (FIXED)"); 
+            if (typeof window !== "undefined") window.alert("ROOT API");
+            return null; 
+          })()}
+          <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '20px', color: 'black' }}>
+            <h1 style={{ fontSize: '40px', fontWeight: 'bold' }}>ROOT API ACTIVE</h1>
+            <button onClick={() => setViewTab("map")} style={{ marginTop: '20px', padding: '10px 20px', backgroundColor: '#3b82f6', color: 'white', borderRadius: '8px' }}>Close</button>
+          </div>
+        </div>
+      )}
       <MobileBottomNav />
       <InboxUrlSync 
         onInboxChange={handleInboxUrlChange} 
@@ -2774,35 +2801,10 @@ function MapHome() {
       </AnimatePresence>
 
       {/* ──── Analytics View ──── */}
-      {viewTab === "analytics" && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 99999, backgroundColor: 'red', border: '20px solid white', padding: '100px', pointerEvents: 'auto' }}>
-          {(() => { 
-            console.log("Rendering Analytics Diagnostic View (FIXED INLINE)"); 
-            if (typeof window !== "undefined") window.alert("ANALYTICS RENDERED");
-            return null; 
-          })()}
-          <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '20px', color: 'black' }}>
-            <h1 style={{ fontSize: '40px', fontWeight: 'bold' }}>ANALYTICS FIXED ACTIVE</h1>
-            <p>isPro: {isPro ? "TRUE" : "FALSE"}</p>
-            <button onClick={() => setViewTab("map")} style={{ marginTop: '20px', padding: '10px 20px', backgroundColor: '#3b82f6', color: 'white', borderRadius: '8px' }}>Close</button>
-          </div>
-        </div>
-      )}
+      {/* Moved to root for debug */}
 
       {/* ──── API Docs View ──── */}
-      {viewTab === "api" && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 99999, backgroundColor: 'blue', border: '20px solid white', padding: '100px', pointerEvents: 'auto' }}>
-          {(() => { 
-            console.log("Rendering API Diagnostic View (FIXED INLINE)"); 
-            if (typeof window !== "undefined") window.alert("API RENDERED");
-            return null; 
-          })()}
-          <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '20px', color: 'black' }}>
-            <h1 style={{ fontSize: '40px', fontWeight: 'bold' }}>API DOCS FIXED ACTIVE</h1>
-            <button onClick={() => setViewTab("map")} style={{ marginTop: '20px', padding: '10px 20px', backgroundColor: '#3b82f6', color: 'white', borderRadius: '8px' }}>Close</button>
-          </div>
-        </div>
-      )}
+      {/* Moved to root for debug */}
 
       {/* District Stats Card */}
       <AnimatePresence>
