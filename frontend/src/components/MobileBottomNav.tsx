@@ -27,11 +27,14 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import { Map as MapIcon, List, Bell, Settings as SettingsIcon, BarChart3, Lock, Code } from "lucide-react";
+import { Map as MapIcon, List, Bell, Settings as SettingsIcon, BarChart3, Lock } from "lucide-react";
 import { subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
 import { useAuth } from "@/contexts/AuthContext";
 
-type TabId = "map" | "feed" | "analytics" | "api" | "inbox" | "settings";
+// API Docs (`/use-cases/api`) intentionally not in the bottom nav: it's
+// reachable from the More menu and from the Analytics header. Surfacing it
+// here would crowd the bar past the iOS-style 5-icon comfort zone.
+type TabId = "map" | "feed" | "analytics" | "inbox" | "settings";
 
 interface Tab {
   id: TabId;
@@ -45,7 +48,6 @@ const TABS: Tab[] = [
   { id: "map",       label: "Map",       href: "/?view=map",                Icon: MapIcon },
   { id: "feed",      label: "Feed",      href: "/feed",                     Icon: List },
   { id: "analytics", label: "Analytics", href: "/?view=analytics",          Icon: BarChart3, pro: true },
-  { id: "api",       label: "API",       href: "/use-cases/api",             Icon: Code },
   { id: "inbox",     label: "Inbox",     href: "/?view=map&inbox=1",        Icon: Bell },
   { id: "settings",  label: "More",      href: "/?view=map&inbox=settings", Icon: SettingsIcon },
 ];
@@ -94,15 +96,13 @@ function MobileBottomNavInner() {
   const onFeed = pathname?.startsWith("/feed") ?? false;
   const activeId: TabId = onFeed
     ? "feed"
-    : pathname?.startsWith("/use-cases/api")
-      ? "api"
-      : viewParam === "analytics"
-        ? "analytics"
-        : inboxParam === "settings"
-          ? "settings"
-          : inboxParam
-            ? "inbox"
-            : "map";
+    : viewParam === "analytics"
+      ? "analytics"
+      : inboxParam === "settings"
+        ? "settings"
+        : inboxParam
+          ? "inbox"
+          : "map";
 
   return (
     <nav
