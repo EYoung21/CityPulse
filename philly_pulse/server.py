@@ -333,6 +333,8 @@ def _storage_bucket_candidates() -> list[str]:
     if not primary:
         primary = "phlpulse.firebasestorage.app"
     candidates = [primary]
+    if not _STORAGE_BUCKET:
+        candidates.append("phlpulse.appspot.com")
     candidates.extend(_discover_storage_buckets())
     return list(dict.fromkeys(candidates))
 
@@ -1199,6 +1201,8 @@ async def simulate():
     return await ingest(req)
 
 
+_SUMMARY_CACHE: dict = {"summary": None, "incident_count": 0, "expires_at": 0.0}
+
 @app.get("/api/summary")
 async def summary(
     response: Response,
@@ -1212,17 +1216,32 @@ async def summary(
         response.headers["X-Pulse-Free-Window-Sec"] = str(FREE_INCIDENT_WINDOW_SECONDS)
 
     import starlette.concurrency
+    import time
     
     if not is_pro:
-        incidents = await starlette.concurrency.run_in_threadpool(store.list_incidents, since=effective_since)
+        incidents = await starlette.concurrency.run_in_threadpool(lambda: store.list_incidents(since=effective_since))
     else:
-        incidents = await starlette.concurrency.run_in_threadpool(store.list_incidents)
+        incidents = await starlette.concurrency.run_in_threadpool(lambda: store.list_incidents())
     recent = incidents[:20]
 
     if not recent:
         return {
             "summary": "No recent incidents to summarize.",
             "incident_count": 0,
+            "meta": {
+                "tier": "pro" if is_pro else "free",
+                "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
+                "clamped": bool(clamped),
+                "effectiveSince": effective_since,
+            },
+        }
+
+    # Use cached summary if available and valid for the current incident count
+    now = time.time()
+    if _SUMMARY_CACHE["expires_at"] > now and _SUMMARY_CACHE["incident_count"] == len(recent) and _SUMMARY_CACHE["summary"]:
+        return {
+            "summary": _SUMMARY_CACHE["summary"],
+            "incident_count": len(recent),
             "meta": {
                 "tier": "pro" if is_pro else "free",
                 "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
@@ -1265,14 +1284,19 @@ async def summary(
     )
 
     try:
+        # Reduced timeout to 8s to prevent 502/504 errors from Vercel/Caddy
         text = await llm_client.chat_completion(
             [{"role": "user", "content": prompt}],
             temperature=0.3,
             max_tokens=200,
-            timeout=20.0,
+            timeout=8.0,
         )
+        final_summary = text.strip()
+        _SUMMARY_CACHE["summary"] = final_summary
+        _SUMMARY_CACHE["incident_count"] = len(recent)
+        _SUMMARY_CACHE["expires_at"] = now + 300.0  # Cache for 5 minutes
         return {
-            "summary": text.strip(),
+            "summary": final_summary,
             "incident_count": len(recent),
             "meta": {
                 "tier": "pro" if is_pro else "free",
@@ -1284,8 +1308,13 @@ async def summary(
     except Exception as e:
         logger.warning("Summary LLM call failed: %s", e)
 
+    fallback_summary = f"{len(recent)} recent incidents across {CITY_NAME}. Check the map for details."
+    _SUMMARY_CACHE["summary"] = fallback_summary
+    _SUMMARY_CACHE["incident_count"] = len(recent)
+    _SUMMARY_CACHE["expires_at"] = now + 60.0  # Cache fallback for 1 minute
+    
     return {
-        "summary": f"{len(recent)} recent incidents across {CITY_NAME}. Check the map for details.",
+        "summary": fallback_summary,
         "incident_count": len(recent),
         "meta": {
             "tier": "pro" if is_pro else "free",
