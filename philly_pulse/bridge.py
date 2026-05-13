@@ -45,6 +45,7 @@ def post_transcript(
     preprocess_meta=None,
     variants=None,
     city=None,
+    segment_start_utc=None,
 ):
     """Fire-and-forget POST of a transcript line to the ingest endpoint.
 
@@ -55,6 +56,8 @@ def post_transcript(
         payload: dict = {"text": text}
         if timestamp:
             payload["timestamp"] = timestamp
+        if segment_start_utc:
+            payload["segment_start_utc"] = segment_start_utc
         if feed_id:
             payload["feed_id"] = feed_id
         if feed_label:

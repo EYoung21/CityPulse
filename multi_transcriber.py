@@ -279,10 +279,10 @@ def transcriber_worker(worker_id):
     while True:
         try:
             item = transcription_queue.get()
-            if item[3] is None:
+            if item[4] is None:
                 break
 
-            feed_id, feed_label, timestamp, raw_pcm = item
+            feed_id, feed_label, timestamp, segment_start_utc, raw_pcm = item
 
             if not PP_ENABLED:
                 transcription_queue.task_done()
@@ -363,6 +363,7 @@ def transcriber_worker(worker_id):
                 PP_BRIDGE_URL, standard_text, timestamp,
                 feed_id=feed_id,
                 feed_label=feed_label,
+                segment_start_utc=segment_start_utc,
                 audio_clip=primary_clip,
                 raw_audio_clip=raw_clip_id,
                 variants=variants_list,
@@ -399,6 +400,7 @@ def feed_capture_thread(feed_id, feed_label):
 
     chunks_read = 0
     speech_chunks = 0
+    segment_start_utc: str | None = None
 
     while True:
         try:
@@ -443,6 +445,9 @@ def feed_capture_thread(feed_id, feed_label):
                 speech_chunks += 1
                 if not is_recording:
                     is_recording = True
+                    segment_start_utc = datetime.datetime.now(datetime.timezone.utc).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    )
                 audio_buffer.append(audio_chunk)
                 silence_counter = 0
             elif is_recording:
@@ -455,7 +460,9 @@ def feed_capture_thread(feed_id, feed_label):
 
                     if duration >= MIN_SPEECH_SECONDS:
                         ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                        transcription_queue.put((feed_id, feed_label, ts, raw_pcm.copy()))
+                        transcription_queue.put(
+                            (feed_id, feed_label, ts, segment_start_utc, raw_pcm.copy())
+                        )
                         print(f"   [{feed_label}] QUEUED {duration:.1f}s segment")
                     else:
                         print(f"   [{feed_label}] skipped {duration:.1f}s (below {MIN_SPEECH_SECONDS}s min)")
@@ -463,6 +470,7 @@ def feed_capture_thread(feed_id, feed_label):
                     audio_buffer = []
                     is_recording = False
                     silence_counter = 0
+                    segment_start_utc = None
 
         except Exception as e:
             print(f"   [{feed_label}] Capture error: {e}")
@@ -522,7 +530,7 @@ def main():
     except KeyboardInterrupt:
         print("\nShutting down...")
         for _ in workers:
-            transcription_queue.put(("", "", "", None))  # sentinel
+            transcription_queue.put(("", "", "", None, None))  # sentinel
         for w in workers:
             w.join(timeout=5)
         print("Done.")

@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import admin_events, city_registry, geocode, inhibitor, llm, llm_client, persistence as store, prefilter, push as push_mod, weights
+from . import admin_events, city_registry, geocode, ingest_location, inhibitor, llm, llm_client, persistence as store, prefilter, push as push_mod, weights
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -53,6 +53,7 @@ if _city_config_path and Path(_city_config_path).exists():
 
 CITY_REGISTRY = city_registry.CITY_REGISTRY
 FEED_LABELS = city_registry.FEED_LABELS
+FEED_META = city_registry.FEED_META
 
 
 def _resolve_feed_label(feed_id: str | None, req_label: str | None) -> str | None:
@@ -146,6 +147,7 @@ _RAW_CLIPS_DIR.mkdir(exist_ok=True)
 class IngestRequest(BaseModel):
     text: str
     timestamp: str | None = None
+    segment_start_utc: str | None = None
     feed_id: str | None = None
     feed_label: str | None = None
     audio_clip: str | None = None
@@ -169,6 +171,15 @@ OSRM_PROFILES = {
     "cycling-regular": "bike",
     "driving-car": "car",
 }
+
+
+def _ingest_lag_sec(reported_at: str, ingested_at: str) -> float | None:
+    try:
+        reported = datetime.fromisoformat(reported_at.replace("Z", "+00:00"))
+        ingested = datetime.fromisoformat(ingested_at.replace("Z", "+00:00"))
+        return max(0.0, (ingested - reported).total_seconds())
+    except (ValueError, TypeError):
+        return None
 
 
 @app.on_event("startup")
@@ -478,6 +489,9 @@ async def ingest(req: IngestRequest):
     feed_id = req.feed_id or "unknown"
     city = req.city or CITY_SLUG
     feed_label = _resolve_feed_label(feed_id, req.feed_label)
+    ingested_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    feed_meta = FEED_META.get(str(feed_id).strip(), {})
+    jurisdiction_hint = feed_meta.get("jurisdiction_hint")
 
     # Audio data is saved AFTER the pipeline determines the incident is map-worthy.
     # This avoids wasting disk on rejected/no-location transcripts (~95% reduction).
@@ -487,7 +501,13 @@ async def ingest(req: IngestRequest):
     ts = req.timestamp
     if ts and re.match(r"^\d{1,2}:\d{2}(:\d{2})?$", ts.strip()):
         ts = f"{date.today().isoformat()}T{ts.strip()}"
-    req_timestamp = ts or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if not ts:
+        logger.warning(
+            "Ingest missing segment timestamp for feed=%s; using ingest time as reported_at",
+            feed_id,
+        )
+    req_timestamp = ts or ingested_at
+    ingest_lag_sec = _ingest_lag_sec(req_timestamp, ingested_at)
 
     correlation = f"{feed_id}_{req_timestamp}"
 
@@ -595,6 +615,7 @@ async def ingest(req: IngestRequest):
             city_context=city_llm_ctx,
             prior_context=prior_context or None,
             feed_label=feed_label,
+            jurisdiction_hint=jurisdiction_hint,
         )
     except llm.LLMError as e:
         await admin_events.broadcast({
@@ -695,6 +716,8 @@ async def ingest(req: IngestRequest):
             description=description,
             word_timings=effective_word_timings,
             city=city,
+            reported_at=req_timestamp,
+            ingested_at=ingested_at,
         )
         await admin_events.broadcast({
             "type": "incident_stored",
@@ -707,6 +730,9 @@ async def ingest(req: IngestRequest):
             feed_id=feed_id,
             raw_text=req.text,
             reported_at=req_timestamp,
+            ingested_at=ingested_at,
+            segment_start_utc=req.segment_start_utc,
+            ingest_lag_sec=ingest_lag_sec,
             audio_clip=effective_audio_clip,
             raw_audio_clip=req.raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
@@ -733,16 +759,60 @@ async def ingest(req: IngestRequest):
     # cluster at one point. If Nominatim can't resolve the text, the
     # incident is dropped (or, post-repair, soft-hidden by the unmapped queue).
     location_confidence = extraction.get("location_confidence", "none")
-    lat, lng = None, None
-    geocode_status = "failed"
 
-    if location_text:
-        coords = await geocode.geocode(location_text, geo_ctx=city_geo_ctx)
-        if coords:
-            lat, lng = coords
-            geocode_status = f"success_{location_confidence}"
-        else:
-            geocode_status = f"no_result_{location_confidence}"
+    geocode_attempts_all: list[dict] = []
+    location_result = None
+    for attempt_idx in range(1, ingest_location.max_extract_attempts() + 1):
+        location_result = await ingest_location.resolve_validated_location(
+            raw_text=req.text,
+            location_text=location_text,
+            location_confidence=location_confidence,
+            city=city,
+            geo_ctx=city_geo_ctx,
+            feed_meta=feed_meta,
+        )
+        geocode_attempts_all.extend(location_result.geocode_attempts)
+        if location_result.lat is not None and location_result.lng is not None:
+            location_text = location_result.location_text or location_text
+            break
+        if attempt_idx >= ingest_location.max_extract_attempts():
+            break
+        validation_error = (
+            location_result.validation.reason
+            if location_result.validation and location_result.validation.reason
+            else location_result.geocode_status
+        )
+        try:
+            extraction = await llm.refine_incident_extraction(
+                req.text,
+                city_context=city_llm_ctx,
+                prior_context=prior_context or None,
+                feed_label=feed_label,
+                jurisdiction_hint=jurisdiction_hint,
+                prior_extraction=extraction,
+                validation_error=validation_error or "geocode_failed",
+            )
+        except llm.LLMError as e:
+            logger.warning("LLM refine failed on attempt %s: %s", attempt_idx, e)
+            break
+        if extraction is None:
+            break
+        category = extraction["severity_category"]
+        location_text = extraction["location_text"]
+        if location_text and geo_suffix:
+            location_text = geocode.normalize_location_text_for_geocode(
+                location_text, suffix=geo_suffix
+            )
+        confidence = extraction["confidence"]
+        description = extraction.get("description")
+        s_base = weights.get_s_base(category)
+        location_confidence = extraction.get("location_confidence", "none")
+
+    lat, lng = None, None
+    geocode_status = location_result.geocode_status if location_result else "failed"
+    if location_result and location_result.lat is not None and location_result.lng is not None:
+        lat, lng = location_result.lat, location_result.lng
+        geocode_status = location_result.geocode_status
 
     await admin_events.broadcast({
         "type": "geocode_result",
@@ -827,6 +897,7 @@ async def ingest(req: IngestRequest):
                 inhibitor_status=inh.status,
                 inhibitor_reason=inh.reason,
                 reported_at=req_timestamp,
+                ingested_at=ingested_at,
                 audio_clip=effective_audio_clip,
                 feed_id=feed_id,
                 description=description,
@@ -921,6 +992,9 @@ async def ingest(req: IngestRequest):
         feed_id=feed_id,
         raw_text=req.text,
         reported_at=req_timestamp,
+        ingested_at=ingested_at,
+        segment_start_utc=req.segment_start_utc,
+        ingest_lag_sec=ingest_lag_sec,
         audio_clip=effective_audio_clip,
         raw_audio_clip=req.raw_audio_clip,
         preprocess_meta=req.preprocess_meta,
@@ -933,6 +1007,7 @@ async def ingest(req: IngestRequest):
         inhibitor_status=inh.status,
         inhibitor_reason=inh.reason,
         geocode_status=geocode_status,
+        geocode_attempts=geocode_attempts_all,
         incident_id=incident_id,
         city=city,
     )
@@ -1044,11 +1119,25 @@ def page_incidents(
                 },
             }
     try:
-        incidents = store.list_incidents(since=effective_since, category=category)
+        if city and near_lat is None and near_lng is None:
+            incidents = store.list_incidents_for_city(
+                city,
+                since=effective_since,
+                category=category,
+                before_iso=cursor,
+                limit=limit,
+            )
+        elif city:
+            incidents = store.list_incidents_for_city(
+                city,
+                since=effective_since,
+                category=category,
+                limit=500,
+            )
+        else:
+            incidents = store.list_incidents(since=effective_since, category=category)
     except Exception:
         incidents = []
-    if city:
-        incidents = [i for i in incidents if i.get("city") == city]
     # Apply cursor *before* sorting in proximity mode: the cursor is
     # only meaningful for chronological pagination. Proximity pages
     # don't paginate by cursor (the user expects the closest items
@@ -1083,9 +1172,12 @@ def page_incidents(
         }
 
     incidents.sort(key=lambda i: i.get("reported_at") or "", reverse=True)
-    if cursor:
-        incidents = [i for i in incidents if (i.get("reported_at") or "") < cursor]
-    page = incidents[:limit]
+    if city and near_lat is None and near_lng is None:
+        page = incidents
+    else:
+        if cursor:
+            incidents = [i for i in incidents if (i.get("reported_at") or "") < cursor]
+        page = incidents[:limit]
     next_cursor = (
         page[-1].get("reported_at") if len(page) == limit and page else None
     )
@@ -1150,14 +1242,20 @@ def search_incidents(
         response.headers["X-Pulse-Free-Window-Sec"] = str(FREE_INCIDENT_WINDOW_SECONDS)
 
     try:
-        incidents = store.list_incidents(since=effective_since, category=category)
+        if city:
+            incidents = store.list_incidents_for_city(
+                city,
+                since=effective_since,
+                category=category,
+                limit=500,
+            )
+        else:
+            incidents = store.list_incidents(since=effective_since, category=category)
     except Exception:
         incidents = []
 
     if until:
         incidents = [i for i in incidents if (i.get("reported_at") or "") <= until]
-    if city:
-        incidents = [i for i in incidents if i.get("city") == city]
 
     matched = [i for i in incidents if _incident_matches_query(i, terms)]
     matched.sort(key=lambda i: i.get("reported_at") or "", reverse=True)
@@ -1369,12 +1467,21 @@ def city_stats(slug: str):
     except Exception:
         incidents_total = -1
 
+    freshness = {}
+    try:
+        freshness = store.get_city_pipeline_freshness(slug, hours=6)
+    except Exception:
+        freshness = {}
+
     return {
         "slug": slug,
         "city_name": city_name,
         "scanner_feeds": len(feeds),
         "incidents_24h": incidents_24h,
         "incidents_total": incidents_total,
+        "newest_incident_at": freshness.get("newest_incident_at"),
+        "newest_extraction_at": freshness.get("newest_extraction_at"),
+        "promotion_rate_6h": freshness.get("promotion_rate_6h"),
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 

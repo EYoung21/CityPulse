@@ -346,6 +346,52 @@ def list_incidents(
     return [dict(r) for r in rows]
 
 
+def list_incidents_for_city(
+    city: str,
+    since: Optional[str] = None,
+    category: Optional[str] = None,
+    before_iso: Optional[str] = None,
+    limit: int = 50,
+    include_blocked: bool = False,
+    include_hidden: bool = False,
+) -> list[dict]:
+    _ = include_hidden
+    if not city:
+        return []
+    conn = get_conn()
+    clauses = ["city = ?"]
+    params: list = [city]
+    if not include_blocked:
+        clauses.append("inhibitor_status != 'blocked'")
+    if since:
+        clauses.append("reported_at >= ?")
+        params.append(since)
+    if before_iso:
+        clauses.append("reported_at < ?")
+        params.append(before_iso)
+    if category:
+        clauses.append("severity_category = ?")
+        params.append(category)
+    where = " WHERE " + " AND ".join(clauses)
+    params.append(int(limit))
+    rows = conn.execute(
+        f"SELECT * FROM incidents{where} ORDER BY reported_at DESC LIMIT ?",
+        params,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_city_pipeline_freshness(slug: str, hours: int = 6) -> dict:
+    _ = slug, hours
+    return {
+        "newest_incident_at": None,
+        "newest_extraction_at": None,
+        "llm_relevant_6h": 0,
+        "promoted_6h": 0,
+        "promotion_rate_6h": None,
+    }
+
+
 def seed_from_json(seed_path: str, s_base_lookup: dict[str, float]) -> int:
     """Load seed_incidents.json into the store. Returns count inserted."""
     with open(seed_path, "r") as f:

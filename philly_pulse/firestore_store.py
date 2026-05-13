@@ -63,6 +63,7 @@ def insert_incident(
     inhibitor_status: str = "passed",
     inhibitor_reason: Optional[str] = None,
     reported_at: Optional[str] = None,
+    ingested_at: Optional[str] = None,
     audio_clip: Optional[str] = None,
     feed_id: Optional[str] = None,
     description: Optional[str] = None,
@@ -77,6 +78,7 @@ def insert_incident(
 
     payload = {
         "reported_at": reported_at,
+        "ingested_at": ingested_at or datetime.now(timezone.utc).isoformat(),
         "raw_text": raw_text,
         "severity_category": severity_category,
         "s_base": s_base,
@@ -235,10 +237,14 @@ def insert_extraction(
     inhibitor_status: Optional[str] = None,
     inhibitor_reason: Optional[str] = None,
     geocode_status: Optional[str] = None,
+    geocode_attempts: Optional[list] = None,
     incident_id: Optional[str] = None,
     city: Optional[str] = None,
     prefilter_status: Optional[str] = None,
     prefilter_reason: Optional[str] = None,
+    ingested_at: Optional[str] = None,
+    segment_start_utc: Optional[str] = None,
+    ingest_lag_sec: Optional[float] = None,
 ) -> dict:
     db = _ensure_client()
     eid = uuid.uuid4().hex[:12]
@@ -248,6 +254,9 @@ def insert_extraction(
         "feed_id": feed_id,
         "raw_text": raw_text,
         "reported_at": reported_at,
+        "ingested_at": ingested_at or datetime.now(timezone.utc).isoformat(),
+        "segment_start_utc": segment_start_utc,
+        "ingest_lag_sec": ingest_lag_sec,
         "audio_clip": audio_clip,
         "raw_audio_clip": raw_audio_clip,
         "preprocess_meta": preprocess_meta,
@@ -260,6 +269,7 @@ def insert_extraction(
         "inhibitor_status": inhibitor_status,
         "inhibitor_reason": inhibitor_reason,
         "geocode_status": geocode_status,
+        "geocode_attempts": geocode_attempts or [],
         "incident_id": incident_id,
         "city": city,
         "prefilter_status": prefilter_status,
@@ -389,6 +399,104 @@ def list_incidents(
     except Exception:
         pass
     return rows
+
+
+def list_incidents_for_city(
+    city: str,
+    since: Optional[str] = None,
+    category: Optional[str] = None,
+    before_iso: Optional[str] = None,
+    limit: int = 50,
+    include_blocked: bool = False,
+    include_hidden: bool = False,
+) -> list[dict]:
+    """City-scoped incidents ordered by reported_at desc (cursor via before_iso)."""
+    if not city:
+        return []
+    db = _ensure_client()
+    rows: list[dict] = []
+    try:
+        query = (
+            db.collection("incidents")
+            .where("city", "==", city)
+            .order_by("reported_at", direction=firestore.Query.DESCENDING)
+        )
+        if since:
+            query = query.where("reported_at", ">=", since)
+        if before_iso:
+            query = query.where("reported_at", "<", before_iso)
+        query = query.limit(int(limit))
+        for doc in query.stream():
+            row = _doc_to_row(doc.id, doc.to_dict() or {})
+            if not include_blocked and row.get("inhibitor_status") == "blocked":
+                continue
+            if not include_hidden and row.get("hidden") is True:
+                continue
+            if category and row.get("severity_category") != category:
+                continue
+            rows.append(row)
+    except Exception:
+        pass
+    return rows
+
+
+def get_city_pipeline_freshness(slug: str, hours: int = 6) -> dict[str, Any]:
+    """Newest extraction/incident timestamps and promotion rate for ops dashboards."""
+    db = _ensure_client()
+    floor = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    out: dict[str, Any] = {
+        "newest_incident_at": None,
+        "newest_extraction_at": None,
+        "llm_relevant_6h": 0,
+        "promoted_6h": 0,
+        "promotion_rate_6h": None,
+    }
+    try:
+        inc_q = (
+            db.collection("incidents")
+            .where("city", "==", slug)
+            .order_by("reported_at", direction=firestore.Query.DESCENDING)
+            .limit(1)
+        )
+        for snap in inc_q.stream():
+            out["newest_incident_at"] = (snap.to_dict() or {}).get("reported_at")
+            break
+    except Exception:
+        pass
+    try:
+        ext_q = (
+            db.collection("extractions")
+            .where("city", "==", slug)
+            .order_by("reported_at", direction=firestore.Query.DESCENDING)
+            .limit(1)
+        )
+        for snap in ext_q.stream():
+            out["newest_extraction_at"] = (snap.to_dict() or {}).get("reported_at")
+            break
+    except Exception:
+        pass
+    try:
+        rel = 0
+        promoted = 0
+        ext_recent = (
+            db.collection("extractions")
+            .where("city", "==", slug)
+            .where("reported_at", ">=", floor)
+            .limit(5000)
+        )
+        for snap in ext_recent.stream():
+            data = snap.to_dict() or {}
+            if not data.get("llm_relevant"):
+                continue
+            rel += 1
+            if data.get("incident_id"):
+                promoted += 1
+        out["llm_relevant_6h"] = rel
+        out["promoted_6h"] = promoted
+        out["promotion_rate_6h"] = (promoted / rel) if rel else None
+    except Exception:
+        pass
+    return out
 
 
 def seed_from_json(seed_path: str, s_base_lookup: dict[str, float]) -> int:

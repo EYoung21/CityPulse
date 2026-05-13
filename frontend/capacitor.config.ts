@@ -22,7 +22,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
  */
 const config: CapacitorConfig = {
   appId: "com.phillypulse.app",
-  appName: "PhillyPulse",
+  appName: "CityPulse",
   webDir: "out",
 
   // server: {

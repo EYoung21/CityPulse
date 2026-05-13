@@ -1,5 +1,5 @@
 # Per-city prefilter overrides for Philadelphia.
-# These EXTEND the shared defaults at philly_pulse/data/prefilter_default.yaml.
+# Re-tune PPD Citywide (feed 4603) with: python scripts/eval_prefilter.py --feed 4603
 # See that file for the architecture and the full list of universal patterns.
 #
 # Add only patterns/keywords that are specific to PPD/PFD/SEPTA radio.

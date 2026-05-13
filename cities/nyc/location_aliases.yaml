@@ -1,0 +1,29 @@
+aliases:
+  "Avenue of the Americas": ["6th Avenue", "Sixth Avenue", "6th Ave", "Ave of the Americas"]
+  "Sixth Avenue": ["6th Avenue", "6th Ave", "Avenue of the Americas"]
+boroughs:
+  Manhattan:
+    lat_min: 40.70
+    lat_max: 40.88
+    lng_min: -74.02
+    lng_max: -73.91
+  Brooklyn:
+    lat_min: 40.57
+    lat_max: 40.74
+    lng_min: -74.04
+    lng_max: -73.83
+  Bronx:
+    lat_min: 40.78
+    lat_max: 40.92
+    lng_min: -73.93
+    lng_max: -73.75
+  Queens:
+    lat_min: 40.54
+    lat_max: 40.80
+    lng_min: -73.96
+    lng_max: -73.70
+  StatenIsland:
+    lat_min: 40.49
+    lat_max: 40.65
+    lng_min: -74.26
+    lng_max: -74.05
