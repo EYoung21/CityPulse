@@ -37,10 +37,10 @@ export const metadata: Metadata = {
   description:
     `CityPulse: Real-time AI-powered community safety for ${cityName}. Live police scanner transcription, incident mapping, and safe routing.`,
   manifest: "/manifest.json",
-  applicationName: "PhillyPulse",
+  applicationName: "CityPulse",
   appleWebApp: {
     capable: true,
-    title: "PhillyPulse",
+    title: "CityPulse",
     statusBarStyle: "black-translucent",
   },
   icons: {

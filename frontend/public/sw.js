@@ -22,7 +22,7 @@
  *   {type:"CLEAR_TILE_CACHE"}                     // empties just the tiles
  */
 
-const CACHE_VERSION = "pp-v4";
+const CACHE_VERSION = "pp-v5";
 const SHELL_CACHE   = `${CACHE_VERSION}-shell`;
 const TILE_CACHE    = `${CACHE_VERSION}-tiles`;
 const ASSET_CACHE   = `${CACHE_VERSION}-assets`;

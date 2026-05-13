@@ -29,12 +29,17 @@ feeds:
   # FDNY borough dispatch — primary source of NYC incidents.
   - feed_id: "8534"
     label: "FDNY Bronx Dispatch"
+    borough: "Bronx"
   - feed_id: "8585"
     label: "FDNY Queens Dispatch"
+    borough: "Queens"
   - feed_id: "8749"
     label: "FDNY Staten Island Dispatch"
+    borough: "StatenIsland"
   - feed_id: "9466"
     label: "FDNY Citywide"
+    jurisdiction_hint: "FDNY citywide; Manhattan and cross-borough box assignments when borough is not explicit."
+    borough: "Manhattan"
 
   # Brooklyn no longer has a standalone FDNY borough feed on Broadcastify.
   # This combo carries Brooklyn fire alarms plus Hatzolah EMS dispatch

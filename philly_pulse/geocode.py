@@ -10,9 +10,12 @@ Supports two modes:
 
 import logging
 import re
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
 import httpx
+
+from .location_aliases import expand_location_aliases
 
 logger = logging.getLogger(__name__)
 
@@ -350,3 +353,74 @@ async def geocode(
     logger.info("No geocode results for '%s' after %d attempts", location_text, len(queries))
     _cache[key] = None
     return None
+
+
+@dataclass
+class GeocodeResolution:
+    lat: float | None = None
+    lng: float | None = None
+    status: str = "failed"
+    attempts: list[dict[str, Any]] = field(default_factory=list)
+    resolved_text: str | None = None
+
+
+def transcript_geocode_candidates(raw_text: str) -> list[str]:
+    """Cheap regex pass for cross-streets / block numbers before giving up."""
+    if not raw_text:
+        return []
+    out: list[str] = []
+    for m in re.finditer(
+        r"\b(\d{1,3}(?:st|nd|rd|th)?)\s+(?:and|&)\s+(\d{1,3}(?:st|nd|rd|th)?)\b",
+        raw_text,
+        re.IGNORECASE,
+    ):
+        cand = f"{m.group(1)} and {m.group(2)}"
+        if cand not in out:
+            out.append(cand)
+    for m in re.finditer(
+        r"\b(\d{1,4})\s*(?:hundred|00)?\s*block\s+of\s+([A-Za-z][\w\s]{2,40})",
+        raw_text,
+        re.IGNORECASE,
+    ):
+        cand = f"{m.group(1)} block of {m.group(2).strip()}"
+        if cand not in out:
+            out.append(cand)
+    return out
+
+
+async def resolve_incident_location(
+    location_text: str | None,
+    *,
+    raw_text: str,
+    city: str,
+    geo_ctx: dict | None,
+    location_confidence: str = "none",
+) -> GeocodeResolution:
+    """Multi-strategy geocode: aliases, reformulations, transcript regex."""
+    res = GeocodeResolution(status=f"no_result_{location_confidence}")
+    if not location_text:
+        res.status = "failed"
+        return res
+
+    ctx_suffix = (geo_ctx or {}).get("suffix", _SUFFIX)
+    candidates: list[str] = []
+    for alt in expand_location_aliases(location_text, city=city):
+        norm = normalize_location_text_for_geocode(alt, suffix=ctx_suffix)
+        if norm and norm not in candidates:
+            candidates.append(norm)
+    for cand in transcript_geocode_candidates(raw_text):
+        norm = normalize_location_text_for_geocode(cand, suffix=ctx_suffix)
+        if norm and norm not in candidates:
+            candidates.append(norm)
+
+    for cand in candidates:
+        coords = await geocode(cand, geo_ctx=geo_ctx)
+        res.attempts.append({"query": cand, "ok": bool(coords)})
+        if coords:
+            res.lat, res.lng = coords
+            res.resolved_text = cand
+            res.status = f"success_{location_confidence}"
+            return res
+
+    res.status = f"no_result_{location_confidence}"
+    return res

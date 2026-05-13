@@ -132,7 +132,12 @@ def _sanitize_feed_label(label: str | None) -> str | None:
     return s[:500] if s else None
 
 
-def _build_system_prompt(ctx: dict, *, feed_label: str | None = None) -> str:
+def _build_system_prompt(
+    ctx: dict,
+    *,
+    feed_label: str | None = None,
+    jurisdiction_hint: str | None = None,
+) -> str:
     city = ctx["city_name"]
     suffix = ctx["geocode_suffix"]
     local = _truncate_local_context(str(ctx.get("llm_local_context") or ""))
@@ -144,6 +149,13 @@ def _build_system_prompt(ctx: dict, *, feed_label: str | None = None) -> str:
 ## Scanner source
 This transmission is from the feed labeled: "{fl}".
 Prefer place names and jurisdictions that match this feed's typical service area over unrelated cities in the same broader metro when the audio is ambiguous.
+
+"""
+    jh = _sanitize_feed_label(jurisdiction_hint)
+    if jh:
+        feed_block += f"""## Jurisdiction hint
+This feed primarily covers: {jh}
+Extract intersections and addresses that plausibly fall in that service area.
 
 """
 
@@ -253,6 +265,7 @@ async def extract_incident(
     city_context: dict | None = None,
     prior_context: list[str] | None = None,
     feed_label: str | None = None,
+    jurisdiction_hint: str | None = None,
 ) -> Optional[dict]:
     """Extract structured incident data from a raw transcript line.
 
@@ -280,7 +293,9 @@ async def extract_incident(
         )
 
     ctx = city_context or _default_city_context
-    prompt = _build_system_prompt(ctx, feed_label=feed_label)
+    prompt = _build_system_prompt(
+        ctx, feed_label=feed_label, jurisdiction_hint=jurisdiction_hint
+    )
 
     messages: list[dict] = [{"role": "system", "content": prompt}]
     prior_block = _format_prior_context(prior_context)
@@ -362,6 +377,97 @@ async def extract_incident(
     if loc_confidence not in ("direct", "context", "none"):
         loc_confidence = "direct" if location_text else ("context" if context_location else "none")
 
+    effective_location = location_text or context_location
+
+    return {
+        "is_dispatch_relevant": True,
+        "severity_category": cat,
+        "location_text": effective_location,
+        "location_confidence": loc_confidence,
+        "context_location_text": context_location,
+        "confidence": float(data.get("confidence", 0.7)),
+        "description": data.get("description"),
+    }
+
+
+async def refine_incident_extraction(
+    raw_text: str,
+    *,
+    city_context: dict | None = None,
+    prior_context: list[str] | None = None,
+    feed_label: str | None = None,
+    jurisdiction_hint: str | None = None,
+    prior_extraction: dict,
+    validation_error: str,
+) -> Optional[dict]:
+    """Reprompt after geocode/validation failure with explicit correction context."""
+    if not llm_client.is_configured():
+        raise LLMError(
+            "No LLM provider configured. Set LAMBDA_API_KEY (preferred) "
+            "or OPENAI_API_KEY in the environment."
+        )
+
+    ctx = city_context or _default_city_context
+    prompt = _build_system_prompt(
+        ctx, feed_label=feed_label, jurisdiction_hint=jurisdiction_hint
+    )
+    correction = (
+        "Your prior JSON extraction failed downstream validation.\n"
+        f"Error: {validation_error}\n"
+        f"Prior JSON: {json.dumps(prior_extraction, ensure_ascii=False)}\n"
+        "Return corrected JSON only. Do not invent coordinates."
+    )
+
+    messages: list[dict] = [
+        {"role": "system", "content": prompt},
+        {"role": "system", "content": correction},
+    ]
+    prior_block = _format_prior_context(prior_context)
+    if prior_block:
+        messages.append({"role": "system", "content": prior_block})
+    messages.append({"role": "user", "content": raw_text})
+
+    use_json_object = os.environ.get("LLM_RESPONSE_FORMAT_JSON", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    response_format: dict | None = {"type": "json_object"} if use_json_object else None
+
+    try:
+        content = await llm_client.chat_completion(
+            messages,
+            temperature=0.0,
+            max_tokens=300,
+            timeout=_LLM_TIMEOUT_SEC,
+            response_format=response_format,
+        )
+    except Exception as e:
+        raise LLMError(f"LLM refine request failed: {e}") from e
+
+    content = content.strip()
+    if content.startswith("```"):
+        lines = content.split("\n")
+        lines = [l for l in lines if not l.startswith("```")]
+        content = "\n".join(lines).strip()
+
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError as e:
+        raise LLMError(f"LLM returned invalid JSON: {e}\nRaw: {content}") from e
+
+    if not data.get("is_dispatch_relevant"):
+        return None
+
+    cat = data.get("severity_category", "")
+    if cat not in SEVERITY_CATEGORIES:
+        raise LLMError(f"Invalid severity_category '{cat}'.")
+
+    location_text = data.get("location_text")
+    context_location = data.get("context_location_text")
+    loc_confidence = data.get("location_confidence", "none")
+    if loc_confidence not in ("direct", "context", "none"):
+        loc_confidence = "direct" if location_text else ("context" if context_location else "none")
     effective_location = location_text or context_location
 
     return {

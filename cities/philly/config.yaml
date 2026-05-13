@@ -37,7 +37,9 @@ geocode:
   suffix: ", PA"
 
 feeds:
-  - { feed_id: "4603",  label: "PPD Citywide" }
+  - feed_id: "4603"
+    label: "PPD Citywide"
+    jurisdiction_hint: "Philadelphia Police citywide dispatch; prefer Philadelphia streets over suburban counties unless units name DelCo/MontCo towns."
   - { feed_id: "17310", label: "PPD Central" }
   - { feed_id: "21297", label: "PPD East" }
   - { feed_id: "45495", label: "PPD Northeast" }
@@ -81,7 +83,10 @@ feeds:
   #              runs encrypted DMR, so Sector 7 + MontCo Fire West
   #              (18335) is the closest unencrypted coverage we can get.
   - { feed_id: "46436", label: "DelCo PD Sector 1 (Brookhaven/Aston/Chichester/Marcus Hook)" }
-  - { feed_id: "46437", label: "DelCo PD Sector 2 (Swarthmore/Media/Springfield/Marple/Newtown)" }
+  - feed_id: "46437"
+    label: "DelCo PD Sector 2 (Swarthmore/Media/Springfield/Marple/Newtown)"
+    jurisdiction_hint: "Delaware County Sector 2 (Swarthmore, Media, Springfield, Marple, Nether Providence, Newtown Twp)."
+    geocode_bounds: "-75.45,39.86,-75.30,39.98"
   - { feed_id: "46444", label: "DelCo PD Sector 3 (Chester City)" }
   - { feed_id: "46443", label: "DelCo PD Sector 4 (Lansdowne/Yeadon/Sharon Hill/Folcroft/Darby)" }
   - { feed_id: "46442", label: "DelCo PD Sector 5 (Ridley/Eddystone/Glenolden/Prospect Park/Norwood/Tinicum)" }

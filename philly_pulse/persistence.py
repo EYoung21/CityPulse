@@ -36,6 +36,8 @@ if _should_use_firestore():
         insert_extraction,
         insert_incident,
         list_incidents,
+        list_incidents_for_city,
+        get_city_pipeline_freshness,
         seed_from_json,
         update_extraction,
         update_incident,
@@ -54,6 +56,8 @@ else:
         insert_extraction,
         insert_incident,
         list_incidents,
+        list_incidents_for_city,
+        get_city_pipeline_freshness,
         seed_from_json,
         update_extraction,
     )

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -21,6 +22,9 @@ CITY_REGISTRY: dict[str, dict] = {}
 # Broadcastify feed_id (str) → human label; merged across all cities/*.yaml
 FEED_LABELS: dict[str, str] = {}
 
+# feed_id → optional jurisdiction_hint / geocode_bounds / borough
+FEED_META: dict[str, dict[str, Any]] = {}
+
 # slug → [{"feed_id": "...", "label": "..."}, …] for admin UI / per-city streams
 CITY_FEEDS: dict[str, list[dict[str, str]]] = {}
 
@@ -32,6 +36,7 @@ def load_city_registry() -> None:
     """Populate CITY_REGISTRY, FEED_LABELS, CITY_FEEDS, DOMAIN_TO_SLUG from cities/*/config.yaml."""
     CITY_REGISTRY.clear()
     FEED_LABELS.clear()
+    FEED_META.clear()
     CITY_FEEDS.clear()
     DOMAIN_TO_SLUG.clear()
     cities_dir = Path(__file__).resolve().parent.parent / "cities"
@@ -101,6 +106,27 @@ def load_city_registry() -> None:
                 if not k:
                     continue
                 feeds_list.append({"feed_id": k, "label": str(lab).strip()})
+                meta: dict[str, Any] = {}
+                jh = feed.get("jurisdiction_hint")
+                if isinstance(jh, str) and jh.strip():
+                    meta["jurisdiction_hint"] = jh.strip()
+                gb = feed.get("geocode_bounds")
+                if isinstance(gb, dict):
+                    meta["geocode_bounds"] = gb
+                elif isinstance(gb, str):
+                    parts = [float(x) for x in gb.split(",")]
+                    if len(parts) == 4:
+                        meta["geocode_bounds"] = {
+                            "lng_min": parts[0],
+                            "lat_min": parts[1],
+                            "lng_max": parts[2],
+                            "lat_max": parts[3],
+                        }
+                borough = feed.get("borough")
+                if isinstance(borough, str) and borough.strip():
+                    meta["borough"] = borough.strip()
+                if meta:
+                    FEED_META[k] = meta
                 if k in FEED_LABELS:
                     if FEED_LABELS[k] != str(lab).strip():
                         logger.warning(

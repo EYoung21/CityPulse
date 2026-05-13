@@ -1,0 +1,3 @@
+# Human-reviewed dispatch slang and location patterns for LLM/geocode tuning.
+# Populate via scripts/analyze_dropped_extractions.py, then merge into llm_local_context.
+entries: []
