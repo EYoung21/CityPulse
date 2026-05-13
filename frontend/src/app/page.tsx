@@ -2925,7 +2925,7 @@ function MapHome() {
 
       {/* Analytics: outside map shell so parent opacity/visibility does not hide it */}
       {viewTab === "analytics" && (
-        <div className="absolute inset-0 z-20 bg-[var(--map-bg)] overflow-y-auto">
+        <motion.div className="absolute inset-x-0 top-0 bottom-[calc(64px+env(safe-area-inset-bottom,0px))] md:bottom-0 z-20 bg-[var(--map-bg)] overflow-y-auto">
           <div className="max-w-5xl mx-auto p-4 md:p-8">
             <AnalyticsPanel
               incidents={incidents}
@@ -2935,13 +2935,13 @@ function MapHome() {
               onClose={() => setViewTab("map")}
             />
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* ──── Feed view ──── */}
       {viewTab === "feed" && (
-        <div 
-          className="absolute inset-0 flex flex-col overflow-hidden z-20" 
+        <motion.div
+          className="absolute inset-x-0 top-0 bottom-[calc(64px+env(safe-area-inset-bottom,0px))] md:bottom-0 flex flex-col overflow-hidden z-20"
           style={{ background: "var(--panel-bg)" }}
         >
           {/* Feed stats header */}
@@ -3204,7 +3204,7 @@ function MapHome() {
               </div>
             )}
           </FeedPullRefresh>
-        </div>
+        </motion.div>
       )}
       
       </div>{/* end content area wrapper */}

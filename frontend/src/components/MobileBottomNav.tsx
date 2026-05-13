@@ -26,7 +26,7 @@
  */
 
 import { usePathname, useSearchParams } from "next/navigation";
-import { Suspense, useSyncExternalStore, type MouseEvent } from "react";
+import { Suspense, useSyncExternalStore, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { Map as MapIcon, List, Bell, Settings as SettingsIcon, BarChart3, Lock } from "lucide-react";
 import { subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
@@ -61,6 +61,22 @@ const MOBILE_QUERY = "(max-width: 767px)";
  *  for the home indicator, which we add on top). Exported so the map
  *  page can pad the bottom of any UI it doesn't want overlapped. */
 export const MOBILE_NAV_HEIGHT_PX = 64;
+
+function navigateToTab(href: string) {
+  if (typeof window === "undefined") return;
+  window.location.href = href;
+}
+
+function readSessionViewTab(): TabId | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const saved = sessionStorage.getItem(SESSION_VIEW_KEY);
+    if (saved === "feed" || saved === "analytics" || saved === "map") return saved;
+  } catch {
+    /* non-fatal */
+  }
+  return null;
+}
 
 function persistTabIntent(tab: Tab) {
   if (typeof window === "undefined") return;
@@ -142,32 +158,34 @@ function MobileBottomNavInner() {
   const inboxParam = searchParams?.get("inbox") ?? null;
   const viewParam = searchParams?.get("view") ?? null;
   const onFeed = pathname?.startsWith("/feed") ?? false;
+  const sessionView = pathname === "/" ? readSessionViewTab() : null;
   const activeId: TabId = onFeed
     ? "feed"
     : viewParam === "feed"
       ? "feed"
       : viewParam === "analytics"
-      ? "analytics"
-      : inboxParam === "settings"
-        ? "settings"
-        : inboxParam
-          ? "inbox"
-          : "map";
+        ? "analytics"
+        : sessionView === "feed"
+          ? "feed"
+          : sessionView === "analytics"
+            ? "analytics"
+            : inboxParam === "settings"
+              ? "settings"
+              : inboxParam
+                ? "inbox"
+                : "map";
 
-  const handleTabClick = (tab: Tab) => (event: MouseEvent<HTMLAnchorElement>) => {
+  const handleTabActivate = (tab: Tab) => {
     persistTabIntent(tab);
-    if (activeId === tab.id) {
-      event.preventDefault();
-      return;
-    }
+    if (activeId === tab.id) return;
+    navigateToTab(tab.href);
+  };
 
-    // Mobile tab switches are primary app navigation. Use a native document
-    // navigation so the bar still works if the App Router is in a suspended
-    // route transition or recovering from stale PWA shell state.
-    if (typeof window !== "undefined") {
-      event.preventDefault();
-      window.location.assign(tab.href);
-    }
+  const handleTabPointerUp = (tab: Tab) => (event: PointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    handleTabActivate(tab);
   };
 
   const nav = (
@@ -178,7 +196,9 @@ function MobileBottomNavInner() {
         left: 0,
         right: 0,
         bottom: 0,
-        zIndex: 10050,
+        zIndex: 2147483000,
+        isolation: "isolate",
+        transform: "translateZ(0)",
         display: "flex",
         alignItems: "stretch",
         justifyContent: "space-around",
@@ -197,13 +217,13 @@ function MobileBottomNavInner() {
         const active = activeId === tab.id;
         const showPro = tab.pro && !isPro;
         return (
-          <a
+          <button
             key={tab.id}
-            href={tab.href}
+            type="button"
             aria-label={tab.label}
             aria-current={active ? "page" : undefined}
-            onClick={handleTabClick(tab)}
-            className="flex-1 flex flex-col items-center justify-center gap-0.5 no-underline"
+            onPointerUp={handleTabPointerUp(tab)}
+            className="flex-1 flex flex-col items-center justify-center gap-0.5"
             style={{
               color: active ? "#60a5fa" : "#94a3b8",
               transition: "color 120ms ease",
@@ -271,7 +291,7 @@ function MobileBottomNavInner() {
             >
               {tab.label}
             </span>
-          </a>
+          </button>
         );
       })}
     </nav>
