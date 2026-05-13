@@ -266,6 +266,20 @@
 
 
 /* Pulse ring animation for new incidents */
+@keyframes feed-incident-enter {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.feed-incident-new {
+  animation: feed-incident-enter 0.35s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feed-incident-new {
+    animation: none;
+  }
+}
 @keyframes pulse-ring {
   0% { transform: scale(0.8); opacity: 1; }
   100% { transform: scale(2.5); opacity: 0; }
