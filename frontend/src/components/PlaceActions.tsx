@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import {
   Navigation,
   CornerUpRight,
@@ -29,6 +29,7 @@ import {
   useSavedDestinations,
   type SavedCategory,
 } from "@/hooks/useSavedDestinations";
+import { placesMatch } from "@/lib/saved-place-match";
 import { requestUpgrade } from "@/lib/upgrade";
 
 interface Props {
@@ -82,6 +83,7 @@ export default function PlaceActions({
 }: Props) {
   const [toast, setToast] = useState<ToastKind>(null);
   const [savePickerOpen, setSavePickerOpen] = useState(false);
+  const [pendingSave, setPendingSave] = useState(false);
   const { canSave, addDestination, removeDestination, destinations } = useSavedDestinations();
   // We only show "Add as stop" when the user is mid-route-planning or
   // mid-trip — otherwise the button is confusing for users who haven't
@@ -103,12 +105,16 @@ export default function PlaceActions({
   const coordStr = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
   const displayLabel = label?.trim() || coordStr;
 
-  const isSaved = destinations.some(
-    (d) => Math.abs(d.lat - lat) < 1e-5 && Math.abs(d.lng - lng) < 1e-5
+  const savedMatch = useMemo(
+    () => destinations.find((d) => placesMatch(d.lat, d.lng, lat, lng)),
+    [destinations, lat, lng],
   );
-  const savedMatch = destinations.find(
-    (d) => Math.abs(d.lat - lat) < 1e-5 && Math.abs(d.lng - lng) < 1e-5
-  );
+  const isSaved = Boolean(savedMatch);
+  const showSaved = isSaved || pendingSave;
+
+  useEffect(() => {
+    if (isSaved) setPendingSave(false);
+  }, [isSaved]);
 
   const onCopyCoords = useCallback(async () => {
     haptic();
@@ -178,11 +184,13 @@ export default function PlaceActions({
   const onSaveAs = useCallback(async (cat: SavedCategory) => {
     haptic();
     if (!canSave) return;
+    setPendingSave(true);
     try {
       await addDestination(displayLabel, lat, lng, cat);
       setSavePickerOpen(false);
       flashToast("saved");
     } catch (e) {
+      setPendingSave(false);
       if (e instanceof SavedPlaceLimitError) {
         setSavePickerOpen(false);
         requestUpgrade(e.feature);
@@ -191,6 +199,15 @@ export default function PlaceActions({
       }
     }
   }, [canSave, addDestination, displayLabel, lat, lng, flashToast, haptic]);
+
+  const onBookmarkClick = useCallback(() => {
+    haptic();
+    if (showSaved) {
+      setSavePickerOpen((open) => !open);
+      return;
+    }
+    void onSaveAs("favorite");
+  }, [haptic, onSaveAs, showSaved]);
 
   const onRemoveSaved = useCallback(async () => {
     if (!savedMatch) return;
@@ -398,22 +415,33 @@ export default function PlaceActions({
           <div className="relative shrink-0">
             <button
               type="button"
-              onClick={() => setSavePickerOpen((v) => !v)}
-              title={isSaved ? "Saved · tap to change or remove" : "Save place"}
-              aria-label={isSaved ? "Saved place options" : "Save this place"}
+              onClick={onBookmarkClick}
+              title={
+                showSaved
+                  ? "Saved · tap to change or remove"
+                  : "Save as favorite · right-click for more categories"
+              }
+              aria-label={showSaved ? "Saved place options" : "Save this place as favorite"}
               aria-haspopup="menu"
               aria-expanded={savePickerOpen}
+              aria-pressed={showSaved}
               className={btn}
               style={{
                 ...btnStyle,
-                color: isSaved ? "#3b82f6" : btnStyle.color,
-                background: isSaved ? "rgba(59,130,246,0.12)" : btnStyle.background,
-                borderColor: isSaved ? "rgba(59,130,246,0.35)" : (btnStyle.border as string),
+                color: showSaved ? "#3b82f6" : btnStyle.color,
+                background: showSaved ? "rgba(59,130,246,0.12)" : btnStyle.background,
+                borderColor: showSaved ? "rgba(59,130,246,0.35)" : (btnStyle.border as string),
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setSavePickerOpen(true);
               }}
             >
               <Bookmark
                 className="w-4 h-4"
-                {...(isSaved ? { fill: "currentColor" } : {})}
+                fill={showSaved ? "currentColor" : "none"}
+                stroke="currentColor"
+                strokeWidth={showSaved ? 1.5 : 2}
               />
             </button>
             {savePickerOpen && (
@@ -426,7 +454,7 @@ export default function PlaceActions({
                 }}
                 onMouseLeave={() => setSavePickerOpen(false)}
               >
-                {isSaved && (
+                {showSaved && (
                   <button
                     role="menuitem"
                     type="button"

@@ -15,6 +15,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
+import { placesMatch } from "@/lib/saved-place-match";
 import { useAuth } from "@/contexts/AuthContext";
 
 /** Built-in categories pinned at top of the list. `custom` is everything
@@ -175,14 +176,39 @@ export function useSavedDestinations() {
           existing.map((d) => deleteDoc(doc(db, "users", user!.uid, "savedDestinations", d.id)))
         );
       }
-      await addDoc(col, {
+      const optimisticId = `optimistic-${Date.now()}`;
+      const optimistic: SavedDestination = {
+        id: optimisticId,
         name,
         lat,
         lng,
         category,
         listId: category === "custom" ? listId : null,
-        createdAt: serverTimestamp(),
+        createdAt: new Date().toISOString(),
+      };
+      setDestinations((prev) => {
+        const withoutSameSpot = prev.filter(
+          (d) => !placesMatch(d.lat, d.lng, lat, lng),
+        );
+        const withoutSingleton =
+          category === "home" || category === "work"
+            ? withoutSameSpot.filter((d) => d.category !== category)
+            : withoutSameSpot;
+        return [optimistic, ...withoutSingleton];
       });
+      try {
+        await addDoc(col, {
+          name,
+          lat,
+          lng,
+          category,
+          listId: category === "custom" ? listId : null,
+          createdAt: serverTimestamp(),
+        });
+      } catch (error) {
+        setDestinations((prev) => prev.filter((d) => d.id !== optimisticId));
+        throw error;
+      }
     },
     [canSave, user, destinations, isPro, customCount]
   );
@@ -190,10 +216,17 @@ export function useSavedDestinations() {
   const removeDestination = useCallback(
     async (destId: string) => {
       if (!canSave) return;
+      const previous = destinations;
+      setDestinations((prev) => prev.filter((d) => d.id !== destId));
       const db = getFirestore(getFirebaseApp());
-      await deleteDoc(doc(db, "users", user!.uid, "savedDestinations", destId));
+      try {
+        await deleteDoc(doc(db, "users", user!.uid, "savedDestinations", destId));
+      } catch (error) {
+        setDestinations(previous);
+        throw error;
+      }
     },
-    [canSave, user]
+    [canSave, user, destinations]
   );
 
   const setCategory = useCallback(
