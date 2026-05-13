@@ -1,11 +1,16 @@
 "use client";
 
-import { useState, useRef, useMemo } from "react";
+import { useState, useMemo } from "react";
 import type { Incident } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
 import { incidentHeadline, incidentLocationLabel } from "@/lib/incident-display";
 import IncidentThumbnail from "./IncidentThumbnail";
 import IncidentDetail from "./IncidentDetail";
+import FeedIncidentSkeleton from "./FeedIncidentSkeleton";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { haptic } from "@/lib/native";
+import { toggleFeedAudio } from "./FeedAudioMiniPlayer";
+import { Drawer } from "vaul";
 import {
   AlertTriangle,
   Flame,
@@ -20,7 +25,6 @@ import {
   Pause,
   Map,
 } from "lucide-react";
-import { incidentAudioSources } from "@/lib/public-api-base";
 import { resolveBlipKind, monoGlyphSvg } from "./IncidentMap";
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
@@ -85,17 +89,25 @@ interface Props {
   incidents: Incident[];
   selectedId: string | null;
   onSelect: (id: string) => void;
-  /** Opens the in-app map focused on this incident. */
   onViewOnMap?: (id: string) => void;
-  /**
-   * When true, each row renders a real OSM map thumbnail (≈110×72)
-   * on the right rail instead of the tiny dot-on-rect placeholder.
-   * Used by the full-screen `/feed` route. The sidebar feed (which
-   * lives next to a real map) keeps the placeholder to save space.
-   */
   showMapThumbnail?: boolean;
   sortMode?: "recent" | "near";
   userLoc?: { lat: number; lng: number } | null;
+  density?: "compact" | "immersive";
+  loading?: boolean;
+  newIncidentIds?: Set<string>;
+}
+
+function haversineMi(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 3958.8;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function IncidentCard({
@@ -104,71 +116,48 @@ function IncidentCard({
   onSelect,
   onViewOnMap,
   showMapThumbnail,
+  density = "compact",
+  userLoc,
+  isNew,
+  showInlineDetail = true,
 }: {
   inc: Incident;
   isSelected: boolean;
   onSelect: () => void;
   onViewOnMap?: (id: string) => void;
   showMapThumbnail?: boolean;
+  density?: "compact" | "immersive";
+  userLoc?: { lat: number; lng: number } | null;
+  isNew?: boolean;
+  showInlineDetail?: boolean;
 }) {
   const sev = getSeverity(inc.severity_category);
   const isHighSev = inc.s_base >= 0.7;
   const confidencePct = Math.round(inc.confidence * 100);
   const [playing, setPlaying] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const immersive = density === "immersive";
   const headline = incidentHeadline(inc);
   const locationLabel = incidentLocationLabel(inc);
   const canViewOnMap = inc.lat != null && inc.lng != null && !!onViewOnMap;
+  const distanceMi =
+    userLoc && inc.lat != null && inc.lng != null
+      ? haversineMi(userLoc.lat, userLoc.lng, inc.lat, inc.lng)
+      : null;
 
   const confColor =
     confidencePct >= 70 ? "#22c55e" : confidencePct >= 40 ? "#f59e0b" : "#ef4444";
 
   const openOnMap = (event: React.MouseEvent) => {
     event.stopPropagation();
+    void haptic("light");
     if (canViewOnMap) onViewOnMap?.(inc.id);
   };
 
   const toggleAudio = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const sources = incidentAudioSources(inc);
-    if (sources.length === 0) return;
-
-    if (!audioRef.current) {
-      const audio = new Audio(sources[0]);
-      let currentIdx = 0;
-
-      const attemptPlay = () => {
-        audio.play().then(() => setPlaying(true)).catch(() => {
-          currentIdx++;
-          if (currentIdx < sources.length) {
-            audio.src = sources[currentIdx];
-            attemptPlay();
-          } else {
-            setPlaying(false);
-          }
-        });
-      };
-
-      audio.addEventListener("ended", () => setPlaying(false));
-      audio.addEventListener("error", () => {
-        currentIdx++;
-        if (currentIdx < sources.length) {
-          audio.src = sources[currentIdx];
-          attemptPlay();
-        } else {
-          setPlaying(false);
-        }
-      });
-
-      audioRef.current = audio;
-      attemptPlay();
-    } else if (playing) {
-      audioRef.current.pause();
-      setPlaying(false);
-    } else {
-      audioRef.current.play().catch(() => setPlaying(false));
-      setPlaying(true);
-    }
+    void haptic("light");
+    toggleFeedAudio(inc, headline);
+    setPlaying(true);
   };
 
   const supportingText =
@@ -180,44 +169,57 @@ function IncidentCard({
 
   return (
     <div
-      className={`group relative rounded-lg text-left transition-all duration-200 ${
-        isSelected ? "bg-white/10 ring-1 ring-white/10" : "hover:bg-white/5"
+      className={`group relative text-left transition-all duration-200 ${
+        immersive ? "rounded-2xl mx-2 my-1.5 border border-white/5" : "rounded-lg"
+      } ${isSelected ? "bg-white/10 ring-1 ring-white/10" : "hover:bg-white/5"} ${
+        isNew ? "feed-incident-new" : ""
       }`}
       style={{ opacity: baseOpacity }}
     >
       <div
-        onClick={onSelect}
-        className="flex items-start gap-2.5 px-3 py-2.5 cursor-pointer"
+        onClick={() => {
+          void haptic("selection");
+          onSelect();
+        }}
+        className={`flex items-start gap-2.5 cursor-pointer ${immersive ? "px-4 py-3.5" : "px-3 py-2.5"}`}
         role="button"
         tabIndex={0}
         aria-expanded={isSelected}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
+            void haptic("selection");
             onSelect();
           }
         }}
       >
         <div
-          className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full transition-opacity"
+          className={`absolute left-0 w-[3px] rounded-full transition-opacity ${
+            immersive ? "top-0 bottom-0" : "top-2 bottom-2"
+          }`}
           style={{ backgroundColor: sev.markerColor, opacity: isSelected ? 1 : 0.4 }}
         />
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 mb-0.5">
             <span
-              className="text-[11px] font-bold uppercase tracking-wider"
+              className={`font-bold uppercase tracking-wider ${immersive ? "text-xs" : "text-[11px]"}`}
               style={{ color: sev.markerColor }}
             >
               {sev.label}
             </span>
-            {isHighSev && (
-              <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
+            {isNew && (
+              <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">
+                New
+              </span>
             )}
+            {isHighSev && <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />}
           </div>
 
           <p
-            className={`text-sm font-semibold leading-snug ${isSelected ? "" : "line-clamp-2"}`}
+            className={`font-semibold leading-snug ${immersive ? "text-base" : "text-sm"} ${
+              isSelected ? "" : "line-clamp-2"
+            }`}
             style={{ color: "var(--panel-text, rgba(255,255,255,0.92))" }}
           >
             {headline}
@@ -229,6 +231,11 @@ function IncidentCard({
           >
             <MapPin className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }} />
             <span className="truncate">{locationLabel}</span>
+            {distanceMi != null && (
+              <span className="shrink-0 font-mono text-[10px]" style={{ color: "#60a5fa" }}>
+                {distanceMi < 0.1 ? "<0.1" : distanceMi.toFixed(1)} mi
+              </span>
+            )}
           </div>
 
           {supportingText && !isSelected && (
@@ -245,9 +252,7 @@ function IncidentCard({
               <button
                 onClick={toggleAudio}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium transition-all ${
-                  playing
-                    ? "bg-blue-500 text-white"
-                    : "bg-blue-500/15 text-blue-400 hover:bg-blue-500/25"
+                  playing ? "bg-blue-500 text-white" : "bg-blue-500/15 text-blue-400 hover:bg-blue-500/25"
                 }`}
               >
                 {playing ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
@@ -265,10 +270,7 @@ function IncidentCard({
                 title={canViewOnMap ? "View on map" : undefined}
                 aria-label={canViewOnMap ? "View on map" : undefined}
               >
-                <div
-                  className="w-full h-full relative"
-                  style={{ background: "var(--panel-input-bg, rgba(255,255,255,0.05))" }}
-                >
+                <div className="w-full h-full relative" style={{ background: "var(--panel-input-bg, rgba(255,255,255,0.05))" }}>
                   <div
                     className="absolute w-1.5 h-1.5 rounded-full"
                     style={{
@@ -283,14 +285,8 @@ function IncidentCard({
               </button>
             )}
 
-            <div
-              className="h-1 flex-1 rounded-full overflow-hidden"
-              style={{ background: "var(--panel-input-bg, rgba(255,255,255,0.05))" }}
-            >
-              <div
-                className="h-full rounded-full"
-                style={{ width: `${confidencePct}%`, backgroundColor: confColor }}
-              />
+            <div className="h-1 flex-1 rounded-full overflow-hidden" style={{ background: "var(--panel-input-bg, rgba(255,255,255,0.05))" }}>
+              <div className="h-full rounded-full" style={{ width: `${confidencePct}%`, backgroundColor: confColor }} />
             </div>
             <span className="text-[10px] font-mono shrink-0" style={{ color: confColor }}>
               {confidencePct}%
@@ -304,8 +300,8 @@ function IncidentCard({
               <IncidentThumbnail
                 lat={inc.lat}
                 lng={inc.lng}
-                width={110}
-                height={72}
+                width={immersive ? 128 : 110}
+                height={immersive ? 84 : 72}
                 svgGlyph={monoGlyphSvg(resolveBlipKind(inc), inc.id)}
                 onClick={canViewOnMap ? openOnMap : undefined}
                 title={canViewOnMap ? "View on map" : undefined}
@@ -334,10 +330,7 @@ function IncidentCard({
           {(inc.mention_count ?? 0) > 1 && inc.last_mention_at && (
             <span
               className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-              style={{
-                background: "rgba(59,130,246,0.15)",
-                color: "#60a5fa",
-              }}
+              style={{ background: "rgba(59,130,246,0.15)", color: "#60a5fa" }}
               title={`${inc.mention_count} scanner mentions`}
             >
               +{(inc.mention_count ?? 1) - 1} upd · {timeAgo(inc.last_mention_at)}
@@ -346,20 +339,14 @@ function IncidentCard({
         </div>
       </div>
 
-      {isSelected && (
-        <div
-          className="px-3 pb-3 space-y-2"
-          onClick={(event) => event.stopPropagation()}
-        >
+      {isSelected && showInlineDetail && (
+        <div className="px-3 pb-3 space-y-2" onClick={(event) => event.stopPropagation()}>
           {canViewOnMap && (
             <button
               type="button"
               onClick={openOnMap}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium transition-colors hover:bg-blue-500/25"
-              style={{
-                background: "rgba(59,130,246,0.15)",
-                color: "#60a5fa",
-              }}
+              style={{ background: "rgba(59,130,246,0.15)", color: "#60a5fa" }}
             >
               <Map className="w-3.5 h-3.5" />
               View on map
@@ -390,8 +377,14 @@ export default function IncidentFeed({
   showMapThumbnail,
   sortMode = "recent",
   userLoc,
+  density = "compact",
+  loading = false,
+  newIncidentIds,
 }: Props) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const isMobile = useIsMobile();
+  const immersive = density === "immersive";
+  const selected = incidents.find((i) => i.id === selectedId) ?? null;
 
   const blocks = useMemo(() => {
     if (sortMode === "near" && userLoc) {
@@ -406,6 +399,10 @@ export default function IncidentFeed({
     return groupByTimeBlocks(incidents);
   }, [incidents, sortMode, userLoc]);
 
+  if (loading && incidents.length === 0) {
+    return <FeedIncidentSkeleton immersive={immersive} />;
+  }
+
   if (incidents.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 gap-3">
@@ -417,49 +414,75 @@ export default function IncidentFeed({
     );
   }
 
+  const renderCard = (inc: Incident) => (
+    <IncidentCard
+      key={inc.id}
+      inc={inc}
+      isSelected={inc.id === selectedId}
+      onSelect={() => onSelect(inc.id)}
+      onViewOnMap={onViewOnMap}
+      showMapThumbnail={showMapThumbnail}
+      density={density}
+      userLoc={userLoc}
+      isNew={newIncidentIds?.has(inc.id)}
+      showInlineDetail={!immersive || !isMobile}
+    />
+  );
+
   return (
-    <div className="flex flex-col gap-0.5">
-      {blocks.map((block) => {
-        const isCollapsed = collapsed[block.label] ?? false;
-        return (
-          <div key={block.label}>
-            <button
-              onClick={() =>
-                setCollapsed((prev) => ({ ...prev, [block.label]: !isCollapsed }))
-              }
-              className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors"
-              style={{ color: "var(--panel-text-secondary, rgba(255,255,255,0.6))" }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover, rgba(255,255,255,0.03))")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+    <>
+      <div className="flex flex-col gap-0.5">
+        {blocks.map((block) => {
+          const isCollapsed = immersive ? false : (collapsed[block.label] ?? false);
+          return (
+            <div key={block.label}>
+              {immersive ? (
+                <div
+                  className="sticky top-0 z-10 px-4 py-2 flex items-center gap-2 backdrop-blur-md"
+                  style={{ background: "color-mix(in srgb, var(--panel-bg) 88%, transparent)" }}
+                >
+                  <span className="text-[11px] font-bold uppercase tracking-wider flex-1" style={{ color: "var(--panel-text-secondary)" }}>
+                    {block.label}
+                  </span>
+                  <span className="text-[11px] font-mono px-2 py-0.5 rounded-full" style={{ background: "var(--panel-input-bg)" }}>
+                    {block.incidents.length}
+                  </span>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setCollapsed((prev) => ({ ...prev, [block.label]: !isCollapsed }))}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors"
+                  style={{ color: "var(--panel-text-secondary, rgba(255,255,255,0.6))" }}
+                >
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
+                  <span className="text-[11px] font-bold uppercase tracking-wider flex-1">{block.label}</span>
+                  <span className="text-[11px] font-mono px-2 py-0.5 rounded-full" style={{ background: "var(--panel-input-bg, rgba(255,255,255,0.05))" }}>
+                    {block.incidents.length}
+                  </span>
+                </button>
+              )}
+              {!isCollapsed && block.incidents.map(renderCard)}
+            </div>
+          );
+        })}
+        {loading && <FeedIncidentSkeleton count={2} immersive={immersive} />}
+      </div>
+
+      {selected && immersive && isMobile && (
+        <Drawer.Root open onOpenChange={(open) => { if (!open) onSelect(selected.id); }}>
+          <Drawer.Portal>
+            <Drawer.Overlay className="fixed inset-0 z-[3000] bg-black/40" />
+            <Drawer.Content
+              className="fixed left-0 right-0 bottom-0 z-[3001] rounded-t-2xl p-4 max-h-[85dvh] overflow-y-auto"
+              style={{ background: "var(--panel-bg)", borderTop: "1px solid var(--panel-border)" }}
             >
-              <ChevronDown
-                className={`w-3.5 h-3.5 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
-              />
-              <span className="text-[11px] font-bold uppercase tracking-wider flex-1">
-                {block.label}
-              </span>
-              <span
-                className="text-[11px] font-mono px-2 py-0.5 rounded-full"
-                style={{ background: "var(--panel-input-bg, rgba(255,255,255,0.05))" }}
-              >
-                {block.incidents.length}
-              </span>
-            </button>
-            {!isCollapsed &&
-              block.incidents.map((inc) => (
-                <IncidentCard
-                  key={inc.id}
-                  inc={inc}
-                  isSelected={inc.id === selectedId}
-                  onSelect={() => onSelect(inc.id)}
-                  onViewOnMap={onViewOnMap}
-                  showMapThumbnail={showMapThumbnail}
-                />
-              ))}
-          </div>
-        );
-      })}
-    </div>
+              <Drawer.Title className="sr-only">Incident details</Drawer.Title>
+              <IncidentDetail incident={selected} onClose={() => onSelect(selected.id)} />
+            </Drawer.Content>
+          </Drawer.Portal>
+        </Drawer.Root>
+      )}
+    </>
   );
 }
 

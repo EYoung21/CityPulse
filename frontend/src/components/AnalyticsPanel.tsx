@@ -40,6 +40,13 @@ import {
   calendarGrid,
   categoryDisplay,
   incidentsToCsv,
+  mentionVelocity,
+  confidenceTrend,
+  inhibitorTrend,
+  feedMixWeighted,
+  geoDensityGrid,
+  routeSafetyByHour,
+  incidentsNearRoute,
 } from "@/lib/analytics";
 import Sparkline from "@/components/charts/Sparkline";
 import TimeGrid from "@/components/charts/TimeGrid";
@@ -59,7 +66,7 @@ import {
 } from "@/lib/neighborhoods";
 import { getCurrentCity } from "@/lib/pulse-cities";
 
-type TabId = "overview" | "hotspots" | "categories" | "timing" | "quality";
+type TabId = "overview" | "hotspots" | "categories" | "timing" | "quality" | "routes";
 type ScopeKind = "city" | "district" | "neighborhood";
 
 const TIME_WINDOWS: { label: string; hours: number }[] = [
@@ -76,6 +83,7 @@ const TABS: { id: TabId; label: string; Icon: typeof BarChart3 }[] = [
   { id: "categories", label: "Categories",   Icon: LayersIcon },
   { id: "timing",     label: "Timing",       Icon: Clock },
   { id: "quality",    label: "Data quality", Icon: Database },
+  { id: "routes",     label: "Routes",       Icon: Activity },
 ];
 
 interface Props {
@@ -89,6 +97,7 @@ interface Props {
   areaName?: string;
   /** Lookup so the Feeds breakdown can show pretty names instead of raw ids. */
   feedLabels?: Record<string, string>;
+  routeGeometry?: [number, number][];
   onClose: () => void;
 }
 
@@ -97,6 +106,7 @@ export default function AnalyticsPanel({
   areaIncidents,
   areaName,
   feedLabels = {},
+  routeGeometry,
   onClose,
 }: Props) {
   const [windowHours, setWindowHours] = useState<number>(24 * 30);
@@ -198,6 +208,19 @@ export default function AnalyticsPanel({
   const quality = useMemo(() => dataQuality(scoped), [scoped]);
   const activeNow = useMemo(() => activeNowCount(scoped, 30), [scoped]);
   const calendar = useMemo(() => calendarGrid(scoped, 12), [scoped]);
+  const mentions = useMemo(() => mentionVelocity(scoped, Number.isFinite(windowHours) ? windowHours : 24 * 7), [scoped, windowHours]);
+  const confTrend = useMemo(() => confidenceTrend(scoped, 14), [scoped]);
+  const inhibTrend = useMemo(() => inhibitorTrend(scoped, 14), [scoped]);
+  const feedsWeighted = useMemo(() => feedMixWeighted(scoped, feedLabels), [scoped, feedLabels]);
+  const geoCells = useMemo(() => geoDensityGrid(scoped, 2).slice(0, 12), [scoped]);
+  const routeHours = useMemo(
+    () => (routeGeometry && routeGeometry.length > 1 ? routeSafetyByHour(routeGeometry, scoped) : null),
+    [routeGeometry, scoped]
+  );
+  const routeIncidents = useMemo(
+    () => (routeGeometry && routeGeometry.length > 1 ? incidentsNearRoute(routeGeometry, scoped).slice(0, 8) : []),
+    [routeGeometry, scoped]
+  );
 
   const totalCount = scoped.length;
   const sevSum = useMemo(() => sevIndex.reduce((s, v) => s + v, 0), [sevIndex]);
@@ -438,7 +461,7 @@ export default function AnalyticsPanel({
       </div>
 
       {/* ── Body ──────────────────────────────────────────────────────── */}
-      <div ref={exportTargetRef} className="p-4 space-y-5">
+      <div ref={exportTargetRef} className="p-4 space-y-5 max-h-[min(72vh,900px)] overflow-y-auto">
         {totalCount === 0 ? (
           <EmptyState scopeLabel={scopeLabel} />
         ) : tab === "overview" ? (
@@ -454,10 +477,12 @@ export default function AnalyticsPanel({
             comparison={comparison}
             hasComparison={comparison !== null}
             windowHours={windowHours}
+            mentions={mentions}
           />
         ) : tab === "hotspots" ? (
           <Hotspots
             hotspots={hotspots}
+            geoCells={geoCells}
             scopeKind={scopeKind}
             districts={districts}
             neighborhoods={neighborhoods}
@@ -470,8 +495,20 @@ export default function AnalyticsPanel({
           <CategoriesTab trends={trends} dayNight={dayNight} />
         ) : tab === "timing" ? (
           <TimingTab grid={grid} calendar={calendar} hours={hours} quietWindow={quietWindow} />
+        ) : tab === "routes" ? (
+          <RoutesTab
+            routeHours={routeHours}
+            routeIncidents={routeIncidents}
+            hasRoute={Boolean(routeGeometry && routeGeometry.length > 1)}
+          />
         ) : (
-          <QualityTab feeds={feeds} quality={quality} />
+          <QualityTab
+            feeds={feeds}
+            feedsWeighted={feedsWeighted}
+            quality={quality}
+            confTrend={confTrend}
+            inhibTrend={inhibTrend}
+          />
         )}
       </div>
     </div>
@@ -513,6 +550,7 @@ interface OverviewProps {
   comparison: ReturnType<typeof areaVsCityComparison> | null;
   hasComparison: boolean;
   windowHours: number;
+  mentions: ReturnType<typeof mentionVelocity>;
 }
 
 function Overview({
@@ -527,6 +565,7 @@ function Overview({
   comparison,
   hasComparison,
   windowHours,
+  mentions,
 }: OverviewProps) {
   return (
     <div className="space-y-5">
@@ -546,10 +585,10 @@ function Overview({
           hint="live scanner threads"
         />
         <Stat
-          label="Quietest window"
-          value={`${formatHour(quietWindow.startHour)}–${formatHour(quietWindow.endHour)}`}
-          icon={<Moon className="w-3.5 h-3.5" />}
-          hint={`~${quietWindow.avgIncidents.toFixed(1)} / hr`}
+          label="Heating up"
+          value={mentions.heatingCount}
+          icon={<Activity className="w-3.5 h-3.5" />}
+          hint={`${mentions.recentUpdates} mention updates`}
         />
       </div>
 
@@ -691,6 +730,7 @@ function Overview({
 
 interface HotspotsProps {
   hotspots: ReturnType<typeof topHotspots>;
+  geoCells: ReturnType<typeof geoDensityGrid>;
   scopeKind: ScopeKind;
   districts: District[];
   neighborhoods: Neighborhood[];
@@ -702,6 +742,7 @@ interface HotspotsProps {
 
 function Hotspots({
   hotspots,
+  geoCells,
   scopeKind,
   districts,
   neighborhoods,
@@ -802,6 +843,28 @@ function Hotspots({
               );
             })}
           </ol>
+        </Section>
+      )}
+
+      {geoCells.length > 0 && (
+        <Section title="Geo density" icon={<Grid3X3 className="w-3.5 h-3.5" />}>
+          <div className="space-y-1">
+            {geoCells.map((cell) => (
+              <button
+                key={cell.key}
+                type="button"
+                onClick={() => onFocusPoint(cell.lat, cell.lng)}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left hover:bg-white/5 transition-colors"
+              >
+                <span className="text-[11px] flex-1 font-mono" style={{ color: "var(--panel-text-secondary)" }}>
+                  {cell.lat.toFixed(2)}, {cell.lng.toFixed(2)}
+                </span>
+                <span className="text-[11px] font-mono" style={{ color: "var(--panel-text)" }}>
+                  {cell.count}
+                </span>
+              </button>
+            ))}
+          </div>
         </Section>
       )}
 
@@ -1008,12 +1071,58 @@ function TimingTab({
 // Data quality tab
 // ──────────────────────────────────────────────────────────────────────────
 
+function RoutesTab({
+  routeHours,
+  routeIncidents,
+  hasRoute,
+}: {
+  routeHours: number[] | null;
+  routeIncidents: Incident[];
+  hasRoute: boolean;
+}) {
+  if (!hasRoute || !routeHours) {
+    return (
+      <div className="rounded-lg p-6 text-center" style={{ background: "var(--panel-input-bg)" }}>
+        <p className="text-sm" style={{ color: "var(--panel-text-secondary)" }}>
+          Plan a route on the map to see corridor safety by hour.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-5">
+      <Section title="Incidents along route" icon={<Activity className="w-3.5 h-3.5" />}>
+        {routeIncidents.length === 0 ? (
+          <p className="text-[11px]" style={{ color: "var(--panel-text-muted)" }}>No incidents in the route buffer for this window.</p>
+        ) : (
+          <ol className="space-y-1">
+            {routeIncidents.map((inc) => (
+              <li key={inc.id} className="text-[11px] truncate" style={{ color: "var(--panel-text-secondary)" }}>
+                {categoryDisplay(inc.severity_category)} · {inc.location_text || "Unknown location"}
+              </li>
+            ))}
+          </ol>
+        )}
+      </Section>
+      <Section title="Hour-of-day along corridor" icon={<Clock className="w-3.5 h-3.5" />}>
+        <Sparkline data={routeHours} color="#f59e0b" width={300} height={40} filled />
+      </Section>
+    </div>
+  );
+}
+
 function QualityTab({
   feeds,
+  feedsWeighted,
   quality,
+  confTrend,
+  inhibTrend,
 }: {
   feeds: ReturnType<typeof feedMix>;
+  feedsWeighted: ReturnType<typeof feedMixWeighted>;
   quality: ReturnType<typeof dataQuality>;
+  confTrend: ReturnType<typeof confidenceTrend>;
+  inhibTrend: ReturnType<typeof inhibitorTrend>;
 }) {
   return (
     <div className="space-y-5">
@@ -1129,13 +1238,39 @@ function QualityTab({
           </div>
         )}
       </Section>
+
+      <Section title="Confidence trend (14d)" icon={<TrendingUp className="w-3.5 h-3.5" />}>
+        <Sparkline data={confTrend.map((p) => p.confidence)} color="#22c55e" width={300} height={40} filled />
+      </Section>
+
+      {inhibTrend.length > 0 && (
+        <Section title="Inhibitor reasons (14d)" icon={<Database className="w-3.5 h-3.5" />}>
+          <div className="space-y-1">
+            {inhibTrend.slice(0, 6).map((row) => (
+              <div key={row.reason} className="flex items-center justify-between text-[11px]">
+                <span style={{ color: "var(--panel-text-secondary)" }}>{row.reason}</span>
+                <span className="font-mono" style={{ color: "var(--panel-text)" }}>{row.count}</span>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {feedsWeighted.length > 0 && (
+        <Section title="Severity-weighted feeds" icon={<Radio className="w-3.5 h-3.5" />}>
+          <div className="space-y-1">
+            {feedsWeighted.slice(0, 6).map((f) => (
+              <div key={f.feedId} className="flex items-center gap-2 text-[11px]">
+                <span className="flex-1 truncate" style={{ color: "var(--panel-text-secondary)" }}>{f.label}</span>
+                <span className="font-mono" style={{ color: "var(--panel-text)" }}>{Math.round(f.share * 100)}%</span>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
     </div>
   );
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Small shared bits
-// ──────────────────────────────────────────────────────────────────────────
 
 function Section({
   title,

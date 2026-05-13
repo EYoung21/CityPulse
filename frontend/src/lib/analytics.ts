@@ -645,3 +645,148 @@ export function incidentsToCsv(incidents: Incident[]): string {
   );
   return [headers.join(","), ...rows].join("\n");
 }
+
+export interface MentionVelocity {
+  heatingCount: number;
+  meanMentions: number;
+  recentUpdates: number;
+}
+
+export function mentionVelocity(incidents: Incident[], windowHours: number = 24): MentionVelocity {
+  const cutoff = Date.now() - windowHours * 60 * 60 * 1000;
+  let heatingCount = 0;
+  let mentionSum = 0;
+  let recentUpdates = 0;
+  let n = 0;
+  for (const inc of incidents) {
+    const t = Date.parse(inc.reported_at);
+    if (!Number.isFinite(t) || t < cutoff) continue;
+    n++;
+    const m = inc.mention_count ?? 1;
+    mentionSum += m;
+    if (m >= 2) {
+      const last = inc.last_mention_at ? Date.parse(inc.last_mention_at) : t;
+      if (Number.isFinite(last) && last >= Date.now() - 30 * 60 * 1000) heatingCount++;
+      if (m > 1) recentUpdates += m - 1;
+    }
+  }
+  return {
+    heatingCount,
+    meanMentions: n > 0 ? mentionSum / n : 0,
+    recentUpdates,
+  };
+}
+
+export interface DailyTrendPoint {
+  date: string;
+  confidence: number;
+  geocodedShare: number;
+}
+
+export function confidenceTrend(incidents: Incident[], days: number = 14): DailyTrendPoint[] {
+  const now = Date.now();
+  const keys: string[] = [];
+  const buckets = new Map<string, { conf: number[]; geo: number; total: number }>();
+  for (let d = 0; d < days; d++) {
+    const dt = new Date(now - (days - 1 - d) * DAY_MS);
+    const key = dt.toISOString().slice(0, 10);
+    keys.push(key);
+    buckets.set(key, { conf: [], geo: 0, total: 0 });
+  }
+  for (const inc of incidents) {
+    const t = Date.parse(inc.reported_at);
+    if (!Number.isFinite(t)) continue;
+    const key = new Date(t).toISOString().slice(0, 10);
+    const b = buckets.get(key);
+    if (!b) continue;
+    b.total++;
+    if (typeof inc.confidence === "number") b.conf.push(inc.confidence);
+    if (inc.lat != null && inc.lng != null) b.geo++;
+  }
+  return keys.map((date) => {
+    const b = buckets.get(date)!;
+    const conf = b.conf.length
+      ? b.conf.reduce((s, v) => s + v, 0) / b.conf.length
+      : 0;
+    return {
+      date,
+      confidence: conf,
+      geocodedShare: b.total > 0 ? b.geo / b.total : 0,
+    };
+  });
+}
+
+export interface InhibitorTrendRow {
+  reason: string;
+  count: number;
+}
+
+export function inhibitorTrend(incidents: Incident[], days: number = 14): InhibitorTrendRow[] {
+  const cutoff = Date.now() - days * DAY_MS;
+  const counts = new Map<string, number>();
+  for (const inc of incidents) {
+    const t = Date.parse(inc.reported_at);
+    if (!Number.isFinite(t) || t < cutoff) continue;
+    const reason = inc.inhibitor_reason || inc.inhibitor_status || "unknown";
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+export interface FeedWeightShare {
+  feedId: string;
+  label: string;
+  count: number;
+  severityWeight: number;
+  share: number;
+}
+
+export function feedMixWeighted(
+  incidents: Incident[],
+  feedLabels: Record<string, string> = {}
+): FeedWeightShare[] {
+  const rows = new Map<string, { count: number; weight: number }>();
+  let total = 0;
+  for (const inc of incidents) {
+    if (!inc.feed_id) continue;
+    const w = Math.max(0, Number(inc.s_base) || 0);
+    const acc = rows.get(inc.feed_id) ?? { count: 0, weight: 0 };
+    acc.count++;
+    acc.weight += w;
+    rows.set(inc.feed_id, acc);
+    total += w;
+  }
+  if (total === 0) return [];
+  return Array.from(rows.entries())
+    .map(([feedId, acc]) => ({
+      feedId,
+      label: feedLabels[feedId] || feedId,
+      count: acc.count,
+      severityWeight: acc.weight,
+      share: acc.weight / total,
+    }))
+    .sort((a, b) => b.severityWeight - a.severityWeight);
+}
+
+export interface GeoCell {
+  key: string;
+  lat: number;
+  lng: number;
+  count: number;
+}
+
+export function geoDensityGrid(incidents: Incident[], precision = 2): GeoCell[] {
+  const cells = new Map<string, GeoCell>();
+  for (const inc of incidents) {
+    if (inc.lat == null || inc.lng == null) continue;
+    const lat = Number(inc.lat.toFixed(precision));
+    const lng = Number(inc.lng.toFixed(precision));
+    const key = `${lat},${lng}`;
+    const cell = cells.get(key) ?? { key, lat, lng, count: 0 };
+    cell.count++;
+    cells.set(key, cell);
+  }
+  return Array.from(cells.values()).sort((a, b) => b.count - a.count);
+}

@@ -33,9 +33,14 @@ import {
   Bell,
   Search,
   Crosshair,
+  Activity,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import IncidentFeed from "@/components/IncidentFeed";
+import FeedPullRefresh from "@/components/FeedPullRefresh";
+import FeedAudioMiniPlayer from "@/components/FeedAudioMiniPlayer";
+import { getCurrentPosition } from "@/lib/native";
+import { activeNowCount } from "@/lib/analytics";
 import SearchSidebar from "@/components/SearchSidebar";
 import { type RouteData } from "@/components/RoutePanel";
 import SafetyScoreCard from "@/components/SafetyScoreCard";
@@ -454,25 +459,19 @@ function MapHome() {
   const [feedUserLoc, setFeedUserLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [feedLocating, setFeedLocating] = useState(false);
   const [feedSearchQuery, setFeedSearchQuery] = useState("");
+  const [feedVisibleLimit, setFeedVisibleLimit] = useState(40);
 
-  const requestFeedLocation = useCallback(() => {
-    if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
-      alert("Geolocation is not supported in this browser");
-      return;
-    }
+  const requestFeedLocation = useCallback(async () => {
     setFeedLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setFeedUserLoc({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setFeedSortMode("near");
-        setFeedLocating(false);
-      },
-      (err) => {
-        setFeedLocating(false);
-        alert(err.message || "Could not get your location");
-      },
-      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 }
-    );
+    try {
+      const pos = await getCurrentPosition();
+      setFeedUserLoc({ lat: pos.lat, lng: pos.lng });
+      setFeedSortMode("near");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Could not get your location");
+    } finally {
+      setFeedLocating(false);
+    }
   }, []);
 
   // Persistent Safety-POI overlay state. Each enabled category triggers
@@ -1531,6 +1530,13 @@ function MapHome() {
       return text.includes(q);
     });
   }, [filteredIncidents, feedSearchQuery]);
+
+  const visibleFeedIncidents = useMemo(
+    () => feedIncidents.slice(0, feedVisibleLimit),
+    [feedIncidents, feedVisibleLimit]
+  );
+
+  const feedActiveNow = useMemo(() => activeNowCount(feedIncidents, 30), [feedIncidents]);
 
   /** Subset of `filteredIncidents` whose pin sits inside the current
    *  map viewport. Drives the badge numerator so the on-screen count
@@ -2925,6 +2931,7 @@ function MapHome() {
               incidents={incidents}
               areaName={cityDisplayName}
               feedLabels={feedLabels}
+              routeGeometry={tripGeometry ?? undefined}
               onClose={() => setViewTab("map")}
             />
           </div>
@@ -2953,14 +2960,27 @@ function MapHome() {
                 incidents{activeTimeLabel ? ` · ${activeTimeLabel}` : ""}
               </span>
             </div>
-            {trendPct !== 0 && (
-              <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium ${
-                trendPct > 0 ? "bg-red-500/10 text-red-400" : "bg-green-500/10 text-green-400"
-              }`}>
-                {trendPct > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                {trendPct > 0 ? "+" : ""}{trendPct}%
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              {isPro && (
+                <button
+                  type="button"
+                  onClick={() => setViewTab("analytics")}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium"
+                  style={{ background: "rgba(59,130,246,0.12)", color: "#60a5fa" }}
+                >
+                  <Activity className="w-3 h-3" />
+                  {feedActiveNow} active
+                </button>
+              )}
+              {trendPct !== 0 && (
+                <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium ${
+                  trendPct > 0 ? "bg-red-500/10 text-red-400" : "bg-green-500/10 text-green-400"
+                }`}>
+                  {trendPct > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                  {trendPct > 0 ? "+" : ""}{trendPct}%
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Sort toggle (Recent / Near Me) & Search */}
@@ -3142,15 +3162,16 @@ function MapHome() {
             </div>
           </div>
 
-          {/* Scrollable feed body */}
-          <div
-            className="flex-1 overflow-y-auto"
-            style={{
-              paddingBottom: `calc(${MOBILE_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom, 0px))`,
+          <FeedAudioMiniPlayer />
+
+          <FeedPullRefresh
+            className="flex-1"
+            onRefresh={async () => {
+              setFeedVisibleLimit(40);
             }}
           >
             <IncidentFeed
-              incidents={feedIncidents}
+              incidents={visibleFeedIncidents}
               selectedId={selectedId}
               onSelect={(id) => {
                 setSelectedId((prev) => (prev === id ? null : id));
@@ -3166,10 +3187,23 @@ function MapHome() {
                 }
               }}
               showMapThumbnail
+              density="immersive"
               sortMode={feedSortMode}
               userLoc={feedUserLoc}
             />
-          </div>
+            {feedVisibleLimit < feedIncidents.length && (
+              <div className="px-4 py-3 text-center">
+                <button
+                  type="button"
+                  onClick={() => setFeedVisibleLimit((n) => n + 40)}
+                  className="text-xs font-medium px-3 py-1.5 rounded-full"
+                  style={{ background: "var(--panel-input-bg)", color: "var(--panel-text-secondary)" }}
+                >
+                  Load more
+                </button>
+              </div>
+            )}
+          </FeedPullRefresh>
         </div>
       )}
       

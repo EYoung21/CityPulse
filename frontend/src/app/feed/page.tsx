@@ -1,79 +1,24 @@
 "use client";
 
-/**
- * Full-screen `/feed` route.
- *
- * Citizen-style infinite-scroll incident feed, no map. We deliberately
- * keep it as a *separate route* from the map-first home (`/`) so:
- *   - users on the home page get the full map experience untouched
- *   - users who prefer the feed can pin /feed as their home tab
- *   - the design door is open to making /feed the mobile default later
- *
- * Two browse modes:
- *   - "Recent": cursor-paginated chronological order, time-bucketed.
- *   - "Near me": proximity-sorted (requires geolocation). No paginated
- *     cursor — the server returns the closest N to keep results
- *     predictable when you scroll back to the top.
- *
- * Each incident row links into the existing map view via `?incident=…`
- * so tapping a row gives the user the same detail panel they'd see if
- * they had been on the map all along.
- */
-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Crosshair, Download, Code, Zap } from "lucide-react";
+import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Crosshair, Download, Code, Zap, Activity } from "lucide-react";
 import IncidentFeed from "@/components/IncidentFeed";
 import MobileBottomNav, { MOBILE_NAV_HEIGHT_PX } from "@/components/MobileBottomNav";
 import InstallPrompt from "@/components/InstallPrompt";
-import { fetchIncidentPage, type Incident } from "@/lib/api";
-import { fetchIncidentPageFromFirestore } from "@/lib/firestore";
+import FeedPullRefresh from "@/components/FeedPullRefresh";
+import FeedNewPill from "@/components/FeedNewPill";
+import FeedAudioMiniPlayer from "@/components/FeedAudioMiniPlayer";
 import { getCurrentCity } from "@/lib/pulse-cities";
 import { useAuth } from "@/contexts/AuthContext";
-
-/**
- * Read-path resolver for the feed: Firestore first (resilient to the
- * Python API being down), API as a fallback (covers the case where
- * Firestore is misconfigured locally but the dev server is fine).
- *
- * The Python `/api/incidents/page` endpoint and the Firestore query
- * return the same shape, so the caller can't tell them apart. The
- * fallback mostly matters for local dev with `NEXT_PUBLIC_FIREBASE_*`
- * unset; in prod, Firestore should always succeed.
- */
-async function loadIncidentPage(opts: {
-  cursor?: string | null;
-  limit?: number;
-  city?: string;
-  nearLat?: number | null;
-  nearLng?: number | null;
-  since?: string;
-  signal?: AbortSignal;
-}) {
-  try {
-    return await fetchIncidentPageFromFirestore(opts);
-  } catch (firestoreErr) {
-    console.warn("[feed] Firestore page failed, falling back to API", firestoreErr);
-    return fetchIncidentPage(opts);
-  }
-}
-
-type FeedMode = "recent" | "near";
-
-const PAGE_SIZE = 20;
+import { useFeedIncidents, type FeedMode } from "@/hooks/useFeedIncidents";
+import { activeNowCount } from "@/lib/analytics";
 
 export default function FeedPage() {
   const [mode, setMode] = useState<FeedMode>("recent");
-  const [incidents, setIncidents] = useState<Incident[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
-  const [locating, setLocating] = useState(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const scrollTopRef = useRef<HTMLDivElement | null>(null);
 
   const city = getCurrentCity();
   const { isPro } = useAuth();
@@ -82,80 +27,34 @@ export default function FeedPage() {
     []
   );
 
-  /** First-page load + reload on mode change. */
-  const loadFirst = useCallback(async () => {
-    abortRef.current?.abort();
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    setLoading(true);
-    setError(null);
-    setIncidents([]);
-    setCursor(null);
-    setHasMore(true);
-    let timedOut = false;
-    const slow = window.setTimeout(() => {
-      timedOut = true;
-      ctrl.abort();
-    }, 25_000);
-    try {
-      const page = await loadIncidentPage({
-        limit: mode === "near" ? 40 : PAGE_SIZE,
-        city: city.slug,
-        nearLat: mode === "near" ? userLoc?.lat ?? null : null,
-        nearLng: mode === "near" ? userLoc?.lng ?? null : null,
-        since: isPro ? undefined : freeSinceIso,
-        signal: ctrl.signal,
-      });
-      if (!ctrl.signal.aborted) {
-        setIncidents(page.incidents);
-        setCursor(page.next_cursor);
-        setHasMore(Boolean(page.next_cursor));
-      }
-    } catch (err) {
-      const aborted = (err as { name?: string })?.name === "AbortError";
-      if (aborted && timedOut) {
-        setError("Request timed out — check your connection and try again.");
-      } else if (!aborted) {
-        setError(err instanceof Error ? err.message : "Failed to load feed");
-      }
-    } finally {
-      window.clearTimeout(slow);
-      setLoading(false);
-    }
-  }, [mode, city.slug, userLoc?.lat, userLoc?.lng]);
+  const {
+    incidents,
+    loading,
+    error,
+    hasMore,
+    loadMore,
+    refresh,
+    userLoc,
+    locating,
+    requestLocation,
+    lastUpdatedLabel,
+    pendingNewCount,
+    acknowledgeNew,
+    onScrollNearTop,
+  } = useFeedIncidents({
+    citySlug: city.slug,
+    mode,
+    onModeChange: setMode,
+    sinceIso: isPro ? undefined : freeSinceIso,
+  });
 
-  useEffect(() => {
-    void loadFirst();
-  }, [loadFirst]);
+  const newIncidentIds = useMemo(() => {
+    if (pendingNewCount <= 0) return undefined;
+    return new Set(incidents.slice(0, pendingNewCount).map((i) => i.id));
+  }, [incidents, pendingNewCount]);
 
-  /** Cursor pagination — only meaningful in "recent" mode. */
-  const loadMore = useCallback(async () => {
-    if (!cursor || loading || !hasMore || mode !== "recent") return;
-    setLoading(true);
-    try {
-      const page = await loadIncidentPage({
-        cursor,
-        limit: PAGE_SIZE,
-        city: city.slug,
-      });
-      setIncidents((prev) => {
-        const seen = new Set(prev.map((i) => i.id));
-        const merged = [...prev];
-        for (const inc of page.incidents) {
-          if (!seen.has(inc.id)) merged.push(inc);
-        }
-        return merged;
-      });
-      setCursor(page.next_cursor);
-      setHasMore(Boolean(page.next_cursor));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load more");
-    } finally {
-      setLoading(false);
-    }
-  }, [cursor, loading, hasMore, mode, city.slug]);
+  const activeNow = useMemo(() => activeNowCount(incidents, 30), [incidents]);
 
-  /** Intersection-observer-driven autoload for the bottom sentinel. */
   useEffect(() => {
     const node = sentinelRef.current;
     if (!node) return;
@@ -171,26 +70,6 @@ export default function FeedPage() {
     return () => obs.disconnect();
   }, [loadMore]);
 
-  const requestLocation = useCallback(() => {
-    if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
-      setError("Geolocation is not supported in this browser");
-      return;
-    }
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setUserLoc({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setMode("near");
-        setLocating(false);
-      },
-      (err) => {
-        setLocating(false);
-        setError(err.message || "Could not get your location");
-      },
-      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 }
-    );
-  }, []);
-
   const handleSelect = useCallback((id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
   }, []);
@@ -201,11 +80,11 @@ export default function FeedPage() {
   }, []);
 
   const headerSubtitle = useMemo(() => {
+    if (lastUpdatedLabel) return lastUpdatedLabel;
     if (mode === "near" && userLoc) return "Closest incidents to you";
     return `Latest scanner activity in ${city.name}`;
-  }, [mode, userLoc, city.name]);
+  }, [mode, userLoc, city.name, lastUpdatedLabel]);
 
-  /** Download currently loaded incidents as a CSV file. */
   const downloadCsv = useCallback(() => {
     if (incidents.length === 0) return;
     const escape = (s: string) => {
@@ -232,6 +111,11 @@ export default function FeedPage() {
     URL.revokeObjectURL(url);
   }, [incidents, city.slug]);
 
+  const jumpToNew = useCallback(() => {
+    acknowledgeNew();
+    scrollTopRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, [acknowledgeNew]);
+
   return (
     <div
       className="min-h-dvh flex flex-col"
@@ -248,9 +132,7 @@ export default function FeedPage() {
         <Link
           href="/?view=map"
           className="inline-flex items-center justify-center w-9 h-9 rounded-full"
-          style={{
-            background: "var(--panel-input-bg, rgba(148,163,184,0.1))",
-          }}
+          style={{ background: "var(--panel-input-bg, rgba(148,163,184,0.1))" }}
           aria-label="Back to map"
           title="Back to map"
         >
@@ -263,6 +145,16 @@ export default function FeedPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {isPro ? (
+            <Link
+              href="/?view=analytics"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium"
+              style={{ background: "rgba(59,130,246,0.12)", color: "#60a5fa" }}
+            >
+              <Activity className="w-3 h-3" />
+              {activeNow} active
+            </Link>
+          ) : null}
           <Link
             href="/use-cases/api"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all hover:bg-white/10"
@@ -276,12 +168,9 @@ export default function FeedPage() {
           </Link>
           {!isPro && (
             <button
-              onClick={() => window.location.href = "/?view=map&inbox=settings"}
+              onClick={() => { window.location.href = "/?view=map&inbox=settings"; }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium shadow-lg shadow-purple-500/20"
-              style={{
-                background: "linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)",
-                color: "#fff",
-              }}
+              style={{ background: "linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)", color: "#fff" }}
             >
               <Zap className="w-3.5 h-3.5 fill-current" /> Upgrade
             </button>
@@ -321,7 +210,7 @@ export default function FeedPage() {
             aria-selected={mode === "near"}
             onClick={() => {
               if (userLoc) setMode("near");
-              else requestLocation();
+              else void requestLocation();
             }}
             disabled={locating}
             className="px-3 py-1 rounded-full font-medium flex items-center gap-1.5 disabled:opacity-60"
@@ -337,7 +226,7 @@ export default function FeedPage() {
         {mode === "near" && userLoc && (
           <button
             type="button"
-            onClick={requestLocation}
+            onClick={() => void requestLocation()}
             className="ml-auto inline-flex items-center gap-1 text-[11px]"
             style={{ color: "var(--panel-text-muted)" }}
             title="Refresh your location"
@@ -347,7 +236,7 @@ export default function FeedPage() {
         )}
         <button
           type="button"
-          onClick={() => void loadFirst()}
+          onClick={() => void refresh()}
           className={`inline-flex items-center gap-1 text-[11px] ${mode === "near" ? "" : "ml-auto"}`}
           style={{ color: "var(--panel-text-muted)" }}
           title="Refresh feed"
@@ -374,7 +263,10 @@ export default function FeedPage() {
         </div>
       )}
 
-      <main className="flex-1">
+      <FeedNewPill count={pendingNewCount} onJump={jumpToNew} />
+      <FeedAudioMiniPlayer />
+
+      <main className="flex-1 min-h-0 flex flex-col">
         {error && (
           <div
             className="mx-4 mt-3 px-3 py-2 rounded-lg text-xs"
@@ -388,37 +280,32 @@ export default function FeedPage() {
           </div>
         )}
 
-        <IncidentFeed
-          incidents={incidents}
-          selectedId={expandedId}
-          onSelect={handleSelect}
-          onViewOnMap={handleViewOnMap}
-          showMapThumbnail
-        />
-
-        <div ref={sentinelRef} className="h-12" />
-        {loading && (
-          <div className="flex items-center justify-center py-4 text-xs" style={{ color: "var(--panel-text-muted)" }}>
-            <Loader2 className="w-4 h-4 animate-spin mr-2" />
-            Loading…
+        <FeedPullRefresh onRefresh={refresh} className="flex-1" onScroll={onScrollNearTop}>
+          <div ref={scrollTopRef}>
+            <IncidentFeed
+              incidents={incidents}
+              selectedId={expandedId}
+              onSelect={handleSelect}
+              onViewOnMap={handleViewOnMap}
+              showMapThumbnail
+              density="immersive"
+              loading={loading}
+              sortMode={mode}
+              userLoc={userLoc}
+              newIncidentIds={newIncidentIds}
+            />
+            <div ref={sentinelRef} className="h-12" />
+            {!hasMore && mode === "recent" && incidents.length > 0 && (
+              <div className="px-4 py-6 text-center text-[11px]" style={{ color: "var(--panel-text-muted)" }}>
+                That&apos;s every incident in your selected window.
+              </div>
+            )}
+            <div
+              aria-hidden="true"
+              style={{ height: `calc(${MOBILE_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom, 0px))` }}
+            />
           </div>
-        )}
-        {!hasMore && mode === "recent" && incidents.length > 0 && (
-          <div className="px-4 py-6 text-center text-[11px]" style={{ color: "var(--panel-text-muted)" }}>
-            That&apos;s every incident in your selected window.
-          </div>
-        )}
-        {/* Padding the scroll list so the last incident row clears
-            the fixed bottom nav on mobile (the nav is `position:
-            fixed` so it overlays content otherwise). Sized at the
-            nav height + iOS home-indicator inset; harmless on
-            desktop where the nav itself renders nothing. */}
-        <div
-          aria-hidden="true"
-          style={{
-            height: `calc(${MOBILE_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom, 0px))`,
-          }}
-        />
+        </FeedPullRefresh>
       </main>
       <MobileBottomNav />
       <InstallPrompt />
