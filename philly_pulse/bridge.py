@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 AUDIO_CLIPS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "audio_clips")
 RAW_CLIPS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "audio_clips_raw")
+BRIDGE_POST_TIMEOUT_SEC = float(os.environ.get("BRIDGE_POST_TIMEOUT_SEC", "180"))
 
 
 def _read_clip_b64(clip_id: str, folder: str) -> str | None:
@@ -102,7 +103,7 @@ def post_transcript(
             method="POST",
         )
         try:
-            with urlopen(req, timeout=60) as resp:
+            with urlopen(req, timeout=BRIDGE_POST_TIMEOUT_SEC) as resp:
                 logger.info("Bridge POST %d (%d clips): %s",
                             resp.status, len(audio_data), text[:60])
         except URLError as e:

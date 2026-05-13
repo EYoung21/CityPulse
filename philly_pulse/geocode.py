@@ -72,9 +72,15 @@ def _make_queries(loc: str, suffix: str | None = None) -> list[str]:
         suffix = _SUFFIX
 
     clean = _clean_location(loc)
-    city_part = suffix.strip(", ").split(",")[0]
-    if re.search(re.escape(city_part), clean, re.IGNORECASE):
-        suffix = ", " + suffix.strip(", ").split(",")[-1].strip()  # just state
+    suffix_parts = [p.strip() for p in suffix.strip(", ").split(",") if p.strip()]
+    city_part = suffix_parts[0] if suffix_parts else ""
+    state_part = suffix_parts[-1] if len(suffix_parts) > 1 else ""
+    clean_has_city = bool(city_part and re.search(re.escape(city_part), clean, re.IGNORECASE))
+    clean_has_state = bool(state_part and re.search(rf"\b{re.escape(state_part)}\b", clean, re.IGNORECASE))
+    if clean_has_city and clean_has_state:
+        suffix = ""
+    elif clean_has_city and state_part:
+        suffix = ", " + state_part
 
     queries.append(f"{clean}{suffix}")
 
@@ -89,7 +95,16 @@ def _make_queries(loc: str, suffix: str | None = None) -> list[str]:
             queries.append(f"{a} Street & {b} Avenue{suffix}")
             queries.append(f"{a} Avenue & {b} Street{suffix}")
 
-    if not m:
+    has_road_type = bool(
+        re.search(
+            r"\b(?:street|st|avenue|ave|boulevard|blvd|road|rd|drive|dr|"
+            r"lane|ln|place|pl|way|court|ct|circle|cir|terrace|ter|"
+            r"parkway|pkwy|highway|hwy)\b",
+            clean,
+            re.IGNORECASE,
+        )
+    )
+    if not m and not has_road_type:
         queries.append(f"{clean} Street{suffix}")
 
     return queries
@@ -224,6 +239,8 @@ _VAGUE_REGEXES: list[re.Pattern[str]] = [
     # "block of <number>" or "<number> block" with no street name.
     re.compile(r"^\d+\s+block$", re.IGNORECASE),
     re.compile(r"^block\s+of\s+\d+$", re.IGNORECASE),
+    # Non-address room/unit-only fragments.
+    re.compile(r"^(?:room|apt|apartment|unit|suite)\s+[a-z0-9-]+$", re.IGNORECASE),
 ]
 
 

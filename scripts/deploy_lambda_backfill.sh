@@ -92,17 +92,31 @@ ssh -i "$SSH_KEY" "${LAMBDA_USER}@${LAMBDA_IP}" "
         sed -E 's|(PASSWORD=).*|\1<set>|; s|(USERNAME=).+|\1<set>|'
 "
 
-echo "==> 4. Start (or restart) ingest API + backfill"
+START_BACKFILL="${START_BACKFILL:-0}"
+
+echo "==> 4. Start (or restart) loopback ingest API"
 ssh -i "$SSH_KEY" "${LAMBDA_USER}@${LAMBDA_IP}" "
-    sudo systemctl enable citypulse-ingest-api citypulse-backfill
+    sudo systemctl enable citypulse-ingest-api
     sudo systemctl restart citypulse-ingest-api
     sleep 2
-    sudo systemctl restart citypulse-backfill
-    sleep 2
     sudo systemctl status citypulse-ingest-api --no-pager -l | head -18
-    echo ---
-    sudo systemctl status citypulse-backfill --no-pager -l | head -18
 "
+
+if [[ "$START_BACKFILL" == "1" ]]; then
+    echo "==> 5. START_BACKFILL=1: starting archive backfill"
+    ssh -i "$SSH_KEY" "${LAMBDA_USER}@${LAMBDA_IP}" "
+        sudo systemctl enable citypulse-backfill
+        sudo systemctl restart citypulse-backfill
+        sleep 2
+        sudo systemctl status citypulse-backfill --no-pager -l | head -18
+    "
+else
+    echo "==> 5. Leaving archive backfill stopped/disabled to protect realtime live streams"
+    ssh -i "$SSH_KEY" "${LAMBDA_USER}@${LAMBDA_IP}" "
+        sudo systemctl disable --now citypulse-backfill 2>/dev/null || true
+        sudo systemctl is-active citypulse-backfill || true
+    "
+fi
 
 echo
 echo "==> Deployed. Tail logs:"

@@ -5,6 +5,16 @@
 - `systemctl status pulse-live@philly` (and `@nyc`, etc.)
 - Tail logs on the Lambda host for bridge POST failures and Whisper queue depth.
 - Bridge URL must reach `/api/ingest` on the API host.
+- Realtime has priority over archive catch-up. Keep `citypulse-backfill` stopped unless you are intentionally running backfill:
+  `systemctl disable --now citypulse-backfill`.
+- `scripts/deploy_lambda_backfill.sh` leaves archive backfill stopped by default; use `START_BACKFILL=1` only during supervised catch-up windows.
+
+### Stale feed triage
+
+- If all cities share the same `newest_extraction_at`, check Lambda live logs first:
+  `tail -f /var/log/pulse-live.log`.
+- `EOF, reconnecting...` on most feeds plus `queue=0` usually means Broadcastify live streams are not delivering audio. Stop archive backfill, restart `pulse-live@sf pulse-live@nyc pulse-live@philly pulse-live@chattanooga`, then re-check `/api/city-stats/{slug}`.
+- `Bridge POST error: The read operation timed out` means the public ingest request exceeded `BRIDGE_POST_TIMEOUT_SEC`; raise that env var or reduce live-path geocode/LLM retry work before starting backfill.
 
 ## Freshness checks
 

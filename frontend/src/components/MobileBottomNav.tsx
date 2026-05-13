@@ -25,9 +25,8 @@
  * full real estate.
  */
 
-import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useSyncExternalStore, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { Map as MapIcon, List, Bell, Settings as SettingsIcon, BarChart3, Lock } from "lucide-react";
 import { subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
@@ -54,10 +53,69 @@ const TABS: Tab[] = [
   { id: "settings",  label: "More",      href: "/?view=map&inbox=settings", Icon: SettingsIcon },
 ];
 
+const HOME_VIEW_PREF_KEY = "cp:home-view";
+const SESSION_VIEW_KEY = "pulse_view_tab";
+const MOBILE_QUERY = "(max-width: 767px)";
+
 /** Standard iOS-style tab bar height (excluding the safe-area inset
  *  for the home indicator, which we add on top). Exported so the map
  *  page can pad the bottom of any UI it doesn't want overlapped. */
 export const MOBILE_NAV_HEIGHT_PX = 64;
+
+function persistTabIntent(tab: Tab) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(HOME_VIEW_PREF_KEY, tab.id === "feed" ? "feed" : "map");
+  } catch {
+    /* storage can be unavailable in private browsing */
+  }
+  try {
+    sessionStorage.setItem(
+      SESSION_VIEW_KEY,
+      tab.id === "analytics" ? "analytics" : tab.id === "feed" ? "feed" : "map"
+    );
+  } catch {
+    /* non-fatal */
+  }
+}
+
+function subscribeMobileViewport(onStoreChange: () => void) {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return () => {};
+  }
+  const mql = window.matchMedia(MOBILE_QUERY);
+  if (typeof mql.addEventListener === "function") {
+    mql.addEventListener("change", onStoreChange);
+    return () => mql.removeEventListener("change", onStoreChange);
+  }
+  if (typeof mql.addListener === "function") {
+    mql.addListener(onStoreChange);
+    return () => mql.removeListener(onStoreChange);
+  }
+  return () => {};
+}
+
+function getMobileViewportSnapshot() {
+  return typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(MOBILE_QUERY).matches;
+}
+
+function getServerMobileViewportSnapshot() {
+  return false;
+}
+
+function subscribeUnread(onStoreChange: () => void) {
+  return subscribeAlerts(() => onStoreChange());
+}
+
+function getUnreadSnapshot() {
+  return unreadCount();
+}
+
+function getServerUnreadSnapshot() {
+  return 0;
+}
 
 // Inner component that uses `useSearchParams` — extracted so we can
 // wrap *only this slice* in <Suspense>. Next.js requires a Suspense
@@ -65,50 +123,52 @@ export const MOBILE_NAV_HEIGHT_PX = 64;
 // Router; the boundary is what lets the rest of the page keep
 // rendering even when the search params haven't been hydrated yet.
 function MobileBottomNavInner() {
-  const [show, setShow] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  const [unread, setUnread] = useState(0);
+  const show = useSyncExternalStore(
+    subscribeMobileViewport,
+    getMobileViewportSnapshot,
+    getServerMobileViewportSnapshot
+  );
+  const unread = useSyncExternalStore(
+    subscribeUnread,
+    getUnreadSnapshot,
+    getServerUnreadSnapshot
+  );
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const mql = window.matchMedia("(max-width: 767px)");
-    const apply = () => setShow(mql.matches);
-    apply();
-    if (typeof mql.addEventListener === "function") {
-      mql.addEventListener("change", apply);
-      return () => mql.removeEventListener("change", apply);
-    } else if (typeof mql.addListener === "function") {
-      mql.addListener(apply);
-      return () => mql.removeListener(apply);
-    }
-  }, []);
-
-  useEffect(() => {
-    setUnread(unreadCount());
-    return subscribeAlerts(() => setUnread(unreadCount()));
-  }, []);
-
   const { isPro } = useAuth();
-  if (!show || !mounted) return null;
+  if (!show) return null;
 
   const inboxParam = searchParams?.get("inbox") ?? null;
   const viewParam = searchParams?.get("view") ?? null;
   const onFeed = pathname?.startsWith("/feed") ?? false;
   const activeId: TabId = onFeed
     ? "feed"
-    : viewParam === "analytics"
+    : viewParam === "feed"
+      ? "feed"
+      : viewParam === "analytics"
       ? "analytics"
       : inboxParam === "settings"
         ? "settings"
         : inboxParam
           ? "inbox"
           : "map";
+
+  const handleTabClick = (tab: Tab) => (event: MouseEvent<HTMLAnchorElement>) => {
+    persistTabIntent(tab);
+    if (activeId === tab.id) {
+      event.preventDefault();
+      return;
+    }
+
+    // Mobile tab switches are primary app navigation. Use a native document
+    // navigation so the bar still works if the App Router is in a suspended
+    // route transition or recovering from stale PWA shell state.
+    if (typeof window !== "undefined") {
+      event.preventDefault();
+      window.location.assign(tab.href);
+    }
+  };
 
   const nav = (
     <nav
@@ -137,14 +197,12 @@ function MobileBottomNavInner() {
         const active = activeId === tab.id;
         const showPro = tab.pro && !isPro;
         return (
-          <Link
+          <a
             key={tab.id}
             href={tab.href}
-            replace
-            prefetch={false}
-            scroll={false}
             aria-label={tab.label}
             aria-current={active ? "page" : undefined}
+            onClick={handleTabClick(tab)}
             className="flex-1 flex flex-col items-center justify-center gap-0.5 no-underline"
             style={{
               color: active ? "#60a5fa" : "#94a3b8",
@@ -213,7 +271,7 @@ function MobileBottomNavInner() {
             >
               {tab.label}
             </span>
-          </Link>
+          </a>
         );
       })}
     </nav>
