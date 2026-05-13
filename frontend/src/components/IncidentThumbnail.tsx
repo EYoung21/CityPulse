@@ -40,6 +40,8 @@ interface Props {
   className?: string;
   /** Forwarded to the wrapping div for extra style overrides. */
   style?: React.CSSProperties;
+  onClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
+  title?: string;
 }
 
 export default function IncidentThumbnail({
@@ -52,6 +54,8 @@ export default function IncidentThumbnail({
   variant = "dark",
   className,
   style,
+  onClick,
+  title,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
@@ -93,7 +97,21 @@ export default function IncidentThumbnail({
     <div
       ref={containerRef}
       className={className}
-      aria-hidden="true"
+      aria-hidden={onClick ? undefined : "true"}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      title={title}
+      onClick={onClick}
+      onKeyDown={
+        onClick
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onClick(event as unknown as React.MouseEvent<HTMLDivElement>);
+              }
+            }
+          : undefined
+      }
       style={{
         position: "relative",
         width,
@@ -102,6 +120,7 @@ export default function IncidentThumbnail({
         background: placeholderBg,
         borderRadius: 8,
         flexShrink: 0,
+        cursor: onClick ? "pointer" : undefined,
         ...style,
       }}
     >

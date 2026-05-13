@@ -64,9 +64,17 @@ def main() -> int:
     slugs = args.city or sorted(city_registry.CITY_REGISTRY.keys())
     for slug in slugs:
         row = city_report(slug, args.hours)
+        ext_age = row["extraction_age_min"]
+        inc_age = row["incident_age_min"]
         print(
-            f"{slug}: extraction_age={row['extraction_age_min']:.1f}m "
-            f"incident_age={row['incident_age_min']:.1f}m "
+            f"{slug}: extraction_age={ext_age:.1f}m " if ext_age is not None else f"{slug}: extraction_age=n/a ",
+            end="",
+        )
+        print(
+            f"incident_age={inc_age:.1f}m " if inc_age is not None else "incident_age=n/a ",
+            end="",
+        )
+        print(
             f"promotion={row['promoted']}/{row['llm_relevant']} "
             f"rate={row['promotion_rate']}"
         )

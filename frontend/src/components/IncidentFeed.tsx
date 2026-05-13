@@ -3,7 +3,9 @@
 import { useState, useRef, useMemo } from "react";
 import type { Incident } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
+import { incidentHeadline, incidentLocationLabel } from "@/lib/incident-display";
 import IncidentThumbnail from "./IncidentThumbnail";
+import IncidentDetail from "./IncidentDetail";
 import {
   AlertTriangle,
   Flame,
@@ -16,6 +18,7 @@ import {
   ChevronDown,
   Play,
   Pause,
+  Map,
 } from "lucide-react";
 import { incidentAudioSources } from "@/lib/public-api-base";
 import { resolveBlipKind, monoGlyphSvg } from "./IncidentMap";
@@ -68,7 +71,6 @@ function groupByTimeBlocks(incidents: Incident[]): TimeBlock[] {
   }
 
   for (const block of blocks) {
-    // Within each time block: sort by most recent to least recent
     block.incidents.sort((a, b) => {
       const ta = new Date(a.reported_at).getTime();
       const tb = new Date(b.reported_at).getTime();
@@ -83,6 +85,8 @@ interface Props {
   incidents: Incident[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** Opens the in-app map focused on this incident. */
+  onViewOnMap?: (id: string) => void;
   /**
    * When true, each row renders a real OSM map thumbnail (≈110×72)
    * on the right rail instead of the tiny dot-on-rect placeholder.
@@ -98,11 +102,13 @@ function IncidentCard({
   inc,
   isSelected,
   onSelect,
+  onViewOnMap,
   showMapThumbnail,
 }: {
   inc: Incident;
   isSelected: boolean;
   onSelect: () => void;
+  onViewOnMap?: (id: string) => void;
   showMapThumbnail?: boolean;
 }) {
   const sev = getSeverity(inc.severity_category);
@@ -110,15 +116,23 @@ function IncidentCard({
   const confidencePct = Math.round(inc.confidence * 100);
   const [playing, setPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const headline = incidentHeadline(inc);
+  const locationLabel = incidentLocationLabel(inc);
+  const canViewOnMap = inc.lat != null && inc.lng != null && !!onViewOnMap;
 
   const confColor =
     confidencePct >= 70 ? "#22c55e" : confidencePct >= 40 ? "#f59e0b" : "#ef4444";
+
+  const openOnMap = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (canViewOnMap) onViewOnMap?.(inc.id);
+  };
 
   const toggleAudio = (e: React.MouseEvent) => {
     e.stopPropagation();
     const sources = incidentAudioSources(inc);
     if (sources.length === 0) return;
-    
+
     if (!audioRef.current) {
       const audio = new Audio(sources[0]);
       let currentIdx = 0;
@@ -148,157 +162,198 @@ function IncidentCard({
 
       audioRef.current = audio;
       attemptPlay();
+    } else if (playing) {
+      audioRef.current.pause();
+      setPlaying(false);
     } else {
-      if (playing) {
-        audioRef.current.pause();
-        setPlaying(false);
-      } else {
-        audioRef.current.play().catch(() => setPlaying(false));
-        setPlaying(true);
-      }
+      audioRef.current.play().catch(() => setPlaying(false));
+      setPlaying(true);
     }
   };
 
-  const snippet = inc.description
-    ? inc.description
-    : inc.location_text
-      ? `${sev.label} reported at ${inc.location_text}`
+  const supportingText =
+    inc.description?.trim() && inc.raw_text?.trim() && inc.raw_text.trim() !== inc.description.trim()
+      ? inc.raw_text.trim()
       : null;
 
   const baseOpacity = confidencePct < 40 ? 0.6 : 1;
-  const rowOpacity = baseOpacity;
 
   return (
     <div
-      onClick={onSelect}
-      className={`group relative flex items-start gap-2.5 px-3 py-2.5 rounded-lg text-left transition-all duration-200 cursor-pointer
-        ${isSelected ? "bg-white/10 ring-1 ring-white/10" : "hover:bg-white/5"}`}
-      style={{ opacity: rowOpacity }}
+      className={`group relative rounded-lg text-left transition-all duration-200 ${
+        isSelected ? "bg-white/10 ring-1 ring-white/10" : "hover:bg-white/5"
+      }`}
+      style={{ opacity: baseOpacity }}
     >
       <div
-        className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full transition-opacity"
-        style={{ backgroundColor: sev.markerColor, opacity: isSelected ? 1 : 0.4 }}
-      />
+        onClick={onSelect}
+        className="flex items-start gap-2.5 px-3 py-2.5 cursor-pointer"
+      >
+        <div
+          className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full transition-opacity"
+          style={{ backgroundColor: sev.markerColor, opacity: isSelected ? 1 : 0.4 }}
+        />
 
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 mb-0.5">
-          <span
-            className="text-[11px] font-bold uppercase tracking-wider"
-            style={{ color: sev.markerColor }}
-          >
-            {sev.label}
-          </span>
-          {isHighSev && (
-            <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
-          )}
-        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 mb-0.5">
+            <span
+              className="text-[11px] font-bold uppercase tracking-wider"
+              style={{ color: sev.markerColor }}
+            >
+              {sev.label}
+            </span>
+            {isHighSev && (
+              <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
+            )}
+          </div>
 
-        <div className="flex items-center gap-1.5 text-sm truncate" style={{ color: "var(--panel-text, rgba(255,255,255,0.7))" }}>
-          <MapPin className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }} />
-          <span className="truncate">{inc.location_text || "Unknown"}</span>
-        </div>
-
-        {snippet && (
           <p
-            className="mt-1 text-xs leading-snug italic line-clamp-2"
+            className={`text-sm font-semibold leading-snug ${isSelected ? "" : "line-clamp-2"}`}
+            style={{ color: "var(--panel-text, rgba(255,255,255,0.92))" }}
+          >
+            {headline}
+          </p>
+
+          <div
+            className="mt-1 flex items-center gap-1.5 text-xs truncate"
             style={{ color: "var(--panel-text-secondary, rgba(255,255,255,0.5))" }}
           >
-            &ldquo;{snippet}&rdquo;
-          </p>
-        )}
+            <MapPin className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }} />
+            <span className="truncate">{locationLabel}</span>
+          </div>
 
-        <div className="mt-1.5 flex items-center gap-2">
-          {(inc.audio_url || inc.audio_clip) && (
-            <button
-              onClick={toggleAudio}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium transition-all ${
-                playing
-                  ? "bg-blue-500 text-white"
-                  : "bg-blue-500/15 text-blue-400 hover:bg-blue-500/25"
-              }`}
+          {supportingText && !isSelected && (
+            <p
+              className="mt-1 text-xs leading-snug italic line-clamp-2"
+              style={{ color: "var(--panel-text-secondary, rgba(255,255,255,0.5))" }}
             >
-              {playing ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-              {playing ? "Playing" : "Listen"}
-            </button>
+              &ldquo;{supportingText}&rdquo;
+            </p>
           )}
 
-          {inc.lat != null && inc.lng != null && !showMapThumbnail && (
-            <div
-              className="w-12 h-8 rounded border overflow-hidden shrink-0"
-              style={{ borderColor: "var(--panel-border, rgba(255,255,255,0.1))" }}
-            >
-              <div
-                className="w-full h-full relative"
-                style={{ background: "var(--panel-input-bg, rgba(255,255,255,0.05))" }}
+          <div className="mt-1.5 flex items-center gap-2">
+            {(inc.audio_url || inc.audio_clip) && (
+              <button
+                onClick={toggleAudio}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium transition-all ${
+                  playing
+                    ? "bg-blue-500 text-white"
+                    : "bg-blue-500/15 text-blue-400 hover:bg-blue-500/25"
+                }`}
+              >
+                {playing ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                {playing ? "Playing" : "Listen"}
+              </button>
+            )}
+
+            {inc.lat != null && inc.lng != null && !showMapThumbnail && (
+              <button
+                type="button"
+                onClick={openOnMap}
+                disabled={!canViewOnMap}
+                className="w-12 h-8 rounded border overflow-hidden shrink-0 disabled:opacity-60"
+                style={{ borderColor: "var(--panel-border, rgba(255,255,255,0.1))" }}
+                title={canViewOnMap ? "View on map" : undefined}
+                aria-label={canViewOnMap ? "View on map" : undefined}
               >
                 <div
-                  className="absolute w-1.5 h-1.5 rounded-full"
-                  style={{
-                    backgroundColor: sev.markerColor,
-                    top: "50%",
-                    left: "50%",
-                    transform: "translate(-50%, -50%)",
-                    boxShadow: `0 0 4px ${sev.markerColor}`,
-                  }}
-                />
-              </div>
-            </div>
-          )}
+                  className="w-full h-full relative"
+                  style={{ background: "var(--panel-input-bg, rgba(255,255,255,0.05))" }}
+                >
+                  <div
+                    className="absolute w-1.5 h-1.5 rounded-full"
+                    style={{
+                      backgroundColor: sev.markerColor,
+                      top: "50%",
+                      left: "50%",
+                      transform: "translate(-50%, -50%)",
+                      boxShadow: `0 0 4px ${sev.markerColor}`,
+                    }}
+                  />
+                </div>
+              </button>
+            )}
 
-          <div
-            className="h-1 flex-1 rounded-full overflow-hidden"
-            style={{ background: "var(--panel-input-bg, rgba(255,255,255,0.05))" }}
-          >
             <div
-              className="h-full rounded-full"
-              style={{ width: `${confidencePct}%`, backgroundColor: confColor }}
-            />
+              className="h-1 flex-1 rounded-full overflow-hidden"
+              style={{ background: "var(--panel-input-bg, rgba(255,255,255,0.05))" }}
+            >
+              <div
+                className="h-full rounded-full"
+                style={{ width: `${confidencePct}%`, backgroundColor: confColor }}
+              />
+            </div>
+            <span className="text-[10px] font-mono shrink-0" style={{ color: confColor }}>
+              {confidencePct}%
+            </span>
           </div>
-          <span className="text-[10px] font-mono shrink-0" style={{ color: confColor }}>
-            {confidencePct}%
+        </div>
+
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <div className="flex items-start gap-1.5">
+            {showMapThumbnail && inc.lat != null && inc.lng != null && (
+              <IncidentThumbnail
+                lat={inc.lat}
+                lng={inc.lng}
+                width={110}
+                height={72}
+                svgGlyph={monoGlyphSvg(resolveBlipKind(inc), inc.id)}
+                onClick={canViewOnMap ? openOnMap : undefined}
+                title={canViewOnMap ? "View on map" : undefined}
+              />
+            )}
+            <div
+              className="mt-0.5 w-8 h-8 rounded-md flex items-center justify-center shrink-0"
+              style={{
+                background: "var(--panel-input-bg, rgba(255,255,255,0.06))",
+                color: "var(--panel-text-secondary, rgba(255,255,255,0.55))",
+              }}
+              title={sev.label}
+              aria-label={`Type: ${sev.label}`}
+            >
+              {CATEGORY_ICONS[inc.severity_category] || <CircleDot className="w-4 h-4" />}
+            </div>
+          </div>
+          <span className="text-[11px] font-mono" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }}>
+            {timeAgo(inc.reported_at)}
           </span>
+          {(inc.mention_count ?? 0) > 1 && inc.last_mention_at && (
+            <span
+              className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+              style={{
+                background: "rgba(59,130,246,0.15)",
+                color: "#60a5fa",
+              }}
+              title={`${inc.mention_count} scanner mentions`}
+            >
+              +{(inc.mention_count ?? 1) - 1} upd · {timeAgo(inc.last_mention_at)}
+            </span>
+          )}
         </div>
       </div>
 
-      <div className="flex flex-col items-end gap-1 shrink-0">
-        <div className="flex items-start gap-1.5">
-          {showMapThumbnail && inc.lat != null && inc.lng != null && (
-            <IncidentThumbnail
-              lat={inc.lat}
-              lng={inc.lng}
-              width={110}
-              height={72}
-              svgGlyph={monoGlyphSvg(resolveBlipKind(inc), inc.id)}
-            />
+      {isSelected && (
+        <div
+          className="px-3 pb-3 space-y-2"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {canViewOnMap && (
+            <button
+              type="button"
+              onClick={openOnMap}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium transition-colors hover:bg-blue-500/25"
+              style={{
+                background: "rgba(59,130,246,0.15)",
+                color: "#60a5fa",
+              }}
+            >
+              <Map className="w-3.5 h-3.5" />
+              View on map
+            </button>
           )}
-          <div
-            className="mt-0.5 w-8 h-8 rounded-md flex items-center justify-center shrink-0"
-            style={{
-              background: "var(--panel-input-bg, rgba(255,255,255,0.06))",
-              color: "var(--panel-text-secondary, rgba(255,255,255,0.55))",
-            }}
-            title={sev.label}
-            aria-label={`Type: ${sev.label}`}
-          >
-            {CATEGORY_ICONS[inc.severity_category] || <CircleDot className="w-4 h-4" />}
-          </div>
+          <IncidentDetail incident={inc} onClose={onSelect} />
         </div>
-        <span className="text-[11px] font-mono" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }}>
-          {timeAgo(inc.reported_at)}
-        </span>
-        {(inc.mention_count ?? 0) > 1 && inc.last_mention_at && (
-          <span
-            className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-            style={{
-              background: "rgba(59,130,246,0.15)",
-              color: "#60a5fa",
-            }}
-            title={`${inc.mention_count} scanner mentions`}
-          >
-            +{(inc.mention_count ?? 1) - 1} upd · {timeAgo(inc.last_mention_at)}
-          </span>
-        )}
-      </div>
+      )}
     </div>
   );
 }
@@ -313,15 +368,23 @@ function timeAgo(isoStr: string): string {
   return `${Math.floor(hrs / 24)}d`;
 }
 
-export default function IncidentFeed({ incidents, selectedId, onSelect, showMapThumbnail, sortMode = "recent", userLoc }: Props) {
+export default function IncidentFeed({
+  incidents,
+  selectedId,
+  onSelect,
+  onViewOnMap,
+  showMapThumbnail,
+  sortMode = "recent",
+  userLoc,
+}: Props) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  
+
   const blocks = useMemo(() => {
     if (sortMode === "near" && userLoc) {
       const distSq = (lat1: number, lng1: number, lat2: number, lng2: number) => {
         return (lat1 - lat2) ** 2 + (lng1 - lng2) ** 2;
       };
-      const sorted = [...incidents].filter(i => i.lat != null && i.lng != null).sort((a, b) => {
+      const sorted = [...incidents].filter((i) => i.lat != null && i.lng != null).sort((a, b) => {
         return distSq(a.lat!, a.lng!, userLoc.lat, userLoc.lng) - distSq(b.lat!, b.lng!, userLoc.lat, userLoc.lng);
       });
       return [{ label: "Nearest to You", incidents: sorted }];
@@ -375,6 +438,7 @@ export default function IncidentFeed({ incidents, selectedId, onSelect, showMapT
                   inc={inc}
                   isSelected={inc.id === selectedId}
                   onSelect={() => onSelect(inc.id)}
+                  onViewOnMap={onViewOnMap}
                   showMapThumbnail={showMapThumbnail}
                 />
               ))}

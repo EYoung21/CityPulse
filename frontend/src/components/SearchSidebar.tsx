@@ -908,8 +908,11 @@ export default function SearchSidebar({
                 selectedId={selectedId ?? null}
                 onSelect={(id) => {
                   onSelectIncident?.(id);
+                }}
+                onViewOnMap={(id) => {
+                  onSelectIncident?.(id);
                   const inc = incidents.find((i) => i.id === id);
-                  if (inc?.lat && inc?.lng) onFlyTo(inc.lat, inc.lng);
+                  if (inc?.lat != null && inc?.lng != null) onFlyTo(inc.lat, inc.lng);
                 }}
               />
             </div>
@@ -1131,8 +1134,11 @@ export default function SearchSidebar({
           selectedId={selectedId ?? null}
           onSelect={(id) => {
             onSelectIncident?.(id);
+          }}
+          onViewOnMap={(id) => {
+            onSelectIncident?.(id);
             const inc = incidents.find((i) => i.id === id);
-            if (inc?.lat && inc?.lng) onFlyTo(inc.lat, inc.lng);
+            if (inc?.lat != null && inc?.lng != null) onFlyTo(inc.lat, inc.lng);
           }}
         />
       </div>

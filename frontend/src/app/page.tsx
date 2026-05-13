@@ -3018,56 +3018,111 @@ function MapHome() {
 
           {/* Filter row within feed (time + category) */}
           <div
-            className="px-3 py-2 flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0"
+            className="px-3 py-2.5 flex flex-col gap-2.5 shrink-0"
             style={{ borderBottom: "1px solid var(--panel-border)" }}
           >
-            <div
-              className="flex items-center rounded-full overflow-hidden shrink-0"
-              style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)" }}
-            >
-              <Clock className="w-3 h-3 ml-2 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
-              {TIME_FILTERS.slice(0, 8).map((tf) => {
-                const locked = tf.pro && !isPro;
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-2 px-0.5">
+                <span
+                  className="text-[10px] font-semibold uppercase tracking-wider"
+                  style={{ color: "var(--panel-text-muted)" }}
+                >
+                  Time window
+                </span>
+                {activeTimeLabel && (
+                  <span className="text-[10px]" style={{ color: "var(--panel-text-secondary)" }}>
+                    {activeTimeLabel}
+                  </span>
+                )}
+              </div>
+              <div
+                className="flex items-center rounded-full overflow-x-auto no-scrollbar"
+                style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)" }}
+              >
+                <Clock className="w-3.5 h-3.5 ml-2.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
+                {TIME_FILTERS.map((tf) => {
+                  const locked = tf.pro && !isPro;
+                  return (
+                    <button
+                      key={tf.label}
+                      type="button"
+                      onClick={() => {
+                        if (locked) { setShowUpgrade("Extended History"); return; }
+                        setTimeFilter(tf.hours);
+                      }}
+                      className={`px-2.5 py-1.5 text-[11px] font-medium transition-all relative shrink-0 ${
+                        timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
+                      } ${locked ? "opacity-50" : ""}`}
+                      style={timeFilter !== tf.hours ? { color: locked ? "var(--panel-text-muted)" : "var(--panel-text-secondary)" } : {}}
+                      title={locked ? "Pro feature · upgrade to unlock" : undefined}
+                    >
+                      {tf.label}
+                      {locked && <Lock className="w-2.5 h-2.5 absolute -top-0.5 -right-0.5 text-purple-400" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+              <FilterPresetsBar
+                activeCats={activeCats}
+                timeFilterHours={timeFilter}
+                onApply={(cats, hours) => {
+                  setActiveCats(cats);
+                  const tf = TIME_FILTERS.find((t) => t.hours === hours);
+                  if (tf?.pro && !isPro) {
+                    setShowUpgrade("Extended History");
+                    return;
+                  }
+                  setTimeFilter(hours);
+                }}
+              />
+
+              <button
+                type="button"
+                onClick={() => setActiveCats(new Set())}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[10px] font-medium transition-all shrink-0 ${
+                  activeCats.size === 0 ? "bg-blue-500/15 text-blue-500 ring-1 ring-blue-500/30" : "opacity-70 hover:opacity-100"
+                }`}
+                style={
+                  activeCats.size > 0
+                    ? { background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)", color: "var(--panel-text-secondary)" }
+                    : { background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.3)" }
+                }
+              >
+                All
+              </button>
+
+              {CATEGORY_PILLS.map((pill) => {
+                const Icon = pill.icon;
+                const isActive = pill.cats.some((c) => activeCats.has(c));
+                const count = filteredIncidents.filter((i) => (pill.cats as readonly string[]).includes(i.severity_category)).length;
                 return (
                   <button
-                    key={tf.label}
-                    onClick={() => {
-                      if (locked) { setShowUpgrade("Extended History"); return; }
-                      setTimeFilter(tf.hours);
+                    key={pill.label}
+                    type="button"
+                    onClick={() => toggleCat(pill.cats)}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[10px] font-medium transition-all shrink-0 ${
+                      isActive ? "ring-1" : "opacity-70 hover:opacity-100"
+                    }`}
+                    style={{
+                      background: isActive ? pill.color + "18" : "var(--panel-input-bg)",
+                      border: `1px solid ${isActive ? pill.color + "40" : "var(--panel-border)"}`,
+                      color: isActive ? pill.color : "var(--panel-text-secondary)",
                     }}
-                    className={`px-2 py-1.5 text-[10px] font-medium transition-all relative ${
-                      timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
-                    } ${locked ? "opacity-50" : ""}`}
-                    style={timeFilter !== tf.hours ? { color: locked ? "var(--panel-text-muted)" : "var(--panel-text-secondary)" } : {}}
                   >
-                    {tf.label}
-                    {locked && <Lock className="w-2 h-2 absolute -top-0.5 -right-0.5 text-purple-400" />}
+                    <Icon className="w-3 h-3" />
+                    {pill.label}
+                    {count > 0 && (
+                      <span className="text-[10px] font-mono" style={{ opacity: isActive ? 1 : 0.5 }}>
+                        {count}
+                      </span>
+                    )}
                   </button>
                 );
               })}
             </div>
-
-            {CATEGORY_PILLS.map((pill) => {
-              const Icon = pill.icon;
-              const isActive = pill.cats.some((c) => activeCats.has(c));
-              return (
-                <button
-                  key={pill.label}
-                  onClick={() => toggleCat(pill.cats)}
-                  className={`flex items-center gap-1 px-2 py-1.5 rounded-full text-[10px] font-medium transition-all shrink-0 ${
-                    isActive ? "ring-1" : "opacity-70 hover:opacity-100"
-                  }`}
-                  style={{
-                    background: isActive ? pill.color + "18" : "var(--panel-input-bg)",
-                    border: `1px solid ${isActive ? pill.color + "40" : "var(--panel-border)"}`,
-                    color: isActive ? pill.color : "var(--panel-text-secondary)",
-                  }}
-                >
-                  <Icon className="w-3 h-3" />
-                  {pill.label}
-                </button>
-              );
-            })}
           </div>
 
           {/* Scrollable feed body */}
@@ -3076,10 +3131,12 @@ function MapHome() {
               incidents={feedIncidents}
               selectedId={selectedId}
               onSelect={(id) => {
+                setSelectedId((prev) => (prev === id ? null : id));
+              }}
+              onViewOnMap={(id) => {
                 setSelectedId(id);
                 const inc = filteredIncidents.find((i) => i.id === id);
                 if (inc?.lat != null && inc?.lng != null) {
-                  // Switch to map and fly to the incident
                   setViewTab("map");
                   requestAnimationFrame(() => {
                     mapRef.current?.flyTo(inc.lat!, inc.lng!, 16);
