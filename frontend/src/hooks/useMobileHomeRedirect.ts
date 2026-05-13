@@ -11,12 +11,13 @@ import { useRouter } from "next/navigation";
  * Override hierarchy (highest wins):
  *   1. `?view=map`  ........ explicit URL hint; sticks for future visits
  *   2. `?view=feed` ........ explicit URL hint; sticks for future visits
- *   3. `?incident=…` /
+ *   3. `?view=analytics` ... analytics tab on home; never redirect
+ *   4. `?incident=…` /
  *      `?lat=&lng=`  ....... share-link / deep-link; never redirect
- *   4. localStorage
+ *   5. localStorage
  *      `cp:home-view` ...... user's most recent explicit choice
- *   5. viewport <768px ..... default to /feed (mobile)
- *   6. otherwise ........... stay on / (desktop)
+ *   6. viewport <768px ..... default to /feed (mobile)
+ *   7. otherwise ........... stay on / (desktop)
  *
  * The hook is split into "decide synchronously on mount" + "navigate
  * in an effect" so the wrapping component can render nothing while
@@ -51,13 +52,17 @@ function decide(): HomeRedirectDecision {
       }
       return "redirect";
     }
+    if (viewHint === "analytics") {
+      return "stay";
+    }
 
     // Deep links into the map (incident detail / dropped pin) always
     // win — those URLs only make sense on the map. The user can opt
     // back into feed-first home later.
     if (
       url.searchParams.has("incident") ||
-      (url.searchParams.has("lat") && url.searchParams.has("lng"))
+      (url.searchParams.has("lat") && url.searchParams.has("lng")) ||
+      url.searchParams.has("inbox")
     ) {
       return "stay";
     }
