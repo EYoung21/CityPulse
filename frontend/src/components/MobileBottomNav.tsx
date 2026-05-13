@@ -25,8 +25,10 @@
  * full real estate.
  */
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Map as MapIcon, List, Bell, Settings as SettingsIcon, BarChart3, Lock } from "lucide-react";
 import { subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
 import { useAuth } from "@/contexts/AuthContext";
@@ -63,11 +65,15 @@ export const MOBILE_NAV_HEIGHT_PX = 64;
 // Router; the boundary is what lets the rest of the page keep
 // rendering even when the search params haven't been hydrated yet.
 function MobileBottomNavInner() {
-  const router = useRouter();
   const [show, setShow] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const [unread, setUnread] = useState(0);
   const pathname = usePathname();
   const searchParams = useSearchParams();
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -89,7 +95,7 @@ function MobileBottomNavInner() {
   }, []);
 
   const { isPro } = useAuth();
-  if (!show) return null;
+  if (!show || !mounted) return null;
 
   const inboxParam = searchParams?.get("inbox") ?? null;
   const viewParam = searchParams?.get("view") ?? null;
@@ -104,7 +110,7 @@ function MobileBottomNavInner() {
           ? "inbox"
           : "map";
 
-  return (
+  const nav = (
     <nav
       aria-label="Primary"
       style={{
@@ -131,20 +137,16 @@ function MobileBottomNavInner() {
         const active = activeId === tab.id;
         const showPro = tab.pro && !isPro;
         return (
-          <button
+          <Link
             key={tab.id}
-            type="button"
-            onClick={() => router.replace(tab.href)}
+            href={tab.href}
+            replace
+            prefetch={false}
+            scroll={false}
             aria-label={tab.label}
             aria-current={active ? "page" : undefined}
+            className="flex-1 flex flex-col items-center justify-center gap-0.5 no-underline"
             style={{
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 2,
-              textDecoration: "none",
               color: active ? "#60a5fa" : "#94a3b8",
               transition: "color 120ms ease",
               position: "relative",
@@ -154,6 +156,7 @@ function MobileBottomNavInner() {
               WebkitTapHighlightColor: "transparent",
               paddingTop: 4,
               paddingBottom: 2,
+              touchAction: "manipulation",
             }}
           >
             <span style={{ position: "relative", lineHeight: 0 }}>
@@ -210,11 +213,13 @@ function MobileBottomNavInner() {
             >
               {tab.label}
             </span>
-          </button>
+          </Link>
         );
       })}
     </nav>
   );
+
+  return createPortal(nav, document.body);
 }
 
 export default function MobileBottomNav() {

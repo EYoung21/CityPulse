@@ -97,7 +97,7 @@ import { useDeviceHeading } from "@/hooks/useDeviceHeading";
 import { useGpsSpeed } from "@/hooks/useGpsSpeed";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useMobileHomeRedirect } from "@/hooks/useMobileHomeRedirect";
-import MobileBottomNav from "@/components/MobileBottomNav";
+import MobileBottomNav, { MOBILE_NAV_HEIGHT_PX } from "@/components/MobileBottomNav";
 import InboxUrlSync, { type InboxPanel } from "@/components/InboxUrlSync";
 import { decodeTripToken, type DecodedTripToken } from "@/lib/share-trip";
 import type { ManeuverStep } from "@/lib/routing";
@@ -305,12 +305,28 @@ function MapHome() {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [routes, setRoutes] = useState<RouteData | null>(null);
   /** Top-level view tab: "map", "feed", "analytics". Developer API docs live at `/use-cases/api`. */
-  const [viewTab, setViewTab] = useState<"map" | "feed" | "analytics">("map");
+  const [viewTab, setViewTab] = useState<"map" | "feed" | "analytics">(() => {
+    if (typeof window === "undefined") return "map";
+    const viewHint = new URLSearchParams(window.location.search).get("view");
+    if (viewHint === "map" || viewHint === "feed" || viewHint === "analytics") {
+      return viewHint;
+    }
+    const saved = sessionStorage.getItem("pulse_view_tab");
+    if (saved === "map" || saved === "feed" || saved === "analytics") {
+      return saved;
+    }
+    return "map";
+  });
 
   useEffect(() => {
     const saved = sessionStorage.getItem("pulse_view_tab");
     if (saved === "api") {
       sessionStorage.setItem("pulse_view_tab", "map");
+      return;
+    }
+    const viewHint = new URLSearchParams(window.location.search).get("view");
+    if (viewHint === "map" || viewHint === "feed" || viewHint === "analytics") {
+      setViewTab(viewHint);
       return;
     }
     if (saved === "map" || saved === "feed" || saved === "analytics") {
@@ -3127,7 +3143,12 @@ function MapHome() {
           </div>
 
           {/* Scrollable feed body */}
-          <div className="flex-1 overflow-y-auto">
+          <div
+            className="flex-1 overflow-y-auto"
+            style={{
+              paddingBottom: `calc(${MOBILE_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom, 0px))`,
+            }}
+          >
             <IncidentFeed
               incidents={feedIncidents}
               selectedId={selectedId}
