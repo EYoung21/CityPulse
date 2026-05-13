@@ -42,6 +42,7 @@
 export const INSTALL_PROMPT_EVENT = "pp:request-install";
 export function requestInstallPrompt(): void {
   if (typeof window === "undefined") return;
+  if (!isMobileInstallContext()) return;
   window.dispatchEvent(new Event(INSTALL_PROMPT_EVENT));
 }
 
@@ -101,6 +102,21 @@ function isIos(): boolean {
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
+/** PWA install nudges are mobile-only. Desktop Chromium can still install
+ *  from the browser menu; we do not capture `beforeinstallprompt` or
+ *  render the in-app banner on large viewports / fine-pointer devices. */
+function isMobileInstallContext(): boolean {
+  if (isIos()) return true;
+  if (typeof window !== "undefined" && window.matchMedia) {
+    if (window.matchMedia("(max-width: 767px)").matches) return true;
+    const coarse = window.matchMedia("(pointer: coarse)").matches;
+    const noHover = window.matchMedia("(hover: none)").matches;
+    if (coarse && noHover) return true;
+  }
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  return /Android|webOS|iPhone|iPod|Mobile/i.test(ua);
+}
+
 /** Exported for push settings and other flows that need the same
  *  iOS-vs-iPadOS sniff without duplicating UA logic. */
 export function isIosLikeClient(): boolean {
@@ -132,6 +148,7 @@ export default function InstallPrompt() {
     if (typeof window === "undefined") return;
     if (isStandalone()) return; // Already installed.
     if (loadDismiss() !== null) return; // User said no recently.
+    if (!isMobileInstallContext()) return;
 
     const onBeforeInstall = (e: Event) => {
       e.preventDefault();
@@ -183,9 +200,9 @@ export default function InstallPrompt() {
     };
   }, []);
 
-  // Show only if (a) we've waited the engagement timer AND (b) we have
-  // either a deferred event OR an iOS device that could AddToHomeScreen.
-  const shouldShow = visible && (deferred !== null || iosHint);
+  // Mobile only: engagement timer plus deferred Chromium event or iOS hint.
+  const shouldShow =
+    isMobileInstallContext() && visible && (deferred !== null || iosHint);
   if (!shouldShow) return null;
 
   const handleInstall = async () => {
@@ -228,7 +245,7 @@ export default function InstallPrompt() {
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 80, opacity: 0 }}
         transition={{ type: "spring", stiffness: 320, damping: 28 }}
-        className="fixed inset-x-0 z-[10060] flex justify-center px-3 pointer-events-none max-md:bottom-[calc(env(safe-area-inset-bottom,0px)+5rem)] md:bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)]"
+        className="fixed inset-x-0 z-[10060] flex justify-center px-3 pointer-events-none max-md:bottom-[calc(env(safe-area-inset-bottom,0px)+5rem)] md:hidden"
         role="dialog"
         aria-label={`Install ${brand}`}
       >
@@ -260,7 +277,7 @@ export default function InstallPrompt() {
               {deferred ? (
                 <p className="text-[11px] mt-0.5 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
                   Get instant launches, an app icon, offline support, and
-                  push alerts when {brand} isn&rsquo;t open.
+                  push alerts when {brand} is not open.
                 </p>
               ) : (
                 <p className="text-[11px] mt-0.5 leading-snug" style={{ color: "var(--panel-text-muted)" }}>

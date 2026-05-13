@@ -1644,7 +1644,7 @@ function MapHome() {
           and from the Analytics header — surfacing it as a fourth top-bar tab
           is redundant and crowds the bar on mobile. */}
       <div
-        className="relative z-[1100] flex items-stretch shrink-0"
+        className="relative z-[1100] hidden md:flex items-stretch shrink-0"
         style={{
           background: "var(--panel-bg)",
           borderBottom: "1px solid var(--panel-border)",
