@@ -197,7 +197,7 @@ export function useSavedDestinations() {
         return [optimistic, ...withoutSingleton];
       });
       try {
-        await addDoc(col, {
+        const ref = await addDoc(col, {
           name,
           lat,
           lng,
@@ -205,6 +205,9 @@ export function useSavedDestinations() {
           listId: category === "custom" ? listId : null,
           createdAt: serverTimestamp(),
         });
+        setDestinations((prev) =>
+          prev.map((d) => (d.id === optimisticId ? { ...d, id: ref.id } : d)),
+        );
       } catch (error) {
         setDestinations((prev) => prev.filter((d) => d.id !== optimisticId));
         throw error;
@@ -218,6 +221,7 @@ export function useSavedDestinations() {
       if (!canSave) return;
       const previous = destinations;
       setDestinations((prev) => prev.filter((d) => d.id !== destId));
+      if (destId.startsWith("optimistic-")) return;
       const db = getFirestore(getFirebaseApp());
       try {
         await deleteDoc(doc(db, "users", user!.uid, "savedDestinations", destId));
