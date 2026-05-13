@@ -200,26 +200,31 @@ export default function PlaceActions({
     }
   }, [canSave, addDestination, displayLabel, lat, lng, flashToast, haptic]);
 
-  const onBookmarkClick = useCallback(() => {
+  const onRemoveSaved = useCallback(async () => {
     haptic();
-    if (showSaved) {
-      setSavePickerOpen((open) => !open);
+    if (!savedMatch) {
+      setPendingSave(false);
+      setSavePickerOpen(false);
       return;
     }
-    void onSaveAs("favorite");
-  }, [haptic, onSaveAs, showSaved]);
-
-  const onRemoveSaved = useCallback(async () => {
-    if (!savedMatch) return;
-    haptic();
     try {
       await removeDestination(savedMatch.id);
+      setPendingSave(false);
       setSavePickerOpen(false);
       flashToast("removed");
     } catch {
       /* ignore */
     }
   }, [savedMatch, removeDestination, flashToast, haptic]);
+
+  const onBookmarkClick = useCallback(() => {
+    haptic();
+    if (showSaved) {
+      void onRemoveSaved();
+      return;
+    }
+    void onSaveAs("favorite");
+  }, [haptic, onSaveAs, onRemoveSaved, showSaved]);
 
   const onDirectionsTo = useCallback(() => {
     haptic();
@@ -418,10 +423,10 @@ export default function PlaceActions({
               onClick={onBookmarkClick}
               title={
                 showSaved
-                  ? "Saved · tap to change or remove"
+                  ? "Saved · tap to remove · right-click for more options"
                   : "Save as favorite · right-click for more categories"
               }
-              aria-label={showSaved ? "Saved place options" : "Save this place as favorite"}
+              aria-label={showSaved ? "Remove saved place" : "Save this place as favorite"}
               aria-haspopup="menu"
               aria-expanded={savePickerOpen}
               aria-pressed={showSaved}
