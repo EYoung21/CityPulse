@@ -16,6 +16,18 @@ class LocationPipelineTests(unittest.TestCase):
         )
         self.assertTrue(any("23" in c and "6" in c for c in cands))
 
+    def test_queries_do_not_duplicate_city_state_suffix(self):
+        queries = geocode._make_queries(
+            "1755 Gunbarrel Road, Chattanooga, TN",
+            suffix=", Chattanooga, TN",
+        )
+        self.assertTrue(queries)
+        self.assertFalse(any("TN, TN" in q for q in queries))
+        self.assertFalse(any("Road Street" in q for q in queries))
+
+    def test_room_only_location_is_vague(self):
+        self.assertTrue(geocode._is_too_vague("room 10", ", Chattanooga, TN"))
+
     def test_validator_rejects_missing_transcript_ordinal(self):
         result = location_validate.validate_location(
             raw_text="working fire at West 23rd Street",
