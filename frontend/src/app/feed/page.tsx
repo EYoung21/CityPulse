@@ -69,6 +69,7 @@ export default function FeedPage() {
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [locating, setLocating] = useState(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -190,9 +191,11 @@ export default function FeedPage() {
     );
   }, []);
 
-  /** Hook into the map view: tapping a row deep-links into `/?incident=ID`
-   *  so the existing map detail panel renders the selection. */
   const handleSelect = useCallback((id: string) => {
+    setExpandedId((prev) => (prev === id ? null : id));
+  }, []);
+
+  const handleViewOnMap = useCallback((id: string) => {
     if (typeof window === "undefined") return;
     window.location.href = `/?incident=${encodeURIComponent(id)}`;
   }, []);
@@ -387,8 +390,9 @@ export default function FeedPage() {
 
         <IncidentFeed
           incidents={incidents}
-          selectedId={null}
+          selectedId={expandedId}
           onSelect={handleSelect}
+          onViewOnMap={handleViewOnMap}
           showMapThumbnail
         />
 

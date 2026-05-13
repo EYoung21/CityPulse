@@ -3,6 +3,7 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import type { Incident, IncidentMention } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
+import { incidentHeadline, incidentLocationLabel } from "@/lib/incident-display";
 import {
   MapPin,
   Clock,
@@ -395,7 +396,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
                 className="font-semibold text-sm"
                 style={{ color: "var(--panel-text)" }}
               >
-                {incident.location_text || "Unknown Location"}
+                {incidentHeadline(incident)}
               </h3>
               {incident.location_confidence === "context" && (
                 <span className="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-500">
@@ -403,6 +404,13 @@ export default function IncidentDetail({ incident, onClose }: Props) {
                 </span>
               )}
             </div>
+            <p
+              className="mt-1 text-xs flex items-center gap-1.5"
+              style={{ color: "var(--panel-text-secondary)" }}
+            >
+              <MapPin className="w-3.5 h-3.5 shrink-0" />
+              {incidentLocationLabel(incident)}
+            </p>
           </div>
           <button
             onClick={onClose}
