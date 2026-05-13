@@ -445,7 +445,10 @@ function MapHome() {
    *  count inside. Distinct from measure so they don't fight. */
   const [perimeterMode, setPerimeterMode] = useState(false);
   const [perimeterPoints, setPerimeterPoints] = useState<[number, number][]>([]);
-  const [heatmapEnabled, setHeatmapEnabled] = useState(true);
+  const [heatmapEnabled, setHeatmapEnabled] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return !window.matchMedia("(max-width: 767px)").matches;
+  });
   const [districtsEnabled, setDistrictsEnabled] = useState(false);
   // "This hour's hotspots" overlay — when on, the heatmap weights
   // incidents within ±1h of the current hour-of-day at full strength
@@ -1739,6 +1742,7 @@ function MapHome() {
       >
       <IncidentMap
         ref={mapRef}
+        layersActive={viewTab === "map"}
         incidents={filteredIncidents}
         selectedId={selectedId}
         onSelectIncident={(id) => { setMapTap(null); setSelectedId(id); if (window.innerWidth < 768) setSidebarOpen(false); }}

@@ -346,6 +346,9 @@ interface Props {
    *  the follow-me logic to disable auto-recenter when the rider takes
    *  manual control. Does not fire for programmatic panTo(). */
   onUserDrag?: () => void;
+  /** When false, defer expensive incident/heatmap relayers while another
+   *  surface (feed, analytics) is foregrounded. */
+  layersActive?: boolean;
   /** Persistent safety-POI overlay (hospitals/police/fire). Rendered as
    *  a separate Leaflet layer-group so toggling it doesn't disturb the
    *  incident-marker cluster. Page-level fetcher hands us a pre-filtered
@@ -869,6 +872,23 @@ function basemapAttribution(style: BasemapStyle): string {
   return '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>';
 }
 
+function isMobileViewport(): boolean {
+  return typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(max-width: 767px)").matches;
+}
+
+function incidentMarkerSignature(
+  inc: Incident,
+  tripRouteGeometry: [number, number][] | null | undefined
+): string {
+  let greyed = false;
+  if (tripRouteGeometry && tripRouteGeometry.length >= 2 && inc.lat != null && inc.lng != null) {
+    greyed = minDistToRouteKm([inc.lat, inc.lng], tripRouteGeometry) > TRIP_PROXIMITY_KM;
+  }
+  return `${inc.id}|${inc.lat}|${inc.lng}|${greyed ? 1 : 0}|${inc.severity_category}|${Math.round(inc.w_eff * 100)}`;
+}
+
 type TripLiveLayers = {
   marker: L.Marker;
   traveled: L.Polyline;
@@ -914,11 +934,19 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     onSavedPlaceClick,
     measurePoints = null,
     perimeterPoints = null,
+    layersActive = true,
   },
   ref
 ) {
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<L.MarkerClusterGroup | null>(null);
+  const incidentMarkersRef = useRef<Map<string, { marker: L.Marker; signature: string }>>(new Map());
+  const mapInteractingRef = useRef(false);
+  const pendingIncidentSyncRef = useRef(false);
+  const incidentSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queueIncidentSyncRef = useRef<(delay?: number) => void>(() => {});
+  const incidentsRef = useRef(incidents);
+  incidentsRef.current = incidents;
   const heatRef = useRef<L.Layer | null>(null);
   const heatPulseRafRef = useRef<number | null>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
@@ -1069,6 +1097,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       ? [hashView!.lat, hashView!.lng]
       : center;
     const initialZoom = hashInRange ? hashView!.zoom : zoom;
+    const mobileViewport = isMobileViewport();
 
     const map = L.map("incident-map", {
       zoomControl: false,
@@ -1076,6 +1105,9 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       // marker clusters and gloved / shaky touch on phones. Runtime
       // option; @types/leaflet MapOptions omits it on some versions.
       tapTolerance: 22,
+      preferCanvas: mobileViewport,
+      zoomAnimation: !mobileViewport,
+      fadeAnimation: !mobileViewport,
     } as L.MapOptions).setView(initialCenter, initialZoom);
 
     L.control.zoom({ position: "topright" }).addTo(map);
@@ -1083,7 +1115,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     // Initial base layer. The vector-tiles toggle persists in
     // localStorage so we honor it on first paint without waiting for a
     // React render.
-    usingVectorTilesRef.current = isVectorTilesEnabled();
+    usingVectorTilesRef.current = isVectorTilesEnabled() && !mobileViewport;
     if (usingVectorTilesRef.current) {
       tileLayerRef.current = L.maplibreGL({
         style: vectorBasemapStyleUrl(basemapStyle, isDark),
@@ -1096,16 +1128,22 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       tileLayerRef.current = L.tileLayer(basemapUrl(basemapStyle, isDark), {
         attribution: basemapAttribution(basemapStyle),
         maxZoom: 19,
+        updateWhenIdle: true,
+        updateWhenZooming: !mobileViewport,
+        keepBuffer: mobileViewport ? 2 : 4,
       }).addTo(map);
     }
 
     markersRef.current = L.markerClusterGroup({
-      maxClusterRadius: 60,
+      maxClusterRadius: mobileViewport ? 72 : 60,
       spiderfyOnMaxZoom: false,
       showCoverageOnHover: false,
       zoomToBoundsOnClick: false,
       disableClusteringAtZoom: 18,
-      animate: true,
+      animate: !mobileViewport,
+      chunkedLoading: mobileViewport,
+      chunkInterval: mobileViewport ? 120 : 200,
+      chunkDelay: mobileViewport ? 60 : 50,
       iconCreateFunction: (cluster: L.MarkerCluster) => {
         const count = cluster.getChildCount();
         let size = 32;
@@ -1204,10 +1242,23 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     // dragstart (real user gesture) and ignore programmatic panTo() calls
     // that we mark via `programmaticPanRef`.
     const onDragStart = () => {
+      mapInteractingRef.current = true;
       if (programmaticPanRef.current) return;
       onUserDragRef.current?.();
     };
+    const onInteractionEnd = () => {
+      mapInteractingRef.current = false;
+      if (!pendingIncidentSyncRef.current) return;
+      pendingIncidentSyncRef.current = false;
+      queueIncidentSyncRef.current(isMobileViewport() ? 120 : 0);
+    };
     map.on("dragstart", onDragStart);
+    map.on("dragend", onInteractionEnd);
+    const onZoomStart = () => {
+      mapInteractingRef.current = true;
+    };
+    map.on("zoomstart", onZoomStart);
+    map.on("zoomend", onInteractionEnd);
 
     /**
      * Tap-vs-long-press disambiguation:
@@ -1313,6 +1364,9 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       map.off("moveend", dispatchMove);
       map.off("zoomend", dispatchMove);
       map.off("dragstart", onDragStart);
+      map.off("dragend", onInteractionEnd);
+      map.off("zoomstart", onZoomStart);
+      map.off("zoomend", onInteractionEnd);
       if (hashWriteTimer) clearTimeout(hashWriteTimer);
       if (movePillTimer) clearTimeout(movePillTimer);
       cancelAnimationFrame(zoomRaf);
@@ -1332,6 +1386,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     if (!map) return;
 
     const apply = (vector: boolean) => {
+      const mobileViewport = isMobileViewport();
+      const effectiveVector = vector && !mobileViewport;
       const attrControl = map.attributionControl;
       if (tileLayerRef.current) {
         map.removeLayer(tileLayerRef.current);
@@ -1347,7 +1403,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
           attrControl.removeAttribution(basemapAttribution("streets"));
         } catch { /* ignore */ }
       }
-      if (vector) {
+      if (effectiveVector) {
         tileLayerRef.current = L.maplibreGL({
           style: vectorBasemapStyleUrl(basemapStyle, isDark),
           attributionControl: false,
@@ -1357,9 +1413,12 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         tileLayerRef.current = L.tileLayer(basemapUrl(basemapStyle, isDark), {
           attribution: basemapAttribution(basemapStyle),
           maxZoom: 19,
+          updateWhenIdle: true,
+          updateWhenZooming: !mobileViewport,
+          keepBuffer: mobileViewport ? 2 : 4,
         }).addTo(map);
       }
-      usingVectorTilesRef.current = vector;
+      usingVectorTilesRef.current = effectiveVector;
     };
 
     apply(usingVectorTilesRef.current);
@@ -1379,12 +1438,17 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   // Track the safe route polylines so we can hide/show them without full re-render
   const safePolylinesRef = useRef<L.Polyline[]>([]);
 
-  useEffect(() => {
+  const runIncidentSync = useCallback(() => {
+    if (!layersActive) return;
+    if (mapInteractingRef.current) {
+      pendingIncidentSyncRef.current = true;
+      return;
+    }
+
     const map = mapRef.current;
     const markers = markersRef.current;
     if (!map || !markers) return;
 
-    markers.clearLayers();
     if (heatPulseRafRef.current != null) {
       cancelAnimationFrame(heatPulseRafRef.current);
       heatPulseRafRef.current = null;
@@ -1399,29 +1463,15 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     if (heatmapEnabled) {
       const useDensity = timeFilterHours >= 168;
       const heatData: [number, number, number][] = [];
-      // Wrap-around hour distance: e.g. a 23h incident is just 2h away
-      // from a 1am focus, not 22h. Used to weight the time-of-day
-      // overlay so the hotspots reflect "what happens around this hour"
-      // rather than the average over the whole window.
       const hourDist = (a: number, b: number): number => {
         const d = Math.abs(a - b) % 24;
         return Math.min(d, 24 - d);
       };
       for (const inc of incidents) {
         if (inc.lat == null || inc.lng == null) continue;
-        // Severity-weighted intensity so the hotspots reflect *what* is
-        // happening, not just *that* something is happening. The "density"
-        // mode (week+ window) keeps a flatter weight so the map shows raw
-        // incident density rather than collapsing toward a few violent
-        // pinpoints.
         const base = useDensity ? 0.6 : Math.max(inc.w_eff, 0.2);
         let weight = useDensity ? base : heatmapWeight(inc.severity_category, base);
         if (todHourFocus != null) {
-          // Triangular kernel centered on the focus hour: 1.0 at the
-          // peak hour, ramping linearly down to a small floor over a
-          // ±2h window. Outside that, the incident still contributes a
-          // sliver so the overall map context isn't lost — but the
-          // peak-hour hotspots clearly dominate.
           const t = new Date(inc.reported_at);
           const h = t.getHours();
           const d = hourDist(h, todHourFocus);
@@ -1448,8 +1498,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
           0.86: "#ef4444",
           1.0: "#dc2626",
         };
-        const softRadius = 72;
-        const softBlur = 44;
+        const softRadius = isMobileViewport() ? 56 : 72;
+        const softBlur = isMobileViewport() ? 34 : 44;
         const legacyGradient = {
           0.0: "rgba(0,0,40,0)",
           0.1: "#0a0a5c",
@@ -1476,13 +1526,23 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         });
         heat.addTo(map);
         heatRef.current = heat;
-
       }
     }
 
+    const nextIds = new Set<string>();
     let glyphUid = 0;
     for (const inc of incidents) {
       if (inc.lat == null || inc.lng == null) continue;
+      const signature = incidentMarkerSignature(inc, tripRouteGeometry);
+      nextIds.add(inc.id);
+      const existing = incidentMarkersRef.current.get(inc.id);
+      if (existing && existing.signature === signature) continue;
+
+      if (existing) {
+        markers.removeLayer(existing.marker);
+        incidentMarkersRef.current.delete(inc.id);
+      }
+
       let greyed = false;
       if (isTripMode && tripRouteGeometry) {
         const dist = minDistToRouteKm([inc.lat, inc.lng], tripRouteGeometry);
@@ -1499,16 +1559,61 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       (marker as any)._ppIncidentId = inc.id;
       if (!greyed) marker.on("click", () => stableOnSelect(inc.id));
       markers.addLayer(marker);
+      incidentMarkersRef.current.set(inc.id, { marker, signature });
+    }
+
+    for (const [id, entry] of incidentMarkersRef.current) {
+      if (nextIds.has(id)) continue;
+      markers.removeLayer(entry.marker);
+      incidentMarkersRef.current.delete(id);
     }
   }, [
     incidents,
+    layersActive,
     stableOnSelect,
     tripRouteGeometry,
     heatmapEnabled,
     todHourFocus,
     timeFilterHours,
-    heatmapDemoBoost,
   ]);
+
+  const queueIncidentSync = useCallback((delay = 0) => {
+    if (!layersActive) return;
+    if (incidentSyncTimerRef.current) clearTimeout(incidentSyncTimerRef.current);
+    incidentSyncTimerRef.current = setTimeout(() => {
+      incidentSyncTimerRef.current = null;
+      runIncidentSync();
+    }, delay);
+  }, [layersActive, runIncidentSync]);
+
+  queueIncidentSyncRef.current = queueIncidentSync;
+
+  useEffect(() => {
+    if (!layersActive) return;
+    queueIncidentSync(isMobileViewport() ? 400 : 120);
+    return () => {
+      if (incidentSyncTimerRef.current) clearTimeout(incidentSyncTimerRef.current);
+    };
+  }, [
+    incidents,
+    tripRouteGeometry,
+    heatmapEnabled,
+    todHourFocus,
+    timeFilterHours,
+    heatmapDemoBoost,
+    layersActive,
+    queueIncidentSync,
+  ]);
+
+  useEffect(() => {
+    if (!layersActive) return;
+    const map = mapRef.current;
+    if (!map) return;
+    requestAnimationFrame(() => {
+      map.invalidateSize();
+      queueIncidentSync(0);
+    });
+  }, [layersActive, queueIncidentSync]);
 
   // Persistent safety-POI overlay (hospitals/police/fire). Lives in its
   // own layer-group so toggling it doesn't disturb the cluster of
@@ -1810,7 +1915,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       return;
     }
     const map = mapRef.current;
-    const inc = incidents.find((i) => i.id === selectedId);
+    const inc = incidentsRef.current.find((i) => i.id === selectedId);
     if (inc?.lat == null || inc?.lng == null) return;
 
     // Center once per selection. The dependency array includes `incidents`
@@ -1848,7 +1953,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }
 
     return () => { highlight?.clearLayers(); };
-  }, [selectedId, incidents, flyToOffset]);
+  }, [selectedId, flyToOffset]);
 
   // "Parked here" sticky marker — distinct purple car badge so it
   // doesn't get confused with the user's location dot. Passive
