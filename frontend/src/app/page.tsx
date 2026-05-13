@@ -716,6 +716,7 @@ function MapHome() {
   // is visible (mobile auto-collapses) and dismiss the lightweight overlays.
   useEffect(() => {
     function handler() {
+      setViewTab("map");
       setSidebarOpen(true);
       setMapTap(null);
     }

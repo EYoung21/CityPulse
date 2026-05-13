@@ -9,7 +9,6 @@ import {
   Copy,
   Hash,
   Bookmark,
-  Check,
   Home,
   Briefcase,
   Star,
@@ -57,7 +56,7 @@ interface Props {
   website?: string;
 }
 
-type ToastKind = "copied-coords" | "copied-pluscode" | "saved" | "parked" | "added-stop" | null;
+type ToastKind = "copied-coords" | "copied-pluscode" | "saved" | "removed" | "parked" | "added-stop" | null;
 
 /** Compact action-button row shared by SafetyScoreCard and IncidentDetail.
  *  Buttons: Directions to / from, Share, Open in Maps, Copy coordinates,
@@ -83,7 +82,7 @@ export default function PlaceActions({
 }: Props) {
   const [toast, setToast] = useState<ToastKind>(null);
   const [savePickerOpen, setSavePickerOpen] = useState(false);
-  const { canSave, addDestination, destinations } = useSavedDestinations();
+  const { canSave, addDestination, removeDestination, destinations } = useSavedDestinations();
   // We only show "Add as stop" when the user is mid-route-planning or
   // mid-trip — otherwise the button is confusing for users who haven't
   // opened the directions panel yet. Source of truth is the global
@@ -105,6 +104,9 @@ export default function PlaceActions({
   const displayLabel = label?.trim() || coordStr;
 
   const isSaved = destinations.some(
+    (d) => Math.abs(d.lat - lat) < 1e-5 && Math.abs(d.lng - lng) < 1e-5
+  );
+  const savedMatch = destinations.find(
     (d) => Math.abs(d.lat - lat) < 1e-5 && Math.abs(d.lng - lng) < 1e-5
   );
 
@@ -190,6 +192,18 @@ export default function PlaceActions({
     }
   }, [canSave, addDestination, displayLabel, lat, lng, flashToast, haptic]);
 
+  const onRemoveSaved = useCallback(async () => {
+    if (!savedMatch) return;
+    haptic();
+    try {
+      await removeDestination(savedMatch.id);
+      setSavePickerOpen(false);
+      flashToast("removed");
+    } catch {
+      /* ignore */
+    }
+  }, [savedMatch, removeDestination, flashToast, haptic]);
+
   const onDirectionsTo = useCallback(() => {
     haptic();
     const params = new URLSearchParams(window.location.search);
@@ -244,6 +258,8 @@ export default function PlaceActions({
         ? "Plus Code copied"
         : toast === "saved"
           ? "Saved"
+          : toast === "removed"
+            ? "Removed from saved"
           : toast === "parked"
             ? "Parked here"
             : toast === "added-stop"
@@ -383,8 +399,8 @@ export default function PlaceActions({
             <button
               type="button"
               onClick={() => setSavePickerOpen((v) => !v)}
-              title={isSaved ? "Saved · choose category" : "Save place"}
-              aria-label={isSaved ? "Already saved (change category)" : "Save this place"}
+              title={isSaved ? "Saved · tap to change or remove" : "Save place"}
+              aria-label={isSaved ? "Saved place options" : "Save this place"}
               aria-haspopup="menu"
               aria-expanded={savePickerOpen}
               className={btn}
@@ -395,7 +411,10 @@ export default function PlaceActions({
                 borderColor: isSaved ? "rgba(59,130,246,0.35)" : (btnStyle.border as string),
               }}
             >
-              {isSaved ? <Check className="w-4 h-4" /> : <Bookmark className="w-4 h-4" />}
+              <Bookmark
+                className="w-4 h-4"
+                {...(isSaved ? { fill: "currentColor" } : {})}
+              />
             </button>
             {savePickerOpen && (
               <div
@@ -407,6 +426,19 @@ export default function PlaceActions({
                 }}
                 onMouseLeave={() => setSavePickerOpen(false)}
               >
+                {isSaved && (
+                  <button
+                    role="menuitem"
+                    type="button"
+                    onClick={() => void onRemoveSaved()}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-xs"
+                    style={{ color: "#f87171" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  >
+                    Remove from saved
+                  </button>
+                )}
                 <p
                   className="text-[9px] uppercase tracking-wider px-3 py-1"
                   style={{ color: "var(--panel-text-muted)" }}

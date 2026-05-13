@@ -698,6 +698,16 @@ export async function getMultiRouteVariants(
 ): Promise<RouteResult[]> {
   if (waypoints.length < 2) return [];
 
+  // Browser calls to ORS are blocked by CORS; route through our API proxy instead.
+  if (typeof window !== "undefined") {
+    const isSafe = !!avoidPolygons;
+    let osrm = await getRouteOSRM(mode, waypoints, isSafe);
+    if (!osrm && waypoints.length > 2) {
+      osrm = await getRouteOSRMChained(mode, waypoints, isSafe);
+    }
+    return osrm ? [osrm] : [];
+  }
+
   // Try ORS first (supports avoidance polygons + alternatives)
   const body: Record<string, unknown> = {
     coordinates: waypoints.map(([lat, lng]) => [lng, lat]),

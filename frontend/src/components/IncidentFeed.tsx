@@ -188,6 +188,15 @@ function IncidentCard({
       <div
         onClick={onSelect}
         className="flex items-start gap-2.5 px-3 py-2.5 cursor-pointer"
+        role="button"
+        tabIndex={0}
+        aria-expanded={isSelected}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onSelect();
+          }
+        }}
       >
         <div
           className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full transition-opacity"
@@ -317,6 +326,11 @@ function IncidentCard({
           <span className="text-[11px] font-mono" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }}>
             {timeAgo(inc.reported_at)}
           </span>
+          <ChevronDown
+            className={`w-4 h-4 transition-transform ${isSelected ? "rotate-180" : ""}`}
+            style={{ color: isSelected ? "#60a5fa" : "var(--panel-text-muted, rgba(255,255,255,0.35))" }}
+            aria-hidden
+          />
           {(inc.mention_count ?? 0) > 1 && inc.last_mention_at && (
             <span
               className="text-[10px] font-mono px-1.5 py-0.5 rounded"
