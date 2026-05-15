@@ -41,6 +41,7 @@ import FeedPullRefresh from "@/components/FeedPullRefresh";
 import FeedAudioMiniPlayer from "@/components/FeedAudioMiniPlayer";
 import { getCurrentPosition } from "@/lib/native";
 import { activeNowCount } from "@/lib/analytics";
+import { INCIDENT_CATEGORY_GROUPS, toggleCategoryGroupSelection } from "@/lib/incident-category-groups";
 import SearchSidebar from "@/components/SearchSidebar";
 import { type RouteData } from "@/components/RoutePanel";
 import SafetyScoreCard from "@/components/SafetyScoreCard";
@@ -162,13 +163,12 @@ function statsFromIncidents(incidents: Incident[]): StatsResponse {
   };
 }
 
-const CATEGORY_PILLS = [
-  { label: "Violent", icon: Siren, cats: ["violent_weapon", "violent_no_weapon", "shots_heard", "robbery", "burglary_in_progress"], color: "#ef4444" },
-  { label: "Medical", icon: HeartPulse, cats: ["medical_priority", "medical_other"], color: "#f472b6" },
-  { label: "Traffic", icon: Car, cats: ["traffic_crash_injury", "traffic_crash_no_injury"], color: "#3b82f6" },
-  { label: "Fire", icon: Flame, cats: ["fire_hazmat"], color: "#fb923c" },
-  { label: "Disorder", icon: Volume2, cats: ["disorder", "admin_or_noise"], color: "#8b5cf6" },
-] as const;
+const CATEGORY_PILL_ICONS = [Siren, HeartPulse, Car, Flame, Volume2] as const;
+
+const CATEGORY_PILLS = INCIDENT_CATEGORY_GROUPS.map((pill, i) => ({
+  ...pill,
+  icon: CATEGORY_PILL_ICONS[i],
+}));
 
 const TIME_FILTERS = [
   // Free tier: every "live view" window ≤1h is free (5m, 10m, 30m, 1h).
@@ -1565,13 +1565,7 @@ function MapHome() {
   }, [incidents, apiSummaryDown]);
 
   const toggleCat = useCallback((cats: readonly string[]) => {
-    setActiveCats((prev) => {
-      const next = new Set(prev);
-      const allActive = cats.every((c) => next.has(c));
-      if (allActive) cats.forEach((c) => next.delete(c));
-      else cats.forEach((c) => next.add(c));
-      return next;
-    });
+    setActiveCats((prev) => toggleCategoryGroupSelection(cats, prev));
   }, []);
 
   /** Live + extended history merged, deduped by id. Extended is empty
@@ -3011,10 +3005,12 @@ function MapHome() {
         <motion.div className="absolute inset-x-0 top-0 bottom-[calc(64px+env(safe-area-inset-bottom,0px))] md:bottom-0 z-20 bg-[var(--map-bg)] overflow-y-auto">
           <div className="max-w-5xl mx-auto p-4 md:p-8">
             <AnalyticsPanel
-              incidents={incidents}
+              incidents={allIncidents}
               areaName={cityDisplayName}
               feedLabels={feedLabels}
               routeGeometry={tripGeometry ?? undefined}
+              activeCats={activeCats}
+              onActiveCatsChange={setActiveCats}
               onClose={() => setViewTab("map")}
             />
           </div>

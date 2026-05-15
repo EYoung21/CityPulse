@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import Link from "next/link";
 import {
   X,
@@ -65,6 +65,7 @@ import {
   onCityNeighborhoodsLoaded,
 } from "@/lib/neighborhoods";
 import { getCurrentCity } from "@/lib/pulse-cities";
+import IncidentTypeFilterChips from "@/components/IncidentTypeFilterChips";
 
 type TabId = "overview" | "hotspots" | "categories" | "timing" | "quality" | "routes";
 type ScopeKind = "city" | "district" | "neighborhood";
@@ -99,6 +100,10 @@ interface Props {
   feedLabels?: Record<string, string>;
   routeGeometry?: [number, number][];
   onClose: () => void;
+  /** When set with `onActiveCatsChange`, mirrors the map feed category filter
+   *  (empty set = all types). */
+  activeCats?: Set<string>;
+  onActiveCatsChange?: Dispatch<SetStateAction<Set<string>>>;
 }
 
 export default function AnalyticsPanel({
@@ -108,7 +113,13 @@ export default function AnalyticsPanel({
   feedLabels = {},
   routeGeometry,
   onClose,
+  activeCats: activeCatsProp,
+  onActiveCatsChange,
 }: Props) {
+  const [localCats, setLocalCats] = useState<Set<string>>(() => new Set());
+  const activeCats = activeCatsProp ?? localCats;
+  const setActiveCats = onActiveCatsChange ?? setLocalCats;
+
   const [windowHours, setWindowHours] = useState<number>(24 * 30);
   const [tab, setTab] = useState<TabId>("overview");
   const [scopeKind, setScopeKind] = useState<ScopeKind>("city");
@@ -187,8 +198,21 @@ export default function AnalyticsPanel({
   }, [areaIncidents, areaName, scopeKind, effectiveScopeSlug, districts, neighborhoods]);
 
   // Apply the time window AFTER the scope filter so all derived charts agree.
-  const scoped = useMemo(() => withinWindow(scopedAll, windowHours), [scopedAll, windowHours]);
-  const cityWindowed = useMemo(() => withinWindow(incidents, windowHours), [incidents, windowHours]);
+  const timeWindowed = useMemo(() => withinWindow(scopedAll, windowHours), [scopedAll, windowHours]);
+  const cityTimeWindowed = useMemo(() => withinWindow(incidents, windowHours), [incidents, windowHours]);
+
+  const scoped = useMemo(() => {
+    if (activeCats.size === 0) return timeWindowed;
+    return timeWindowed.filter((i) => activeCats.has(i.severity_category));
+  }, [timeWindowed, activeCats]);
+
+  const cityWindowed = useMemo(() => {
+    if (activeCats.size === 0) return cityTimeWindowed;
+    return cityTimeWindowed.filter((i) => activeCats.has(i.severity_category));
+  }, [cityTimeWindowed, activeCats]);
+
+  const emptyBecauseCategoryOnly =
+    timeWindowed.length > 0 && scoped.length === 0 && activeCats.size > 0;
 
   // ── Derived stats ──────────────────────────────────────────────────────
   const trends = useMemo(() => trendByDay(scoped, 30), [scoped]);
@@ -233,8 +257,12 @@ export default function AnalyticsPanel({
     const a = document.createElement("a");
     const slug = (scopeLabel || "city").toLowerCase().replace(/[^a-z0-9]+/g, "-");
     const win = TIME_WINDOWS.find((w) => w.hours === windowHours)?.label || "all";
+    const cat =
+      activeCats.size > 0
+        ? `-${[...activeCats].sort().join("+").slice(0, 40).replace(/[^a-z0-9+]+/gi, "-")}`
+        : "";
     a.href = url;
-    a.download = `citypulse-${slug}-${win}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `citypulse-${slug}-${win}${cat}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -429,6 +457,17 @@ export default function AnalyticsPanel({
         </div>
       </div>
 
+      <div
+        className="px-4 py-2 flex flex-wrap items-center gap-2"
+        style={{ borderBottom: "1px solid var(--panel-border)" }}
+      >
+        <IncidentTypeFilterChips
+          activeCats={activeCats}
+          onActiveCatsChange={setActiveCats}
+          incidentsForCounts={timeWindowed}
+        />
+      </div>
+
       {/* ── Sub-tabs ──────────────────────────────────────────────────── */}
       <div
         className="flex items-stretch overflow-x-auto no-scrollbar"
@@ -463,7 +502,7 @@ export default function AnalyticsPanel({
       {/* ── Body ──────────────────────────────────────────────────────── */}
       <div ref={exportTargetRef} className="p-4 space-y-5 max-h-[min(72vh,900px)] overflow-y-auto">
         {totalCount === 0 ? (
-          <EmptyState scopeLabel={scopeLabel} />
+          <EmptyState scopeLabel={scopeLabel} categoryOnly={emptyBecauseCategoryOnly} />
         ) : tab === "overview" ? (
           <Overview
             scopeLabel={scopeLabel}
@@ -487,6 +526,7 @@ export default function AnalyticsPanel({
             districts={districts}
             neighborhoods={neighborhoods}
             scoped={scoped}
+            typeFilterActive={activeCats.size > 0}
             onFocusDistrict={focusDistrict}
             onFocusNeighborhood={focusNeighborhood}
             onFocusPoint={focusPoint}
@@ -519,7 +559,7 @@ export default function AnalyticsPanel({
 // Empty state
 // ──────────────────────────────────────────────────────────────────────────
 
-function EmptyState({ scopeLabel }: { scopeLabel: string }) {
+function EmptyState({ scopeLabel, categoryOnly }: { scopeLabel: string; categoryOnly?: boolean }) {
   return (
     <div
       className="rounded-lg p-6 text-center"
@@ -527,9 +567,13 @@ function EmptyState({ scopeLabel }: { scopeLabel: string }) {
     >
       <BarChart3 className="w-6 h-6 mx-auto mb-2 opacity-50" />
       <p className="text-sm font-medium" style={{ color: "var(--panel-text-secondary)" }}>
-        No incidents in {scopeLabel} for this window.
+        {categoryOnly
+          ? "No incidents match the selected types in this scope and window."
+          : `No incidents in ${scopeLabel} for this window.`}
       </p>
-      <p className="text-[11px] mt-1">Try a wider time range, or switch scope.</p>
+      <p className="text-[11px] mt-1">
+        {categoryOnly ? "Clear type filters or pick another combination." : "Try a wider time range, or switch scope."}
+      </p>
     </div>
   );
 }
@@ -735,6 +779,7 @@ interface HotspotsProps {
   districts: District[];
   neighborhoods: Neighborhood[];
   scoped: Incident[];
+  typeFilterActive: boolean;
   onFocusDistrict: (slug: string) => void;
   onFocusNeighborhood: (slug: string) => void;
   onFocusPoint: (lat: number, lng: number) => void;
@@ -747,6 +792,7 @@ function Hotspots({
   districts,
   neighborhoods,
   scoped,
+  typeFilterActive,
   onFocusDistrict,
   onFocusNeighborhood,
   onFocusPoint,
@@ -831,6 +877,7 @@ function Hotspots({
                     >
                       {row.count}
                     </span>
+                    {!typeFilterActive && (
                     <span
                       className="text-[10px] uppercase tracking-wider w-20 text-right shrink-0 truncate"
                       style={{ color: "var(--panel-text-muted)" }}
@@ -838,6 +885,7 @@ function Hotspots({
                     >
                       {categoryDisplay(row.topCat)}
                     </span>
+                    )}
                   </button>
                 </li>
               );
@@ -895,6 +943,7 @@ function Hotspots({
                   >
                     {h.label}
                   </span>
+                  {!typeFilterActive && (
                   <span
                     className="text-[10px] uppercase tracking-wider truncate w-24 text-right shrink-0"
                     style={{ color: "var(--panel-text-muted)" }}
@@ -902,6 +951,7 @@ function Hotspots({
                   >
                     {categoryDisplay(h.topCategory)}
                   </span>
+                  )}
                   <span
                     className="text-[10px] font-mono w-10 text-right shrink-0"
                     style={{ color: "var(--panel-text-secondary)" }}

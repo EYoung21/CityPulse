@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Crosshair, Download, Code, Zap, Activity } from "lucide-react";
 import IncidentFeed from "@/components/IncidentFeed";
+import IncidentTypeFilterChips from "@/components/IncidentTypeFilterChips";
+import { incidentMatchesCategoryFilter } from "@/lib/incident-category-groups";
 import MobileBottomNav, { MOBILE_NAV_HEIGHT_PX } from "@/components/MobileBottomNav";
 import InstallPrompt from "@/components/InstallPrompt";
 import FeedPullRefresh from "@/components/FeedPullRefresh";
@@ -17,6 +19,7 @@ import { activeNowCount } from "@/lib/analytics";
 export default function FeedPage() {
   const [mode, setMode] = useState<FeedMode>("recent");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [activeCats, setActiveCats] = useState<Set<string>>(() => new Set());
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const scrollTopRef = useRef<HTMLDivElement | null>(null);
 
@@ -48,12 +51,17 @@ export default function FeedPage() {
     sinceIso: isPro ? undefined : freeSinceIso,
   });
 
+  const visibleIncidents = useMemo(
+    () => incidents.filter((i) => incidentMatchesCategoryFilter(i, activeCats)),
+    [incidents, activeCats]
+  );
+
   const newIncidentIds = useMemo(() => {
     if (pendingNewCount <= 0) return undefined;
     return new Set(incidents.slice(0, pendingNewCount).map((i) => i.id));
   }, [incidents, pendingNewCount]);
 
-  const activeNow = useMemo(() => activeNowCount(incidents, 30), [incidents]);
+  const activeNow = useMemo(() => activeNowCount(visibleIncidents, 30), [visibleIncidents]);
 
   useEffect(() => {
     const node = sentinelRef.current;
@@ -86,13 +94,13 @@ export default function FeedPage() {
   }, [mode, userLoc, city.name, lastUpdatedLabel]);
 
   const downloadCsv = useCallback(() => {
-    if (incidents.length === 0) return;
+    if (visibleIncidents.length === 0) return;
     const escape = (s: string) => {
       if (/[,"\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
       return s;
     };
     const headers = ["reported_at", "category", "location", "lat", "lng", "description", "confidence"];
-    const rows = incidents.map((inc) => [
+    const rows = visibleIncidents.map((inc) => [
       inc.reported_at,
       inc.severity_category,
       escape(inc.location_text || ""),
@@ -109,7 +117,7 @@ export default function FeedPage() {
     a.download = `citypulse-${city.slug}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [incidents, city.slug]);
+  }, [visibleIncidents, city.slug]);
 
   const jumpToNew = useCallback(() => {
     acknowledgeNew();
@@ -243,17 +251,28 @@ export default function FeedPage() {
         >
           <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} /> Refresh
         </button>
-        {incidents.length > 0 && (
+        {visibleIncidents.length > 0 && (
           <button
             type="button"
             onClick={downloadCsv}
             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors hover:bg-white/5"
             style={{ color: "var(--panel-text-muted)", border: "1px solid var(--panel-border)" }}
-            title={`Download ${incidents.length} incidents as CSV`}
+            title={`Download ${visibleIncidents.length} incidents as CSV`}
           >
             <Download className="w-3.5 h-3.5" /> CSV
           </button>
         )}
+      </div>
+
+      <div
+        className="px-4 py-2 flex flex-wrap items-center gap-2"
+        style={{ borderBottom: "1px solid var(--panel-border, rgba(148,163,184,0.15))" }}
+      >
+        <IncidentTypeFilterChips
+          activeCats={activeCats}
+          onActiveCatsChange={setActiveCats}
+          incidentsForCounts={incidents}
+        />
       </div>
 
       {!isPro && (
@@ -283,7 +302,7 @@ export default function FeedPage() {
         <FeedPullRefresh onRefresh={refresh} className="flex-1" onScroll={onScrollNearTop}>
           <div ref={scrollTopRef}>
             <IncidentFeed
-              incidents={incidents}
+              incidents={visibleIncidents}
               selectedId={expandedId}
               onSelect={handleSelect}
               onViewOnMap={handleViewOnMap}
@@ -295,7 +314,7 @@ export default function FeedPage() {
               newIncidentIds={newIncidentIds}
             />
             <div ref={sentinelRef} className="h-12" />
-            {!hasMore && mode === "recent" && incidents.length > 0 && (
+            {!hasMore && mode === "recent" && visibleIncidents.length > 0 && (
               <div className="px-4 py-6 text-center text-[11px]" style={{ color: "var(--panel-text-muted)" }}>
                 That&apos;s every incident in your selected window.
               </div>
