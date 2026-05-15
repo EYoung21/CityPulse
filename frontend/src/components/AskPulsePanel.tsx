@@ -8,7 +8,6 @@ import {
   Plus,
   Send,
   Square,
-  ChevronDown,
 } from "lucide-react";
 import { fetchPulseChat, type PulseChatMessage } from "@/lib/api";
 
@@ -97,8 +96,8 @@ export default function AskPulsePanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const [threadMenuOpen, setThreadMenuOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const threadStripRef = useRef<HTMLDivElement | null>(null);
   const listEndRef = useRef<HTMLDivElement | null>(null);
   const hydratedRef = useRef(false);
 
@@ -147,8 +146,13 @@ export default function AskPulsePanel({
     setDraft("");
     setEditingMessageId(null);
     setError(null);
-    setThreadMenuOpen(false);
   }, []);
+
+  useEffect(() => {
+    if (!activeId || !threadStripRef.current) return;
+    const el = threadStripRef.current.querySelector<HTMLElement>(`[data-thread-id="${activeId}"]`);
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  }, [activeId, threads.length]);
 
   const stopGeneration = useCallback(() => {
     abortRef.current?.abort();
@@ -290,61 +294,6 @@ export default function AskPulsePanel({
             Context: {activeTimeLabel} · {citySlug} · UNVERIFIED scanner data
           </p>
         </div>
-        <div className="relative shrink-0">
-          <button
-            type="button"
-            onClick={() => setThreadMenuOpen((o) => !o)}
-            className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium max-w-[140px] sm:max-w-[200px]"
-            style={{ background: "var(--panel-input-bg)", color: "var(--panel-text)" }}
-            aria-expanded={threadMenuOpen}
-            aria-haspopup="listbox"
-          >
-            <span className="truncate">{activeThread?.title ?? "Chat"}</span>
-            <ChevronDown className="w-3.5 h-3.5 shrink-0 opacity-60" />
-          </button>
-          {threadMenuOpen && (
-            <ul
-              className="absolute right-0 top-full mt-1 z-50 min-w-[200px] max-w-[min(90vw,280px)] rounded-lg border shadow-lg py-1 max-h-64 overflow-y-auto"
-              style={{
-                background: "var(--panel-bg)",
-                borderColor: "var(--panel-border)",
-                boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-              }}
-              role="listbox"
-            >
-              {threads.map((t) => (
-                <li key={t.id}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={t.id === activeId}
-                    className="w-full text-left px-3 py-2 text-xs truncate hover:bg-white/5"
-                    style={{ color: t.id === activeId ? "#60a5fa" : "var(--panel-text)" }}
-                    onClick={() => {
-                      setActiveId(t.id);
-                      setThreadMenuOpen(false);
-                      setEditingMessageId(null);
-                      setDraft("");
-                      setError(null);
-                    }}
-                  >
-                    {t.title}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={newThread}
-          className="p-2 rounded-lg shrink-0"
-          style={{ background: "var(--panel-input-bg)", color: "var(--panel-text)" }}
-          title="New chat"
-          aria-label="New chat"
-        >
-          <Plus className="w-4 h-4" />
-        </button>
         <button
           type="button"
           onClick={onClose}
@@ -354,6 +303,64 @@ export default function AskPulsePanel({
           Close
         </button>
       </header>
+
+      <div
+        ref={threadStripRef}
+        className="shrink-0 flex items-center gap-2 px-3 py-2 overflow-x-auto no-scrollbar border-b"
+        style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}
+        role="tablist"
+        aria-label="Chat threads"
+      >
+        <button
+          type="button"
+          onClick={newThread}
+          className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-medium border border-dashed"
+          style={{
+            borderColor: "var(--panel-border)",
+            color: "var(--panel-text-secondary)",
+            background: "transparent",
+          }}
+          title="New chat"
+        >
+          <Plus className="w-3 h-3" />
+          New
+        </button>
+        {threads.map((t) => {
+          const active = t.id === activeId;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              data-thread-id={t.id}
+              onClick={() => {
+                setActiveId(t.id);
+                setEditingMessageId(null);
+                setDraft("");
+                setError(null);
+              }}
+              className="shrink-0 max-w-[min(42vw,220px)] px-3 py-1.5 rounded-full text-[11px] font-medium truncate transition-colors"
+              style={
+                active
+                  ? {
+                      background: "rgba(59,130,246,0.18)",
+                      color: "#60a5fa",
+                      border: "1px solid rgba(59,130,246,0.35)",
+                    }
+                  : {
+                      background: "var(--panel-input-bg)",
+                      color: "var(--panel-text-secondary)",
+                      border: "1px solid var(--panel-border)",
+                    }
+              }
+              title={t.title}
+            >
+              {t.title}
+            </button>
+          );
+        })}
+      </div>
 
       {error && (
         <div className="shrink-0 mx-3 mt-2 px-3 py-2 rounded-lg text-xs bg-red-500/15 text-red-300 border border-red-500/25">

@@ -56,6 +56,7 @@ import { share as nativeShare } from "@/lib/native";
 import { setPref } from "@/lib/prefs-sync";
 import { useAuth } from "@/contexts/AuthContext";
 import { publishRouteState } from "@/lib/route-state";
+import { openAskPulseTab } from "@/lib/open-ask-pulse";
 
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
@@ -1265,9 +1266,8 @@ export default function SearchSidebar({
           <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--panel-text-muted)" }}>Navigation</p>
         </div>
         {menuRow(Sparkles, "Ask Pulse", () => {
-          setDrawerOpen(false);
-          setActiveDesktopPanel(null);
-          window.dispatchEvent(new CustomEvent("pp:focus-search"));
+          closeDesktopDrawer();
+          openAskPulseTab();
         })}
         {menuRow(Bookmark, "Saved places", () => selectDesktopPanel("saved"))}
         {menuRow(History, "Recent trips", () => selectDesktopPanel("recents"))}
@@ -1330,7 +1330,14 @@ export default function SearchSidebar({
               <button
                 key={id}
                 type="button"
-                onClick={() => selectDesktopPanel(id)}
+                onClick={() => {
+                  if (id === "menu") {
+                    closeDesktopDrawer();
+                    openAskPulseTab();
+                    return;
+                  }
+                  selectDesktopPanel(id);
+                }}
                 className="w-full min-h-[58px] px-1 flex flex-col items-center justify-center gap-1 transition-colors text-[11px] font-medium"
                 style={{
                   color: active ? "#3b82f6" : "var(--panel-text-secondary)",
