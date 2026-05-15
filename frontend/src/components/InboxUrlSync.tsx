@@ -16,7 +16,7 @@ import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 export type InboxPanel = "list" | "settings" | null;
-export type ViewTab = "map" | "feed" | "analytics" | null;
+export type ViewTab = "map" | "feed" | "analytics" | "ask" | null;
 
 interface Props {
   onInboxChange: (panel: InboxPanel) => void;
@@ -40,7 +40,7 @@ function Inner({ onInboxChange, onViewChange }: Props) {
       router.replace("/use-cases/api");
       return;
     }
-    if (view === "map" || view === "feed" || view === "analytics") {
+    if (view === "map" || view === "feed" || view === "analytics" || view === "ask") {
       onViewChange(view);
     }
   }, [view, onViewChange, router]);
