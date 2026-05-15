@@ -1,5 +1,12 @@
 import { getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import { getAnalytics, isSupported, type Analytics } from "firebase/analytics";
+import {
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  type Firestore,
+} from "firebase/firestore";
 
 function firebaseConfig() {
   const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
@@ -37,6 +44,27 @@ export function isFirebaseConfigured(): boolean {
 }
 
 let app: FirebaseApp | undefined;
+let firestoreDb: Firestore | undefined;
+
+/** Firestore with IndexedDB persistence so reloads can paint from cache immediately. */
+export function getFirestoreDb(): Firestore {
+  const firebaseApp = getFirebaseApp();
+  if (firestoreDb) return firestoreDb;
+  if (typeof window === "undefined") {
+    firestoreDb = getFirestore(firebaseApp);
+    return firestoreDb;
+  }
+  try {
+    firestoreDb = initializeFirestore(firebaseApp, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    });
+  } catch {
+    firestoreDb = getFirestore(firebaseApp);
+  }
+  return firestoreDb;
+}
 
 /** Call from client code when using Auth, Firestore, etc. Throws if env is incomplete. */
 export function getFirebaseApp(): FirebaseApp {
@@ -69,4 +97,13 @@ export function getFirebaseAnalytics(): Promise<Analytics | null> {
     });
   }
   return analyticsPromise;
+}
+
+/** Eager init so later `getFirestore(app)` calls don't skip IndexedDB cache. */
+if (typeof window !== "undefined" && isFirebaseConfigured()) {
+  try {
+    getFirestoreDb();
+  } catch {
+    /* env partial during tests */
+  }
 }

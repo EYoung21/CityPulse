@@ -101,8 +101,8 @@ def insert_incident(
     }
     ref = db.collection("incidents").document(incident_id)
     ref.set(payload)
-    snap = ref.get()
-    return _doc_to_row(snap.id, snap.to_dict() or {})
+    # Avoid an extra ``get()`` — ``set`` already wrote the full payload.
+    return _doc_to_row(incident_id, payload)
 
 
 # ── Incident dedup ────────────────────────────────────────────────────
@@ -217,8 +217,17 @@ def append_mention(incident_id: str, mention: dict) -> Optional[dict]:
                 updates["s_base"] = mention["s_base"]
 
     ref.update(updates)
-    fresh = ref.get()
-    return _doc_to_row(fresh.id, fresh.to_dict() or {})
+    mentions = list(current.get("mentions") or [])
+    mentions.append(mention)
+    merged: dict[str, Any] = {**current}
+    merged["mentions"] = mentions
+    merged["mention_count"] = int(current.get("mention_count") or 0) + 1
+    if "last_mention_at" in updates:
+        merged["last_mention_at"] = updates["last_mention_at"]
+    for k in ("confidence", "description", "severity_category", "s_base"):
+        if k in updates:
+            merged[k] = updates[k]
+    return _doc_to_row(snap.id, merged)
 
 
 def insert_extraction(
@@ -338,9 +347,8 @@ def update_extraction(extraction_id: str, updates: dict) -> Optional[dict]:
     db = _ensure_client()
     ref = db.collection("extractions").document(extraction_id)
     ref.update(updates)
-    snap = ref.get()
-    data = snap.to_dict() or {}
-    return {"id": snap.id, **data}
+    # Callers only need the write to land; skip a follow-up read.
+    return None
 
 
 def get_incident(incident_id: str) -> Optional[dict]:
@@ -354,11 +362,13 @@ def get_incident(incident_id: str) -> Optional[dict]:
 def update_incident(incident_id: str, updates: dict) -> Optional[dict]:
     db = _ensure_client()
     ref = db.collection("incidents").document(incident_id)
-    if not ref.get().exists:
-        return None
-    ref.update(updates)
     snap = ref.get()
-    return _doc_to_row(snap.id, snap.to_dict() or {})
+    if not snap.exists:
+        return None
+    current = snap.to_dict() or {}
+    ref.update(updates)
+    merged = {**current, **updates}
+    return _doc_to_row(snap.id, merged)
 
 
 def delete_incident(incident_id: str) -> bool:

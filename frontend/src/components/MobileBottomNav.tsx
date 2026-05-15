@@ -11,21 +11,24 @@
  * Routing model:
  *   - Map     → `/?view=map`            (sticks the map preference)
  *   - Feed    → `/feed`
- *   - Inbox   → `/?view=map&inbox=1`    (opens AlertsInbox in list mode)
- *   - Settings→ `/?view=map&inbox=settings`
- *                                       (opens AlertsInbox on Settings)
+ *   - Inbox   → `/?view=<current>&inbox=1` on home (keeps map / analytics / ask)
+ *               or `/feed?inbox=1` on the feed — never forces map.
+ *   - Settings→ same pattern with `inbox=settings`.
  *
- * `MapHome` (`app/page.tsx`) reads the `inbox` query param on mount
- * and toggles `showInbox` + the inbox's `defaultPanel` accordingly,
- * so the URL hint round-trips into UI state.
+ * `MapHome` / feed read the `inbox` query param and open AlertsInbox
+ * without changing the active surface unless the tab itself switches
+ * (e.g. Map → Feed).
  *
- * The bar is *only* rendered when the viewport is ≤767px — desktop
+ * `persistTabIntent` only updates sticky prefs for primary surfaces
+ * (map/feed/ask/analytics) — never for inbox/settings overlays, so a
+ * bare `/` URL plus `?inbox=` / `?inbox=settings` still resolves the
+ * underlying `view=` from session instead of defaulting to map.
  * keeps the existing top-bar nav. We render `null` on desktop so the
  * map's bottom-edge controls (compass, recenter, etc.) keep their
  * full real estate.
  */
 
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useSyncExternalStore, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { Map as MapIcon, List, Bell, Settings as SettingsIcon, BarChart3, Lock, MessageCircle } from "lucide-react";
@@ -50,8 +53,8 @@ const TABS: Tab[] = [
   { id: "feed",      label: "Feed",      href: "/feed",                     Icon: List },
   { id: "ask",       label: "Ask",       href: "/?view=ask",                Icon: MessageCircle, pro: true },
   { id: "analytics", label: "Analytics", href: "/?view=analytics",          Icon: BarChart3, pro: true },
-  { id: "inbox",     label: "Inbox",     href: "/?view=map&inbox=1",        Icon: Bell },
-  { id: "settings",  label: "More",      href: "/?view=map&inbox=settings", Icon: SettingsIcon },
+  { id: "inbox",     label: "Inbox",     href: "/?inbox=1",                 Icon: Bell },
+  { id: "settings",  label: "More",      href: "/?inbox=settings",          Icon: SettingsIcon },
 ];
 
 const HOME_VIEW_PREF_KEY = "cp:home-view";
@@ -63,9 +66,44 @@ const MOBILE_QUERY = "(max-width: 767px)";
  *  page can pad the bottom of any UI it doesn't want overlapped. */
 export const MOBILE_NAV_HEIGHT_PX = 64;
 
-function navigateToTab(href: string) {
-  if (typeof window === "undefined") return;
-  window.location.href = href;
+/** Resolve home `view=` slug for inbox/settings deep links (never `inbox` / `settings`). */
+function homeViewSlugForInbox(
+  viewParam: string | null,
+  sessionTab: TabId | null
+): "map" | "feed" | "analytics" | "ask" {
+  const valid = new Set<string>(["map", "feed", "analytics", "ask"]);
+  if (viewParam && valid.has(viewParam)) return viewParam as "map";
+  if (sessionTab && valid.has(sessionTab)) return sessionTab as "map";
+  return "map";
+}
+
+function resolveTabHref(
+  tab: Tab,
+  ctx: {
+    pathname: string | null;
+    onFeed: boolean;
+    viewParam: string | null;
+    sessionTab: TabId | null;
+  }
+): string {
+  const { pathname, onFeed, viewParam, sessionTab } = ctx;
+  if (tab.id === "inbox") {
+    if (onFeed) return "/feed?inbox=1";
+    if (pathname === "/") {
+      const v = homeViewSlugForInbox(viewParam, sessionTab);
+      return `/?view=${encodeURIComponent(v)}&inbox=1`;
+    }
+    return "/?view=map&inbox=1";
+  }
+  if (tab.id === "settings") {
+    if (onFeed) return "/feed?inbox=settings";
+    if (pathname === "/") {
+      const v = homeViewSlugForInbox(viewParam, sessionTab);
+      return `/?view=${encodeURIComponent(v)}&inbox=settings`;
+    }
+    return "/?view=map&inbox=settings";
+  }
+  return tab.href;
 }
 
 function readSessionViewTab(): TabId | null {
@@ -81,6 +119,11 @@ function readSessionViewTab(): TabId | null {
 
 function persistTabIntent(tab: Tab) {
   if (typeof window === "undefined") return;
+  // Inbox / More are overlays — they must not overwrite `pulse_view_tab` or
+  // `cp:home-view`, or the next `resolveTabHref` sees a bogus "map" session
+  // when the URL has no `?view=` and we incorrectly deep-link to map
+  // (same class of bug as inbox forcing map on a bare `/` home).
+  if (tab.id === "inbox" || tab.id === "settings") return;
   try {
     localStorage.setItem(HOME_VIEW_PREF_KEY, tab.id === "feed" ? "feed" : "map");
   } catch {
@@ -141,6 +184,7 @@ function getServerUnreadSnapshot() {
 // Router; the boundary is what lets the rest of the page keep
 // rendering even when the search params haven't been hydrated yet.
 function MobileBottomNavInner() {
+  const router = useRouter();
   const show = useSyncExternalStore(
     subscribeMobileViewport,
     getMobileViewportSnapshot,
@@ -160,11 +204,17 @@ function MobileBottomNavInner() {
   const inboxParam = searchParams?.get("inbox") ?? null;
   const viewParam = searchParams?.get("view") ?? null;
   const onFeed = pathname?.startsWith("/feed") ?? false;
-  const sessionView = pathname === "/" ? readSessionViewTab() : null;
+  const sessionTab = pathname === "/" ? readSessionViewTab() : null;
 
   let activeId: TabId = "map";
   if (onFeed) {
-    activeId = "feed";
+    if (inboxParam === "settings") activeId = "settings";
+    else if (inboxParam) activeId = "inbox";
+    else activeId = "feed";
+  } else if (inboxParam === "settings") {
+    activeId = "settings";
+  } else if (inboxParam) {
+    activeId = "inbox";
   } else if (viewParam === "feed") {
     activeId = "feed";
   } else if (viewParam === "analytics") {
@@ -173,22 +223,24 @@ function MobileBottomNavInner() {
     activeId = "ask";
   } else if (viewParam === "map") {
     activeId = "map";
-  } else if (sessionView === "feed") {
+  } else if (sessionTab === "feed") {
     activeId = "feed";
-  } else if (sessionView === "analytics") {
+  } else if (sessionTab === "analytics") {
     activeId = "analytics";
-  } else if (sessionView === "ask") {
+  } else if (sessionTab === "ask") {
     activeId = "ask";
-  } else if (inboxParam === "settings") {
-    activeId = "settings";
-  } else if (inboxParam) {
-    activeId = "inbox";
   }
 
   const handleTabActivate = (tab: Tab) => {
     persistTabIntent(tab);
     if (activeId === tab.id) return;
-    navigateToTab(tab.href);
+    const href = resolveTabHref(tab, {
+      pathname: pathname ?? null,
+      onFeed,
+      viewParam,
+      sessionTab,
+    });
+    router.push(href);
   };
 
   const handleTabPointerUp = (tab: Tab) => (event: PointerEvent<HTMLButtonElement>) => {

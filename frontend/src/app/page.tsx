@@ -105,6 +105,7 @@ import { useDeviceHeading } from "@/hooks/useDeviceHeading";
 import { useGpsSpeed } from "@/hooks/useGpsSpeed";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useMobileHomeRedirect } from "@/hooks/useMobileHomeRedirect";
+import { useMobilePrimaryTabSwipe } from "@/hooks/useMobilePrimaryTabSwipe";
 import MobileBottomNav, { MOBILE_NAV_HEIGHT_PX } from "@/components/MobileBottomNav";
 import InboxUrlSync, { type InboxPanel } from "@/components/InboxUrlSync";
 import { decodeTripToken, type DecodedTripToken } from "@/lib/share-trip";
@@ -124,10 +125,10 @@ import { isFirebaseConfigured } from "@/lib/firebase";
 import {
   fetchExtendedHistoryPage,
   fetchIncidentCount,
-  fetchIncidentsSnapshotOnce,
   subscribeIncidents,
 } from "@/lib/firestore";
 import { enrichIncidents } from "@/lib/incident-weights";
+import { loadCachedIncidents, saveCachedIncidents } from "@/lib/incident-snapshot-cache";
 import { apiUrl, fetchPublicApi } from "@/lib/public-api-base";
 import { buildLocalSummary } from "@/lib/local-summary";
 import {
@@ -319,13 +320,21 @@ function MapHome() {
     setCityDisplayName(getCurrentCity().name);
   }, [pathname, searchParams]);
 
-  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [incidents, setIncidents] = useState<Incident[]>(() => {
+    if (typeof window === "undefined") return [];
+    return loadCachedIncidents(getCurrentCity().slug)?.incidents ?? [];
+  });
   /** Latest map pins for API summary/stats fallbacks when Firestore owns the map. */
   const incidentsForStatsRef = useRef<Incident[]>([]);
   /** After Firestore paints pins, re-fetch summary/stats once (initial API call saw ref []). */
   const statsAfterFirestoreRef = useRef(false);
   useEffect(() => {
     incidentsForStatsRef.current = incidents;
+  }, [incidents]);
+
+  useEffect(() => {
+    if (incidents.length === 0) return;
+    saveCachedIncidents(getCurrentCity().slug, incidents);
   }, [incidents]);
   /** Older incidents pulled on-demand when the user picks a 1w+ time
    *  filter. Kept separate from the live `incidents` slice so the live
@@ -1227,15 +1236,18 @@ function MapHome() {
   }, [useFirestoreData, incidents.length, loadFromApi]);
 
   useEffect(() => {
+    const cached = loadCachedIncidents(getCurrentCity().slug);
+    if (cached && cached.incidents.length > 0) {
+      setSummary(buildLocalSummary(cached.incidents));
+      setStats(statsFromIncidents(cached.incidents));
+    }
+  }, []);
+
+  useEffect(() => {
     if (useFirestoreData) {
-      // One-shot Firestore read often returns (from cache or server)
-      // before the first onSnapshot callback — paints pins immediately.
-      void fetchIncidentsSnapshotOnce()
-        .then((rows) => {
-          if (rows.length > 0) setIncidents(rows);
-        })
-        .catch(() => {});
-      // REST pull in parallel so API works as a second source when healthy.
+      // Initial pins come from localStorage (see ``useState`` above) and the
+      // first ``onSnapshot`` tick. Avoid a duplicate full-query ``getDocs`` —
+      // it billed the same ~MAP_SYNC_LIMIT document reads twice per cold load.
       void loadFromApi();
       const unsub = subscribeIncidents(
         (next) => setIncidents(next),
@@ -1297,7 +1309,7 @@ function MapHome() {
 
   /** When the global time filter exceeds the live-listener's coverage
    *  (1w+), kick off a Firestore aggregate count + paged historical
-   *  read so the count actually grows. We fetch in 2k-doc chunks so the
+   *  read so the count actually grows. We fetch in ~750-doc chunks so the
    *  cost is paid progressively and the UI can paint as pages arrive;
    *  changing the filter (or unmounting) cancels mid-stream. Short
    *  windows clear the slice so we don't keep stale history merged in. */
@@ -1310,7 +1322,7 @@ function MapHome() {
     }
     // Trigger extended history whenever the user picks a window the
     // live listener (MAP_SYNC_LIMIT docs) may not fully cover. For
-    // high-ingest cities the 1200-doc cap can be exhausted in well
+    // high-ingest cities the ~800-doc cap can be exhausted in well
     // under a day, so we kick in at 3h+ — short windows still pay
     // nothing because the page.tsx state stays at [] and the
     // shouldRenderIncident guard drops anything irrelevant.
@@ -1747,6 +1759,63 @@ function MapHome() {
         return result.nearbyIncidents;
       })()
     : undefined;
+
+  const inboxParam = searchParams.get("inbox");
+  const incidentParam = searchParams.get("incident");
+  const tripParam = searchParams.get("trip");
+  const hasPinDeepLink =
+    searchParams.has("lat") && searchParams.has("lng");
+
+  const mobilePrimarySwipeEnabled = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    if (!window.matchMedia("(max-width: 767px)").matches) return false;
+    if (inboxParam) return false;
+    if (incidentParam) return false;
+    if (tripParam) return false;
+    if (hasPinDeepLink) return false;
+    if (showInbox) return false;
+    if (measureMode) return false;
+    if (perimeterMode) return false;
+    if (safetyEscapeOpen) return false;
+    if (showAbout) return false;
+    if (showLayers) return false;
+    if (showUpgrade) return false;
+    if (showTurnList) return false;
+    if (alongRouteOpen) return false;
+    if (sharedTrip) return false;
+    if (tripRecap) return false;
+    if (peekAnchor) return false;
+    if (sidebarOpen) return false;
+    if (selectedId) return false;
+    if (clusterIncidentIds) return false;
+    if (selectedDistrict) return false;
+    if (mapTap) return false;
+    return true;
+  }, [
+    inboxParam,
+    incidentParam,
+    tripParam,
+    hasPinDeepLink,
+    showInbox,
+    measureMode,
+    perimeterMode,
+    safetyEscapeOpen,
+    showAbout,
+    showLayers,
+    showUpgrade,
+    showTurnList,
+    alongRouteOpen,
+    sharedTrip,
+    tripRecap,
+    peekAnchor,
+    sidebarOpen,
+    selectedId,
+    clusterIncidentIds,
+    selectedDistrict,
+    mapTap,
+  ]);
+
+  useMobilePrimaryTabSwipe({ enabled: mobilePrimarySwipeEnabled });
 
   return (
     <div className="pp-app-shell relative w-full h-dvh min-h-0 overflow-hidden flex flex-col" style={{ background: "var(--map-bg)" }}>

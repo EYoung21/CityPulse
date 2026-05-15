@@ -313,7 +313,8 @@ export default function AskPulsePanel({
             Ask Pulse
           </h1>
           <p className="text-[11px] truncate" style={{ color: "var(--panel-text-muted)" }}>
-            Context: newest incidents for {citySlug} (not the map time filter) · UNVERIFIED scanner data
+            Context: newest incidents for {citySlug} (LLM sees a capped sample — not full history or official stats)
+            · UNVERIFIED scanner data
           </p>
         </div>
         <button

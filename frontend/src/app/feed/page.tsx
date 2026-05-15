@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Crosshair, Download, Code, Zap, Activity } from "lucide-react";
 import IncidentFeed from "@/components/IncidentFeed";
 import IncidentTypeFilterChips from "@/components/IncidentTypeFilterChips";
@@ -14,7 +15,76 @@ import FeedAudioMiniPlayer from "@/components/FeedAudioMiniPlayer";
 import { getCurrentCity } from "@/lib/pulse-cities";
 import { useAuth } from "@/contexts/AuthContext";
 import { useFeedIncidents, type FeedMode } from "@/hooks/useFeedIncidents";
+import { useMobilePrimaryTabSwipe } from "@/hooks/useMobilePrimaryTabSwipe";
 import { activeNowCount } from "@/lib/analytics";
+import AlertsInbox from "@/components/AlertsInbox";
+
+function FeedAlertsInboxHost() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const inbox = searchParams?.get("inbox");
+  const [open, setOpen] = useState(false);
+  const [panel, setPanel] = useState<"list" | "settings">("list");
+
+  useEffect(() => {
+    if (inbox === "settings") {
+      setPanel("settings");
+      setOpen(true);
+    } else if (inbox != null && inbox !== "") {
+      setPanel("list");
+      setOpen(true);
+    } else {
+      setOpen(false);
+    }
+  }, [inbox]);
+
+  const onClose = useCallback(() => {
+    setOpen(false);
+    const p = new URLSearchParams(searchParams?.toString() ?? "");
+    p.delete("inbox");
+    const qs = p.toString();
+    router.replace(qs ? `${pathname}?${qs}` : (pathname || "/feed"));
+  }, [router, pathname, searchParams]);
+
+  return (
+    <>
+      {open && (
+        <button
+          type="button"
+          className="fixed inset-0 z-[2147483009] cursor-default border-0 p-0"
+          style={{ background: "rgba(0,0,0,0.45)" }}
+          aria-label="Close alerts"
+          onClick={onClose}
+        />
+      )}
+      <AlertsInbox
+        open={open}
+        defaultPanel={panel}
+        placement="mobileAboveNav"
+        onClose={onClose}
+        onJump={(incidentId, lat, lng) => {
+          window.location.href = `/?incident=${encodeURIComponent(incidentId)}&lat=${lat}&lng=${lng}&zoom=16`;
+        }}
+      />
+    </>
+  );
+}
+
+/** `useSearchParams` + swipe hook — keep inside `<Suspense>` for App Router. */
+function FeedMobileTabSwipeHost({ expandedId }: { expandedId: string | null }) {
+  const searchParams = useSearchParams();
+  const inboxOpen = searchParams.get("inbox");
+  const enabled = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    if (!window.matchMedia("(max-width: 767px)").matches) return false;
+    if (inboxOpen != null && inboxOpen !== "") return false;
+    if (expandedId) return false;
+    return true;
+  }, [inboxOpen, expandedId]);
+  useMobilePrimaryTabSwipe({ enabled });
+  return null;
+}
 
 export default function FeedPage() {
   const [mode, setMode] = useState<FeedMode>("recent");
@@ -22,6 +92,7 @@ export default function FeedPage() {
   const [activeCats, setActiveCats] = useState<Set<string>>(() => new Set());
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const scrollTopRef = useRef<HTMLDivElement | null>(null);
+  const [feedScrollRoot, setFeedScrollRoot] = useState<HTMLDivElement | null>(null);
 
   const city = getCurrentCity();
   const { isPro } = useAuth();
@@ -35,6 +106,7 @@ export default function FeedPage() {
     loading,
     error,
     hasMore,
+    cursor,
     loadMore,
     refresh,
     userLoc,
@@ -64,19 +136,20 @@ export default function FeedPage() {
   const activeNow = useMemo(() => activeNowCount(visibleIncidents, 30), [visibleIncidents]);
 
   useEffect(() => {
+    const root = feedScrollRoot;
     const node = sentinelRef.current;
-    if (!node) return;
+    if (!root || !node) return;
     const obs = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
           if (e.isIntersecting) void loadMore();
         }
       },
-      { rootMargin: "400px 0px" }
+      { root, rootMargin: "0px 0px 480px 0px" }
     );
     obs.observe(node);
     return () => obs.disconnect();
-  }, [loadMore]);
+  }, [loadMore, feedScrollRoot, visibleIncidents.length, hasMore, cursor, mode]);
 
   const handleSelect = useCallback((id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
@@ -175,13 +248,13 @@ export default function FeedPage() {
             <Code className="w-3.5 h-3.5" /> API
           </Link>
           {!isPro && (
-            <button
-              onClick={() => { window.location.href = "/?view=map&inbox=settings"; }}
+            <Link
+              href="/feed?inbox=settings"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium shadow-lg shadow-purple-500/20"
               style={{ background: "linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)", color: "#fff" }}
             >
               <Zap className="w-3.5 h-3.5 fill-current" /> Upgrade
-            </button>
+            </Link>
           )}
         </div>
       </header>
@@ -299,7 +372,12 @@ export default function FeedPage() {
           </div>
         )}
 
-        <FeedPullRefresh onRefresh={refresh} className="flex-1" onScroll={onScrollNearTop}>
+        <FeedPullRefresh
+          onRefresh={refresh}
+          className="flex-1"
+          onScroll={onScrollNearTop}
+          onScrollContainerReady={setFeedScrollRoot}
+        >
           <div ref={scrollTopRef}>
             <IncidentFeed
               incidents={visibleIncidents}
@@ -327,6 +405,10 @@ export default function FeedPage() {
         </FeedPullRefresh>
       </main>
       <MobileBottomNav />
+      <Suspense fallback={null}>
+        <FeedMobileTabSwipeHost expandedId={expandedId} />
+        <FeedAlertsInboxHost />
+      </Suspense>
       <InstallPrompt />
     </div>
   );

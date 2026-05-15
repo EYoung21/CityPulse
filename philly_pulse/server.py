@@ -15,7 +15,7 @@ import threading
 import time
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 import numpy as np
@@ -47,6 +47,17 @@ PULSE_CHAT_RL_WINDOW_SEC = float(os.environ.get("PULSE_CHAT_RL_WINDOW_SEC", "60"
 PULSE_CHAT_RL_MAX = int(os.environ.get("PULSE_CHAT_RL_MAX", "20"))
 _PULSE_CHAT_RL: dict[str, list[float]] = {}
 _PULSE_CHAT_RL_LOCK = threading.Lock()
+
+# Ask Pulse tools: in-memory search (0 extra reads) + capped paged Firestore fetch.
+PULSE_CHAT_TOOLS_ENABLED = os.environ.get("PULSE_CHAT_TOOLS_ENABLED", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+PULSE_CHAT_TOOL_ROUNDS_MAX = max(2, min(12, int(os.environ.get("PULSE_CHAT_TOOL_ROUNDS_MAX", "5"))))
+PULSE_CHAT_FS_TOOL_FETCHES_MAX = max(0, min(5, int(os.environ.get("PULSE_CHAT_FS_TOOL_FETCHES_MAX", "2"))))
+PULSE_CHAT_FS_TOOL_PAGE_CAP = max(20, min(200, int(os.environ.get("PULSE_CHAT_FS_TOOL_PAGE_CAP", "100"))))
+PULSE_CHAT_TOOL_RESULT_MAX = max(5, min(60, int(os.environ.get("PULSE_CHAT_TOOL_RESULT_MAX", "35"))))
 
 # ── City config ─────────────────────────────────────────────────────
 
@@ -1486,6 +1497,273 @@ def _trim_incident_for_pulse_bundle(inc: dict) -> dict:
     }
 
 
+_GUNISH_USER_RE = re.compile(
+    r"\b(gun|guns|firearm|firearms|weapon|weapons|shoot|shooting|shooter|shot\b|"
+    r"shots?\s+fired|pistol|rifle|gunfire|gunshot|handgun|ammo|magazine|armed|discharge)\b",
+    re.I,
+)
+
+
+def _pulse_chat_last_user_message(chat_tail: list[dict[str, str]]) -> str:
+    for m in reversed(chat_tail):
+        if m.get("role") == "user":
+            return str(m.get("content") or "")
+    return ""
+
+
+def _incident_gun_related(inc: dict) -> bool:
+    """Heuristic match for firearm / shots / weapon language in scanner text."""
+    cat = str(inc.get("severity_category") or "").lower()
+    if cat in ("violent_weapon", "shots_heard"):
+        return True
+    blob = " ".join(
+        [
+            str(inc.get("raw_text") or ""),
+            str(inc.get("description") or ""),
+            str(inc.get("location_text") or ""),
+        ]
+    ).lower()
+    needles = (
+        "gun",
+        "guns",
+        "shoot",
+        "shooting",
+        "shot",
+        "shots fired",
+        "firearm",
+        "weapon",
+        "rifle",
+        "pistol",
+        "gunfire",
+        "gunshot",
+        "handgun",
+        "magazine",
+        "armed person",
+        "person with a gun",
+        "pgun",
+        "gunsht",
+    )
+    return any(n in blob for n in needles)
+
+
+def _build_pulse_chat_bundle(
+    fetched: list[dict],
+    last_user: str,
+    bundle_max: int,
+) -> tuple[list[dict], bool, bool]:
+    """Build trimmed rows for the LLM. When the user message looks firearm-related,
+    prepend up to `topic_cap` matching rows from the same `fetched` list (still
+    bounded by fetch size), then fill with newest incidents. This is not a
+    full-history scan — only rows present in `fetched`.
+    """
+    gunish = bool(_GUNISH_USER_RE.search(last_user))
+    topic_cap = min(96, max(24, bundle_max // 2)) if gunish else 0
+
+    seen: set[str] = set()
+    bundle: list[dict] = []
+
+    if gunish and topic_cap > 0:
+        for inc in fetched:
+            if len(bundle) >= topic_cap:
+                break
+            iid = str(inc.get("id") or "")
+            if not iid or iid in seen:
+                continue
+            if not _incident_gun_related(inc):
+                continue
+            seen.add(iid)
+            bundle.append(_trim_incident_for_pulse_bundle(inc))
+
+    for inc in fetched:
+        if len(bundle) >= bundle_max:
+            break
+        iid = str(inc.get("id") or "")
+        if not iid or iid in seen:
+            continue
+        seen.add(iid)
+        bundle.append(_trim_incident_for_pulse_bundle(inc))
+
+    truncated_fetch = len(fetched) > len(bundle)
+    return bundle, truncated_fetch, gunish
+
+
+def _pulse_tokenize_keywords(q: str) -> list[str]:
+    normalized = re.sub(r"[,;|]+", " ", (q or "").strip())
+    return [t.lower() for t in normalized.split() if len(t) >= 2][:12]
+
+
+def _pulse_incident_match_blob(inc: dict) -> str:
+    parts = [
+        str(inc.get("raw_text") or ""),
+        str(inc.get("description") or ""),
+        str(inc.get("location_text") or ""),
+        str(inc.get("severity_category") or ""),
+    ]
+    return " ".join(parts).lower()
+
+
+def pulse_chat_tool_specs() -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "search_incidents",
+                "description": (
+                    "Search incidents already loaded for this Ask Pulse request (initial fetch plus any "
+                    "pages from fetch_older_incidents). Substring match on text, location, and category — "
+                    "does not query the database (no Firestore reads)."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "keywords": {
+                            "type": "string",
+                            "description": (
+                                "Comma or whitespace separated tokens. Default OR semantics (any token matches). "
+                                "Example: shooting, gun, shots, firearm."
+                            ),
+                        },
+                        "match_all_keywords": {
+                            "type": "boolean",
+                            "description": "If true, every keyword must appear in the incident text or category.",
+                        },
+                        "severity_category": {
+                            "type": "string",
+                            "description": "If set, incident.severity_category must match exactly.",
+                        },
+                        "since_reported_at": {
+                            "type": "string",
+                            "description": "If set, reported_at must be >= this ISO timestamp.",
+                        },
+                        "until_reported_at": {
+                            "type": "string",
+                            "description": "If set, reported_at must be <= this ISO timestamp.",
+                        },
+                        "limit": {"type": "integer", "description": "Max incidents to return (server capped)."},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "fetch_older_incidents",
+                "description": (
+                    "Load ONE page of older incidents from storage with reported_at strictly before "
+                    "before_reported_at. Uses Firestore document reads (budget is tiny per chat). "
+                    "Call only when search_incidents on the current pool is not enough — e.g. pass the "
+                    "oldest reported_at you have loaded."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "before_reported_at": {
+                            "type": "string",
+                            "description": "ISO timestamp upper bound (exclusive): rows are strictly older.",
+                        },
+                        "limit": {"type": "integer", "description": "Page size (server capped)."},
+                    },
+                    "required": ["before_reported_at"],
+                },
+            },
+        },
+    ]
+
+
+def _pulse_tool_exec_search(pool_by_id: dict[str, dict], args: dict[str, Any]) -> dict[str, Any]:
+    keywords = _pulse_tokenize_keywords(str(args.get("keywords") or ""))
+    match_all = bool(args.get("match_all_keywords"))
+    cat = (args.get("severity_category") or "").strip() or None
+    since = (args.get("since_reported_at") or "").strip() or None
+    until = (args.get("until_reported_at") or "").strip() or None
+    lim = int(args.get("limit") or 20)
+    lim = max(1, min(40, lim, PULSE_CHAT_TOOL_RESULT_MAX))
+
+    if not keywords and not cat and not since and not until:
+        return {
+            "error": "Provide keywords, severity_category, and/or since/until to avoid scanning the whole pool.",
+            "incidents": [],
+            "match_count": 0,
+        }
+
+    hits: list[dict] = []
+    for inc in pool_by_id.values():
+        ra = str(inc.get("reported_at") or "")
+        if since and ra < since:
+            continue
+        if until and ra > until:
+            continue
+        if cat and str(inc.get("severity_category") or "") != cat:
+            continue
+        blob = _pulse_incident_match_blob(inc)
+        if keywords:
+            if match_all:
+                if not all(k in blob for k in keywords):
+                    continue
+            elif not any(k in blob for k in keywords):
+                continue
+        hits.append(inc)
+
+    hits.sort(key=lambda i: i.get("reported_at") or "", reverse=True)
+    hits = hits[:lim]
+    trimmed = [_trim_incident_for_pulse_bundle(i) for i in hits]
+    return {
+        "match_count": len(trimmed),
+        "incidents": trimmed,
+        "hint": "Subset of incidents loaded for this chat; not guaranteed full city coverage.",
+    }
+
+
+def _pulse_tool_exec_fetch_older(
+    *,
+    city_slug: str,
+    effective_since: str | None,
+    before_iso: str,
+    page_limit: int,
+    pool_by_id: dict[str, dict],
+    fs_used: list[int],
+) -> dict[str, Any]:
+    """Synchronous store fetch; invoke via ``run_in_threadpool`` from the Ask Pulse handler."""
+    if fs_used[0] >= PULSE_CHAT_FS_TOOL_FETCHES_MAX:
+        return {
+            "error": "fetch_budget_exhausted",
+            "detail": f"At most {PULSE_CHAT_FS_TOOL_FETCHES_MAX} older-page fetches per Ask Pulse request.",
+            "incidents": [],
+            "added_new_ids": 0,
+            "documents_returned": 0,
+        }
+    bio = (before_iso or "").strip()
+    if not bio:
+        return {"error": "missing_before_reported_at", "incidents": [], "added_new_ids": 0, "documents_returned": 0}
+
+    rows = store.list_incidents_for_city(
+        city_slug,
+        since=effective_since,
+        before_iso=bio,
+        limit=page_limit,
+        include_blocked=False,
+    )
+    fs_used[0] += 1
+    added = 0
+    for inc in rows:
+        iid = str(inc.get("id") or "")
+        if not iid or iid in pool_by_id:
+            continue
+        pool_by_id[iid] = inc
+        added += 1
+    rows.sort(key=lambda x: x.get("reported_at") or "", reverse=True)
+    cap = min(PULSE_CHAT_TOOL_RESULT_MAX, max(1, page_limit))
+    trimmed = [_trim_incident_for_pulse_bundle(i) for i in rows[:cap]]
+    return {
+        "documents_returned": len(rows),
+        "added_new_ids": added,
+        "pool_size": len(pool_by_id),
+        "firestore_pages_used": fs_used[0],
+        "incidents": trimmed,
+        "hint": "One page, newest-first within the page; may repeat fetch if budget allows and history goes deeper.",
+    }
+
+
 @app.post("/api/pulse-chat")
 async def pulse_chat(
     body: PulseChatRequest,
@@ -1526,42 +1804,61 @@ async def pulse_chat(
 
     city_slug = _normalize_pulse_city_slug(body.city)
     effective_since, _clamped = _apply_free_since(body.since, is_pro=True)
+    last_user = _pulse_chat_last_user_message(chat_tail)
 
     import starlette.concurrency
+
+    fetch_cap = min(PULSE_CHAT_STORE_FETCH, 800)
+    if _GUNISH_USER_RE.search(last_user):
+        fetch_cap = min(800, max(fetch_cap, 700))
 
     def _load():
         return store.list_incidents_for_city(
             city_slug,
             since=effective_since,
-            limit=min(PULSE_CHAT_STORE_FETCH, 800),
+            limit=fetch_cap,
             include_blocked=False,
         )
 
     fetched = await starlette.concurrency.run_in_threadpool(_load)
     fetched.sort(key=lambda i: i.get("reported_at") or "", reverse=True)
-    bundle: list[dict] = []
-    for inc in fetched:
-        bundle.append(_trim_incident_for_pulse_bundle(inc))
-        if len(bundle) >= PULSE_CHAT_BUNDLE_MAX:
-            break
-    truncated_fetch = len(fetched) > len(bundle)
+    bundle, truncated_fetch, topic_boost = _build_pulse_chat_bundle(
+        fetched, last_user, PULSE_CHAT_BUNDLE_MAX
+    )
     bundle_json = json.dumps(bundle, ensure_ascii=False)
 
     registry_entry = CITY_REGISTRY.get(city_slug) or {}
     city_display = registry_entry.get("city_name") or CITY_NAME
+
+    tool_block = ""
+    if PULSE_CHAT_TOOLS_ENABLED:
+        tool_block = (
+            "\n- Tools: you may call ``search_incidents`` to filter the incidents already loaded for this "
+            f"request (up to {len(fetched)} from the server prefetch; no extra database reads). You may call "
+            f"``fetch_older_incidents`` at most {PULSE_CHAT_FS_TOOL_FETCHES_MAX} time(s) total — each call loads "
+            f"one older page (capped at {PULSE_CHAT_FS_TOOL_PAGE_CAP} rows; uses Firestore document reads). "
+            "Prefer search_incidents first; use fetch_older_incidents only when the prefetch window is not enough.\n"
+            "- Ground factual claims in the initial JSON, tool outputs, and user messages. If tools return no "
+            "matches or fetch budget is exhausted, say that in one short sentence.\n"
+        )
 
     system = (
         "You are Ask Pulse, a careful assistant for CityPulse — a scanner-derived public safety feed. "
         "All incident data below is UNVERIFIED, may be incomplete or mistaken, and is not official "
         "police reporting. Never present it as confirmed fact.\n"
         "Rules:\n"
-        "- Answer only using the incident JSON below plus the user's messages. If the answer is not "
-        "supported by those incidents, say you don't have enough in the current window and suggest "
+        "- Answer only using the incident JSON below"
+        + (", tool results from this session," if PULSE_CHAT_TOOLS_ENABLED else ",")
+        + " and the user's messages. If the answer is not "
+        "supported by those sources, say you don't have enough in the current window and suggest "
         "broadening the time range or checking the map.\n"
-        "- The JSON list is the most recent incidents for the city (fetch/size capped, newest first). "
+        "- The JSON list is a trimmed sample of the most recent incidents (size capped, newest first). "
         "It is not guaranteed to cover every calendar span the user names; if their window likely "
         "extends beyond these rows, say that in one short sentence and answer from what is present.\n"
-        "- Prefer citing incident id and reported_at when you mention specifics.\n"
+        "- For firearm- or shooting-related questions, the list may start with extra rows that match "
+        "gun/shots/weapon language (still from the same capped fetch — not a full database or year tally).\n"
+        + tool_block
+        + "- Prefer citing incident id and reported_at when you mention specifics.\n"
         "- Do not invent incidents, addresses, or outcomes.\n"
         f"- City context: {city_display} ({city_slug}).\n\n"
         f"The following {len(bundle)} incidents (of {len(fetched)} fetched) are in context"
@@ -1572,7 +1869,7 @@ async def pulse_chat(
 
     chat_model = (os.environ.get("PULSE_CHAT_MODEL") or "").strip() or None
 
-    messages_out: list[dict[str, str]] = [{"role": "system", "content": system}] + chat_tail
+    messages_out: list[dict[str, Any]] = [{"role": "system", "content": system}] + chat_tail
 
     if not llm_client.is_configured() and not llm_client.is_deepseek_pulse_fallback_configured():
         raise HTTPException(
@@ -1580,14 +1877,109 @@ async def pulse_chat(
             detail="Ask Pulse is unavailable: set LAMBDA_API_KEY / OPENAI_API_KEY or DEEPSEEK_API_KEY on the server",
         )
 
+    reply = ""
+    tool_rounds_used = 0
+    firestore_tool_fetches = 0
+    pool_size = len(fetched)
+
     try:
-        reply = await llm_client.pulse_chat_completion(
-            messages_out,
-            model=chat_model,
-            temperature=0.25,
-            max_tokens=1400,
-            timeout=75.0,
-        )
+        if not PULSE_CHAT_TOOLS_ENABLED:
+            reply = await llm_client.pulse_chat_completion(
+                messages_out,
+                model=chat_model,
+                temperature=0.25,
+                max_tokens=1400,
+                timeout=75.0,
+            )
+            reply = (reply or "").strip()
+        else:
+            tools = pulse_chat_tool_specs()
+            pool_by_id: dict[str, dict] = {}
+            for inc in fetched:
+                iid = str(inc.get("id") or "")
+                if iid:
+                    pool_by_id[iid] = inc
+            fs_used = [0]
+            messages_loop: list[dict[str, Any]] = [dict(x) for x in messages_out]
+            tool_round_idx = 0
+            while tool_round_idx < PULSE_CHAT_TOOL_ROUNDS_MAX:
+                force_text = tool_round_idx >= PULSE_CHAT_TOOL_ROUNDS_MAX - 1
+                asst = await llm_client.pulse_chat_completion_message(
+                    messages_loop,
+                    model=chat_model,
+                    temperature=0.25,
+                    max_tokens=1400,
+                    timeout=75.0,
+                    tools=tools,
+                    tool_choice="none" if force_text else "auto",
+                )
+                tool_round_idx += 1
+                tool_rounds_used = tool_round_idx
+                tcalls = asst.get("tool_calls")
+                if not tcalls:
+                    reply = (asst.get("content") or "").strip()
+                    break
+                if force_text:
+                    reply = (asst.get("content") or "").strip()
+                    if not reply:
+                        reply = (
+                            "I could not fully answer within the tool budget; try narrowing the time range "
+                            "or checking the map for more context."
+                        )
+                    break
+                msg_a: dict[str, Any] = {"role": "assistant", "content": (asst.get("content") or "") or ""}
+                msg_a["tool_calls"] = tcalls
+                messages_loop.append(msg_a)
+                for tc in tcalls:
+                    fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+                    name = str((fn or {}).get("name") or "")
+                    raw_args = (fn or {}).get("arguments") or "{}"
+                    tid_raw = tc.get("id")
+                    tid = str(tid_raw) if tid_raw is not None else ""
+                    if not tid:
+                        tid = f"call_{name}_{tool_round_idx}"
+                    try:
+                        if isinstance(raw_args, str):
+                            args = json.loads(raw_args)
+                        elif isinstance(raw_args, dict):
+                            args = raw_args
+                        else:
+                            args = {}
+                    except json.JSONDecodeError:
+                        args = {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    if name == "search_incidents":
+                        out = _pulse_tool_exec_search(pool_by_id, args)
+                    elif name == "fetch_older_incidents":
+                        bio = str(args.get("before_reported_at") or "")
+                        plim = int(args.get("limit") or 80)
+                        plim = max(1, min(PULSE_CHAT_FS_TOOL_PAGE_CAP, plim))
+
+                        def _fetch_sync():
+                            return _pulse_tool_exec_fetch_older(
+                                city_slug=city_slug,
+                                effective_since=effective_since,
+                                before_iso=bio,
+                                page_limit=plim,
+                                pool_by_id=pool_by_id,
+                                fs_used=fs_used,
+                            )
+
+                        out = await starlette.concurrency.run_in_threadpool(_fetch_sync)
+                    else:
+                        out = {"error": "unknown_tool", "name": name}
+                    messages_loop.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tid,
+                            "content": json.dumps(out, ensure_ascii=False)[:29000],
+                        }
+                    )
+            firestore_tool_fetches = fs_used[0]
+            if not reply:
+                reply = "I could not produce an answer from the available data and tools."
+            pool_size = len(pool_by_id)
     except LLMConfigError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except LLMHTTPError as e:
@@ -1603,7 +1995,7 @@ async def pulse_chat(
         if row.get("id")
     ]
     return {
-        "reply": (reply or "").strip(),
+        "reply": reply.strip(),
         "citations": citations,
         "meta": {
             "city": city_slug,
@@ -1611,6 +2003,12 @@ async def pulse_chat(
             "incidents_in_context": len(bundle),
             "incidents_fetched": len(fetched),
             "truncated": truncated_fetch,
+            "fetch_cap": fetch_cap,
+            "topic_boost": "firearms" if topic_boost else None,
+            "tools_enabled": bool(PULSE_CHAT_TOOLS_ENABLED),
+            "tool_rounds": tool_rounds_used if PULSE_CHAT_TOOLS_ENABLED else 0,
+            "firestore_tool_fetches": firestore_tool_fetches if PULSE_CHAT_TOOLS_ENABLED else 0,
+            "pool_incidents": pool_size,
         },
     }
 
