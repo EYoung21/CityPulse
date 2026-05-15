@@ -351,6 +351,12 @@ export interface PulseChatResponse {
     incidents_in_context: number;
     incidents_fetched: number;
     truncated: boolean;
+    fetch_cap?: number;
+    topic_boost?: string | null;
+    tools_enabled?: boolean;
+    tool_rounds?: number;
+    firestore_tool_fetches?: number;
+    pool_incidents?: number;
   };
 }
 

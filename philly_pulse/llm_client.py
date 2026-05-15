@@ -207,6 +207,127 @@ async def _post_chat_completion(
         ) from e
 
 
+def _choice_message_from_body(body: dict[str, Any], *, provider: str) -> dict[str, Any]:
+    try:
+        msg = body["choices"][0]["message"]
+        if not isinstance(msg, dict):
+            raise TypeError("message not a dict")
+        return msg
+    except (KeyError, IndexError, TypeError) as e:
+        raise LLMHTTPError(
+            200,
+            f"unexpected response shape: {body!r}",
+            provider=provider,
+        ) from e
+
+
+async def _post_chat_completion_message(
+    cfg: ProviderConfig,
+    messages: list[dict[str, Any]],
+    *,
+    model: Optional[str],
+    temperature: float,
+    max_tokens: int,
+    timeout: float,
+    tools: Optional[list[dict[str, Any]]] = None,
+    tool_choice: Any = "auto",
+) -> dict[str, Any]:
+    """POST chat/completions and return the assistant ``message`` object (may include ``tool_calls``)."""
+    payload: dict[str, Any] = {
+        "model": model or cfg.default_model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if tools is not None:
+        payload["tools"] = tools
+        payload["tool_choice"] = tool_choice
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(
+            cfg.chat_completions_url,
+            headers={
+                "Authorization": f"Bearer {cfg.api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+
+    if resp.status_code != 200:
+        body = resp.text
+        snippet = body[:400] + ("…" if len(body) > 400 else "")
+        logger.warning(
+            "LLM call to %s (%s) failed: HTTP %d — %s",
+            cfg.name, payload["model"], resp.status_code, snippet,
+        )
+        raise LLMHTTPError(resp.status_code, body, provider=cfg.name)
+
+    body = resp.json()
+    return _choice_message_from_body(body, provider=cfg.name)
+
+
+async def pulse_chat_completion_message(
+    messages: list[dict[str, Any]],
+    *,
+    model: Optional[str] = None,
+    temperature: float = 0.25,
+    max_tokens: int = 1400,
+    timeout: float = 75.0,
+    tools: Optional[list[dict[str, Any]]] = None,
+    tool_choice: Any = "auto",
+) -> dict[str, Any]:
+    """Ask Pulse multi-turn: same provider fallback as :func:`pulse_chat_completion`, returns raw message dict."""
+    ds_cfg = _deepseek_pulse_fallback_config()
+    primary_cfg = _resolve_provider()
+
+    if primary_cfg is not None:
+        try:
+            return await _post_chat_completion_message(
+                primary_cfg,
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                tools=tools,
+                tool_choice=tool_choice,
+            )
+        except LLMHTTPError as e:
+            if not _pulse_primary_should_fallback_http(e):
+                raise
+            logger.warning(
+                "Pulse chat (tools) primary failed (%s); trying DeepSeek fallback: %s",
+                e.status_code,
+                e,
+            )
+        except httpx.RequestError as e:
+            logger.warning("Pulse chat (tools) primary transport error; trying DeepSeek fallback: %s", e)
+    else:
+        if not ds_cfg:
+            raise LLMConfigError(
+                "No LLM provider configured. Set LAMBDA_API_KEY (preferred), "
+                "OPENAI_API_KEY, or DEEPSEEK_API_KEY for Ask Pulse."
+            )
+        logger.info("Pulse chat (tools): no primary LLM env; using DeepSeek for Ask Pulse only")
+
+    if ds_cfg is None:
+        raise LLMConfigError(
+            "Primary LLM failed and DEEPSEEK_API_KEY is not set — cannot fall back for Ask Pulse."
+        )
+
+    ds_model = (os.environ.get("PULSE_CHAT_DEEPSEEK_MODEL") or "").strip() or ds_cfg.default_model
+    return await _post_chat_completion_message(
+        ds_cfg,
+        messages,
+        model=ds_model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        tools=tools,
+        tool_choice=tool_choice,
+    )
+
+
 async def chat_completion(
     messages: list[dict[str, Any]],
     *,

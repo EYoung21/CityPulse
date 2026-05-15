@@ -608,9 +608,10 @@
   top: var(--pp-below-app-topnav-top);
 }
 
-/* Mobile-only: lift bottom controls above iOS home indicator. */
+/* Mobile-only: lift bottom controls above the tab bar + home indicator
+   (matches map filter strip; see MobileBottomNav MOBILE_NAV_HEIGHT_PX). */
 .pp-bottom-controls {
-  bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+  bottom: calc(0.75rem + 64px + env(safe-area-inset-bottom, 0px));
 }
 @media (min-width: 768px) {
   .pp-bottom-controls { bottom: 4.5rem; }

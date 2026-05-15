@@ -8,11 +8,19 @@ interface Props {
   children: ReactNode;
   className?: string;
   onScroll?: (nearTop: boolean) => void;
+  /** Fires when the inner scroll container mounts / unmounts (for IntersectionObserver `root`). */
+  onScrollContainerReady?: (el: HTMLDivElement | null) => void;
 }
 
 const PULL_THRESHOLD = 72;
 
-export default function FeedPullRefresh({ onRefresh, children, className = "", onScroll }: Props) {
+export default function FeedPullRefresh({
+  onRefresh,
+  children,
+  className = "",
+  onScroll,
+  onScrollContainerReady,
+}: Props) {
   const [pullPx, setPullPx] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const startYRef = useRef<number | null>(null);
@@ -48,7 +56,10 @@ export default function FeedPullRefresh({ onRefresh, children, className = "", o
         )}
       </div>
       <div
-        ref={scrollRef}
+        ref={(el) => {
+          scrollRef.current = el;
+          onScrollContainerReady?.(el);
+        }}
         className="h-full overflow-y-auto"
         onScroll={handleScroll}
         onTouchStart={(e) => {

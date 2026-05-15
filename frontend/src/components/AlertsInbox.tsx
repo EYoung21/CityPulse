@@ -35,12 +35,19 @@ import { notificationsSupported } from "@/lib/notifications";
 import { useAuth } from "@/contexts/AuthContext";
 import { requestUpgrade } from "@/lib/upgrade";
 import { requestInstallPrompt } from "@/components/InstallPrompt";
+import { MOBILE_NAV_HEIGHT_PX } from "@/components/MobileBottomNav";
 import { highlightTerms } from "@/lib/highlight-keywords";
 
 interface Props {
   open: boolean;
   onClose: () => void;
   onJump: (incidentId: string, lat: number, lng: number) => void;
+  /**
+   * Where the drawer mounts: default anchors above the map bell stack;
+   * use `mobileAboveNav` on routes like `/feed` so the panel clears the
+   * mobile tab bar.
+   */
+  placement?: "mapBell" | "mobileAboveNav";
   /**
    * Which subview should be visible the first time the drawer opens.
    * Defaults to `"list"` (recent alerts). Set to `"settings"` to
@@ -75,7 +82,13 @@ const KIND_LABEL: Record<InboxAlert["kind"], string> = {
  *  language of the existing Theme/Layers menus so the control stack
  *  feels cohesive. Lists the most-recent N alerts with read state,
  *  with single-tap "fly to" + an unread bulk-clear. */
-export default function AlertsInbox({ open, onClose, onJump, defaultPanel = "list" }: Props) {
+export default function AlertsInbox({
+  open,
+  onClose,
+  onJump,
+  placement = "mapBell",
+  defaultPanel = "list",
+}: Props) {
   const { isPro } = useAuth();
   const [alerts, setAlerts] = useState<InboxAlert[]>([]);
   const [quiet, setQuiet] = useState<QuietHoursConfig>(() => loadQuietHours());
@@ -155,11 +168,21 @@ export default function AlertsInbox({ open, onClose, onJump, defaultPanel = "lis
           initial={{ opacity: 0, scale: 0.9, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.9, y: 8 }}
-          className="absolute bottom-12 right-0 w-80 max-w-[calc(100vw-1.5rem)] rounded-xl shadow-2xl backdrop-blur-md flex flex-col overflow-hidden"
+          className={
+            placement === "mobileAboveNav"
+              ? "fixed left-3 right-3 max-w-lg mx-auto w-auto rounded-xl shadow-2xl backdrop-blur-md flex flex-col overflow-hidden"
+              : "absolute bottom-12 right-0 w-80 max-w-[calc(100vw-1.5rem)] rounded-xl shadow-2xl backdrop-blur-md flex flex-col overflow-hidden"
+          }
           style={{
             background: "var(--panel-bg)",
             border: "1px solid var(--panel-border)",
             maxHeight: "min(60vh, 32rem)",
+            ...(placement === "mobileAboveNav"
+              ? {
+                  bottom: `calc(${MOBILE_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom, 0px) + 10px)`,
+                  zIndex: 2147483010,
+                }
+              : {}),
           }}
           role="dialog"
           aria-label="Alerts inbox"

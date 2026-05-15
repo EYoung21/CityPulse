@@ -1,28 +1,30 @@
 import {
   collection,
+  documentId,
   getDocs,
-  getFirestore,
+  getDocsFromCache,
   limit as limitFn,
   onSnapshot,
   orderBy,
   query,
   startAfter,
   where,
+  type QuerySnapshot,
 } from "firebase/firestore";
-import { getFirebaseApp } from "@/lib/firebase";
+import { getFirestoreDb } from "@/lib/firebase";
 import type { Incident, Extraction, IncidentPageResponse, PreprocessMeta, VariantResult, WhisperMeta } from "@/lib/api";
 import { enrichIncidents } from "@/lib/incident-weights";
 import { getCurrentCity } from "@/lib/pulse-cities";
 
 const COLLECTION = "incidents";
 /** Map + live listener: cap sync size for fast first paint. Recent
- *  incidents dominate the viewport; 5000 docs was routinely 4–5s cold. */
-const MAP_SYNC_LIMIT = 1200;
+ *  incidents dominate the viewport; each doc in the query is billed on
+ *  initial load and on listener updates — keep this conservative. */
+const MAP_SYNC_LIMIT = 800;
 /** Hard ceiling for the one-shot extended-history fetch (used when the
- *  user picks a multi-week/month time window). Above this the read cost
- *  and client memory both balloon; the global filter shouldn't yank in
- *  unbounded history anyway. */
-const EXTENDED_HISTORY_LIMIT = 8000;
+ *  user picks a multi-week/month time window). Limits worst-case reads
+ *  per session when paging through history. */
+const EXTENDED_HISTORY_LIMIT = 5000;
 
 function toISOString(val: unknown): string {
   if (!val) return new Date().toISOString();
@@ -130,6 +132,25 @@ export async function fetchIncidentCount(opts: {
  *
  *  Skips the `inhibitor`/`hidden`/`llm_fallback` rows the same way
  *  `subscribeIncidents` does, so the merged set stays renderable. */
+function incidentsFromSnapshot(snap: QuerySnapshot): Incident[] {
+  const list: Incident[] = [];
+  snap.forEach((d) => {
+    const row = mapDoc(d.id, d.data());
+    if (shouldRenderIncident(row)) list.push(row);
+  });
+  return enrichIncidents(list);
+}
+
+function mapSyncQuery() {
+  const db = getFirestoreDb();
+  return query(
+    collection(db, COLLECTION),
+    where("city", "==", getCurrentCity().slug),
+    orderBy("reported_at", "desc"),
+    limitFn(MAP_SYNC_LIMIT),
+  );
+}
+
 export async function fetchExtendedHistoryPage(opts: {
   /** Inclusive lower bound for `reported_at`. ISO string. `null` =
    *  "no lower bound" (the "All" pill). Used to STOP paging once we
@@ -141,12 +162,12 @@ export async function fetchExtendedHistoryPage(opts: {
   /** Previous page's `nextCursor` — ISO string of the last doc in the
    *  prior page. Omit on the first call. */
   cursor?: string | null;
-  /** Page size; defaults to 2000. Stays well under EXTENDED_HISTORY_LIMIT
+  /** Page size; defaults to 750. Stays well under EXTENDED_HISTORY_LIMIT
    *  so several pages fit per hard ceiling. */
   pageSize?: number;
 }): Promise<{ rows: Incident[]; nextCursor: string | null }> {
-  const db = getFirestore(getFirebaseApp());
-  const size = Math.max(1, Math.min(opts.pageSize ?? 2000, EXTENDED_HISTORY_LIMIT));
+  const db = getFirestoreDb();
+  const size = Math.max(1, Math.min(opts.pageSize ?? 750, EXTENDED_HISTORY_LIMIT));
   // Note: NO `where("reported_at", ">=", …)` clause. Sorting desc and
   // walking the cursor is enough — once a page's last row is older than
   // `sinceISO`, we set `nextCursor = null` and stop paging.
@@ -184,20 +205,15 @@ export async function fetchExtendedHistoryPage(opts: {
  *  Used to paint the map as soon as possible: `onSnapshot` can lag on
  *  cold start while this returns from cache or a single round-trip. */
 export async function fetchIncidentsSnapshotOnce(): Promise<Incident[]> {
-  const db = getFirestore(getFirebaseApp());
-  const q = query(
-    collection(db, COLLECTION),
-    where("city", "==", getCurrentCity().slug),
-    orderBy("reported_at", "desc"),
-    limitFn(MAP_SYNC_LIMIT)
-  );
+  const q = mapSyncQuery();
+  try {
+    const cached = await getDocsFromCache(q);
+    if (!cached.empty) return incidentsFromSnapshot(cached);
+  } catch {
+    /* no IndexedDB cache yet */
+  }
   const snap = await getDocs(q);
-  const list: Incident[] = [];
-  snap.forEach((d) => {
-    const row = mapDoc(d.id, d.data());
-    if (shouldRenderIncident(row)) list.push(row);
-  });
-  return enrichIncidents(list);
+  return incidentsFromSnapshot(snap);
 }
 
 /**
@@ -207,13 +223,7 @@ export function subscribeIncidents(
   onData: (incidents: Incident[]) => void,
   onError?: (e: Error) => void
 ): () => void {
-  const db = getFirestore(getFirebaseApp());
-  const q = query(
-    collection(db, COLLECTION),
-    where("city", "==", getCurrentCity().slug),
-    orderBy("reported_at", "desc"),
-    limitFn(MAP_SYNC_LIMIT)
-  );
+  const q = mapSyncQuery();
 
   return onSnapshot(
     q,
@@ -289,7 +299,7 @@ export async function fetchIncidentPageFromFirestore(opts: {
   nearLng?: number | null;
   since?: string;
 }): Promise<IncidentPageResponse> {
-  const db = getFirestore(getFirebaseApp());
+  const db = getFirestoreDb();
   const limit = opts.limit ?? 20;
   const citySlug = opts.city || getCurrentCity().slug;
   const isNear = opts.nearLat != null && opts.nearLng != null;
@@ -306,7 +316,7 @@ export async function fetchIncidentPageFromFirestore(opts: {
       where("city", "==", citySlug),
       where("reported_at", ">=", lowerBound),
       orderBy("reported_at", "desc"),
-      limitFn(500),
+      limitFn(220),
     );
     const snap = await getDocs(q);
     const list: (Incident & { distance_km?: number })[] = [];
@@ -330,29 +340,94 @@ export async function fetchIncidentPageFromFirestore(opts: {
     };
   }
 
-  // "recent" mode: cursor is the previous page's last `reported_at`.
-  const baseConstraints = [
+  // "recent" mode: cursor is `reported_at\x1fdocumentId` so we can
+  // `startAfter` through hidden/blocked rows without stalling pagination.
+  // We over-fetch raw docs, filter client-side, then still know whether
+  // Firestore has more rows when the raw batch fills the cap.
+  const SEP = "\x1f";
+  const rawCursor = (opts.cursor || "").trim();
+  let cursorAt = "";
+  let cursorId = "";
+  if (rawCursor) {
+    const i = rawCursor.indexOf(SEP);
+    if (i >= 0) {
+      cursorAt = rawCursor.slice(0, i);
+      cursorId = rawCursor.slice(i + SEP.length);
+    } else {
+      cursorAt = rawCursor;
+    }
+  }
+
+  const fetchCap = Math.min(120, Math.max(limit + 25, limit * 3));
+  const baseConstraintsCompound = [
+    where("city", "==", citySlug),
+    ...(sinceIso ? [where("reported_at", ">=", sinceIso)] : []),
+    orderBy("reported_at", "desc"),
+    orderBy(documentId(), "desc"),
+  ];
+
+  let snap;
+  const legacy = [
     where("city", "==", citySlug),
     ...(sinceIso ? [where("reported_at", ">=", sinceIso)] : []),
     orderBy("reported_at", "desc"),
   ];
-  const q = opts.cursor
-    ? query(collection(db, COLLECTION), ...baseConstraints, startAfter(opts.cursor), limitFn(limit + 1))
-    : query(collection(db, COLLECTION), ...baseConstraints, limitFn(limit + 1));
-  const snap = await getDocs(q);
-  const rows: Incident[] = [];
+  const runLegacy = (after?: string) =>
+    getDocs(
+      after
+        ? query(collection(db, COLLECTION), ...legacy, startAfter(after), limitFn(fetchCap))
+        : query(collection(db, COLLECTION), ...legacy, limitFn(fetchCap))
+    );
+
+  try {
+    if (cursorAt && cursorId) {
+      snap = await getDocs(
+        query(
+          collection(db, COLLECTION),
+          ...baseConstraintsCompound,
+          startAfter(cursorAt, cursorId),
+          limitFn(fetchCap)
+        )
+      );
+    } else if (cursorAt) {
+      snap = await runLegacy(cursorAt);
+    } else {
+      snap = await getDocs(query(collection(db, COLLECTION), ...baseConstraintsCompound, limitFn(fetchCap)));
+    }
+  } catch {
+    // Missing / building composite index (city, reported_at desc, __name__ desc), or
+    // compound cursor unsupported — chronological `startAfter` still moves forward.
+    snap = await runLegacy(cursorAt || undefined);
+  }
+
+  const visible: Incident[] = [];
   snap.forEach((doc) => {
     const inc = mapDoc(doc.id, doc.data());
-    if (shouldRenderIncident(inc)) rows.push(inc);
+    if (shouldRenderIncident(inc)) visible.push(inc);
   });
-  // Over-fetch by one so we know whether to advertise a next cursor.
-  const hasMore = rows.length > limit;
-  const page = hasMore ? rows.slice(0, limit) : rows;
+
+  const hasMoreInBatch = visible.length > limit;
+  const page = hasMoreInBatch ? visible.slice(0, limit) : visible;
+  const batchExhausted = snap.size < fetchCap;
+  const hasMore = hasMoreInBatch || (!batchExhausted && snap.size > 0);
+
   const enriched = enrichIncidents(page);
   const last = enriched[enriched.length - 1];
+  const lastRaw = snap.docs[snap.docs.length - 1];
+  let next: string | null = null;
+  if (hasMore) {
+    if (hasMoreInBatch && last) {
+      next = `${last.reported_at}${SEP}${last.id}`;
+    } else if (lastRaw) {
+      const d = lastRaw.data();
+      const at = toISOString(d.reported_at);
+      next = `${at}${SEP}${lastRaw.id}`;
+    }
+  }
+
   return {
     incidents: enriched,
-    next_cursor: hasMore && last ? last.reported_at : null,
+    next_cursor: next,
     mode: "recent",
   };
 }
@@ -444,14 +519,14 @@ export function subscribeExtractions(
   onData: (extractions: Extraction[]) => void,
   onError?: (e: Error) => void
 ): () => void {
-  const db = getFirestore(getFirebaseApp());
+  const db = getFirestoreDb();
   const q = query(
     collection(db, "extractions"),
     where("feed_id", "==", feedId),
     where("reported_at", ">=", since.toISOString()),
     where("reported_at", "<=", until.toISOString()),
     orderBy("reported_at", "desc"),
-    limitFn(2000)
+    limitFn(800)
   );
 
   return onSnapshot(
@@ -475,13 +550,13 @@ export function subscribeAllExtractions(
   onData: (extractions: Extraction[]) => void,
   onError?: (e: Error) => void
 ): () => void {
-  const db = getFirestore(getFirebaseApp());
+  const db = getFirestoreDb();
   const q = query(
     collection(db, "extractions"),
     where("reported_at", ">=", since.toISOString()),
     where("reported_at", "<=", until.toISOString()),
     orderBy("reported_at", "desc"),
-    limitFn(2000)
+    limitFn(800)
   );
 
   return onSnapshot(

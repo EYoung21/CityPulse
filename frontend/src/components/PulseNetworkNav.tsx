@@ -1,10 +1,50 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  useSyncExternalStore,
+} from "react";
+import { createPortal } from "react-dom";
 import { getAuth } from "firebase/auth";
 import { PULSE_CITIES, getCurrentCity, type PulseCity } from "@/lib/pulse-cities";
 import { useAuth } from "@/contexts/AuthContext";
 import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
+import { MOBILE_NAV_HEIGHT_PX } from "@/components/MobileBottomNav";
+
+const MOBILE_LAYOUT_QUERY = "(max-width: 767px)";
+/** Above MobileBottomNav portal (`z-index: 2147483000`). */
+const MOBILE_MENU_Z = 2147483010;
+
+function subscribeMobileLayout(onStoreChange: () => void) {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return () => {};
+  }
+  const mql = window.matchMedia(MOBILE_LAYOUT_QUERY);
+  if (typeof mql.addEventListener === "function") {
+    mql.addEventListener("change", onStoreChange);
+    return () => mql.removeEventListener("change", onStoreChange);
+  }
+  if (typeof mql.addListener === "function") {
+    mql.addListener(onStoreChange);
+    return () => mql.removeListener(onStoreChange);
+  }
+  return () => {};
+}
+
+function getMobileLayoutSnapshot() {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(MOBILE_LAYOUT_QUERY).matches
+  );
+}
+
+function getServerMobileLayoutSnapshot() {
+  return false;
+}
 
 /**
  * Pulse Network navigation dropdown.
@@ -22,9 +62,21 @@ import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
  */
 export default function PulseNetworkNav() {
   const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const current = getCurrentCity();
   const { user } = useAuth();
+
+  const isMobile = useSyncExternalStore(
+    subscribeMobileLayout,
+    getMobileLayoutSnapshot,
+    getServerMobileLayoutSnapshot
+  );
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const navigateToCity = useCallback(async (city: PulseCity) => {
     // Preview-only cities don't have a real domain yet — view them by
@@ -48,39 +100,166 @@ export default function PulseNetworkNav() {
     window.location.href = url;
   }, [user]);
 
-  // Close on outside click
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  // Close on outside click (mobile menu is portaled — include panel ref)
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(e: PointerEvent) {
+      const t = e.target as Node;
+      if (ref.current?.contains(t)) return;
+      if (panelRef.current?.contains(t)) return;
+      setOpen(false);
     }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [open]);
+
+  const navLift = `calc(${MOBILE_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom, 0px))`;
+
+  const menuChrome = {
+    background: "rgba(20, 20, 30, 0.95)",
+    backdropFilter: "blur(20px)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    borderRadius: "12px",
+    boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+    padding: "8px 0",
+  } as const;
+
+  const mobileSheet =
+    mounted && open && isMobile ? (
+      createPortal(
+        <>
+          <div
+            role="presentation"
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: MOBILE_MENU_Z - 1,
+              background: "rgba(0,0,0,0.45)",
+            }}
+            onPointerDown={() => setOpen(false)}
+          />
+          <div
+            ref={panelRef}
+            data-pulse-network-panel
+            role="dialog"
+            aria-label="Pulse Network · Live cities"
+            style={{
+              position: "fixed",
+              left: 12,
+              right: 12,
+              bottom: `calc(${navLift} + 10px)`,
+              maxHeight: `min(72dvh, calc(100dvh - env(safe-area-inset-top, 0px) - ${MOBILE_NAV_HEIGHT_PX}px - env(safe-area-inset-bottom, 0px) - 40px))`,
+              zIndex: MOBILE_MENU_Z,
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+              animation: "fadeSlideIn 0.15s ease",
+              ...menuChrome,
+            }}
+          >
+            <div
+              style={{
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "8px 12px 6px 16px",
+                borderBottom: "1px solid rgba(255,255,255,0.08)",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: "1px",
+                  color: "rgba(255,255,255,0.4)",
+                }}
+              >
+                Live Cities
+              </span>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label="Close"
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "rgba(255,255,255,0.06)",
+                  color: "rgba(255,255,255,0.75)",
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                Close
+              </button>
+            </div>
+            <div style={{ overflowY: "auto", flex: 1, minHeight: 0, paddingBottom: 4 }}>
+              {PULSE_CITIES.filter((c) => !c.previewOnly).map((city) => (
+                <CityRow
+                  key={city.slug}
+                  city={city}
+                  isCurrent={city.slug === current.slug}
+                  onNavigate={navigateToCity}
+                  onClose={() => setOpen(false)}
+                />
+              ))}
+            </div>
+            <div
+              style={{
+                flexShrink: 0,
+                borderTop: "1px solid rgba(255,255,255,0.08)",
+                marginTop: 4,
+                padding: "6px 14px 8px",
+                fontSize: "11px",
+                color: "rgba(255,255,255,0.3)",
+                textAlign: "center",
+              }}
+            >
+              Real-time safety • Unverified scanner audio
+            </div>
+          </div>
+        </>,
+        document.body
+      )
+    ) : null;
+
+  const triggerBase = {
+    display: "flex" as const,
+    alignItems: "center" as const,
+    gap: isMobile ? "4px" : "8px",
+    padding: isMobile ? "8px 10px" : "8px 16px",
+    border: "1px solid rgba(255,255,255,0.15)",
+    borderRadius: "10px",
+    background: "rgba(255,255,255,0.06)",
+    color: "rgba(255,255,255,0.8)",
+    cursor: "pointer",
+    fontSize: "14px",
+    fontWeight: 500,
+    transition: "all 0.2s ease",
+    backdropFilter: "blur(8px)",
+  };
 
   return (
     <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
-      {/* Trigger button */}
       <button
+        type="button"
         onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-haspopup="dialog"
         aria-label="Pulse Network · Switch cities"
         title="Pulse Network · Switch cities"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "8px",
-          padding: "8px 16px",
-          border: "1px solid rgba(255,255,255,0.15)",
-          borderRadius: "10px",
-          background: "rgba(255,255,255,0.06)",
-          color: "rgba(255,255,255,0.8)",
-          cursor: "pointer",
-          fontSize: "14px",
-          fontWeight: 500,
-          transition: "all 0.2s ease",
-          backdropFilter: "blur(8px)",
-        }}
+        style={triggerBase}
         onMouseEnter={(e) => {
           e.currentTarget.style.background = "rgba(255,255,255,0.12)";
           e.currentTarget.style.borderColor = "rgba(255,255,255,0.25)";
@@ -91,7 +270,7 @@ export default function PulseNetworkNav() {
         }}
       >
         <span style={{ fontSize: "18px" }}>🌐</span>
-        <span>Pulse Network</span>
+        {!isMobile && <span>Pulse Network</span>}
         <span
           style={{
             fontSize: "11px",
@@ -103,22 +282,16 @@ export default function PulseNetworkNav() {
         </span>
       </button>
 
-      {/* Dropdown */}
-      {open && (
+      {open && !isMobile && (
         <div
           style={{
             position: "absolute",
             top: "calc(100% + 6px)",
             right: 0,
             minWidth: "260px",
-            background: "rgba(20, 20, 30, 0.95)",
-            backdropFilter: "blur(20px)",
-            border: "1px solid rgba(255,255,255,0.12)",
-            borderRadius: "12px",
-            boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
-            padding: "8px 0",
             zIndex: 9999,
             animation: "fadeSlideIn 0.15s ease",
+            ...menuChrome,
           }}
         >
           <div
@@ -144,8 +317,6 @@ export default function PulseNetworkNav() {
             />
           ))}
 
-
-
           <div
             style={{
               borderTop: "1px solid rgba(255,255,255,0.08)",
@@ -164,6 +335,8 @@ export default function PulseNetworkNav() {
           </div>
         </div>
       )}
+
+      {mobileSheet}
 
       <style>{`
         @keyframes fadeSlideIn {

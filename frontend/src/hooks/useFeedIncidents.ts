@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchIncidentPage, type Incident } from "@/lib/api";
 import { fetchIncidentPageFromFirestore, subscribeIncidents } from "@/lib/firestore";
+import { loadCachedIncidents } from "@/lib/incident-snapshot-cache";
 import { getCurrentPosition } from "@/lib/native";
 
 export type FeedMode = "recent" | "near";
@@ -70,14 +71,21 @@ export function useFeedIncidents({
   enableLive = true,
   pageSize = PAGE_SIZE,
 }: UseFeedIncidentsOptions) {
-  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [incidents, setIncidents] = useState<Incident[]>(() => {
+    if (typeof window === "undefined") return [];
+    const cached = loadCachedIncidents(citySlug);
+    return cached ? cached.incidents.slice(0, pageSize) : [];
+  });
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [locating, setLocating] = useState(false);
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(() => {
+    if (typeof window === "undefined") return null;
+    return loadCachedIncidents(citySlug)?.savedAt ?? null;
+  });
   const [pendingNewCount, setPendingNewCount] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const knownIdsRef = useRef<Set<string>>(new Set());
@@ -100,14 +108,28 @@ export function useFeedIncidents({
     abortRef.current = ctrl;
     setLoading(true);
     setError(null);
-    setIncidents([]);
     setCursor(null);
     setHasMore(true);
     setPendingNewCount(0);
     pendingBufferRef.current = [];
-    knownIdsRef.current = new Set();
-    newestAtRef.current = 0;
     userScrolledDownRef.current = false;
+
+    const cached = loadCachedIncidents(citySlug);
+    if (cached && cached.incidents.length > 0) {
+      const slice = cached.incidents.slice(0, pageSize);
+      setIncidents(slice);
+      knownIdsRef.current = new Set(slice.map((i) => i.id));
+      const top = slice[0];
+      if (top) {
+        const t = Date.parse(top.reported_at);
+        if (Number.isFinite(t)) newestAtRef.current = t;
+      }
+      setLastUpdatedAt(cached.savedAt);
+    } else {
+      setIncidents([]);
+      knownIdsRef.current = new Set();
+      newestAtRef.current = 0;
+    }
 
     let timedOut = false;
     const slow = window.setTimeout(() => {
