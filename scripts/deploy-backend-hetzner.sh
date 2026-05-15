@@ -5,13 +5,13 @@ set -e
 cd /root/PhillyPulse
 
 if [ -n "$GITHUB_TOKEN" ]; then
-  git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/EYoung21/PhillyPulse.git"
+  git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/EYoung21/CityPulse.git"
 fi
 
 git reset --hard HEAD
 git clean -fd
 git pull origin main
-git remote set-url origin https://github.com/EYoung21/PhillyPulse.git
+git remote set-url origin https://github.com/EYoung21/CityPulse.git
 
 mkdir -p .secrets
 cp /root/firebase-sa.json .secrets/firebase-service-account.json
