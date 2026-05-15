@@ -113,8 +113,7 @@ export default function TripRecapCard({ recap, onClose, historyId }: Props) {
 
   return (
     <div
-      className="fixed inset-x-0 z-[1100] flex justify-center px-3 pointer-events-none"
-      style={{ top: "calc(env(safe-area-inset-top, 0px) + 0.75rem)" }}
+      className="pp-below-app-topnav fixed inset-x-0 z-[2100] flex justify-center px-3 pointer-events-none"
     >
       <div
         className="pointer-events-auto w-full max-w-md rounded-2xl shadow-2xl backdrop-blur-xl overflow-hidden transition-all duration-300"

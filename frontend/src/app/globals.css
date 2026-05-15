@@ -243,10 +243,40 @@
   overflow: hidden !important;
 }
 
+:root {
+  /* Desktop Map / Feed / Analytics / Ask tab bar — 0 on mobile (bottom nav instead). */
+  --pp-app-topnav-height: 0px;
+  --pp-below-topnav-gap: 0.75rem;
+  --pp-below-app-topnav-top: calc(
+    env(safe-area-inset-top, 0px) + var(--pp-app-topnav-height) + var(--pp-below-topnav-gap)
+  );
+}
+
 @media (min-width: 768px) {
-  .pp-app-topnav {
-    min-height: 3.25rem;
+  :root {
+    --pp-app-topnav-height: 3.25rem;
   }
+
+  /* Grid keeps tab panels out from under the desktop top bar. */
+  .pp-app-shell {
+    display: grid;
+    grid-template-rows: var(--pp-app-topnav-height) minmax(0, 1fr);
+  }
+
+  .pp-app-topnav {
+    grid-row: 1;
+    min-height: var(--pp-app-topnav-height);
+  }
+
+  .pp-app-main {
+    grid-row: 2;
+    min-height: 0;
+  }
+}
+
+/* Fixed / sticky toast & pill chrome below the desktop tab bar. */
+.pp-below-app-topnav {
+  top: var(--pp-below-app-topnav-top);
 }
 
 
@@ -575,7 +605,7 @@
   bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
 }
 .safe-top-offset {
-  top: calc(0.75rem + env(safe-area-inset-top, 0px));
+  top: var(--pp-below-app-topnav-top);
 }
 
 /* Mobile-only: lift bottom controls above iOS home indicator. */

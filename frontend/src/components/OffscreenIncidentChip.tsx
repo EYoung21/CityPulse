@@ -44,9 +44,8 @@ export default function OffscreenIncidentChip({
 
   return (
     <div
-      className="pointer-events-none fixed inset-x-0 z-[1100] flex justify-center px-3"
+      className="pp-below-app-topnav pointer-events-none fixed inset-x-0 z-[1100] flex justify-center px-3"
       style={{
-        top: "calc(env(safe-area-inset-top, 0px) + 4.25rem)",
         opacity: enter ? 1 : 0,
         transform: enter ? "translateY(0)" : "translateY(-8px)",
         transition: "opacity 0.2s ease, transform 0.2s ease",

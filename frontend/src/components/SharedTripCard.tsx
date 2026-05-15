@@ -56,9 +56,8 @@ export default function SharedTripCard({ trip, onClose }: Props) {
 
   return (
     <div
-      className="fixed left-1/2 -translate-x-1/2 z-[1100] w-[min(420px,calc(100vw-1.5rem))] rounded-2xl shadow-2xl backdrop-blur-xl overflow-hidden"
+      className="pp-below-app-topnav fixed left-1/2 -translate-x-1/2 z-[2100] w-[min(420px,calc(100vw-1.5rem))] rounded-2xl shadow-2xl backdrop-blur-xl overflow-hidden"
       style={{
-        top: "calc(env(safe-area-inset-top, 0px) + 0.75rem)",
         background: "var(--panel-bg)",
         border: "1px solid var(--panel-border)",
       }}
