@@ -10,6 +10,8 @@ import yaml
 
 _REPO = Path(__file__).resolve().parent.parent
 _CACHE: dict[str, dict[str, Any]] = {}
+_LEXICON_CACHE: dict[str, list[dict[str, Any]]] = {}
+_LEXICON_PATTERNS: dict[str, list[tuple[re.Pattern[str], str]]] = {}
 
 
 def _load_city(slug: str) -> dict[str, Any]:
@@ -28,6 +30,59 @@ def _load_city(slug: str) -> dict[str, Any]:
             pass
     _CACHE[slug] = data
     return data
+
+
+def _load_lexicon_entries(city_slug: str) -> list[dict[str, Any]]:
+    slug = (city_slug or "").strip().lower()
+    if slug in _LEXICON_CACHE:
+        return _LEXICON_CACHE[slug]
+    path = _REPO / "cities" / slug / "location_lexicon.yaml"
+    entries: list[dict[str, Any]] = []
+    if path.is_file():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                loaded = yaml.safe_load(f) or {}
+            raw = loaded.get("entries") if isinstance(loaded, dict) else None
+            if isinstance(raw, list):
+                entries = [e for e in raw if isinstance(e, dict)]
+        except Exception:
+            pass
+    _LEXICON_CACHE[slug] = entries
+    return entries
+
+
+def _lexicon_compiled(slug: str) -> list[tuple[re.Pattern[str], str]]:
+    if slug in _LEXICON_PATTERNS:
+        return _LEXICON_PATTERNS[slug]
+    compiled: list[tuple[re.Pattern[str], str]] = []
+    for entry in _load_lexicon_entries(slug):
+        pat = entry.get("pattern")
+        rep = entry.get("replace")
+        if not isinstance(pat, str) or not isinstance(rep, str):
+            continue
+        try:
+            compiled.append((re.compile(pat), rep))
+        except re.error:
+            continue
+    _LEXICON_PATTERNS[slug] = compiled
+    return compiled
+
+
+def apply_location_lexicon(text: str | None, *, city: str) -> str | None:
+    """Apply per-city `location_lexicon.yaml` regex replacements (geocode tuning).
+
+    Rules are applied in file order, each to the result of the previous step.
+    """
+    if not text or not str(text).strip():
+        return None
+    slug = (city or "").strip().lower()
+    if not slug:
+        return text
+    s = str(text)
+    for cre, rep in _lexicon_compiled(slug):
+        s = cre.sub(rep, s)
+    s = " ".join(s.split()).strip(" ,.;")
+    return s or None
 
 
 def expand_location_aliases(location_text: str | None, *, city: str) -> list[str]:
@@ -55,7 +110,14 @@ def expand_location_aliases(location_text: str | None, *, city: str) -> list[str
         parts = re.split(r"\s+(?:and|&)\s+", text, maxsplit=1, flags=re.IGNORECASE)
         if len(parts) == 2 and parts[0].strip().lower() == parts[1].strip().lower():
             out.append(parts[0].strip())
-    return out
+    expanded: list[str] = []
+    for item in out:
+        if item not in expanded:
+            expanded.append(item)
+        lexd = apply_location_lexicon(item, city=city)
+        if lexd and lexd != item and lexd not in expanded:
+            expanded.append(lexd)
+    return expanded
 
 
 def borough_bounds(city: str, borough: str | None) -> dict[str, float] | None:

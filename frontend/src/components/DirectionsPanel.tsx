@@ -584,7 +584,7 @@ export default function DirectionsPanel({
           <Info className="w-3.5 h-3.5 shrink-0 mt-0.5 text-blue-400" />
           <span>
             Transit routing shows <strong style={{ color: "var(--panel-text)" }}>walking directions</strong> to and from the nearest station.
-            Full SEPTA integration coming soon.
+            SEPTA routing uses standard directions for now.
           </span>
         </div>
       )}

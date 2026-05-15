@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Mail, Eye, EyeOff, AlertCircle, CheckCircle2 } from "lucide-react";
-import { PULSE_CITIES, getCurrentCity } from "@/lib/pulse-cities";
+import { getCurrentCity, getLaunchedCities } from "@/lib/pulse-cities";
 import "./login.css";
 
 const siteName = process.env.NEXT_PUBLIC_SITE_NAME || "PHLPulse";
@@ -284,10 +284,7 @@ export default function LoginScreen() {
 
 function CityNav() {
   const current = getCurrentCity();
-  const LIVE_SLUGS = new Set(["sf", "nyc", "philly", "chattanooga"]);
-  const others = PULSE_CITIES.filter(
-    (c) => !c.previewOnly && LIVE_SLUGS.has(c.slug) && c.slug !== current.slug
-  );
+  const others = getLaunchedCities().filter((c) => c.slug !== current.slug);
 
   return (
     <div className="w-full max-w-sm mt-6">

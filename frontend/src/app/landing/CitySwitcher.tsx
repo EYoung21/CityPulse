@@ -66,7 +66,7 @@ export function CitySwitcher({ current }: { current: PulseCity }) {
         const launched = getLaunchedCities();
         return (
         <div className="lp-switcher-menu" role="menu">
-          <div className="lp-switcher-menu-label">Pulse Network · {launched.length} cities</div>
+          <div className="lp-switcher-menu-label">Pulse Network</div>
           {launched.map((c) => {
             const isCurrent = c.slug === current.slug;
             return (

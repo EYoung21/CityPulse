@@ -450,16 +450,10 @@ export default function LandingPage() {
   const headlineWords =
     `We listen to every police scanner in ${city.name}. That\u2019s how we know which routes to avoid.`.split(" ");
 
-  // Two distinct rosters drive the network section copy. The headline
-  // counts come from the data so this stays correct as we promote
-  // cities (flip `previewOnly` off) or announce new ones (flip
-  // `comingSoon` on) — no more hand-edited "13 cities" strings.
   const liveCities = PULSE_CITIES.filter((c) => !c.previewOnly);
-  const comingCities = PULSE_CITIES.filter((c) => c.comingSoon);
   const liveCount = liveCities.length;
-  const comingCount = comingCities.length;
   const statWords =
-    `Real-time safety intelligence across ${liveCount} cities, with ${comingCount} more coming soon.`.split(" ");
+    `Real-time safety intelligence across ${liveCount} live metropolitan areas today.`.split(" ");
 
   const sisterCities = liveCities
     .filter((c) => c.slug !== city.slug)
@@ -678,17 +672,9 @@ export default function LandingPage() {
                 {liveCities.map((c) => c.name).join("  ·  ")}
               </span>
             </div>
-            {comingCount > 0 && (
-              <div className="lp-roster-row">
-                <span className="lp-roster-label">
-                  <span className="lp-roster-dot lp-roster-dot--soon" aria-hidden="true" />
-                  Coming soon
-                </span>
-                <span className="lp-roster-cities">
-                  {comingCities.map((c) => c.name).join("  ·  ")}
-                </span>
-              </div>
-            )}
+            <p className="lp-roster-soon" style={{ margin: "0.75rem 0 0", fontSize: "0.95rem", color: "rgba(255,255,255,0.45)" }}>
+              More cities soon.
+            </p>
           </div>
         </div>
       </section>
@@ -698,9 +684,14 @@ export default function LandingPage() {
         <section className="lp-cities">
           <div className="lp-cities-header">
             <div className="lp-cities-label">Sister Cities</div>
-            <h2 className="lp-cities-title">Pulse in other cities</h2>
+            <h2 className="lp-cities-title">Other live Pulse cities</h2>
             <p className="lp-cities-sub">
-              {city.name} is one of {liveCount} live Pulse cities. Jump to another live map.
+              Pulse is also live in{" "}
+              {liveCities
+                .filter((c) => c.slug !== city.slug)
+                .map((c) => c.name)
+                .join(", ")}
+              . Open another metro map below.
             </p>
           </div>
           <div className="lp-city-grid">

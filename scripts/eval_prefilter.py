@@ -33,6 +33,10 @@ Usage::
     python scripts/eval_prefilter.py --city philly --days 30 \\
         --false-drops-out /tmp/philly_false_drops.txt
 
+    # Four cities only (uses Firestore ``city`` + ``reported_at`` index per city)
+    python scripts/eval_prefilter.py --days 30 --city philly --city sf \\
+        --city nyc --city chattanooga --false-drops-out /tmp/fd.jsonl
+
     # Override cost per call (e.g. if you switch models)
     python scripts/eval_prefilter.py --cost-per-call 0.0004
 
@@ -133,6 +137,36 @@ def _iter_extractions(days: int, page_size: int = 2000) -> Iterable[dict]:
             return
 
 
+def _iter_extractions_for_city(city: str, days: int, page_size: int = 2000) -> Iterable[dict]:
+    """Stream `extractions` for one city slug (uses composite city + reported_at).
+
+    Prefer this when ``--city`` is passed so we do not read unrelated cities
+    from Firestore for multi-week windows.
+    """
+    db = _ensure_client()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    base = (
+        db.collection("extractions")
+        .where("city", "==", city)
+        .where("reported_at", ">=", cutoff)
+        .order_by("reported_at")
+        .limit(page_size)
+    )
+    last_snap = None
+    while True:
+        q = base if last_snap is None else base.start_after(last_snap)
+        page = list(q.stream())
+        if not page:
+            return
+        for snap in page:
+            data = snap.to_dict() or {}
+            data["id"] = snap.id
+            yield data
+        last_snap = page[-1]
+        if len(page) < page_size:
+            return
+
+
 def _format_pct(num: int, denom: int) -> str:
     if denom == 0:
         return "  n/a"
@@ -142,25 +176,46 @@ def _format_pct(num: int, denom: int) -> str:
 def main() -> int:
     args = _parse_args()
 
-    print(f"Pulling extractions from last {args.days} days …", flush=True)
-    rows: list[dict] = []
-    for r in _iter_extractions(args.days):
-        rows.append(r)
-        if len(rows) % 5000 == 0:
-            print(f"  loaded {len(rows):,}", flush=True)
-    print(f"Loaded {len(rows):,} total extractions.\n", flush=True)
-
     by_city: dict[str, list[dict]] = defaultdict(list)
-    for r in rows:
-        city = (r.get("city") or "philly").strip().lower()
-        by_city[city].append(r)
 
     if args.cities:
-        wanted = {c.lower() for c in args.cities}
-        by_city = {k: v for k, v in by_city.items() if k in wanted}
-        if not by_city:
-            print(f"No data for requested cities: {sorted(wanted)}.", file=sys.stderr)
+        wanted = sorted({c.lower().strip() for c in args.cities if c and c.strip()})
+        if not wanted:
+            print("No city slugs after parsing --city.", file=sys.stderr)
             return 2
+        print(
+            f"Pulling extractions (per-city index) for {', '.join(wanted)} — last {args.days} days …",
+            flush=True,
+        )
+        for city in wanted:
+            n = 0
+            for r in _iter_extractions_for_city(city, args.days):
+                by_city[city].append(r)
+                n += 1
+                if args.limit and len(by_city[city]) >= args.limit:
+                    break
+                if n % 5000 == 0:
+                    print(f"  {city}: {n:,}", flush=True)
+            print(f"  {city}: done ({len(by_city[city]):,} rows)", flush=True)
+    else:
+        print(f"Pulling extractions from last {args.days} days (all cities) …", flush=True)
+        rows: list[dict] = []
+        for r in _iter_extractions(args.days):
+            rows.append(r)
+            if len(rows) % 5000 == 0:
+                print(f"  loaded {len(rows):,}", flush=True)
+        print(f"Loaded {len(rows):,} total extractions.\n", flush=True)
+        for r in rows:
+            city = (r.get("city") or "philly").strip().lower()
+            by_city[city].append(r)
+
+    if not args.cities and args.limit:
+        for k in list(by_city.keys()):
+            if len(by_city[k]) > args.limit:
+                by_city[k] = by_city[k][: args.limit]
+
+    total_loaded = sum(len(v) for v in by_city.values())
+    print(f"Evaluating {total_loaded:,} extractions across {len(by_city)} city bucket(s).\n", flush=True)
 
     false_drops_fp = None
     if args.false_drops_out:

@@ -66,5 +66,19 @@ class LocationPipelineTests(unittest.TestCase):
         self.assertTrue(result.ok, result.reason)
 
 
+    def test_nyc_lexicon_expands_bqe(self):
+        out = location_aliases.apply_location_lexicon(
+            "crash on the BQE near exit 32", city="nyc"
+        )
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertIn("Brooklyn-Queens", out)
+
+    def test_nyc_transcript_candidates_avenue_street(self):
+        raw = "Units to 8th Avenue and 42nd Street for a 10-32"
+        c = geocode.transcript_geocode_candidates(raw, city="nyc")
+        self.assertTrue(any("Avenue" in x and "Street" in x for x in c))
+
+
 if __name__ == "__main__":
     unittest.main()
