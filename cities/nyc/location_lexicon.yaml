@@ -2,7 +2,9 @@
 # Applied in order by `philly_pulse.location_aliases.apply_location_lexicon`
 # (also merged into `expand_location_aliases` variants).
 #
-# Curate with real failures:
+# Curate with real failures (30d / 400-row export, 2026-05-15): mostly one-off
+# ASR/LLM junk, but spot-checks surfaced lone BQE/FDR/West Side Highway strings
+# and common missing bridge/expressway names. Re-export periodically and merge.
 #   GOOGLE_APPLICATION_CREDENTIALS=... \\
 #     python3 scripts/export_geocode_failures.py --city nyc --days 30 --limit 400 \\
 #     --out /tmp/nyc_geocode_failures.jsonl
@@ -59,3 +61,27 @@ entries:
     replace: "Jackie Robinson Parkway"
   - pattern: "(?i)\\bHarlem\\s+River\\s+Drive\\b"
     replace: "Harlem River Drive"
+
+  - note: "Bridges / facilities common after 30d failure export review"
+    pattern: "(?i)\\bVerraz+zano\\s+Narrows\\s+Bridge\\b|\\bVerraz+zano\\s+Bridge\\b"
+    replace: "Verrazzano-Narrows Bridge"
+  - pattern: "(?i)\\bGowanus\\s+Expressway\\b|\\bGowanus\\s+Expy\\b"
+    replace: "Gowanus Expressway"
+  - pattern: "(?i)\\bKosciuszko\\s+Bridge\\b"
+    replace: "Kosciuszko Bridge"
+  - pattern: "(?i)\\bPulaski\\s+Bridge\\b"
+    replace: "Pulaski Bridge"
+  - pattern: "(?i)\\bWillis\\s+Avenue\\s+Bridge\\b"
+    replace: "Willis Avenue Bridge"
+  - pattern: "(?i)\\bThird\\s+Avenue\\s+Bridge\\b"
+    replace: "Third Avenue Bridge"
+  - pattern: "(?i)\\bProspect\\s+Expressway\\b|\\bProspect\\s+Expy\\b"
+    replace: "Prospect Expressway"
+  - pattern: "(?i)\\bSheridan\\s+Expressway\\b|\\bSheridan\\s+Boulevard\\b"
+    replace: "Sheridan Expressway"
+  - pattern: "(?i)\\bStaten\\s+Island\\s+Expressway\\b|\\bSIE\\b"
+    replace: "Staten Island Expressway"
+  - pattern: "(?i)\\bBrooklyn\\s+Battery\\s+Tunnel\\b|\\bHugh\\s+L\\.?\\s*Carey\\s+Tunnel\\b|\\bHugh\\s+Carey\\s+Tunnel\\b"
+    replace: "Hugh L Carey Tunnel"
+  - pattern: "(?i)\\bTriboro(?:ugh)?\\s+Bridge\\b"
+    replace: "Robert F Kennedy Bridge"
