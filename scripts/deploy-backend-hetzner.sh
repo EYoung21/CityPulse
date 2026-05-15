@@ -26,36 +26,21 @@ systemctl restart philly-pulse-api
 sleep 2
 systemctl is-active philly-pulse-api
 
-# Active realtime cities. Anything in cities/<slug>/config.yaml that is
-# NOT in this list gets stopped + disabled below. Keep in sync with
-# scripts/setup-multi-city.sh and .github/workflows/server-setup-multi-city.yml.
-ACTIVE_CITIES=(sf nyc philly chattanooga)
+# Hetzner-side backfill is retired. Backfill is Lambda-only now.
+for legacy in pulse-backfill.timer pulse-backfill.service; do
+  if systemctl list-unit-files "$legacy" >/dev/null 2>&1; then
+    echo "Removing legacy unit: $legacy"
+    systemctl stop "$legacy" 2>/dev/null || true
+    systemctl disable "$legacy" 2>/dev/null || true
+    rm -f "/etc/systemd/system/${legacy}"
+  fi
+done
+systemctl daemon-reload
 
-is_active_city() {
-  local target="$1"
-  for c in "${ACTIVE_CITIES[@]}"; do
-    [ "$c" = "$target" ] && return 0
-  done
-  return 1
-}
-
-  # Transcribers run on Lambda now. Do not start them on Hetzner.
-
-  # Hetzner-side backfill is retired. Backfill is Lambda-only now.
-  for legacy in pulse-backfill.timer pulse-backfill.service; do
-    if systemctl list-unit-files "$legacy" >/dev/null 2>&1; then
-      echo "Removing legacy unit: $legacy"
-      systemctl stop "$legacy" 2>/dev/null || true
-      systemctl disable "$legacy" 2>/dev/null || true
-      rm -f "/etc/systemd/system/${legacy}"
-    fi
-  done
-  systemctl daemon-reload
-else
-  # Legacy single-city service
-  systemctl restart philly-pulse-live
-  sleep 2
-  systemctl is-active philly-pulse-live || echo "WARNING: philly-pulse-live failed to start"
+# Live transcribers run on Lambda — sync multi_transcriber + cities/ so
+# per-city VAD/tuning changes ship with every API deploy.
+if [ -x /root/PhillyPulse/scripts/sync_lambda_live_transcribers.sh ]; then
+  bash /root/PhillyPulse/scripts/sync_lambda_live_transcribers.sh || echo "WARNING: Lambda transcriber sync failed (non-fatal for API)"
 fi
 
 echo "Deploy complete at $(date)"

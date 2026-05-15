@@ -4,13 +4,15 @@ city:
   short: "SFO"
   domain: "sfopulse.com"
 
-# Peninsula + SF mix includes long pauses on SMC feeds; slightly shorter
-# silence tail yields more segments per hour without starving Philly-scale
-# cities (see multi_transcriber queue depth logs).
+# Slightly shorter segments than Philly default — SF+Peninsula feeds are
+# fewer but bursts still need timely transcription.
 vad_and_silence:
-  vad_aggressiveness: 0
-  min_speech_seconds: 1.3
-  silence_limit: 2.5
+  vad_aggressiveness: 1
+  min_speech_seconds: 1.15
+  silence_limit: 2.2
+
+transcriber:
+  num_workers: 5
 
 feeds:
   - { feed_id: "46180", label: "SFPD Police" }
