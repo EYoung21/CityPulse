@@ -535,6 +535,23 @@ def main():
                 f"queue={qsize} "
                 f"uptime={chunk_count * 30 // 60}m"
             )
+            # Respawn feed threads that exited (legacy builds gave up after
+            # repeated ffmpeg failures). Without this, a city can go silent
+            # while the main process keeps running.
+            for i, feed in enumerate(FEEDS):
+                if feed_threads[i].is_alive():
+                    continue
+                print(f"   [Watchdog] Restarting dead feed: {feed['label']}")
+                feed_threads[i] = threading.Thread(
+                    target=feed_capture_thread,
+                    args=(feed["feed_id"], feed["label"]),
+                    daemon=True,
+                )
+                feed_threads[i].start()
+                time.sleep(0.5)
+            if alive == 0:
+                print("   [Watchdog] All feed threads dead — exiting for systemd restart")
+                sys.exit(1)
             if chunk_count % 10 == 0:
                 gc.collect()
     except KeyboardInterrupt:
