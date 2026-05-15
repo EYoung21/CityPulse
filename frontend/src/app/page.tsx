@@ -265,16 +265,13 @@ function MapHome() {
   const useFirestoreData = firestoreAvailable;
   const { isPro, loading: authLoading } = useAuth();
 
-  const cityFromEnv = process.env.NEXT_PUBLIC_CITY_NAME?.trim();
   const [cityDisplayName, setCityDisplayName] = useState(() => {
-    if (cityFromEnv) return cityFromEnv;
     if (typeof window !== "undefined") return getCurrentCity().name;
     return "";
   });
   useEffect(() => {
-    if (cityFromEnv) setCityDisplayName(cityFromEnv);
-    else setCityDisplayName(getCurrentCity().name);
-  }, [cityFromEnv, pathname, searchParams]);
+    setCityDisplayName(getCurrentCity().name);
+  }, [pathname, searchParams]);
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
   /** Latest map pins for API summary/stats fallbacks when Firestore owns the map. */
@@ -1669,8 +1666,8 @@ function MapHome() {
       {/* API Docs lives at /use-cases/api and is reachable from the More menu
           and from the Analytics header — surfacing it as a fourth top-bar tab
           is redundant and crowds the bar on mobile. */}
-      <div
-        className="relative z-[1100] hidden md:flex items-stretch shrink-0"
+      <header
+        className="pp-app-topnav relative z-[2000] hidden md:flex items-stretch shrink-0 isolate"
         style={{
           background: "var(--panel-bg)",
           borderBottom: "1px solid var(--panel-border)",
@@ -1725,21 +1722,22 @@ function MapHome() {
             </button>
           );
         })}
-      </div>
+      </header>
 
       {/* ──── Content Area ──── */}
-      <div className="relative flex-1 min-h-0 w-full overflow-hidden">
+      <motion.div className="relative z-0 flex-1 min-h-0 w-full overflow-hidden isolate">
 
       {/* ──── Map view ──── */}
       <div
-        className="absolute inset-0 flex flex-col"
+        className="absolute inset-0 flex flex-col overflow-hidden"
         style={{
           visibility: viewTab === "map" ? "visible" : "hidden",
           pointerEvents: viewTab === "map" ? "auto" : "none",
           opacity: viewTab === "map" ? 1 : 0,
-          zIndex: viewTab === "map" ? 10 : 1,
+          zIndex: viewTab === "map" ? 1 : 0,
         }}
       >
+      <div className="absolute inset-0 overflow-hidden">
       <IncidentMap
         ref={mapRef}
         layersActive={viewTab === "map"}
@@ -1911,6 +1909,7 @@ function MapHome() {
         onDistrictClick={(district, incs) => setSelectedDistrict({ district, incidents: incs })}
         onClusterClick={(ids) => { setSelectedId(null); setClusterIncidentIds(ids); }}
       />
+      </div>
 
       {/* Mobile sidebar toggle */}
       <button
@@ -2066,7 +2065,7 @@ function MapHome() {
       {/* Top filter row (time + category + presets). On desktop, offset
           past the sidebar + secondary panels so filters don't get hidden
           when search or route results are open; on mobile, full width. */}
-      <div className="absolute top-1.5 left-3 md:left-[calc(var(--pp-map-sidebar-width,72px)+28.5rem)] right-3 z-[999] pointer-events-none">
+      <div className="absolute top-2 left-3 md:left-[calc(var(--pp-map-sidebar-width,72px)+28.5rem)] right-3 z-[30] pointer-events-none">
         <div className="flex flex-col gap-1.5 md:flex-row md:flex-wrap md:items-center md:gap-2 no-scrollbar pointer-events-auto">
           <div
             className="flex items-center rounded-full shadow-lg shrink-0 backdrop-blur-md overflow-x-auto no-scrollbar"
@@ -3211,7 +3210,7 @@ function MapHome() {
         </motion.div>
       )}
       
-      </div>{/* end content area wrapper */}
+      </motion.div>{/* end content area wrapper */}
 
       {/* Upgrade prompt overlay */}
       <AnimatePresence>

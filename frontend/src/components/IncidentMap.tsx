@@ -1947,7 +1947,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       });
       L.marker([inc.lat, inc.lng], {
         icon: ringIcon,
-        zIndexOffset: 4000,
+        zIndexOffset: 800,
         interactive: false,
       }).addTo(highlight);
     }

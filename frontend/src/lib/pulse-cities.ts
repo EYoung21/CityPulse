@@ -710,13 +710,40 @@ export function heroIncidentBounds(
   ];
 }
 
+/** Strip `www.` and port for domain lookup. */
+export function normalizePulseHost(host: string): string {
+  const h = host.trim().toLowerCase();
+  const noPort = h.includes(":") ? h.slice(0, h.indexOf(":")) : h;
+  return noPort.replace(/^www\./, "");
+}
+
+/** Match a request host to a launched city's `domain` field. */
+export function findCityByHost(host: string | null | undefined): PulseCity | null {
+  if (!host) return null;
+  const normalized = normalizePulseHost(host);
+  if (!normalized || normalized === "localhost" || normalized === "127.0.0.1") {
+    return null;
+  }
+  return (
+    PULSE_CITIES.find((c) => !c.previewOnly && c.domain.toLowerCase() === normalized) ??
+    null
+  );
+}
+
+export function citySiteName(city: PulseCity): string {
+  return city.brand ?? `${city.name.replace(/\s+/g, "")}Pulse`;
+}
+
+/** Browser tab title: `CityPulse · 423Pulse · Chattanooga`. */
+export function cityPageTitle(city: PulseCity): string {
+  return `CityPulse · ${citySiteName(city)} · ${city.name}`;
+}
+
 /**
  * Resolve deploy target. Resolution order:
- *   1. `?city=<slug>` query param (lets you preview any Pulse city
- *      from any deployed domain — primarily for previewOnly cities
- *      that don't have their own domain yet).
- *   2. NEXT_PUBLIC_CITY_SLUG env var (build-time per deployment).
- *   3. Production hostname match against `domain`.
+ *   1. `?city=<slug>` query param (preview / previewOnly cities).
+ *   2. Production hostname match against `domain` (multi-city `city-pulse`).
+ *   3. NEXT_PUBLIC_CITY_SLUG (optional dev default on *.vercel.app).
  *   4. Philadelphia as the local-dev default.
  */
 export function getCurrentCity(): PulseCity {
@@ -725,28 +752,27 @@ export function getCurrentCity(): PulseCity {
       const onLanding = window.location.pathname.startsWith("/landing");
       const qs = new URLSearchParams(window.location.search);
       const querySlug = qs.get("city")?.trim();
-      // Only honor ?city= on in-app routes; the marketing landing
-      // page requires hand-curated metadata that previewOnly cities
-      // intentionally don't have.
       if (querySlug && !onLanding) {
         const byQuery = PULSE_CITIES.find((c) => c.slug === querySlug);
         if (byQuery) return byQuery;
       }
     } catch {
-      // ignore — fall through to other resolution paths
+      /* non-fatal */
     }
+    const byDomain = findCityByHost(window.location.hostname);
+    if (byDomain) return byDomain;
   }
   const slug = process.env.NEXT_PUBLIC_CITY_SLUG?.trim();
   if (slug) {
     const bySlug = PULSE_CITIES.find((c) => c.slug === slug);
     if (bySlug) return bySlug;
   }
-  if (typeof window !== "undefined") {
-    const host = window.location.hostname.toLowerCase().replace(/^www\./, "");
-    const byDomain = PULSE_CITIES.find((c) => c.domain.toLowerCase() === host);
-    if (byDomain) return byDomain;
-  }
   return PULSE_CITIES.find((c) => c.slug === "philly")!;
+}
+
+/** Server-side city for metadata (layout, OG). Pass `headers().get("host")`. */
+export function getCityForRequestHost(host: string | null | undefined): PulseCity {
+  return findCityByHost(host) ?? PULSE_CITIES.find((c) => c.slug === "philly")!;
 }
 
 /** Get all OTHER cities (for the nav dropdown). */
