@@ -34,6 +34,7 @@ import {
   Search,
   Crosshair,
   Activity,
+  MessageCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import IncidentFeed from "@/components/IncidentFeed";
@@ -50,6 +51,7 @@ import AlertToast from "@/components/AlertToast";
 import IncidentDetail from "@/components/IncidentDetail";
 import ClusterListPanel from "@/components/ClusterListPanel";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
+import AskPulsePanel from "@/components/AskPulsePanel";
 import MoreMenu from "@/components/MoreMenu";
 import DistrictCard from "@/components/DistrictCard";
 import OfflineTilesPanel from "@/components/OfflineTilesPanel";
@@ -350,15 +352,15 @@ function MapHome() {
   const [summary, setSummary] = useState<string>("");
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [routes, setRoutes] = useState<RouteData | null>(null);
-  /** Top-level view tab: "map", "feed", "analytics". Developer API docs live at `/use-cases/api`. */
-  const [viewTab, setViewTab] = useState<"map" | "feed" | "analytics">(() => {
+  /** Top-level view tab: "map", "feed", "analytics", "ask". Developer API docs live at `/use-cases/api`. */
+  const [viewTab, setViewTab] = useState<"map" | "feed" | "analytics" | "ask">(() => {
     if (typeof window === "undefined") return "map";
     const viewHint = new URLSearchParams(window.location.search).get("view");
-    if (viewHint === "map" || viewHint === "feed" || viewHint === "analytics") {
+    if (viewHint === "map" || viewHint === "feed" || viewHint === "analytics" || viewHint === "ask") {
       return viewHint;
     }
     const saved = sessionStorage.getItem("pulse_view_tab");
-    if (saved === "map" || saved === "feed" || saved === "analytics") {
+    if (saved === "map" || saved === "feed" || saved === "analytics" || saved === "ask") {
       return saved;
     }
     return "map";
@@ -371,11 +373,11 @@ function MapHome() {
       return;
     }
     const viewHint = new URLSearchParams(window.location.search).get("view");
-    if (viewHint === "map" || viewHint === "feed" || viewHint === "analytics") {
+    if (viewHint === "map" || viewHint === "feed" || viewHint === "analytics" || viewHint === "ask") {
       setViewTab(viewHint);
       return;
     }
-    if (saved === "map" || saved === "feed" || saved === "analytics") {
+    if (saved === "map" || saved === "feed" || saved === "analytics" || saved === "ask") {
       setViewTab(saved);
     }
   }, []);
@@ -383,6 +385,13 @@ function MapHome() {
   useEffect(() => {
     sessionStorage.setItem("pulse_view_tab", viewTab);
   }, [viewTab]);
+
+  useEffect(() => {
+    const v = searchParams.get("view");
+    if (v === "map" || v === "feed" || v === "analytics" || v === "ask") {
+      setViewTab(v);
+    }
+  }, [searchParams]);
   const [timeFilter, setTimeFilter] = useState<number>(1);
   const [activeCats, setActiveCats] = useState<Set<string>>(() => new Set());
 
@@ -1645,6 +1654,12 @@ function MapHome() {
     return `Last ${tf.label}`;
   })();
 
+  /** Lower bound for Ask Pulse RAG; null matches map "All" (no since clamp on server). */
+  const askSinceIso = useMemo(() => {
+    if (!Number.isFinite(timeFilter)) return null;
+    return new Date(Date.now() - timeFilter * 3600_000).toISOString();
+  }, [timeFilter]);
+
   const trendPct = useMemo(() => {
     // "All time" has no comparable previous window — short-circuit so
     // the badge doesn't show a meaningless 100% delta.
@@ -1748,7 +1763,7 @@ function MapHome() {
           boxShadow: "0 2px 12px var(--panel-shadow, rgba(0,0,0,0.25))",
         }}
       >
-        {(["map", "feed", "analytics"] as const).map((tab) => {
+        {(["map", "feed", "analytics", "ask"] as const).map((tab) => {
           const active = viewTab === tab;
           return (
             <button
@@ -1756,6 +1771,10 @@ function MapHome() {
               onClick={() => {
                 if (tab === "analytics" && !isPro) {
                   setShowUpgrade("Analytics");
+                  return;
+                }
+                if (tab === "ask" && !isPro) {
+                  setShowUpgrade("Ask Pulse");
                   return;
                 }
                 setViewTab(tab);
@@ -1770,11 +1789,14 @@ function MapHome() {
                 <MapIcon className="w-4.5 h-4.5" />
               ) : tab === "feed" ? (
                 <Radio className="w-4.5 h-4.5" />
-              ) : (
+              ) : tab === "analytics" ? (
                 <BarChart3 className="w-4.5 h-4.5" />
+              ) : (
+                <MessageCircle className="w-4.5 h-4.5" />
               )}
-              {tab === "map" ? "Map" : tab === "feed" ? "Feed" : "Analytics"}
+              {tab === "map" ? "Map" : tab === "feed" ? "Feed" : tab === "analytics" ? "Analytics" : "Ask"}
               {tab === "analytics" && !isPro && <Lock className="w-2.5 h-2.5 text-purple-400 ml-1" />}
+              {tab === "ask" && !isPro && <Lock className="w-2.5 h-2.5 text-purple-400 ml-1" />}
               {tab === "feed" && filteredIncidents.length > 0 && (
                 <span
                   className="text-[10px] font-mono px-1.5 py-0.5 rounded-full"
@@ -2898,7 +2920,7 @@ function MapHome() {
 
       {/* Safety Score Card */}
       <AnimatePresence>
-        {mapTap && !selected && viewTab !== "analytics" && (
+        {mapTap && !selected && viewTab !== "analytics" && viewTab !== "ask" && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -3285,7 +3307,24 @@ function MapHome() {
           </FeedPullRefresh>
         </motion.div>
       )}
-      
+
+      {viewTab === "ask" && (
+        <motion.div
+          className="absolute inset-x-0 top-0 bottom-[calc(64px+env(safe-area-inset-bottom,0px))] md:bottom-0 z-20 flex flex-col min-h-0 overflow-hidden"
+          style={{ background: "var(--panel-bg)" }}
+        >
+          <AskPulsePanel
+            citySlug={getCurrentCity().slug}
+            sinceIso={askSinceIso}
+            isPro={isPro}
+            authLoading={authLoading}
+            activeTimeLabel={activeTimeLabel}
+            onClose={() => setViewTab("map")}
+            onRequestPro={() => setShowUpgrade("Ask Pulse")}
+          />
+        </motion.div>
+      )}
+
       </motion.div>{/* end content area wrapper */}
 
       {/* Upgrade prompt overlay */}
@@ -3307,7 +3346,11 @@ function MapHome() {
             >
               <UpgradePrompt
                 feature={showUpgrade}
-                description="Get extended history, analytics, safe routing, audio clips, and multi-city access."
+                description={
+                  showUpgrade === "Ask Pulse"
+                    ? "Unlock Ask Pulse for AI answers grounded in scanner-sourced incidents, plus extended history, analytics, and more."
+                    : "Get extended history, analytics, safe routing, audio clips, and multi-city access."
+                }
                 onClose={() => setShowUpgrade(null)}
               />
             </motion.div>

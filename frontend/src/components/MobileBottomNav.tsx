@@ -28,14 +28,14 @@
 import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense, useSyncExternalStore, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { Map as MapIcon, List, Bell, Settings as SettingsIcon, BarChart3, Lock } from "lucide-react";
+import { Map as MapIcon, List, Bell, Settings as SettingsIcon, BarChart3, Lock, MessageCircle } from "lucide-react";
 import { subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
 import { useAuth } from "@/contexts/AuthContext";
 
 // API Docs (`/use-cases/api`) intentionally not in the bottom nav: it's
 // reachable from the More menu and from the Analytics header. Surfacing it
 // here would crowd the bar past the iOS-style 5-icon comfort zone.
-type TabId = "map" | "feed" | "analytics" | "inbox" | "settings";
+type TabId = "map" | "feed" | "ask" | "analytics" | "inbox" | "settings";
 
 interface Tab {
   id: TabId;
@@ -48,6 +48,7 @@ interface Tab {
 const TABS: Tab[] = [
   { id: "map",       label: "Map",       href: "/?view=map",                Icon: MapIcon },
   { id: "feed",      label: "Feed",      href: "/feed",                     Icon: List },
+  { id: "ask",       label: "Ask",       href: "/?view=ask",                Icon: MessageCircle, pro: true },
   { id: "analytics", label: "Analytics", href: "/?view=analytics",          Icon: BarChart3, pro: true },
   { id: "inbox",     label: "Inbox",     href: "/?view=map&inbox=1",        Icon: Bell },
   { id: "settings",  label: "More",      href: "/?view=map&inbox=settings", Icon: SettingsIcon },
@@ -71,7 +72,7 @@ function readSessionViewTab(): TabId | null {
   if (typeof window === "undefined") return null;
   try {
     const saved = sessionStorage.getItem(SESSION_VIEW_KEY);
-    if (saved === "feed" || saved === "analytics" || saved === "map") return saved;
+    if (saved === "feed" || saved === "analytics" || saved === "map" || saved === "ask") return saved;
   } catch {
     /* non-fatal */
   }
@@ -86,10 +87,11 @@ function persistTabIntent(tab: Tab) {
     /* storage can be unavailable in private browsing */
   }
   try {
-    sessionStorage.setItem(
-      SESSION_VIEW_KEY,
-      tab.id === "analytics" ? "analytics" : tab.id === "feed" ? "feed" : "map"
-    );
+    let sessionKey = "map";
+    if (tab.id === "analytics") sessionKey = "analytics";
+    else if (tab.id === "feed") sessionKey = "feed";
+    else if (tab.id === "ask") sessionKey = "ask";
+    sessionStorage.setItem(SESSION_VIEW_KEY, sessionKey);
   } catch {
     /* non-fatal */
   }
@@ -159,21 +161,29 @@ function MobileBottomNavInner() {
   const viewParam = searchParams?.get("view") ?? null;
   const onFeed = pathname?.startsWith("/feed") ?? false;
   const sessionView = pathname === "/" ? readSessionViewTab() : null;
-  const activeId: TabId = onFeed
-    ? "feed"
-    : viewParam === "feed"
-      ? "feed"
-      : viewParam === "analytics"
-        ? "analytics"
-        : sessionView === "feed"
-          ? "feed"
-          : sessionView === "analytics"
-            ? "analytics"
-            : inboxParam === "settings"
-              ? "settings"
-              : inboxParam
-                ? "inbox"
-                : "map";
+
+  let activeId: TabId = "map";
+  if (onFeed) {
+    activeId = "feed";
+  } else if (viewParam === "feed") {
+    activeId = "feed";
+  } else if (viewParam === "analytics") {
+    activeId = "analytics";
+  } else if (viewParam === "ask") {
+    activeId = "ask";
+  } else if (viewParam === "map") {
+    activeId = "map";
+  } else if (sessionView === "feed") {
+    activeId = "feed";
+  } else if (sessionView === "analytics") {
+    activeId = "analytics";
+  } else if (sessionView === "ask") {
+    activeId = "ask";
+  } else if (inboxParam === "settings") {
+    activeId = "settings";
+  } else if (inboxParam) {
+    activeId = "inbox";
+  }
 
   const handleTabActivate = (tab: Tab) => {
     persistTabIntent(tab);
@@ -238,7 +248,7 @@ function MobileBottomNavInner() {
             }}
           >
             <span style={{ position: "relative", lineHeight: 0 }}>
-              <tab.Icon className="w-5.5 h-5.5" />
+              <tab.Icon className="w-5 h-5" />
               {showPro && (
                 <span
                   style={{
@@ -284,7 +294,7 @@ function MobileBottomNavInner() {
             </span>
             <span
               style={{
-                fontSize: 11,
+                fontSize: 9,
                 fontWeight: active ? 700 : 500,
                 letterSpacing: 0.1,
               }}
