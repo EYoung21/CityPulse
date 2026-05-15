@@ -408,12 +408,20 @@ def feed_capture_thread(feed_id, feed_label):
             if not ready:
                 if ffmpeg.poll() is not None:
                     reconnect_count += 1
-                    if reconnect_count > 20:
-                        print(f"   [{feed_label}] Too many reconnects, giving up")
-                        return
-                    print(f"   [{feed_label}] ffmpeg died, reconnecting ({reconnect_count})...")
+                    # Never exit the thread — a dead feed thread cannot be
+                    # restarted without restarting the whole process, and
+                    # philly runs 20+ feeds so one flaky stream must not
+                    # permanently silence the city.
+                    backoff = min(60, 2 + reconnect_count * 2)
+                    if reconnect_count % 20 == 0:
+                        print(
+                            f"   [{feed_label}] ffmpeg died {reconnect_count} times — "
+                            f"backing off {backoff}s then reconnecting"
+                        )
+                    else:
+                        print(f"   [{feed_label}] ffmpeg died, reconnecting ({reconnect_count})...")
                     ffmpeg.kill()
-                    time.sleep(2)
+                    time.sleep(backoff)
                     ffmpeg = get_ffmpeg_stream(feed_id)
                 continue
 
@@ -422,9 +430,11 @@ def feed_capture_thread(feed_id, feed_label):
             if chunks_read % 500 == 0:
                 print(f"   [{feed_label}] alive: {chunks_read} chunks, {speech_chunks} speech, rec={is_recording}, buf={len(audio_buffer)}")
             if not raw_bytes:
-                print(f"   [{feed_label}] EOF, reconnecting...")
+                reconnect_count += 1
+                backoff = min(60, 2 + reconnect_count * 2)
+                print(f"   [{feed_label}] EOF, reconnecting ({reconnect_count}, wait {backoff}s)...")
                 ffmpeg.kill()
-                time.sleep(2)
+                time.sleep(backoff)
                 ffmpeg = get_ffmpeg_stream(feed_id)
                 continue
 

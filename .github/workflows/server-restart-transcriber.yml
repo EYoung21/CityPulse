@@ -1,31 +1,39 @@
 name: Restart Transcriber
 
+# Live ingest runs on Lambda (pulse-live@<city>). Legacy Hetzner
+# philly-pulse-live is disabled after cutover. Prefer
+# server-restart-lambda-transcriber.yml for per-city restarts.
+
 on:
   workflow_dispatch:
+    inputs:
+      city:
+        description: "City slug on Lambda"
+        required: false
+        default: "philly"
 
 jobs:
   restart:
     runs-on: ubuntu-latest
     steps:
-      - name: Start transcriber service
+      - name: Restart pulse-live on Lambda
         uses: appleboy/ssh-action@v1
+        env:
+          CITY: ${{ inputs.city }}
+          LAMBDA_USER: ubuntu
+          LAMBDA_IP: "150.230.182.19"
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: root
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 8m
+          envs: CITY,LAMBDA_USER,LAMBDA_IP
           script: |
-            echo "=== Current status ==="
-            systemctl status philly-pulse-live --no-pager || true
-
+            set -euo pipefail
+            SSH_OPTS="-i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+            echo "=== Restart pulse-live@${CITY} on Lambda ==="
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" \
+              "sudo systemctl restart pulse-live@${CITY}.service && sleep 5 && sudo systemctl is-active pulse-live@${CITY}.service"
+            sleep 90
+            curl -sS "https://api.phlpulse.com/api/city-stats/${CITY}" | head -c 1200
             echo ""
-            echo "=== Service file ==="
-            cat /etc/systemd/system/philly-pulse-live.service 2>/dev/null || echo "(not found)"
-
-            echo ""
-            echo "=== Starting transcriber ==="
-            systemctl start philly-pulse-live
-            sleep 3
-            systemctl is-active philly-pulse-live
-            echo ""
-            echo "=== Transcriber logs ==="
-            journalctl -u philly-pulse-live --no-pager -n 30
