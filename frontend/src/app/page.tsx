@@ -2164,65 +2164,51 @@ function MapHome() {
         onMobileOpenChange={setSidebarOpen}
       />
 
-      {/* Map filters — same time/category controls as Feed. Still in the tree
-          (never removed); a sidebar-rail layout change pushed this row
-          under the search bar at z-30 so it looked gone. */}
-      <div
-        className="absolute top-[3.25rem] md:top-14 left-3 md:left-[calc(var(--pp-map-sidebar-width,72px)+0.75rem)] right-3 z-[1001] pointer-events-none"
-      >
-        <div
-          className="flex flex-col gap-2 pointer-events-auto rounded-xl px-2.5 py-2 shadow-lg backdrop-blur-md max-h-[40vh] overflow-y-auto no-scrollbar"
-          style={{ background: "var(--panel-bg)", border: "1px solid var(--panel-border)" }}
-        >
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-2 px-0.5">
-              <span
-                className="text-[10px] font-semibold uppercase tracking-wider"
-                style={{ color: "var(--panel-text-muted)" }}
-              >
-                Time window
-              </span>
-              {activeTimeLabel && (
-                <span className="text-[10px]" style={{ color: "var(--panel-text-secondary)" }}>
-                  {activeTimeLabel}
-                </span>
-              )}
-            </div>
-            <div
-              className="flex items-center rounded-full overflow-x-auto no-scrollbar"
-              style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)" }}
-            >
-              <Clock className="w-3.5 h-3.5 ml-2.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
-              {TIME_FILTERS.map((tf) => {
-                const locked = tf.pro && !isPro;
-                return (
-                  <button
-                    key={tf.label}
-                    type="button"
-                    onClick={() => {
-                      if (locked) { setShowUpgrade("Extended History"); return; }
-                      setTimeFilter(tf.hours);
-                    }}
-                    className={`px-2.5 py-1.5 text-[11px] font-medium transition-all relative shrink-0 ${
-                      timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
-                    } ${locked ? "opacity-50" : ""}`}
-                    style={timeFilter !== tf.hours ? { color: locked ? "var(--panel-text-muted)" : "var(--panel-text-secondary)" } : {}}
-                    title={locked ? "Pro feature · upgrade to unlock" : undefined}
-                  >
-                    {tf.label}
-                    {locked && <Lock className="w-2.5 h-2.5 absolute -top-0.5 -right-0.5 text-purple-400" />}
-                  </button>
-                );
-              })}
-            </div>
+      {/* Top filter row (time + category + presets). On desktop, offset
+          past the sidebar + secondary panels so filters don't get hidden
+          when search or route results are open; on mobile, full width. */}
+      <div className="absolute top-2 left-3 md:left-[calc(var(--pp-map-sidebar-width,72px)+28.5rem)] right-3 z-[30] pointer-events-none">
+        <div className="flex flex-col gap-1.5 md:flex-row md:flex-wrap md:items-center md:gap-2 no-scrollbar pointer-events-auto">
+          <div
+            className="flex items-center rounded-full shadow-lg shrink-0 backdrop-blur-md overflow-x-auto no-scrollbar"
+            style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)" }}
+          >
+            <Clock className="w-4 h-4 ml-3 md:ml-4 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
+            {TIME_FILTERS.map((tf) => {
+              const locked = tf.pro && !isPro;
+              return (
+                <button
+                  key={tf.label}
+                  onClick={() => {
+                    if (locked) { setShowUpgrade("Extended History"); return; }
+                    setTimeFilter(tf.hours);
+                  }}
+                  className={`px-3 md:px-4 py-2 md:py-2.5 text-xs md:text-sm font-medium transition-all relative shrink-0 ${
+                    timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
+                  } ${locked ? "opacity-50" : ""}`}
+                  style={timeFilter !== tf.hours ? { color: locked ? "var(--panel-text-muted)" : "var(--pill-text)" } : {}}
+                  title={locked ? "Pro feature · upgrade to unlock" : undefined}
+                >
+                  {tf.label}
+                  {locked && <Lock className="w-3 h-3 absolute -top-0.5 -right-0.5 text-purple-400" />}
+                </button>
+              );
+            })}
           </div>
 
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+            <div className="w-px h-6 shrink-0 hidden md:block" style={{ background: "var(--pill-border)" }} />
+
             <FilterPresetsBar
               activeCats={activeCats}
               timeFilterHours={timeFilter}
               onApply={(cats, hours) => {
                 setActiveCats(cats);
+                // Defensive clamp: a Pro user who later downgrades may
+                // still have presets in localStorage that reference a
+                // gated time window. Honoring those would silently
+                // bypass the paywall, so we re-check `pro` here and
+                // fire the upgrade modal instead of applying.
                 const tf = TIME_FILTERS.find((t) => t.hours === hours);
                 if (tf?.pro && !isPro) {
                   setShowUpgrade("Extended History");
@@ -2233,16 +2219,11 @@ function MapHome() {
             />
 
             <button
-              type="button"
               onClick={() => setActiveCats(new Set())}
-              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[10px] font-medium transition-all shrink-0 ${
+              className={`flex items-center gap-1.5 px-3 md:px-4 py-2 md:py-2.5 rounded-full text-xs md:text-sm font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
                 activeCats.size === 0 ? "bg-blue-500/15 text-blue-500 ring-1 ring-blue-500/30" : "opacity-70 hover:opacity-100"
               }`}
-              style={
-                activeCats.size > 0
-                  ? { background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)", color: "var(--panel-text-secondary)" }
-                  : { background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.3)" }
-              }
+              style={activeCats.size > 0 ? { background: "var(--pill-bg)", border: "1px solid var(--pill-border)", color: "var(--pill-text)" } : { background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.3)" }}
             >
               All
             </button>
@@ -2250,27 +2231,24 @@ function MapHome() {
             {CATEGORY_PILLS.map((pill) => {
               const Icon = pill.icon;
               const isActive = pill.cats.some((c) => activeCats.has(c));
-              const count = filteredIncidents.filter((i) => (pill.cats as readonly string[]).includes(i.severity_category)).length;
+              const count = filteredIncidents.filter(i => (pill.cats as readonly string[]).includes(i.severity_category)).length;
               return (
                 <button
                   key={pill.label}
-                  type="button"
                   onClick={() => toggleCat(pill.cats)}
-                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[10px] font-medium transition-all shrink-0 ${
+                  className={`flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 md:py-2.5 rounded-full text-xs md:text-sm font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
                     isActive ? "ring-1" : "opacity-70 hover:opacity-100"
                   }`}
                   style={{
-                    background: isActive ? pill.color + "18" : "var(--panel-input-bg)",
-                    border: `1px solid ${isActive ? pill.color + "40" : "var(--panel-border)"}`,
-                    color: isActive ? pill.color : "var(--panel-text-secondary)",
+                    background: isActive ? pill.color + "18" : "var(--pill-bg)",
+                    border: `1px solid ${isActive ? pill.color + "40" : "var(--pill-border)"}`,
+                    color: isActive ? pill.color : "var(--pill-text)",
                   }}
                 >
-                  <Icon className="w-3 h-3" />
-                  {pill.label}
+                  <Icon className="w-4 h-4 md:w-4.5 md:h-4.5" />
+                  <span className="hidden md:inline">{pill.label}</span>
                   {count > 0 && (
-                    <span className="text-[10px] font-mono" style={{ opacity: isActive ? 1 : 0.5 }}>
-                      {count}
-                    </span>
+                    <span className="text-[11px] font-mono" style={{ opacity: isActive ? 1 : 0.5 }}>{count}</span>
                   )}
                 </button>
               );
