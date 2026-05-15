@@ -69,7 +69,7 @@ export default function ReminderBanner() {
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -16 }}
         transition={{ duration: 0.25 }}
-        className="fixed top-4 left-1/2 -translate-x-1/2 z-[1100] w-[min(28rem,calc(100vw-1.5rem))] rounded-2xl shadow-2xl backdrop-blur-xl"
+        className="pp-below-app-topnav fixed left-1/2 -translate-x-1/2 z-[2100] w-[min(28rem,calc(100vw-1.5rem))] rounded-2xl shadow-2xl backdrop-blur-xl"
         style={{
           background: "var(--panel-bg)",
           border: `1px solid ${missed ? "rgba(245,158,11,0.45)" : "rgba(59,130,246,0.45)"}`,

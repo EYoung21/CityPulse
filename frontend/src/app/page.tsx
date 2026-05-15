@@ -1749,7 +1749,7 @@ function MapHome() {
     : undefined;
 
   return (
-    <div className="relative w-full h-dvh min-h-0 overflow-hidden flex flex-col" style={{ background: "var(--map-bg)" }}>
+    <div className="pp-app-shell relative w-full h-dvh min-h-0 overflow-hidden flex flex-col" style={{ background: "var(--map-bg)" }}>
       <MobileBottomNav />
       <InboxUrlSync 
         onInboxChange={handleInboxUrlChange} 
@@ -1827,7 +1827,7 @@ function MapHome() {
       </header>
 
       {/* ──── Content Area ──── */}
-      <motion.div className="relative z-0 flex-1 min-h-0 w-full overflow-hidden isolate">
+      <motion.div className="pp-app-main relative z-0 flex-1 min-h-0 w-full overflow-hidden isolate">
 
       {/* ──── Map view ──── */}
       <div
@@ -2164,10 +2164,10 @@ function MapHome() {
         onMobileOpenChange={setSidebarOpen}
       />
 
-      {/* Top filter row (time + category + presets). On desktop, offset
-          past the sidebar + secondary panels so filters don't get hidden
-          when search or route results are open; on mobile, full width. */}
-      <div className="absolute top-2 left-3 md:left-[calc(var(--pp-map-sidebar-width,72px)+28.5rem)] right-3 z-[30] pointer-events-none">
+      {/* Top filter row (time + category + presets). Sits just below the
+          search bar and above the SearchSidebar rail (z-[1000]) so a
+          sidebar-rail layout change doesn't bury it. */}
+      <div className="absolute top-[3.25rem] md:top-14 left-3 md:left-[calc(var(--pp-map-sidebar-width,72px)+0.75rem)] right-3 z-[1001] pointer-events-none">
         <div className="flex flex-col gap-1.5 md:flex-row md:flex-wrap md:items-center md:gap-2 no-scrollbar pointer-events-auto">
           <div
             className="flex items-center rounded-full shadow-lg shrink-0 backdrop-blur-md overflow-x-auto no-scrollbar"
@@ -2264,15 +2264,6 @@ function MapHome() {
 
       {/* Live GPS speed readout for driving / cycling trips. */}
       {speedTracked && <SpeedChip mps={tripSpeedMps} loc={userLocation} />}
-
-      {/* Trip recap — shown briefly when the user ends a trip. */}
-      {tripRecap && (
-        <TripRecapCard
-          recap={tripRecap}
-          historyId={tripRecapHistoryId}
-          onClose={() => { setTripRecap(null); setTripRecapHistoryId(null); }}
-        />
-      )}
 
       {/* Parked-here pill — appears whenever a parked-pin is active.
           Auto-dismisses on TTL expiry; user can also clear via the X.
@@ -3330,6 +3321,15 @@ function MapHome() {
       )}
 
       </motion.div>{/* end content area wrapper */}
+
+      {/* Trip recap — root-level so it clears the desktop tab bar on every view. */}
+      {tripRecap && (
+        <TripRecapCard
+          recap={tripRecap}
+          historyId={tripRecapHistoryId}
+          onClose={() => { setTripRecap(null); setTripRecapHistoryId(null); }}
+        />
+      )}
 
       {/* Upgrade prompt overlay */}
       <AnimatePresence>

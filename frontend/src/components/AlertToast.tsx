@@ -56,7 +56,8 @@ export default function AlertToast({ incidents }: Props) {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: -30, scale: 0.95 }}
           transition={{ type: "spring", damping: 20, stiffness: 300 }}
-          className="fixed top-20 left-1/2 -translate-x-1/2 z-[2000]"
+          className="pp-below-app-topnav fixed left-1/2 -translate-x-1/2 z-[2100]"
+          style={{ top: "calc(var(--pp-below-app-topnav-top) + 0.5rem)" }}
         >
           <div
             className="rounded-xl px-4 py-3 flex items-center gap-3 border border-red-500/30 shadow-[0_0_30px_rgba(239,68,68,0.15)] min-w-[280px] backdrop-blur-xl"
