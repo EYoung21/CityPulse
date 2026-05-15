@@ -2164,13 +2164,14 @@ function MapHome() {
         onMobileOpenChange={setSidebarOpen}
       />
 
-      {/* Top filter row (time + category + presets). Sits just below the
-          search bar and above the SearchSidebar rail (z-[1000]) so a
-          sidebar-rail layout change doesn't bury it. */}
-      <div className="absolute top-[3.25rem] md:top-14 left-3 md:left-[calc(var(--pp-map-sidebar-width,72px)+0.75rem)] right-3 z-[1001] pointer-events-none">
-        <div className="flex flex-col gap-1.5 md:flex-row md:flex-wrap md:items-center md:gap-2 no-scrollbar pointer-events-auto">
+      {/* Map filters — mobile: bottom strip above nav; desktop: top-right on
+          the canvas so they don't stack under the search bar / sidebar. */}
+      <div
+        className="pointer-events-none absolute z-[1001] max-md:bottom-[calc(64px+env(safe-area-inset-bottom,0px)+0.75rem)] max-md:inset-x-3 max-md:top-auto md:top-2 md:right-3 md:left-auto md:max-w-[min(920px,calc(100vw-var(--pp-map-sidebar-width,72px)-1.5rem))]"
+      >
+        <div className="flex max-md:flex-col md:flex-row md:flex-wrap items-stretch md:items-center justify-end gap-1.5 md:gap-2 no-scrollbar pointer-events-auto">
           <div
-            className="flex items-center rounded-full shadow-lg shrink-0 backdrop-blur-md overflow-x-auto no-scrollbar"
+            className="flex items-center rounded-full shadow-lg shrink-0 backdrop-blur-md overflow-x-auto no-scrollbar max-md:w-full"
             style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)" }}
           >
             <Clock className="w-4 h-4 ml-3 md:ml-4 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
@@ -2196,7 +2197,7 @@ function MapHome() {
             })}
           </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar max-md:w-full">
             <div className="w-px h-6 shrink-0 hidden md:block" style={{ background: "var(--pill-border)" }} />
 
             <FilterPresetsBar
@@ -2204,11 +2205,6 @@ function MapHome() {
               timeFilterHours={timeFilter}
               onApply={(cats, hours) => {
                 setActiveCats(cats);
-                // Defensive clamp: a Pro user who later downgrades may
-                // still have presets in localStorage that reference a
-                // gated time window. Honoring those would silently
-                // bypass the paywall, so we re-check `pro` here and
-                // fire the upgrade modal instead of applying.
                 const tf = TIME_FILTERS.find((t) => t.hours === hours);
                 if (tf?.pro && !isPro) {
                   setShowUpgrade("Extended History");
