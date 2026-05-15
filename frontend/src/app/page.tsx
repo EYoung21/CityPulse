@@ -1666,12 +1666,6 @@ function MapHome() {
     return `Last ${tf.label}`;
   })();
 
-  /** Lower bound for Ask Pulse RAG; null matches map "All" (no since clamp on server). */
-  const askSinceIso = useMemo(() => {
-    if (!Number.isFinite(timeFilter)) return null;
-    return new Date(Date.now() - timeFilter * 3600_000).toISOString();
-  }, [timeFilter]);
-
   const trendPct = useMemo(() => {
     // "All time" has no comparable previous window — short-circuit so
     // the badge doesn't show a meaningless 100% delta.
@@ -3349,10 +3343,8 @@ function MapHome() {
         >
           <AskPulsePanel
             citySlug={getCurrentCity().slug}
-            sinceIso={askSinceIso}
             isPro={isPro}
             authLoading={authLoading}
-            activeTimeLabel={activeTimeLabel}
             onClose={() => setViewTab("map")}
             onRequestPro={() => setShowUpgrade("Ask Pulse")}
           />

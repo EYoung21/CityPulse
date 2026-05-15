@@ -26,6 +26,7 @@ import {
   Map,
 } from "lucide-react";
 import { resolveBlipKind, monoGlyphSvg } from "./IncidentMap";
+import { sanitizeScannerTranscriptForDisplay } from "@/lib/sanitize-scanner-transcript";
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
   violent_weapon: <ShieldAlert className="w-4 h-4" />,
@@ -162,7 +163,7 @@ function IncidentCard({
 
   const supportingText =
     inc.description?.trim() && inc.raw_text?.trim() && inc.raw_text.trim() !== inc.description.trim()
-      ? inc.raw_text.trim()
+      ? sanitizeScannerTranscriptForDisplay(inc.raw_text.trim())
       : null;
 
   const baseOpacity = confidencePct < 40 ? 0.6 : 1;
