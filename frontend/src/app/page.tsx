@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, Suspense } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -200,6 +200,50 @@ const TIME_FILTERS = [
   { label: "All", hours: Number.POSITIVE_INFINITY, pro: true },
 ] as const;
 
+const STORAGE_TIME_FILTER_HOURS = "pulse_time_filter_hours";
+const STORAGE_ACTIVE_CATS = "pulse_active_cats";
+
+/** Map a stored float back to a canonical TIME_FILTERS.hours (avoids 5/60 drift). */
+function normalizeTimeFilterHours(h: number): number {
+  if (typeof h !== "number" || Number.isNaN(h)) return 1;
+  if (!Number.isFinite(h)) {
+    const row = TIME_FILTERS.find((t) => !Number.isFinite(t.hours));
+    return row ? row.hours : 1;
+  }
+  const exact = TIME_FILTERS.find((t) => t.hours === h);
+  if (exact) return h;
+  const near = TIME_FILTERS.find(
+    (t) => Number.isFinite(t.hours) && Math.abs(t.hours - h) < 1e-4
+  );
+  return near ? near.hours : 1;
+}
+
+function readStoredTimeFilterHours(): number {
+  if (typeof window === "undefined") return 1;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_TIME_FILTER_HOURS);
+    if (raw == null || raw === "") return 1;
+    const n = Number(raw);
+    if (Number.isNaN(n)) return 1;
+    return normalizeTimeFilterHours(n);
+  } catch {
+    return 1;
+  }
+}
+
+function readStoredActiveCats(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = sessionStorage.getItem(STORAGE_ACTIVE_CATS);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr) || !arr.every((x) => typeof x === "string")) return new Set();
+    return new Set(arr);
+  } catch {
+    return new Set();
+  }
+}
+
 const DEFAULT_FEED_LABELS: Record<string, string> = {
   "4603": "Citywide",
   "17310": "Central",
@@ -339,8 +383,44 @@ function MapHome() {
   useEffect(() => {
     sessionStorage.setItem("pulse_view_tab", viewTab);
   }, [viewTab]);
-  const [timeFilter, setTimeFilter] = useState(1);
-  const [activeCats, setActiveCats] = useState<Set<string>>(new Set());
+  const [timeFilter, setTimeFilter] = useState<number>(1);
+  const [activeCats, setActiveCats] = useState<Set<string>>(() => new Set());
+
+  /** Restore after SSR so we do not clobber sessionStorage in the persist effect before this runs. */
+  useLayoutEffect(() => {
+    setTimeFilter(readStoredTimeFilterHours());
+    setActiveCats(readStoredActiveCats());
+  }, []);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(STORAGE_TIME_FILTER_HOURS, String(timeFilter));
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }, [timeFilter]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(STORAGE_ACTIVE_CATS, JSON.stringify([...activeCats]));
+    } catch {
+      /* ignore */
+    }
+  }, [activeCats]);
+
+  /** If auth says non‑Pro, drop stored lookback to the largest free window (1h). */
+  useEffect(() => {
+    if (authLoading) return;
+    if (isPro) return;
+    const canon = normalizeTimeFilterHours(timeFilter);
+    const row =
+      TIME_FILTERS.find((t) => t.hours === canon) ??
+      TIME_FILTERS.find(
+        (t) => Number.isFinite(t.hours) && Math.abs(t.hours - canon) < 1e-4
+      );
+    if (row?.pro) setTimeFilter(1);
+  }, [isPro, authLoading, timeFilter]);
+
   const [mapTap, setMapTap] = useState<{ lat: number; lng: number } | null>(null);
   // Long-press / right-click anchor for the LocationPeekCard. Cleared
   // automatically by the useEffect below whenever a competing overlay
