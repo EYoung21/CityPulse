@@ -45,6 +45,9 @@ jobs:
             rsync -az -e "ssh $SSH_OPTS" \
               /root/PhillyPulse/multi_transcriber.py \
               "$LAMBDA_USER@$LAMBDA_IP:/opt/citypulse-backfill/multi_transcriber.py"
+            rsync -az --delete -e "ssh $SSH_OPTS" \
+              /root/PhillyPulse/cities/ \
+              "$LAMBDA_USER@$LAMBDA_IP:/opt/citypulse-backfill/cities/"
 
             echo ""
             echo "=== pulse-live@${CITY} pre-restart ==="

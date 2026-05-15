@@ -1,0 +1,68 @@
+name: Pulse Live Diagnostics (Lambda)
+
+# SSH Hetzner → Lambda: pulse-live@nyc/sf/philly status + recent log lines.
+# Use after feed feels slow; read queue= and QUEUED rates.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lambda_user:
+        description: "SSH user on Lambda"
+        required: false
+        default: "ubuntu"
+      lambda_ip:
+        description: "Lambda IP"
+        required: false
+        default: "150.230.182.19"
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Lambda pulse-live diagnostics
+        uses: appleboy/ssh-action@v1
+        env:
+          LAMBDA_USER: ${{ inputs.lambda_user }}
+          LAMBDA_IP: ${{ inputs.lambda_ip }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 4m
+          envs: LAMBDA_USER,LAMBDA_IP
+          script: |
+            set -euo pipefail
+            SSH_OPTS="-i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+
+            echo "######################################################"
+            echo "# systemd pulse-live@ (nyc sf philly chattanooga)"
+            echo "######################################################"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "
+              for c in nyc sf philly chattanooga; do
+                echo -n \"pulse-live@\${c}: \"
+                sudo systemctl is-active pulse-live@\${c}.service 2>/dev/null || echo inactive
+              done
+            "
+
+            echo ""
+            echo "######################################################"
+            echo "# Last 500 lines of /var/log/pulse-live.log (filtered)"
+            echo "######################################################"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "sudo tail -n 500 /var/log/pulse-live.log 2>/dev/null || true" \
+              | grep -E '\[Status\]|queue=|QUEUED|nyc|NYC|sf |SFFD|SFPD|philly|Chattanooga|Error|ffmpeg died|Watchdog|Loaded city' \
+              | tail -150 || true
+
+            echo ""
+            echo "######################################################"
+            echo "# journalctl last 15 min (all pulse-live units)"
+            echo "######################################################"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "
+              sudo journalctl -u 'pulse-live@*' --since '15 min ago' --no-pager 2>/dev/null | tail -80
+            " || true
+
+            echo ""
+            echo "######################################################"
+            echo "# Hetzner: ingest POSTs last 5 min (all cities)"
+            echo "######################################################"
+            journalctl -u philly-pulse-api --since '5 min ago' --no-pager 2>/dev/null \
+              | grep -cE 'POST /api/ingest' | xargs -I{} echo "ingest POSTs (5 min): {}"

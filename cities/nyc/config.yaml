@@ -4,20 +4,21 @@ city:
   short: "NYC"
   domain: "newyorkcitypulse.com"
 
+# Shorter speech segments + slightly shorter silence tail → more segments
+# queued for FDNY-style traffic (NYPD precinct audio is mostly encrypted).
+vad_and_silence:
+  vad_aggressiveness: 1
+  min_speech_seconds: 1.15
+  silence_limit: 2.2
+
+# Extra Whisper worker threads on Lambda help drain the queue after bursts.
+transcriber:
+  num_workers: 5
+
 map:
   center_lat: 40.7128
   center_lng: -74.0060
   default_zoom: 11
-
-# Softer VAD / shorter silence tail than global config.yaml — FDNY and
-# Hatzolah audio is often quieter and calls are short; defaults can merge
-# multiple dispatches into one long segment (slower to transcribe) or
-# miss weak speech (empty queue). Tune with Lambda `journalctl` / tail
-# `pulse-live.log` if queue depth warnings appear.
-vad_and_silence:
-  vad_aggressiveness: 0
-  min_speech_seconds: 1.3
-  silence_limit: 2.5
 
 # Live audio sources (Broadcastify feed IDs).
 #

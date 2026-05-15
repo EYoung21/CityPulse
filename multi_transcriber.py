@@ -68,15 +68,19 @@ if _cli_args.config and os.path.exists(_cli_args.config):
 USERNAME = config["credentials"]["username"]
 PASSWORD = config["credentials"]["password"]
 
-_root_vad = config.get("vad_and_silence") or {}
-_city_vad = _city_config.get("vad_and_silence") or {}
-VAD_AGGRESSIVENESS = _city_vad.get(
-    "vad_aggressiveness", _root_vad.get("vad_aggressiveness", 1)
-)
-MIN_SPEECH_SECONDS = float(
-    _city_vad.get("min_speech_seconds", _root_vad.get("min_speech_seconds", 1.5))
-)
-SILENCE_LIMIT = float(_city_vad.get("silence_limit", _root_vad.get("silence_limit", 3.0)))
+# Root config.yaml defaults; per-city YAML can override (shorter silence →
+# more frequent segments for low-feed-density cities like NYC/SF).
+_base_vad = dict(config.get("vad_and_silence") or {})
+_city_vad = dict((_city_config.get("vad_and_silence") or {}))
+_merged_vad = {**_base_vad, **_city_vad}
+VAD_AGGRESSIVENESS = int(_merged_vad.get("vad_aggressiveness", 1))
+MIN_SPEECH_SECONDS = float(_merged_vad.get("min_speech_seconds", 1.5))
+SILENCE_LIMIT = float(_merged_vad.get("silence_limit", 3.0))
+if _city_vad:
+    print(
+        f"Per-city VAD: aggressiveness={VAD_AGGRESSIVENESS} "
+        f"min_speech={MIN_SPEECH_SECONDS}s silence_end={SILENCE_LIMIT}s"
+    )
 
 MODEL_SIZE = config["tuning"].get("model_size", "base")
 LANGUAGE = config["tuning"]["language"]
@@ -114,21 +118,6 @@ _DEFAULT_PHILLY_FEEDS = [
 ]
 
 FEEDS = _city_config.get("feeds", _DEFAULT_PHILLY_FEEDS)
-
-
-def _transcribe_worker_count(num_feeds: int) -> int:
-    """Whisper worker threads (shared GPU). Default scales with feed count so
-    low-feed cities (NYC/SF) do not sit behind the old hard cap of 3 while
-    the queue grows during bursts.
-
-    Override: PULSE_TRANSCRIBE_WORKERS=4
-    """
-    raw = os.environ.get("PULSE_TRANSCRIBE_WORKERS", "").strip()
-    if raw.isdigit():
-        return min(12, max(1, int(raw)))
-    # ~1 worker per 2 feeds, floor 3, cap 6 to avoid thrashing GPU memory.
-    return min(6, max(3, (num_feeds + 3) // 2))
-
 
 # ── Constants ───────────────────────────────────────────────────────
 
@@ -324,7 +313,9 @@ def transcriber_worker(worker_id):
 
             for vcfg in (PIPELINE_VARIANTS if PIPELINE_VARIANTS else []):
                 processed, meta = preprocess_audio(
-                    raw_pcm, vcfg, silence_limit_s=SILENCE_LIMIT, min_speech_s=MIN_SPEECH_SECONDS
+                    raw_pcm, vcfg,
+                    silence_limit_s=SILENCE_LIMIT,
+                    min_speech_s=MIN_SPEECH_SECONDS,
                 )
 
                 result = _transcribe_variant(processed, worker_id, vcfg.name)
@@ -513,12 +504,14 @@ def feed_capture_thread(feed_id, feed_label):
 # ── Main ────────────────────────────────────────────────────────────
 
 def main():
-    num_workers = _transcribe_worker_count(len(FEEDS))
-    print(
-        f"Starting {num_workers} transcription workers + {len(FEEDS)} feed threads "
-        f"(VAD agg={VAD_AGGRESSIVENESS}, min_speech={MIN_SPEECH_SECONDS}s, "
-        f"silence_end={SILENCE_LIMIT}s)"
-    )
+    # Default: small pool (GPU serializes most work anyway). Per-city YAML
+    # can set transcriber.num_workers to drain backlog on Lambda (e.g. 5–6).
+    _tw = (_city_config.get("transcriber") or {}).get("num_workers")
+    if _tw is not None:
+        num_workers = max(1, min(12, int(_tw)))
+    else:
+        num_workers = min(3, max(1, os.cpu_count() or 2))
+    print(f"Starting {num_workers} transcription workers + {len(FEEDS)} feed threads")
     print(
         f"   Clip dirs (cwd={os.getcwd()}): "
         f"{os.path.abspath(AUDIO_CLIPS_FOLDER)} | {os.path.abspath(RAW_CLIPS_FOLDER)}"
@@ -562,12 +555,6 @@ def main():
                 f"queue={qsize} "
                 f"uptime={chunk_count * 30 // 60}m"
             )
-            if qsize >= 25:
-                print(
-                    f"   [WARN] transcription_queue depth={qsize} — "
-                    "bridge/ingest or Whisper may be falling behind; "
-                    "consider PULSE_TRANSCRIBE_WORKERS or lighter city VAD."
-                )
             # Respawn feed threads that exited (legacy builds gave up after
             # repeated ffmpeg failures). Without this, a city can go silent
             # while the main process keeps running.

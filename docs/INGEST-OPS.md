@@ -1,17 +1,9 @@
 # Ingest operations
 
-## Transcriber throughput (multi_feed)
-
-- `multi_transcriber.py` scales Whisper worker threads with **feed count** (default floor 3, cap 6). Low-feed cities (NYC, SF) used to share the same cap as three workers total, which increased **queue depth** during voice bursts.
-- Override on Lambda: `Environment=PULSE_TRANSCRIBE_WORKERS=5` in the `pulse-live@.service` drop-in, then `sudo systemctl daemon-reload && sudo systemctl restart pulse-live@nyc`.
-- Per-city **VAD** overrides live in `cities/<slug>/config.yaml` under `vad_and_silence:` (`vad_aggressiveness`, `min_speech_seconds`, `silence_limit`). NYC/SF use softer VAD + shorter silence tail so short FDNY/SFFD phrases become segments sooner.
-- **Queue backlog**: every 30s the process logs `[Status] feeds=… queue=…`. If you see `[WARN] transcription_queue depth=25`, ingest or Whisper is behind — raise workers slightly or check `journalctl -u philly-pulse-api` for slow `/api/ingest` on Hetzner.
-
 ## Live transcribers
 
 - `systemctl status pulse-live@philly` (and `@nyc`, etc.)
-- **Lambda (GPU host):** `sudo journalctl -u pulse-live@nyc.service -f --no-pager` (swap `nyc` for `sf`, etc.). Combined file log: `tail -f /var/log/pulse-live.log`. Grep for backlog: `grep -E 'queue=|\\[WARN\\]' /var/log/pulse-live.log | tail`.
-- **Hetzner API:** `journalctl -u philly-pulse-api -f` — watch `POST /api/ingest` latency and errors from Lambda IPs.
+- Tail logs on the Lambda host for bridge POST failures and Whisper queue depth.
 - Bridge URL must reach `/api/ingest` on the API host.
 - Realtime has priority over archive catch-up. Keep `citypulse-backfill` stopped unless you are intentionally running backfill:
   `systemctl disable --now citypulse-backfill`.
@@ -28,6 +20,7 @@
 
 - `python scripts/pulse_live_health.py --city philly --city nyc`
 - `GET /api/city-stats/{slug}` exposes `newest_incident_at`, `newest_extraction_at`, and `promotion_rate_6h`.
+- GitHub Actions → **Pulse Live Diagnostics (Lambda)** (`server-pulse-live-diagnostics.yml`): pulls `pulse-live@*` status + recent `/var/log/pulse-live.log` lines (queue depth, QUEUED, errors) via Hetzner→Lambda SSH.
 
 ## Promotion failures
 
