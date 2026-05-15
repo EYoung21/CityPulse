@@ -4,6 +4,14 @@ city:
   short: "SFO"
   domain: "sfopulse.com"
 
+# Peninsula + SF mix includes long pauses on SMC feeds; slightly shorter
+# silence tail yields more segments per hour without starving Philly-scale
+# cities (see multi_transcriber queue depth logs).
+vad_and_silence:
+  vad_aggressiveness: 0
+  min_speech_seconds: 1.3
+  silence_limit: 2.5
+
 feeds:
   - { feed_id: "46180", label: "SFPD Police" }
   - { feed_id: "6336",  label: "SFFD Fire/EMS" }
