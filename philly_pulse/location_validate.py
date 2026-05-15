@@ -85,7 +85,6 @@ def validate_location(
 
     feed_meta = feed_meta or {}
     bounds = feed_meta.get("geocode_bounds")
-    borough = feed_meta.get("borough")
     if bounds and isinstance(bounds, dict):
         try:
             if not (
@@ -95,12 +94,25 @@ def validate_location(
                 return ValidationResult(False, "geocoded point outside feed geocode_bounds")
         except (KeyError, TypeError, ValueError):
             pass
-    elif borough:
-        bb = borough_bounds(city, str(borough))
-        if bb and not (
-            bb["lat_min"] <= lat <= bb["lat_max"] and bb["lng_min"] <= lng <= bb["lng_max"]
-        ):
-            return ValidationResult(False, f"geocoded point outside {borough} bounds")
+    else:
+        # Prefer borough/neighborhood named in the incident over the stream default.
+        # FDNY Citywide (and similar) carries a default borough (e.g. Manhattan) in
+        # feed metadata but routinely dispatches other boroughs — validating only
+        # against the feed default rejects otherwise-good Bronx/Queens pins.
+        feed_borough = feed_meta.get("borough")
+        text_borough = match_borough_key(location_text or "", city=city) or match_borough_key(
+            raw_text or "", city=city
+        )
+        effective = (text_borough or (str(feed_borough).strip() if feed_borough else None)) or None
+        if effective:
+            bb = borough_bounds(city, effective)
+            if bb and not (
+                bb["lat_min"] <= lat <= bb["lat_max"] and bb["lng_min"] <= lng <= bb["lng_max"]
+            ):
+                return ValidationResult(
+                    False,
+                    f"geocoded point outside {effective} bounds",
+                )
 
     transcript_nums = extract_transcript_location_numbers(raw_text)
     loc_nums = extract_transcript_location_numbers(location_text)
