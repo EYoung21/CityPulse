@@ -1,0 +1,75 @@
+name: Restart Lambda Live Transcriber
+
+# Restarts pulse-live@<city> on the GPU Lambda host (where live ingest runs
+# after cutover). Use when one city's feed stalls but others are healthy —
+# e.g. /api/city-stats/philly shows stale newest_extraction_at.
+
+on:
+  workflow_dispatch:
+    inputs:
+      city:
+        description: "City slug (pulse-live@<city>)"
+        required: false
+        default: "philly"
+      lambda_user:
+        description: "SSH user on Lambda"
+        required: false
+        default: "ubuntu"
+      lambda_ip:
+        description: "Lambda IP"
+        required: false
+        default: "150.230.182.19"
+
+jobs:
+  restart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restart pulse-live on Lambda + verify freshness
+        uses: appleboy/ssh-action@v1
+        env:
+          CITY: ${{ inputs.city }}
+          LAMBDA_USER: ${{ inputs.lambda_user }}
+          LAMBDA_IP: ${{ inputs.lambda_ip }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 8m
+          envs: CITY,LAMBDA_USER,LAMBDA_IP
+          script: |
+            set -euo pipefail
+            SSH_OPTS="-i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+
+            echo "=== Pull latest on Hetzner + rsync transcriber to Lambda ==="
+            cd /root/PhillyPulse && git fetch origin main && git reset --hard origin/main
+            rsync -az -e "ssh $SSH_OPTS" \
+              /root/PhillyPulse/multi_transcriber.py \
+              "$LAMBDA_USER@$LAMBDA_IP:/opt/citypulse-backfill/multi_transcriber.py"
+
+            echo ""
+            echo "=== pulse-live@${CITY} pre-restart ==="
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" \
+              "sudo systemctl status pulse-live@${CITY}.service --no-pager -l 2>&1 | head -25" || true
+
+            echo ""
+            echo "=== Restarting pulse-live@${CITY} ==="
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" \
+              "sudo systemctl restart pulse-live@${CITY}.service"
+
+            sleep 15
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" \
+              "sudo systemctl is-active pulse-live@${CITY}.service"
+
+            echo ""
+            echo "=== Recent journal (last 40 lines) ==="
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" \
+              "sudo journalctl -u pulse-live@${CITY}.service --no-pager -n 40" || true
+
+            echo ""
+            echo "=== Wait 90s for model load + first bridge POST ==="
+            sleep 90
+
+            echo ""
+            echo "=== Hetzner API: /api/city-stats/${CITY} ==="
+            timeout 15 curl -sS "https://api.phlpulse.com/api/city-stats/${CITY}" | head -c 1200
+            echo ""
