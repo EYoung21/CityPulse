@@ -146,6 +146,9 @@ export interface Extraction {
 export interface HealthResponse {
   status: string;
   llm_configured: boolean;
+  llm_provider?: string;
+  llm_model?: string;
+  pulse_chat_llm_configured?: boolean;
   inhibitor_configured: boolean;
   incident_count: number;
 }
@@ -322,6 +325,80 @@ export async function fetchSummary(): Promise<SummaryResponse> {
   handleClampHeaders(res);
   if (!res.ok) throw new Error(`Failed to fetch summary: ${res.status}`);
   return res.json();
+}
+
+/** Pro-only Ask Pulse chat (Lambda via server RAG over incidents). */
+export type PulseChatRole = "user" | "assistant";
+
+export interface PulseChatMessage {
+  role: PulseChatRole;
+  content: string;
+}
+
+export interface PulseChatCitation {
+  id: string;
+  reported_at?: string | null;
+  category?: string | null;
+}
+
+export interface PulseChatResponse {
+  reply: string;
+  citations: PulseChatCitation[];
+  meta: {
+    city: string;
+    effective_since?: string | null;
+    incidents_in_context: number;
+    incidents_fetched: number;
+    truncated: boolean;
+  };
+}
+
+export async function fetchPulseChat(opts: {
+  messages: PulseChatMessage[];
+  city?: string;
+  since?: string | null;
+  signal?: AbortSignal;
+}): Promise<PulseChatResponse> {
+  const idToken = await maybeIdToken();
+  if (!idToken) {
+    throw new Error("Sign in with a CityPulse account to use Ask Pulse.");
+  }
+  const res = await fetchPublicApi("/api/pulse-chat", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      city: opts.city,
+      since: opts.since ?? undefined,
+      messages: opts.messages,
+    }),
+    signal: opts.signal,
+  });
+  handleClampHeaders(res);
+  if (res.status === 401) {
+    throw new Error("Session expired; sign in again.");
+  }
+  if (res.status === 403) {
+    throw new Error("CityPulse Pro is required for Ask Pulse.");
+  }
+  if (res.status === 429) {
+    throw new Error("Too many Ask Pulse requests. Try again shortly.");
+  }
+  if (!res.ok) {
+    let detail = `Ask Pulse failed (${res.status})`;
+    try {
+      const j = (await res.json()) as { detail?: unknown };
+      if (j.detail != null) {
+        detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+      }
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as PulseChatResponse;
 }
 
 export async function fetchStats(): Promise<StatsResponse> {

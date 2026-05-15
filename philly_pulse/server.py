@@ -11,6 +11,8 @@ import os
 import random
 import re
 import subprocess
+import threading
+import time
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -24,6 +26,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from . import admin_events, city_registry, geocode, ingest_location, inhibitor, llm, llm_client, persistence as store, prefilter, push as push_mod, weights
+from .llm_client import LLMConfigError, LLMHTTPError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,6 +38,15 @@ FREE_INCIDENT_WINDOW_SECONDS = 60 * 60
 # When False, ingest only stores raw transcript+audio — no LLM/inhibitor/geocode.
 # Flip to True (or set env PHILLY_PULSE_LLM_AUTO=1) to resume automatic processing.
 LLM_AUTO_ENABLED = os.environ.get("PHILLY_PULSE_LLM_AUTO", "0").strip().lower() in ("1", "true", "yes")
+
+# Ask Pulse (Pro): incident RAG + Lambda chat. `PULSE_CHAT_MODEL` overrides
+# `LAMBDA_MODEL` for this endpoint only.
+PULSE_CHAT_STORE_FETCH = int(os.environ.get("PULSE_CHAT_STORE_FETCH", "450"))
+PULSE_CHAT_BUNDLE_MAX = int(os.environ.get("PULSE_CHAT_BUNDLE_MAX", "180"))
+PULSE_CHAT_RL_WINDOW_SEC = float(os.environ.get("PULSE_CHAT_RL_WINDOW_SEC", "60"))
+PULSE_CHAT_RL_MAX = int(os.environ.get("PULSE_CHAT_RL_MAX", "20"))
+_PULSE_CHAT_RL: dict[str, list[float]] = {}
+_PULSE_CHAT_RL_LOCK = threading.Lock()
 
 # ── City config ─────────────────────────────────────────────────────
 
@@ -233,6 +245,7 @@ async def health():
         "llm_configured": llm.is_configured(),
         "llm_provider": llm_client.active_provider_name(),
         "llm_model": llm_client.active_model(),
+        "pulse_chat_llm_configured": llm_client.is_configured(),
         "inhibitor_configured": inhibitor.GUARDRAIL_MODE not in {"off", "disabled", "none"},
         "incident_count": count,
     }
@@ -1419,6 +1432,180 @@ async def summary(
             "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
             "clamped": bool(clamped),
             "effectiveSince": effective_since,
+        },
+    }
+
+
+class PulseChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class PulseChatRequest(BaseModel):
+    """Pro-only chat over incident RAG. Client sends recent conversation tail."""
+
+    city: Optional[str] = None
+    since: Optional[str] = None
+    messages: list[PulseChatMessage]
+
+
+def _pulse_chat_rate_ok(uid: str) -> bool:
+    """Fixed-window rate limit per uid (default 20 requests / 60s)."""
+    now = time.time()
+    floor = now - PULSE_CHAT_RL_WINDOW_SEC
+    with _PULSE_CHAT_RL_LOCK:
+        hits = _PULSE_CHAT_RL.setdefault(uid, [])
+        while hits and hits[0] < floor:
+            hits.pop(0)
+        if len(hits) >= PULSE_CHAT_RL_MAX:
+            return False
+        hits.append(now)
+    return True
+
+
+def _normalize_pulse_city_slug(city: Optional[str]) -> str:
+    slug = (city or "").strip().lower() or (CITY_SLUG or "").strip().lower()
+    if not slug:
+        raise HTTPException(status_code=400, detail="Missing city slug")
+    if slug in CITY_REGISTRY or slug == (CITY_SLUG or "").strip().lower():
+        return slug
+    raise HTTPException(status_code=400, detail=f"Unknown city: {slug}")
+
+
+def _trim_incident_for_pulse_bundle(inc: dict) -> dict:
+    text = inc.get("raw_text") or inc.get("description") or ""
+    text = str(text).replace("\n", " ").strip()[:480]
+    return {
+        "id": inc.get("id"),
+        "reported_at": inc.get("reported_at"),
+        "category": inc.get("severity_category"),
+        "location": inc.get("location_text"),
+        "text": text,
+    }
+
+
+@app.post("/api/pulse-chat")
+async def pulse_chat(
+    body: PulseChatRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Pro-only natural-language Q&A over a bounded slice of scanner-sourced incidents.
+
+    Uses the same Lambda/OpenAI-compatible stack as the rest of the API
+    (:mod:`philly_pulse.llm_client`). Retrieval is RAG (not model training).
+    """
+    decoded = _try_verify_firebase_token(authorization)
+    if not decoded:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if decoded.get("firebase", {}).get("sign_in_provider") == "anonymous":
+        raise HTTPException(status_code=403, detail="Ask Pulse requires a non-anonymous account")
+    if not _is_pro_uid(decoded):
+        raise HTTPException(status_code=403, detail="CityPulse Pro required for Ask Pulse")
+    uid = str(decoded.get("uid") or "")
+    if not _pulse_chat_rate_ok(uid):
+        raise HTTPException(status_code=429, detail="Too many Ask Pulse requests; try again shortly")
+
+    if not body.messages:
+        raise HTTPException(status_code=400, detail="messages must be non-empty")
+    chat_tail: list[dict[str, str]] = []
+    total_user_chars = 0
+    for m in body.messages[-40:]:
+        role = (m.role or "").strip().lower()
+        if role not in ("user", "assistant"):
+            continue
+        c = (m.content or "")[:12000]
+        if role == "user":
+            total_user_chars += len(c)
+        chat_tail.append({"role": role, "content": c})
+    if total_user_chars > 80000:
+        raise HTTPException(status_code=400, detail="Request too large")
+    if not chat_tail or chat_tail[-1]["role"] != "user":
+        raise HTTPException(status_code=400, detail="Last message must be a user message")
+
+    city_slug = _normalize_pulse_city_slug(body.city)
+    effective_since, _clamped = _apply_free_since(body.since, is_pro=True)
+
+    import starlette.concurrency
+
+    def _load():
+        return store.list_incidents_for_city(
+            city_slug,
+            since=effective_since,
+            limit=min(PULSE_CHAT_STORE_FETCH, 800),
+            include_blocked=False,
+        )
+
+    fetched = await starlette.concurrency.run_in_threadpool(_load)
+    fetched.sort(key=lambda i: i.get("reported_at") or "", reverse=True)
+    bundle: list[dict] = []
+    for inc in fetched:
+        bundle.append(_trim_incident_for_pulse_bundle(inc))
+        if len(bundle) >= PULSE_CHAT_BUNDLE_MAX:
+            break
+    truncated_fetch = len(fetched) > len(bundle)
+    bundle_json = json.dumps(bundle, ensure_ascii=False)
+
+    registry_entry = CITY_REGISTRY.get(city_slug) or {}
+    city_display = registry_entry.get("city_name") or CITY_NAME
+
+    system = (
+        "You are Ask Pulse, a careful assistant for CityPulse — a scanner-derived public safety feed. "
+        "All incident data below is UNVERIFIED, may be incomplete or mistaken, and is not official "
+        "police reporting. Never present it as confirmed fact.\n"
+        "Rules:\n"
+        "- Answer only using the incident JSON below plus the user's messages. If the answer is not "
+        "supported by those incidents, say you don't have enough in the current window and suggest "
+        "broadening the time range or checking the map.\n"
+        "- Prefer citing incident id and reported_at when you mention specifics.\n"
+        "- Do not invent incidents, addresses, or outcomes.\n"
+        f"- City context: {city_display} ({city_slug}).\n\n"
+        f"The following {len(bundle)} incidents (of {len(fetched)} fetched) are in context"
+        + (" (truncated for size)" if truncated_fetch else "")
+        + ":\n"
+        + bundle_json
+    )
+
+    chat_model = (os.environ.get("PULSE_CHAT_MODEL") or "").strip() or None
+
+    messages_out: list[dict[str, str]] = [{"role": "system", "content": system}] + chat_tail
+
+    if not llm_client.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Ask Pulse is unavailable: no LLM provider configured on the server",
+        )
+
+    try:
+        reply = await llm_client.chat_completion(
+            messages_out,
+            model=chat_model,
+            temperature=0.25,
+            max_tokens=1400,
+            timeout=75.0,
+        )
+    except LLMConfigError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except LLMHTTPError as e:
+        logger.warning("pulse-chat LLM HTTP error: %s", e)
+        raise HTTPException(status_code=502, detail="Upstream LLM error") from e
+    except Exception as e:
+        logger.warning("pulse-chat LLM failed: %s", e)
+        raise HTTPException(status_code=502, detail="LLM request failed") from e
+
+    citations = [
+        {"id": row["id"], "reported_at": row.get("reported_at"), "category": row.get("category")}
+        for row in bundle
+        if row.get("id")
+    ]
+    return {
+        "reply": (reply or "").strip(),
+        "citations": citations,
+        "meta": {
+            "city": city_slug,
+            "effective_since": effective_since,
+            "incidents_in_context": len(bundle),
+            "incidents_fetched": len(fetched),
+            "truncated": truncated_fetch,
         },
     }
 
