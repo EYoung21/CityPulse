@@ -50,6 +50,21 @@ class LocationPipelineTests(unittest.TestCase):
         )
         self.assertTrue(result.ok)
 
+    def test_validator_prefers_text_borough_over_feed_default(self):
+        """Citywide-style feeds tag a default borough but dispatch names another."""
+        centroid = location_aliases.borough_centroid("nyc", "Bronx")
+        self.assertIsNotNone(centroid)
+        lat, lng = centroid
+        result = location_validate.validate_location(
+            raw_text="10-75 working fire West Bronx",
+            location_text="West Bronx, New York, NY",
+            lat=lat,
+            lng=lng,
+            feed_meta={"borough": "Manhattan"},
+            city="nyc",
+        )
+        self.assertTrue(result.ok, result.reason)
+
 
 if __name__ == "__main__":
     unittest.main()
