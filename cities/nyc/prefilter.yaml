@@ -16,3 +16,14 @@ keep_keywords:
   - "10-30"     # Robbery in progress (NYPD).
   - eddp        # Emotionally disturbed person.
   - signal 13
+  # FDNY — primary NYC live source (borough dispatch).
+  - 10-75
+  - 10-77
+  - 10-45
+  - working fire
+  - second alarm
+  - third alarm
+  - all hands
+  - box
+  - structural fire
+  - high-rise

@@ -1,6 +1,47 @@
 aliases:
   "Avenue of the Americas": ["6th Avenue", "Sixth Avenue", "6th Ave", "Ave of the Americas"]
   "Sixth Avenue": ["6th Avenue", "6th Ave", "Avenue of the Americas"]
+
+# Neighborhood / directional phrases → borough key in `boroughs` below.
+borough_aliases:
+  west bronx: Bronx
+  east bronx: Bronx
+  south bronx: Bronx
+  north bronx: Bronx
+  the bronx: Bronx
+  bed-stuy: Brooklyn
+  bedstuy: Brooklyn
+  bed stuy: Brooklyn
+  williamsburg: Brooklyn
+  bushwick: Brooklyn
+  crown heights: Brooklyn
+  flatbush: Brooklyn
+  park slope: Brooklyn
+  sunset park: Brooklyn
+  bay ridge: Brooklyn
+  astoria: Queens
+  flushing: Queens
+  jamaica: Queens
+  long island city: Queens
+  lic: Queens
+  harlem: Manhattan
+  east harlem: Manhattan
+  upper west side: Manhattan
+  upper east side: Manhattan
+  midtown: Manhattan
+  chelsea: Manhattan
+  soho: Manhattan
+  tribeca: Manhattan
+  financial district: Manhattan
+  lower east side: Manhattan
+  east village: Manhattan
+  greenwich village: Manhattan
+  hell's kitchen: Manhattan
+  hells kitchen: Manhattan
+  washington heights: Manhattan
+  inwood: Manhattan
+  staten island: StatenIsland
+
 boroughs:
   Manhattan:
     lat_min: 40.70

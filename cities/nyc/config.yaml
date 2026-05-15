@@ -4,6 +4,11 @@ city:
   short: "NYC"
   domain: "newyorkcitypulse.com"
 
+map:
+  center_lat: 40.7128
+  center_lng: -74.0060
+  default_zoom: 11
+
 # Live audio sources (Broadcastify feed IDs).
 #
 # NYPD context (2026): the NYPD has been progressively encrypting precinct

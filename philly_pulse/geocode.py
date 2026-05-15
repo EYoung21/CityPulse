@@ -15,7 +15,11 @@ from typing import Any, Optional
 
 import httpx
 
-from .location_aliases import expand_location_aliases
+from .location_aliases import (
+    borough_centroid,
+    expand_location_aliases,
+    match_borough_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -437,6 +441,28 @@ async def resolve_incident_location(
             res.lat, res.lng = coords
             res.resolved_text = cand
             res.status = f"success_{location_confidence}"
+            return res
+
+    # FDNY / borough dispatch often names only "West Bronx", "Bed-Stuy", etc.
+    # Nominatim returns type=borough/neighbourhood which we reject as too coarse;
+    # fall back to the configured borough centroid so NYC feed stays live.
+    for source in (location_text, raw_text):
+        bkey = match_borough_key(source, city=city)
+        if not bkey:
+            continue
+        coords = borough_centroid(city, bkey)
+        res.attempts.append({"query": f"borough:{bkey}", "ok": bool(coords)})
+        if coords:
+            res.lat, res.lng = coords
+            res.resolved_text = (location_text or source or "").strip() or bkey
+            res.status = "success_borough_centroid"
+            logger.info(
+                "Borough centroid for %r -> %s (%f, %f)",
+                source,
+                bkey,
+                coords[0],
+                coords[1],
+            )
             return res
 
     res.status = f"no_result_{location_confidence}"
