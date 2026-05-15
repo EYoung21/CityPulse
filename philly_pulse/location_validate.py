@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from .location_aliases import borough_bounds
+from .location_aliases import borough_bounds, match_borough_key
 
 _ORDINAL_RE = re.compile(
     r"\b(?:west|east|north|south|w|e|n|s)?\s*(\d{1,3})(?:st|nd|rd|th)?\s+"
@@ -19,9 +19,28 @@ _INTERSECTION_RE = re.compile(
     r"\b(\d{1,3})\s*(?:st|nd|rd|th)?\s+(?:and|&)\s+(\d{1,3})\s*(?:st|nd|rd|th)?\b",
     re.IGNORECASE,
 )
+# FDNY/EMS/NYPD unit and box numbers are not street addresses.
+_UNIT_NUMBER_RE = re.compile(
+    r"\b(?:engine|ladder|battalion|squad|rescue|ambulance|ems|medic|"
+    r"boro|conditions|chief|deputy|division|truck|tower|hazmat|unit|car)\s*#?\s*\d{1,4}\b",
+    re.IGNORECASE,
+)
+_DISPATCH_BOX_RE = re.compile(
+    r"\b(?:box|alarm)\s+\d{1,5}\b",
+    re.IGNORECASE,
+)
+_PRECINCT_RE = re.compile(r"\b(?:precinct|pct)\s+\d{1,3}\b", re.IGNORECASE)
+
+
+def _scrub_unit_numbers(text: str) -> str:
+    s = _UNIT_NUMBER_RE.sub(" ", text)
+    s = _DISPATCH_BOX_RE.sub(" ", s)
+    s = _PRECINCT_RE.sub(" ", s)
+    return s
 
 
 def _digits_in_text(text: str) -> set[int]:
+    text = _scrub_unit_numbers(text)
     nums: set[int] = set()
     for m in _ORDINAL_RE.finditer(text):
         nums.add(int(m.group(1)))
@@ -86,6 +105,9 @@ def validate_location(
     transcript_nums = extract_transcript_location_numbers(raw_text)
     loc_nums = extract_transcript_location_numbers(location_text)
     if not transcript_nums:
+        return ValidationResult(True)
+    # Borough/neighborhood-only pins (no street number in the extracted location).
+    if not loc_nums and match_borough_key(location_text, city=city):
         return ValidationResult(True)
 
     max_dist = int(os.environ.get("LOCATION_VALIDATE_MAX_ORDINAL_DELTA", "2"))
