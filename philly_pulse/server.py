@@ -245,7 +245,9 @@ async def health():
         "llm_configured": llm.is_configured(),
         "llm_provider": llm_client.active_provider_name(),
         "llm_model": llm_client.active_model(),
-        "pulse_chat_llm_configured": llm_client.is_configured(),
+        "pulse_chat_llm_configured": llm_client.is_configured()
+        or llm_client.is_deepseek_pulse_fallback_configured(),
+        "pulse_chat_deepseek_fallback": llm_client.is_deepseek_pulse_fallback_configured(),
         "inhibitor_configured": inhibitor.GUARDRAIL_MODE not in {"off", "disabled", "none"},
         "incident_count": count,
     }
@@ -1569,14 +1571,14 @@ async def pulse_chat(
 
     messages_out: list[dict[str, str]] = [{"role": "system", "content": system}] + chat_tail
 
-    if not llm_client.is_configured():
+    if not llm_client.is_configured() and not llm_client.is_deepseek_pulse_fallback_configured():
         raise HTTPException(
             status_code=503,
-            detail="Ask Pulse is unavailable: no LLM provider configured on the server",
+            detail="Ask Pulse is unavailable: set LAMBDA_API_KEY / OPENAI_API_KEY or DEEPSEEK_API_KEY on the server",
         )
 
     try:
-        reply = await llm_client.chat_completion(
+        reply = await llm_client.pulse_chat_completion(
             messages_out,
             model=chat_model,
             temperature=0.25,

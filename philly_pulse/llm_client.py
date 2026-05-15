@@ -6,6 +6,10 @@ extraction (``llm.py``), AI plausibility check (``verifier.py``),
 auto-verify second opinion (``auto_verify.py``), and the
 ``/api/summary`` endpoint — calls :func:`chat_completion` here.
 
+Ask Pulse (``/api/pulse-chat``) uses :func:`pulse_chat_completion` instead:
+same primary stack as below, with an optional ``DEEPSEEK_API_KEY`` fallback
+when Lambda returns 5xx / 429 / transport errors (ingest is unchanged).
+
 Provider resolution (highest priority first, evaluated at call time
 so env edits don't require a process restart):
 
@@ -40,6 +44,8 @@ DEFAULT_LAMBDA_BASE_URL = "https://api.lambda.ai/v1"
 DEFAULT_LAMBDA_MODEL = "llama3.3-70b-instruct-fp8"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
 
 
 class LLMConfigError(RuntimeError):
@@ -118,6 +124,23 @@ def is_configured() -> bool:
     return _resolve_provider() is not None
 
 
+def _deepseek_pulse_fallback_config() -> Optional[ProviderConfig]:
+    """Optional DeepSeek API for Ask Pulse only when Lambda/OpenAI primary fails."""
+    key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    if not key:
+        return None
+    return ProviderConfig(
+        name="deepseek",
+        base_url=os.environ.get("DEEPSEEK_BASE_URL", DEFAULT_DEEPSEEK_BASE_URL).strip(),
+        api_key=key,
+        default_model=os.environ.get("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL).strip(),
+    )
+
+
+def is_deepseek_pulse_fallback_configured() -> bool:
+    return _deepseek_pulse_fallback_config() is not None
+
+
 def active_provider_name() -> str:
     """``"lambda"`` / ``"openai"`` / ``"custom"`` / ``"none"``."""
     cfg = _resolve_provider()
@@ -130,6 +153,58 @@ def active_model() -> str:
     nothing is configured."""
     cfg = _resolve_provider()
     return cfg.default_model if cfg else ""
+
+
+async def _post_chat_completion(
+    cfg: ProviderConfig,
+    messages: list[dict[str, Any]],
+    *,
+    model: Optional[str],
+    temperature: float,
+    max_tokens: int,
+    timeout: float,
+    response_format: Optional[dict[str, Any]],
+    extra_payload: Optional[dict[str, Any]] = None,
+) -> str:
+    payload: dict[str, Any] = {
+        "model": model or cfg.default_model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if response_format is not None:
+        payload["response_format"] = response_format
+    if extra_payload:
+        payload.update(extra_payload)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(
+            cfg.chat_completions_url,
+            headers={
+                "Authorization": f"Bearer {cfg.api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+
+    if resp.status_code != 200:
+        body = resp.text
+        snippet = body[:400] + ("…" if len(body) > 400 else "")
+        logger.warning(
+            "LLM call to %s (%s) failed: HTTP %d — %s",
+            cfg.name, payload["model"], resp.status_code, snippet,
+        )
+        raise LLMHTTPError(resp.status_code, body, provider=cfg.name)
+
+    body = resp.json()
+    try:
+        return body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as e:
+        raise LLMHTTPError(
+            200,
+            f"unexpected response shape: {body!r}",
+            provider=cfg.name,
+        ) from e
 
 
 async def chat_completion(
@@ -157,50 +232,87 @@ async def chat_completion(
             "or OPENAI_API_KEY in the environment."
         )
 
-    payload: dict[str, Any] = {
-        "model": model or cfg.default_model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    if response_format is not None:
-        # Both OpenAI and Lambda accept this; some open-weights models
-        # silently ignore it — that's fine, callers already strip
-        # markdown fences and json.loads() the body defensively.
-        payload["response_format"] = response_format
-    if extra_payload:
-        payload.update(extra_payload)
+    return await _post_chat_completion(
+        cfg,
+        messages,
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        response_format=response_format,
+        extra_payload=extra_payload,
+    )
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(
-            cfg.chat_completions_url,
-            headers={
-                "Authorization": f"Bearer {cfg.api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
+
+def _pulse_primary_should_fallback_http(err: LLMHTTPError) -> bool:
+    """Retry Ask Pulse on upstream overload / gateway / rate-limit errors."""
+    if err.status_code == 200:
+        return False
+    if err.status_code >= 500:
+        return True
+    if err.status_code in (408, 429):
+        return True
+    return False
+
+
+async def pulse_chat_completion(
+    messages: list[dict[str, Any]],
+    *,
+    model: Optional[str] = None,
+    temperature: float = 0.25,
+    max_tokens: int = 1400,
+    timeout: float = 75.0,
+) -> str:
+    """Ask Pulse: primary provider (Lambda/OpenAI/custom) then optional DeepSeek.
+
+    Used only by ``POST /api/pulse-chat``. Ingest and extraction keep using
+    :func:`chat_completion` without DeepSeek so pipeline behavior stays stable.
+    """
+    ds_cfg = _deepseek_pulse_fallback_config()
+    primary_cfg = _resolve_provider()
+
+    if primary_cfg is not None:
+        try:
+            return await _post_chat_completion(
+                primary_cfg,
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                response_format=None,
+                extra_payload=None,
+            )
+        except LLMHTTPError as e:
+            if not _pulse_primary_should_fallback_http(e):
+                raise
+            logger.warning("Pulse chat primary failed (%s); trying DeepSeek fallback: %s", e.status_code, e)
+        except httpx.RequestError as e:
+            logger.warning("Pulse chat primary transport error; trying DeepSeek fallback: %s", e)
+    else:
+        if not ds_cfg:
+            raise LLMConfigError(
+                "No LLM provider configured. Set LAMBDA_API_KEY (preferred), "
+                "OPENAI_API_KEY, or DEEPSEEK_API_KEY for Ask Pulse."
+            )
+        logger.info("Pulse chat: no primary LLM env; using DeepSeek for Ask Pulse only")
+
+    if ds_cfg is None:
+        raise LLMConfigError(
+            "Primary LLM failed and DEEPSEEK_API_KEY is not set — cannot fall back for Ask Pulse."
         )
 
-    if resp.status_code != 200:
-        # Truncate noisy upstream error bodies in the log; full body is
-        # still attached to the exception for the caller.
-        body = resp.text
-        snippet = body[:400] + ("…" if len(body) > 400 else "")
-        logger.warning(
-            "LLM call to %s (%s) failed: HTTP %d — %s",
-            cfg.name, payload["model"], resp.status_code, snippet,
-        )
-        raise LLMHTTPError(resp.status_code, body, provider=cfg.name)
-
-    body = resp.json()
-    try:
-        return body["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as e:
-        raise LLMHTTPError(
-            200,
-            f"unexpected response shape: {body!r}",
-            provider=cfg.name,
-        ) from e
+    ds_model = (os.environ.get("PULSE_CHAT_DEEPSEEK_MODEL") or "").strip() or ds_cfg.default_model
+    return await _post_chat_completion(
+        ds_cfg,
+        messages,
+        model=ds_model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        response_format=None,
+        extra_payload=None,
+    )
 
 
 def chat_completion_sync(

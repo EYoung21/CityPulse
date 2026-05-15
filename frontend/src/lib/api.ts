@@ -149,6 +149,7 @@ export interface HealthResponse {
   llm_provider?: string;
   llm_model?: string;
   pulse_chat_llm_configured?: boolean;
+  pulse_chat_deepseek_fallback?: boolean;
   inhibitor_configured: boolean;
   incident_count: number;
 }
