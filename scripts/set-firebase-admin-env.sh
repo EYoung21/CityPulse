@@ -1,6 +1,9 @@
 #!/bin/bash
-# set-firebase-admin-env.sh — push FIREBASE_ADMIN_KEY to all 4 CityPulse
-# Vercel projects.
+# set-firebase-admin-env.sh — push FIREBASE_ADMIN_KEY to the CityPulse
+# Vercel project (default: city-pulse).
+#
+# Override the project id if yours differs:
+#   VERCEL_PROJECT=city-pulse bash scripts/set-firebase-admin-env.sh ~/path/to.json
 #
 # The Stripe webhook handler (frontend/src/app/api/stripe-webhook/route.ts)
 # needs firebase-admin credentials to write tier/proUntil updates back to
@@ -99,14 +102,13 @@ print(json.dumps({
 }
 
 echo ""
-echo "Pushing FIREBASE_ADMIN_KEY to all 4 projects..."
-for project in philly-pulse nyc-pulse sfo-pulse 423-pulse; do
-  upsert_env "$project"
-done
+VERCEL_PROJECT="${VERCEL_PROJECT:-city-pulse}"
+echo "Pushing FIREBASE_ADMIN_KEY to Vercel project: $VERCEL_PROJECT"
+upsert_env "$VERCEL_PROJECT"
 
 echo ""
 echo "=================================================================="
-echo "FIREBASE_ADMIN_KEY written to all 4 projects."
+echo "FIREBASE_ADMIN_KEY written to $VERCEL_PROJECT."
 echo ""
 echo "Redeploy to pick it up:"
 echo ""

@@ -1,6 +1,19 @@
 # Multi-City Vercel + Domain Setup Guide
 
-This document covers the complete setup for deploying CityPulse to three new domains:
+## Recommended: one Vercel project (`city-pulse`)
+
+Use **one** Vercel project linked to `EYoung21/CityPulse`, **Root Directory `frontend`**, and attach **every** production domain on **Settings → Domains** (e.g. `phlpulse.com`, `newyorkcitypulse.com`, `423pulse.com`, `sfopulse.com`). The app picks the city from **`window.location.hostname`** (`getCurrentCity()` in `frontend/src/lib/pulse-cities.ts`), so you do **not** need separate `NEXT_PUBLIC_CITY_*` env vars per city when each hostname is registered.
+
+**Important:** On the consolidated `city-pulse` project, **remove** `NEXT_PUBLIC_CITY_SLUG`, `NEXT_PUBLIC_CITY_NAME`, and `NEXT_PUBLIC_SITE_NAME` if they are still set to Philadelphia — they force every domain to show Philly in the tab title and map defaults until removed.
+
+- **Default preview URL** after rename: `https://city-pulse-<team-slug>.vercel.app` (exact hostname is on the project’s **Domains** tab). Prefer **custom domains** or `?city=<slug>` on preview for testing a specific city.
+- **Billing:** one `git push` → **one** production build instead of four.
+
+The sections below that describe **creating a separate Vercel project per city** are **legacy** (they multiply build minutes). Keep them only if you are still migrating off the old layout.
+
+---
+
+This document also covers the legacy flow for deploying CityPulse to additional domains (historically: one project per city):
 
 | Project Name | Domain | City Slug | City Name |
 |---|---|---|---|
@@ -17,6 +30,12 @@ All three share the same GitHub repo (`EYoung21/PhillyPulse`), the same Firebase
 - GoDaddy account with DNS access for all three domains
 - Vercel account connected to the `EYoung21/PhillyPulse` GitHub repo
 - The existing `phlpulse` Firebase project (no new Firebase setup needed)
+
+---
+
+## Legacy: separate Vercel project per city (not recommended)
+
+The following **Part 1** onward describes the old multi-project setup. Prefer the **one `city-pulse` project** section at the top.
 
 ---
 
@@ -270,7 +289,7 @@ For each domain, check:
 
 DNS can be correct while **no production deployment** is serving that hostname. Do this in order:
 
-1. **Open the default Vercel URL** for that project (e.g. `423-pulse.vercel.app`, `nyc-pulse-six.vercel.app`).  
+1. **Open the default Vercel URL** for that project (e.g. `city-pulse-<team-slug>.vercel.app` — copy it from **Settings → Domains**).  
    - If **this also 404s**, the project has **no successful Production deployment** — open **Deployments**, fix the failed build, or **Redeploy** the latest `main`.
    - If the `.vercel.app` URL **works** but the custom domain **404s**, continue below.
 
@@ -319,7 +338,7 @@ For comparison, here's how the existing Philadelphia deployment is configured:
 
 | Setting | Value |
 |---|---|
-| Vercel Project | `philly-pulse` (or similar) |
+| Vercel Project | `city-pulse` (single project; legacy setups used `philly-pulse`, etc.) |
 | Domain | `phlpulse.com` |
 | Root Directory | `frontend` |
 | `NEXT_PUBLIC_CITY_SLUG` | `philly` (default, doesn't need to be set) |

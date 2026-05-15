@@ -237,6 +237,18 @@
   -webkit-touch-callout: none;
 }
 
+/* Keep Leaflet markers/clusters inside the map canvas (below the desktop tab bar). */
+#incident-map,
+#incident-map.leaflet-container {
+  overflow: hidden !important;
+}
+
+@media (min-width: 768px) {
+  .pp-app-topnav {
+    min-height: 3.25rem;
+  }
+}
+
 
 /* Cluster number bubbles */
 .pp-cluster-icon { background: transparent !important; }
