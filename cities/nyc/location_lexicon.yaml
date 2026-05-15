@@ -1,2 +1,61 @@
-# Human-reviewed dispatch slang and location patterns for LLM/geocode tuning.
-entries: []
+# Human-reviewed dispatch / ASR → Nominatim phrase expansions for NYC.
+# Applied in order by `philly_pulse.location_aliases.apply_location_lexicon`
+# (also merged into `expand_location_aliases` variants).
+#
+# Curate with real failures:
+#   GOOGLE_APPLICATION_CREDENTIALS=... \\
+#     python3 scripts/export_geocode_failures.py --city nyc --days 30 --limit 400 \\
+#     --out /tmp/nyc_geocode_failures.jsonl
+#
+# Surrounding context for the LLM (follow-ups, weak locations) lives in
+# `philly_pulse/llm.py` (`prior_context`, `context_location_text`) and
+# `philly_pulse/server.py` (last 3 same-feed lines + `refine_incident_extraction`).
+
+entries:
+  - note: "Major NYC limited-access roads (scanner abbreviations)"
+    pattern: "(?i)\\bBQE\\b"
+    replace: "Brooklyn-Queens Expressway"
+  - pattern: "(?i)\\bFDR\\s+Drive\\b"
+    replace: "Franklin D Roosevelt East River Drive"
+  - pattern: "(?i)\\bFDR\\b"
+    replace: "Franklin D Roosevelt East River Drive"
+  - pattern: "(?i)\\bCross\\s+Bronx\\b(?!\\s+Expressway)"
+    replace: "Cross Bronx Expressway"
+  - pattern: "(?i)\\bBruckner\\s+Expressway\\b"
+    replace: "Bruckner Expressway"
+  - pattern: "(?i)\\bMajor\\s+Deegan\\b(?!\\s+Expressway)"
+    replace: "Major Deegan Expressway"
+  - pattern: "(?i)\\bVan\\s+Wyck\\b(?!\\s+Expressway)"
+    replace: "Van Wyck Expressway"
+  - pattern: "(?i)\\bLong\\s+Island\\s+Expressway\\b|\\bLIE\\b"
+    replace: "Long Island Expressway"
+  - pattern: "(?i)\\bGrand\\s+Central\\s+Pkwy\\b|\\bGCP\\b"
+    replace: "Grand Central Parkway"
+  - pattern: "(?i)\\bBelt\\s+Pkwy\\b|\\bBelt\\s+Parkway\\b"
+    replace: "Belt Parkway"
+  - pattern: "(?i)\\bCross\\s+Island\\s+Pkwy\\b"
+    replace: "Cross Island Parkway"
+  - pattern: "(?i)\\bHenry\\s+Hudson\\s+Pkwy\\b|\\bWest\\s+Side\\s+Highway\\b"
+    replace: "Henry Hudson Parkway"
+  - pattern: "(?i)\\bBrooklyn\\s+Bridge\\b"
+    replace: "Brooklyn Bridge"
+  - pattern: "(?i)\\bManhattan\\s+Bridge\\b"
+    replace: "Manhattan Bridge"
+  - pattern: "(?i)\\bWilliamsburg\\s+Bridge\\b"
+    replace: "Williamsburg Bridge"
+  - pattern: "(?i)\\bQueens\\s+Midtown\\s+Tunnel\\b|\\bQMT\\b"
+    replace: "Queens Midtown Tunnel"
+  - pattern: "(?i)\\bLincoln\\s+Tunnel\\b"
+    replace: "Lincoln Tunnel"
+  - pattern: "(?i)\\bHolland\\s+Tunnel\\b"
+    replace: "Holland Tunnel"
+  - pattern: "(?i)\\bGeorge\\s+Washington\\s+Bridge\\b|\\bGWB\\b|\\bGW\\s+Bridge\\b"
+    replace: "George Washington Bridge"
+  - pattern: "(?i)\\bRFK\\s+Bridge\\b|\\bTriborough\\s+Bridge\\b"
+    replace: "Robert F Kennedy Bridge"
+  - pattern: "(?i)\\bClearview\\s+Expressway\\b"
+    replace: "Clearview Expressway"
+  - pattern: "(?i)\\bJackie\\s+Robinson\\s+Pkwy\\b"
+    replace: "Jackie Robinson Parkway"
+  - pattern: "(?i)\\bHarlem\\s+River\\s+Drive\\b"
+    replace: "Harlem River Drive"

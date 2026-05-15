@@ -90,15 +90,6 @@ export interface PulseCity {
    */
   previewOnly?: boolean;
 
-  /**
-   * Subset of `previewOnly` cities that we *publicly announce* as
-   * "coming soon" on the landing page. Only cities flagged
-   * `comingSoon: true` appear in the Pulse Network "coming soon"
-   * roster on the marketing page. Implies `previewOnly: true`.
-   */
-  comingSoon?: boolean;
-
-  /* ── Landing-page metadata (optional for previewOnly cities) ───── */
   /** City-specific brand name (e.g. "PhillyPulse"). */
   brand?: string;
   /** Tagline shown under the hero title. */
@@ -579,84 +570,6 @@ export const PULSE_CITIES: PulseCity[] = [
       { lng: -85.2150, lat: 35.0240, kind: "knife" },         // E. Brainerd (E edge)
       { lng: -85.2980, lat: 34.9810, kind: "gun" },           // Tiftonia (S)
     ],
-  },
-
-  /* ────────────────────────────────────────────────────────────────
-   * Preview-only cities (backend ingest + Firestore live, no polished
-   * landing page yet, no registered domain). Visit any deployed Pulse
-   * site with `?city=<slug>` to view their data.
-   * ──────────────────────────────────────────────────────────────── */
-  {
-    slug: "memphis",
-    name: "Memphis",
-    domain: "memphispulse.com",
-    emoji: "🎷",
-    lat: 35.1495,
-    lng: -90.0490,
-    nominatimViewbox: "-90.20,35.30,-89.85,35.00",
-    geocodeSuffix: ", Memphis, TN",
-    previewOnly: true,
-    comingSoon: true,
-  },
-  {
-    slug: "detroit",
-    name: "Detroit",
-    domain: "detroitpulse.com",
-    emoji: "🚗",
-    lat: 42.3314,
-    lng: -83.0458,
-    nominatimViewbox: "-83.30,42.45,-82.90,42.25",
-    geocodeSuffix: ", Detroit, MI",
-    previewOnly: true,
-    comingSoon: true,
-  },
-  {
-    slug: "orlando",
-    name: "Orlando",
-    domain: "orlandopulse.com",
-    emoji: "🎢",
-    lat: 28.5383,
-    lng: -81.3792,
-    nominatimViewbox: "-81.55,28.70,-81.20,28.40",
-    geocodeSuffix: ", Orlando, FL",
-    previewOnly: true,
-    comingSoon: true,
-  },
-  {
-    slug: "miami",
-    name: "Miami",
-    domain: "miamipulse.com",
-    emoji: "🌴",
-    lat: 25.7617,
-    lng: -80.1918,
-    nominatimViewbox: "-80.40,25.95,-80.10,25.60",
-    geocodeSuffix: ", Miami, FL",
-    previewOnly: true,
-    comingSoon: true,
-  },
-  {
-    slug: "la",
-    name: "Los Angeles",
-    domain: "lapulse.com",
-    emoji: "🌅",
-    lat: 34.0522,
-    lng: -118.2437,
-    nominatimViewbox: "-118.70,34.35,-118.10,33.70",
-    geocodeSuffix: ", Los Angeles, CA",
-    previewOnly: true,
-    comingSoon: true,
-  },
-  {
-    slug: "lasvegas",
-    name: "Las Vegas",
-    domain: "lasvegaspulse.com",
-    emoji: "🎰",
-    lat: 36.1699,
-    lng: -115.1398,
-    nominatimViewbox: "-115.40,36.35,-114.85,35.95",
-    geocodeSuffix: ", Las Vegas, NV",
-    previewOnly: true,
-    comingSoon: true,
   },
 ];
 

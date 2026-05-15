@@ -6,6 +6,9 @@ try multiple reformulations before giving up.
 Supports two modes:
   1. Global default: call configure_geocoder() on startup (single-city server).
   2. Per-request: pass a geo_ctx dict to geocode() for multi-city operation.
+
+Per-city ``cities/<slug>/location_lexicon.yaml`` supplies regex→spelling expansions
+applied in ``location_aliases.apply_location_lexicon`` (merged into alias expansion).
 """
 
 import logging
@@ -69,7 +72,7 @@ def _clean_location(loc: str) -> str:
     return s
 
 
-def _make_queries(loc: str, suffix: str | None = None) -> list[str]:
+def _make_queries(loc: str, suffix: str | None = None, *, city: str | None = None) -> list[str]:
     """Generate multiple query reformulations to maximise Nominatim hit rate."""
     queries: list[str] = []
     if suffix is None:
@@ -110,6 +113,26 @@ def _make_queries(loc: str, suffix: str | None = None) -> list[str]:
     )
     if not m and not has_road_type:
         queries.append(f"{clean} Street{suffix}")
+
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for q in queries:
+        if q not in seen:
+            seen.add(q)
+            deduped.append(q)
+    queries = deduped
+
+    if (city or "").strip().lower() == "nyc":
+        extra: list[str] = []
+        for q in queries:
+            if re.search(r"\s+and\s+", q, re.IGNORECASE) and not re.search(
+                r"\s+&\s+", q
+            ):
+                alt = re.sub(r"\s+and\s+", " & ", q, count=1, flags=re.IGNORECASE)
+                if alt not in seen:
+                    seen.add(alt)
+                    extra.append(alt)
+        queries.extend(extra)
 
     return queries
 
@@ -325,6 +348,8 @@ def _is_too_vague(loc: str, suffix: str) -> bool:
 async def geocode(
     location_text: str,
     geo_ctx: dict | None = None,
+    *,
+    city: str | None = None,
 ) -> Optional[tuple[float, float]]:
     """Geocode a location string to (lat, lng).
 
@@ -346,7 +371,7 @@ async def geocode(
     if key in _cache:
         return _cache[key]
 
-    queries = _make_queries(location_text, suffix=ctx_suffix)
+    queries = _make_queries(location_text, suffix=ctx_suffix, city=city)
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -385,7 +410,7 @@ class GeocodeResolution:
     resolved_text: str | None = None
 
 
-def transcript_geocode_candidates(raw_text: str) -> list[str]:
+def transcript_geocode_candidates(raw_text: str, city: str | None = None) -> list[str]:
     """Cheap regex pass for cross-streets / block numbers before giving up."""
     if not raw_text:
         return []
@@ -406,6 +431,27 @@ def transcript_geocode_candidates(raw_text: str) -> list[str]:
         cand = f"{m.group(1)} block of {m.group(2).strip()}"
         if cand not in out:
             out.append(cand)
+    slug = (city or "").strip().lower()
+    if slug == "nyc":
+        # "8th Avenue and 42nd Street" style grid (explicit road types).
+        for m in re.finditer(
+            r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:Ave|Avenue)\s+(?:and|&)\s+(\d{1,2})(?:st|nd|rd|th)?\s+(?:St|Street)\b",
+            raw_text,
+            re.IGNORECASE,
+        ):
+            a, b = m.group(1), m.group(2)
+            for cand in (f"{a} Avenue and {b} Street", f"{b} Street and {a} Avenue"):
+                if cand not in out:
+                    out.append(cand)
+        for m in re.finditer(
+            r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:St|Street)\s+(?:and|&)\s+(\d{1,2})(?:st|nd|rd|th)?\s+(?:Ave|Avenue)\b",
+            raw_text,
+            re.IGNORECASE,
+        ):
+            a, b = m.group(1), m.group(2)
+            for cand in (f"{a} Street and {b} Avenue", f"{b} Avenue and {a} Street"):
+                if cand not in out:
+                    out.append(cand)
     return out
 
 
@@ -429,13 +475,13 @@ async def resolve_incident_location(
         norm = normalize_location_text_for_geocode(alt, suffix=ctx_suffix)
         if norm and norm not in candidates:
             candidates.append(norm)
-    for cand in transcript_geocode_candidates(raw_text):
+    for cand in transcript_geocode_candidates(raw_text, city=city):
         norm = normalize_location_text_for_geocode(cand, suffix=ctx_suffix)
         if norm and norm not in candidates:
             candidates.append(norm)
 
     for cand in candidates:
-        coords = await geocode(cand, geo_ctx=geo_ctx)
+        coords = await geocode(cand, geo_ctx=geo_ctx, city=city)
         res.attempts.append({"query": cand, "ok": bool(coords)})
         if coords:
             res.lat, res.lng = coords
