@@ -3,6 +3,7 @@
 import type { Incident } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
 import { X, MapPin, Clock, Radio } from "lucide-react";
+import { sanitizeScannerTranscriptForDisplay } from "@/lib/sanitize-scanner-transcript";
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -125,7 +126,7 @@ export default function ClusterListPanel({ incidents, onSelect, onClose }: Props
                         style={{ color: "var(--panel-text-secondary)" }}
                       >
                         <Radio className="w-3 h-3 shrink-0 mt-0.5" />
-                        {inc.raw_text}
+                        {sanitizeScannerTranscriptForDisplay(inc.raw_text)}
                       </p>
                     )}
                   </div>

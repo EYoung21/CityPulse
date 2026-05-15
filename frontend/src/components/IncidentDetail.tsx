@@ -22,6 +22,10 @@ import {
   incidentAudioSources,
   fetchUrlWithPublicApiFallback,
 } from "@/lib/public-api-base";
+import {
+  hasScannerTranscriptArtifacts,
+  sanitizeScannerTranscriptForDisplay,
+} from "@/lib/sanitize-scanner-transcript";
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -71,10 +75,19 @@ function WaveformPlayer({
   const [loadError, setLoadError] = useState<string | null>(null);
   const transcriptContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const hasTimings = wordTimings && wordTimings.length > 0;
-  const words = hasTimings
-    ? wordTimings.map((wt) => wt.word)
-    : transcript.split(/\s+/).filter(Boolean);
+  const { words, effectiveHasTimings } = useMemo(() => {
+    const hasTimings = !!(wordTimings && wordTimings.length > 0);
+    const baseSource = hasTimings
+      ? wordTimings!.map((w) => w.word).join(" ")
+      : transcript;
+    const junk = hasScannerTranscriptArtifacts(baseSource);
+    const displaySource = junk ? sanitizeScannerTranscriptForDisplay(baseSource) : baseSource;
+    const effectiveHasTimings = hasTimings && !junk;
+    const words = effectiveHasTimings
+      ? wordTimings!.map((wt) => wt.word)
+      : displaySource.split(/\s+/).filter(Boolean);
+    return { words, effectiveHasTimings };
+  }, [transcript, wordTimings]);
 
   useEffect(() => {
     let objectUrl: string | null = null;
@@ -238,7 +251,7 @@ function WaveformPlayer({
 
   const currentWordIdx = (() => {
     if (words.length === 0 || duration <= 0) return -1;
-    if (hasTimings) {
+    if (effectiveHasTimings && wordTimings) {
       for (let i = wordTimings.length - 1; i >= 0; i--) {
         if (currentTime >= wordTimings[i].start) return i;
       }
@@ -320,10 +333,10 @@ function WaveformPlayer({
                   idx === currentWordIdx && playing ? "rgba(59,130,246,0.3)" : "transparent",
                 borderRadius: idx === currentWordIdx && playing ? "2px" : "0",
                 padding: idx === currentWordIdx && playing ? "0 2px" : "0",
-                cursor: hasTimings ? "pointer" : "default",
+                cursor: effectiveHasTimings ? "pointer" : "default",
               }}
               onClick={() => {
-                if (hasTimings && audioRef.current) {
+                if (effectiveHasTimings && audioRef.current && wordTimings) {
                   audioRef.current.currentTime = wordTimings[idx].start;
                   drawWaveform();
                 }
@@ -465,7 +478,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
               className="text-sm leading-relaxed italic"
               style={{ color: "var(--panel-text-secondary)" }}
             >
-              &ldquo;{incident.raw_text}&rdquo;
+              &ldquo;{sanitizeScannerTranscriptForDisplay(incident.raw_text)}&rdquo;
             </p>
           )}
 
@@ -564,7 +577,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
                       className="italic"
                       style={{ color: "var(--panel-text-secondary)" }}
                     >
-                      &ldquo;{m.raw_text}&rdquo;
+                      &ldquo;{sanitizeScannerTranscriptForDisplay(m.raw_text)}&rdquo;
                     </p>
                     {mAudioSrc && (
                       <audio

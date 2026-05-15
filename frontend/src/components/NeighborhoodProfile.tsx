@@ -23,6 +23,7 @@ import {
   areaVsCityComparison,
 } from "@/lib/analytics";
 import { assessSafety } from "@/lib/search";
+import { sanitizeScannerTranscriptForDisplay } from "@/lib/sanitize-scanner-transcript";
 import { getSeverity } from "@/lib/severity";
 import Sparkline from "@/components/charts/Sparkline";
 import DonutChart from "@/components/charts/DonutChart";
@@ -454,7 +455,12 @@ function NotableIncidentCard({
         className="text-[11px] leading-snug italic"
         style={{ color: "var(--panel-text-secondary, #aaa)" }}
       >
-        &ldquo;{inc.raw_text.length > 150 ? inc.raw_text.slice(0, 150) + "…" : inc.raw_text}&rdquo;
+        &ldquo;
+        {(() => {
+          const t = sanitizeScannerTranscriptForDisplay(inc.raw_text);
+          return t.length > 150 ? `${t.slice(0, 150)}…` : t;
+        })()}
+        &rdquo;
       </p>
     </div>
   );
