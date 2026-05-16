@@ -12,6 +12,7 @@ import {
   ChevronLeft,
 } from "lucide-react";
 import type { Incident } from "@/lib/api";
+import { withAlpha } from "@/lib/colors";
 import {
   getNeighborhoodBySlug,
   incidentsInNeighborhood,
@@ -415,7 +416,7 @@ function NotableIncidentCard({
         <span
           className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
           style={{
-            backgroundColor: sev.markerColor + "20",
+            backgroundColor: withAlpha(sev.markerColor, 13),
             color: sev.markerColor,
           }}
         >

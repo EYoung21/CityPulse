@@ -41,6 +41,7 @@ import IncidentFeed from "@/components/IncidentFeed";
 import FeedPullRefresh from "@/components/FeedPullRefresh";
 import FeedAudioMiniPlayer from "@/components/FeedAudioMiniPlayer";
 import { getCurrentPosition } from "@/lib/native";
+import { withAlpha } from "@/lib/colors";
 import { activeNowCount } from "@/lib/analytics";
 import { INCIDENT_CATEGORY_GROUPS, toggleCategoryGroupSelection } from "@/lib/incident-category-groups";
 import SearchSidebar from "@/components/SearchSidebar";
@@ -1805,7 +1806,7 @@ function MapHome() {
               className="flex-1 flex items-center justify-center gap-2.5 py-3.5 text-xs font-bold tracking-widest uppercase transition-all relative"
               style={{
                 color: active ? "#3b82f6" : "var(--panel-text-secondary)",
-                background: active ? "rgba(59,130,246,0.06)" : "transparent",
+                background: active ? "var(--pp-accent-soft)" : "transparent",
               }}
             >
               {tab === "map" ? (
@@ -1824,7 +1825,7 @@ function MapHome() {
                 <span
                   className="text-[10px] font-mono px-1.5 py-0.5 rounded-full"
                   style={{
-                    background: active ? "rgba(59,130,246,0.15)" : "var(--panel-input-bg)",
+                    background: active ? "var(--pp-accent-bg)" : "var(--panel-input-bg)",
                     color: active ? "#3b82f6" : "var(--panel-text-muted)",
                   }}
                 >
@@ -2236,7 +2237,7 @@ function MapHome() {
               className={`flex items-center gap-1.5 px-3 md:px-4 py-2 md:py-2.5 rounded-full text-xs md:text-sm font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
                 activeCats.size === 0 ? "bg-blue-500/15 text-blue-500 ring-1 ring-blue-500/30" : "opacity-70 hover:opacity-100"
               }`}
-              style={activeCats.size > 0 ? { background: "var(--pill-bg)", border: "1px solid var(--pill-border)", color: "var(--pill-text)" } : { background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.3)" }}
+              style={activeCats.size > 0 ? { background: "var(--pill-bg)", border: "1px solid var(--pill-border)", color: "var(--pill-text)" } : { background: "var(--pp-accent-bg)", border: "1px solid var(--pp-accent-border)" }}
             >
               All
             </button>
@@ -2253,8 +2254,8 @@ function MapHome() {
                     isActive ? "ring-1" : "opacity-70 hover:opacity-100"
                   }`}
                   style={{
-                    background: isActive ? pill.color + "18" : "var(--pill-bg)",
-                    border: `1px solid ${isActive ? pill.color + "40" : "var(--pill-border)"}`,
+                    background: isActive ? withAlpha(pill.color, 9) : "var(--pill-bg)",
+                    border: `1px solid ${isActive ? withAlpha(pill.color, 25) : "var(--pill-border)"}`,
                     color: isActive ? pill.color : "var(--pill-text)",
                   }}
                 >
@@ -2610,8 +2611,8 @@ function MapHome() {
             aria-label="Search along route"
             className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors active:scale-95"
             style={{
-              background: alongRouteOpen ? "rgba(59,130,246,0.15)" : "var(--pill-bg)",
-              border: `1px solid ${alongRouteOpen ? "rgba(59,130,246,0.3)" : "var(--pill-border)"}`,
+              background: alongRouteOpen ? "var(--pp-accent-bg)" : "var(--pill-bg)",
+              border: `1px solid ${alongRouteOpen ? "var(--pp-accent-border)" : "var(--pill-border)"}`,
               color: alongRouteOpen ? "#3b82f6" : "var(--pill-text)",
             }}
           >
@@ -2669,8 +2670,8 @@ function MapHome() {
             }}
             className="w-12 h-12 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
             style={{
-              background: showInbox ? "rgba(59,130,246,0.15)" : "var(--pill-bg)",
-              border: `1px solid ${showInbox ? "rgba(59,130,246,0.3)" : "var(--pill-border)"}`,
+              background: showInbox ? "var(--pp-accent-bg)" : "var(--pill-bg)",
+              border: `1px solid ${showInbox ? "var(--pp-accent-border)" : "var(--pill-border)"}`,
               color: showInbox ? "#3b82f6" : "var(--pill-text)",
             }}
             title={`Alerts (${unreadAlerts} unread)`}
@@ -2896,9 +2897,9 @@ function MapHome() {
               }}
               className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors"
               style={{
-                background: "rgba(59,130,246,0.10)",
+                background: "var(--pp-accent-soft)",
                 color: "#3b82f6",
-                border: "1px solid rgba(59,130,246,0.30)",
+                border: "1px solid var(--pp-accent-border)",
               }}
             >
               Send feedback or report a bug
@@ -3073,7 +3074,7 @@ function MapHome() {
                   type="button"
                   onClick={() => setViewTab("analytics")}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium"
-                  style={{ background: "rgba(59,130,246,0.12)", color: "#60a5fa" }}
+                  style={{ background: "var(--pp-accent-soft)", color: "var(--pp-accent)" }}
                 >
                   <Activity className="w-3 h-3" />
                   {feedActiveNow} active
@@ -3111,7 +3112,7 @@ function MapHome() {
                 onClick={() => setFeedSortMode("recent")}
                 className="px-3 py-1 rounded-full font-medium flex items-center gap-1.5 transition-colors"
                 style={{
-                  background: feedSortMode === "recent" ? "rgba(59,130,246,0.15)" : "transparent",
+                  background: feedSortMode === "recent" ? "var(--pp-accent-bg)" : "transparent",
                   color: feedSortMode === "recent" ? "#3b82f6" : "var(--panel-text-muted)",
                 }}
               >
@@ -3125,7 +3126,7 @@ function MapHome() {
                 disabled={feedLocating}
                 className="px-3 py-1 rounded-full font-medium flex items-center gap-1.5 transition-colors"
                 style={{
-                  background: feedSortMode === "near" ? "rgba(59,130,246,0.15)" : "transparent",
+                  background: feedSortMode === "near" ? "var(--pp-accent-bg)" : "transparent",
                   color: feedSortMode === "near" ? "#3b82f6" : "var(--panel-text-muted)",
                   opacity: feedLocating ? 0.6 : 1,
                 }}
@@ -3232,7 +3233,7 @@ function MapHome() {
                 style={
                   activeCats.size > 0
                     ? { background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)", color: "var(--panel-text-secondary)" }
-                    : { background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.3)" }
+                    : { background: "var(--pp-accent-bg)", border: "1px solid var(--pp-accent-border)" }
                 }
               >
                 All
@@ -3251,8 +3252,8 @@ function MapHome() {
                       isActive ? "ring-1" : "opacity-70 hover:opacity-100"
                     }`}
                     style={{
-                      background: isActive ? pill.color + "18" : "var(--panel-input-bg)",
-                      border: `1px solid ${isActive ? pill.color + "40" : "var(--panel-border)"}`,
+                      background: isActive ? withAlpha(pill.color, 9) : "var(--panel-input-bg)",
+                      border: `1px solid ${isActive ? withAlpha(pill.color, 25) : "var(--panel-border)"}`,
                       color: isActive ? pill.color : "var(--panel-text-secondary)",
                     }}
                   >

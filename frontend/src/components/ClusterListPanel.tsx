@@ -4,6 +4,7 @@ import type { Incident } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
 import { X, MapPin, Clock, Radio } from "lucide-react";
 import { sanitizeScannerTranscriptForDisplay } from "@/lib/sanitize-scanner-transcript";
+import { withAlpha } from "@/lib/colors";
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -97,7 +98,7 @@ export default function ClusterListPanel({ incidents, onSelect, onClose }: Props
                       <span
                         className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
                         style={{
-                          backgroundColor: sev.markerColor + "20",
+                          backgroundColor: withAlpha(sev.markerColor, 13),
                           color: sev.markerColor,
                         }}
                       >

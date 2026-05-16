@@ -4,6 +4,7 @@ import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import type { Incident, IncidentMention } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
 import { incidentHeadline, incidentLocationLabel } from "@/lib/incident-display";
+import { withAlpha } from "@/lib/colors";
 import {
   MapPin,
   Clock,
@@ -399,7 +400,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
             <div className="flex items-center gap-2 mb-2">
               <span
                 className="text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md"
-                style={{ backgroundColor: sev.markerColor + "20", color: sev.markerColor }}
+                style={{ backgroundColor: withAlpha(sev.markerColor, 13), color: sev.markerColor }}
               >
                 {sev.label}
               </span>
@@ -556,7 +557,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
                     key={`${m.at}-${idx}`}
                     className="text-xs leading-relaxed pl-2 border-l-2"
                     style={{
-                      borderColor: sev.markerColor + "55",
+                      borderColor: withAlpha(sev.markerColor, 33),
                       color: "var(--panel-text)",
                     }}
                   >
