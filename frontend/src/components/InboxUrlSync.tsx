@@ -30,10 +30,22 @@ function Inner({ onInboxChange, onViewChange }: Props) {
   const view = sp?.get("view") ?? null;
 
   useEffect(() => {
+    // Mobile: there is no bell button on the map (we hid it to declutter
+    // the right tool-rail — Inbox / Settings live in the bottom nav).
+    // Send `?inbox=…` deep links to the dedicated mobile pages so the
+    // URL contract stays bookmarkable and behaves the same as tapping
+    // the bottom-nav tabs. The bell-on-desktop path is unchanged.
+    if (inbox && typeof window !== "undefined") {
+      const isMobile = window.matchMedia("(max-width: 767px)").matches;
+      if (isMobile) {
+        router.replace(inbox === "settings" ? "/more" : "/inbox");
+        return;
+      }
+    }
     if (inbox === "settings") onInboxChange("settings");
     else if (inbox) onInboxChange("list");
     else onInboxChange(null);
-  }, [inbox, onInboxChange]);
+  }, [inbox, onInboxChange, router]);
 
   useEffect(() => {
     if (view === "api") {
