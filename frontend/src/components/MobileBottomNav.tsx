@@ -3,29 +3,22 @@
 /**
  * Persistent bottom tab bar for the mobile-sized viewport.
  *
- * Per the build plan §4: `[Map] [Feed] [Inbox] [Settings]`. This
- * supersedes the floating `MobileFeedReturnPill` (which is now
- * removed from MapHome) — the bar is the canonical way to swap
- * between the four primary surfaces on a phone.
+ * Routing model — every tab is a first-class route, no overlays:
+ *   - Map      → `/?view=map`
+ *   - Feed     → `/feed`
+ *   - Ask      → `/?view=ask`
+ *   - Analytics→ `/?view=analytics`
+ *   - Inbox    → `/inbox`   (dedicated full-screen mobile page)
+ *   - More     → `/more`    (dedicated full-screen settings page)
  *
- * Routing model:
- *   - Map     → `/?view=map`            (sticks the map preference)
- *   - Feed    → `/feed`
- *   - Inbox   → `/?view=<current>&inbox=1` on home (keeps map / analytics / ask)
- *               or `/feed?inbox=1` on the feed — never forces map.
- *   - Settings→ same pattern with `inbox=settings`.
+ * `persistTabIntent` only stores the sticky home-view preference for
+ * the four primary surfaces (map/feed/ask/analytics) — Inbox/More are
+ * dedicated routes and shouldn't overwrite which view a bare `/` opens.
  *
- * `MapHome` / feed read the `inbox` query param and open AlertsInbox
- * without changing the active surface unless the tab itself switches
- * (e.g. Map → Feed).
- *
- * `persistTabIntent` only updates sticky prefs for primary surfaces
- * (map/feed/ask/analytics) — never for inbox/settings overlays, so a
- * bare `/` URL plus `?inbox=` / `?inbox=settings` still resolves the
- * underlying `view=` from session instead of defaulting to map.
- * keeps the existing top-bar nav. We render `null` on desktop so the
- * map's bottom-edge controls (compass, recenter, etc.) keep their
- * full real estate.
+ * The bar is only rendered when the viewport is ≤767px — desktop keeps
+ * the existing top-bar nav. We render `null` on desktop so the map's
+ * bottom-edge controls (compass, recenter, etc.) keep their full real
+ * estate.
  */
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -53,8 +46,8 @@ const TABS: Tab[] = [
   { id: "feed",      label: "Feed",      href: "/feed",                     Icon: List },
   { id: "ask",       label: "Ask",       href: "/?view=ask",                Icon: MessageCircle, pro: true },
   { id: "analytics", label: "Analytics", href: "/?view=analytics",          Icon: BarChart3, pro: true },
-  { id: "inbox",     label: "Inbox",     href: "/?inbox=1",                 Icon: Bell },
-  { id: "settings",  label: "More",      href: "/?inbox=settings",          Icon: SettingsIcon },
+  { id: "inbox",     label: "Inbox",     href: "/inbox",                    Icon: Bell },
+  { id: "settings",  label: "More",      href: "/more",                     Icon: SettingsIcon },
 ];
 
 const HOME_VIEW_PREF_KEY = "cp:home-view";
@@ -66,43 +59,8 @@ const MOBILE_QUERY = "(max-width: 767px)";
  *  page can pad the bottom of any UI it doesn't want overlapped. */
 export const MOBILE_NAV_HEIGHT_PX = 64;
 
-/** Resolve home `view=` slug for inbox/settings deep links (never `inbox` / `settings`). */
-function homeViewSlugForInbox(
-  viewParam: string | null,
-  sessionTab: TabId | null
-): "map" | "feed" | "analytics" | "ask" {
-  const valid = new Set<string>(["map", "feed", "analytics", "ask"]);
-  if (viewParam && valid.has(viewParam)) return viewParam as "map";
-  if (sessionTab && valid.has(sessionTab)) return sessionTab as "map";
-  return "map";
-}
-
-function resolveTabHref(
-  tab: Tab,
-  ctx: {
-    pathname: string | null;
-    onFeed: boolean;
-    viewParam: string | null;
-    sessionTab: TabId | null;
-  }
-): string {
-  const { pathname, onFeed, viewParam, sessionTab } = ctx;
-  if (tab.id === "inbox") {
-    if (onFeed) return "/feed?inbox=1";
-    if (pathname === "/") {
-      const v = homeViewSlugForInbox(viewParam, sessionTab);
-      return `/?view=${encodeURIComponent(v)}&inbox=1`;
-    }
-    return "/?view=map&inbox=1";
-  }
-  if (tab.id === "settings") {
-    if (onFeed) return "/feed?inbox=settings";
-    if (pathname === "/") {
-      const v = homeViewSlugForInbox(viewParam, sessionTab);
-      return `/?view=${encodeURIComponent(v)}&inbox=settings`;
-    }
-    return "/?view=map&inbox=settings";
-  }
+/** All tabs are first-class routes — no per-tab URL composition needed. */
+function resolveTabHref(tab: Tab): string {
   return tab.href;
 }
 
@@ -201,46 +159,28 @@ function MobileBottomNavInner() {
   const { isPro } = useAuth();
   if (!show) return null;
 
-  const inboxParam = searchParams?.get("inbox") ?? null;
   const viewParam = searchParams?.get("view") ?? null;
   const onFeed = pathname?.startsWith("/feed") ?? false;
+  const onInbox = pathname?.startsWith("/inbox") ?? false;
+  const onMore = pathname?.startsWith("/more") ?? false;
   const sessionTab = pathname === "/" ? readSessionViewTab() : null;
 
   let activeId: TabId = "map";
-  if (onFeed) {
-    if (inboxParam === "settings") activeId = "settings";
-    else if (inboxParam) activeId = "inbox";
-    else activeId = "feed";
-  } else if (inboxParam === "settings") {
-    activeId = "settings";
-  } else if (inboxParam) {
-    activeId = "inbox";
-  } else if (viewParam === "feed") {
-    activeId = "feed";
-  } else if (viewParam === "analytics") {
-    activeId = "analytics";
-  } else if (viewParam === "ask") {
-    activeId = "ask";
-  } else if (viewParam === "map") {
-    activeId = "map";
-  } else if (sessionTab === "feed") {
-    activeId = "feed";
-  } else if (sessionTab === "analytics") {
-    activeId = "analytics";
-  } else if (sessionTab === "ask") {
-    activeId = "ask";
-  }
+  if (onMore) activeId = "settings";
+  else if (onInbox) activeId = "inbox";
+  else if (onFeed) activeId = "feed";
+  else if (viewParam === "feed") activeId = "feed";
+  else if (viewParam === "analytics") activeId = "analytics";
+  else if (viewParam === "ask") activeId = "ask";
+  else if (viewParam === "map") activeId = "map";
+  else if (sessionTab === "feed") activeId = "feed";
+  else if (sessionTab === "analytics") activeId = "analytics";
+  else if (sessionTab === "ask") activeId = "ask";
 
   const handleTabActivate = (tab: Tab) => {
     persistTabIntent(tab);
     if (activeId === tab.id) return;
-    const href = resolveTabHref(tab, {
-      pathname: pathname ?? null,
-      onFeed,
-      viewParam,
-      sessionTab,
-    });
-    router.push(href);
+    router.push(resolveTabHref(tab));
   };
 
   const handleTabPointerUp = (tab: Tab) => (event: PointerEvent<HTMLButtonElement>) => {
