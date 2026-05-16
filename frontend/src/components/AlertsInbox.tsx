@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { AlertTriangle, Bell, Check, MapPin, Moon, Trash2, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -45,9 +45,11 @@ interface Props {
   /**
    * Where the drawer mounts: default anchors above the map bell stack;
    * use `mobileAboveNav` on routes like `/feed` so the panel clears the
-   * mobile tab bar.
+   * mobile tab bar; `fullScreen` fills the viewport between the top edge
+   * and the mobile bottom nav (used by the dedicated `/inbox` and
+   * `/more` mobile routes).
    */
-  placement?: "mapBell" | "mobileAboveNav";
+  placement?: "mapBell" | "mobileAboveNav" | "fullScreen";
   /**
    * Which subview should be visible the first time the drawer opens.
    * Defaults to `"list"` (recent alerts). Set to `"settings"` to
@@ -161,29 +163,42 @@ export default function AlertsInbox({
     if (open) markAllRead();
   }, [open]);
 
+  const wrapperClassName =
+    placement === "fullScreen"
+      ? "fixed inset-0 flex flex-col overflow-hidden"
+      : placement === "mobileAboveNav"
+        ? "fixed left-3 right-3 max-w-lg mx-auto w-auto rounded-xl shadow-2xl backdrop-blur-md flex flex-col overflow-hidden"
+        : "absolute bottom-12 right-0 w-80 max-w-[calc(100vw-1.5rem)] rounded-xl shadow-2xl backdrop-blur-md flex flex-col overflow-hidden";
+
+  const wrapperStyle: CSSProperties = {
+    background: "var(--panel-bg)",
+    ...(placement === "fullScreen"
+      ? {
+          // Fill viewport down to the top of the mobile bottom nav.
+          bottom: `calc(${MOBILE_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom, 0px))`,
+          zIndex: 2147483005,
+        }
+      : {
+          border: "1px solid var(--panel-border)",
+          maxHeight: "min(60vh, 32rem)",
+          ...(placement === "mobileAboveNav"
+            ? {
+                bottom: `calc(${MOBILE_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom, 0px) + 10px)`,
+                zIndex: 2147483010,
+              }
+            : {}),
+        }),
+  };
+
   return (
     <AnimatePresence>
       {open && (
         <motion.div
-          initial={{ opacity: 0, scale: 0.9, y: 8 }}
+          initial={placement === "fullScreen" ? false : { opacity: 0, scale: 0.9, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.9, y: 8 }}
-          className={
-            placement === "mobileAboveNav"
-              ? "fixed left-3 right-3 max-w-lg mx-auto w-auto rounded-xl shadow-2xl backdrop-blur-md flex flex-col overflow-hidden"
-              : "absolute bottom-12 right-0 w-80 max-w-[calc(100vw-1.5rem)] rounded-xl shadow-2xl backdrop-blur-md flex flex-col overflow-hidden"
-          }
-          style={{
-            background: "var(--panel-bg)",
-            border: "1px solid var(--panel-border)",
-            maxHeight: "min(60vh, 32rem)",
-            ...(placement === "mobileAboveNav"
-              ? {
-                  bottom: `calc(${MOBILE_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom, 0px) + 10px)`,
-                  zIndex: 2147483010,
-                }
-              : {}),
-          }}
+          exit={placement === "fullScreen" ? { opacity: 0 } : { opacity: 0, scale: 0.9, y: 8 }}
+          className={wrapperClassName}
+          style={wrapperStyle}
           role="dialog"
           aria-label="Alerts inbox"
         >
@@ -260,7 +275,11 @@ export default function AlertsInbox({
 
           {showSettings && (
             <div
-              className="px-3 py-3 space-y-2 shrink-0"
+              className={
+                placement === "fullScreen"
+                  ? "px-3 py-3 space-y-2 flex-1 overflow-y-auto"
+                  : "px-3 py-3 space-y-2 shrink-0"
+              }
               style={{ borderBottom: "1px solid var(--panel-border)", background: "var(--panel-input-bg)" }}
             >
               <div className="flex items-center justify-between">
@@ -488,7 +507,15 @@ export default function AlertsInbox({
             </div>
           )}
 
-          <div className="flex-1 overflow-y-auto">
+          <div
+            className="flex-1 overflow-y-auto"
+            style={
+              // In full-screen mode the settings panel takes the whole
+              // body when toggled on (so the dedicated `/more` page is
+              // settings-only). Hide the alerts list in that case.
+              placement === "fullScreen" && showSettings ? { display: "none" } : undefined
+            }
+          >
             {alerts.length === 0 ? (
               <div
                 className="px-4 py-10 text-center text-xs flex flex-col items-center gap-2"
