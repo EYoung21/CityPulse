@@ -573,6 +573,39 @@ def count_city_incidents(slug: str, since_iso: Optional[str] = None) -> int:
         return -1
 
 
+def count_city_incidents_filtered(
+    slug: str,
+    *,
+    since_iso: Optional[str] = None,
+    until_iso: Optional[str] = None,
+    severity_category: Optional[str] = None,
+) -> int:
+    """Cheap aggregate count for the Pulse Chat `count_incidents` tool.
+
+    Lets the LLM answer "how many X in time window Y" questions without
+    paging the actual rows. Returns -1 on error so the caller can degrade
+    gracefully ("count unavailable").
+
+    Firestore composite indexes already cover (city, reported_at) and
+    (city, severity_category, reported_at) for the existing list / stats
+    queries; this reuses both shapes via .count() so no new indexes are
+    required.
+    """
+    db = _ensure_client()
+    try:
+        query = db.collection("incidents").where("city", "==", slug)
+        if severity_category:
+            query = query.where("severity_category", "==", severity_category)
+        if since_iso:
+            query = query.where("reported_at", ">=", since_iso)
+        if until_iso:
+            query = query.where("reported_at", "<", until_iso)
+        agg = query.count().get()
+        return agg[0][0].value
+    except Exception:
+        return -1
+
+
 def inhibitor_stats() -> dict:
     db = _ensure_client()
     stats: dict[str, int] = {}

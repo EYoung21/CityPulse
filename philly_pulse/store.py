@@ -435,6 +435,23 @@ def count_city_incidents(slug: str, since_iso: Optional[str] = None) -> int:
     return -1
 
 
+def count_city_incidents_filtered(
+    slug: str,
+    *,
+    since_iso: Optional[str] = None,
+    until_iso: Optional[str] = None,
+    severity_category: Optional[str] = None,
+) -> int:
+    """SQLite stand-in for the Pulse Chat `count_incidents` aggregate.
+
+    Dev SQLite has no `city` column, so this can't honor the city filter.
+    Return -1 — the Pulse Chat tool surfaces that as "count unavailable
+    on this deployment" and the LLM falls back to its other tools.
+    """
+    _ = slug, since_iso, until_iso, severity_category
+    return -1
+
+
 def inhibitor_stats() -> dict:
     """Return counts by inhibitor_status for the transparency page."""
     conn = get_conn()
