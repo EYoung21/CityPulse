@@ -25,6 +25,7 @@ if _should_use_firestore():
     from .firestore_store import (
         append_mention,
         count_city_incidents,
+        count_city_incidents_filtered,
         delete_incident,
         find_recent_duplicate,
         get_conn,
@@ -46,6 +47,7 @@ else:
     from .store import (
         append_mention,
         count_city_incidents,
+        count_city_incidents_filtered,
         find_recent_duplicate,
         get_conn,
         get_extraction,

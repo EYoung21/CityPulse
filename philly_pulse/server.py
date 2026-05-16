@@ -27,6 +27,7 @@ from pydantic import BaseModel
 
 from . import admin_events, city_registry, geocode, ingest_location, inhibitor, llm, llm_client, persistence as store, prefilter, push as push_mod, weights
 from .llm_client import LLMConfigError, LLMHTTPError
+from .llm import SEVERITY_CATEGORIES
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1667,6 +1668,53 @@ def pulse_chat_tool_specs() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "count_incidents",
+                "description": (
+                    "Cheap aggregate COUNT for this chat's city — answers 'how many X in time window Y' "
+                    "without paging the rows. ALWAYS prefer this over fetch_older_incidents for "
+                    "questions about totals, frequencies, or 'has anything happened in the last N days'. "
+                    "Returns a single number plus the window/category you asked about. Costs roughly "
+                    "one Firestore op regardless of result size. If you need the actual incident text, "
+                    "follow up with search_incidents or fetch_older_incidents."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "severity_category": {
+                            "type": "string",
+                            "enum": list(SEVERITY_CATEGORIES),
+                            "description": (
+                                "Exact match against incident.severity_category. Omit to count all "
+                                "categories. Phrase → category mapping: shot/shooting/gun fired → "
+                                "violent_weapon; gunshots heard/shots heard (no target confirmed) → "
+                                "shots_heard; stabbing/fight/assault without firearm → violent_no_weapon; "
+                                "robbery → robbery; burglary/break-in → burglary_in_progress; medical "
+                                "emergency/cardiac/stroke → medical_priority; non-urgent medical → "
+                                "medical_other; fire/smoke/hazmat → fire_hazmat; crash WITH injury → "
+                                "traffic_crash_injury; fender-bender/no injury → traffic_crash_no_injury; "
+                                "loud noise/disturbance/argument → disorder; admin/test transmission → "
+                                "admin_or_noise. Two related questions (e.g. 'gunshots') usually need "
+                                "two calls: one for violent_weapon and one for shots_heard."
+                            ),
+                        },
+                        "since": {
+                            "type": "string",
+                            "description": (
+                                "ISO-8601 lower bound (inclusive) on reported_at. e.g. "
+                                "'2026-05-02T00:00:00Z' for 'last 2 weeks' from 2026-05-16."
+                            ),
+                        },
+                        "until": {
+                            "type": "string",
+                            "description": "ISO-8601 upper bound (exclusive). Defaults to now.",
+                        },
+                    },
+                },
+            },
+        },
     ]
 
 
@@ -1764,6 +1812,57 @@ def _pulse_tool_exec_fetch_older(
     }
 
 
+def _pulse_tool_exec_count(
+    *,
+    city_slug: str,
+    effective_since: str | None,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    """Single-shot aggregate count for the `count_incidents` tool.
+
+    Bounded by the caller's free-tier window (`effective_since`) so a free
+    user can't cheaply probe deeper history than the rest of the API gives
+    them. Returns -1-style sentinels via an `error` key if the backend
+    can't satisfy the count (e.g. dev SQLite with no city column)."""
+    cat = (str(args.get("severity_category") or "")).strip() or None
+    since_arg = (str(args.get("since") or "")).strip() or None
+    until_arg = (str(args.get("until") or "")).strip() or None
+
+    # Pull the lower bound up to the caller's allowed window — don't let
+    # the LLM pretend a free user can ask "how many in the last year".
+    since = since_arg
+    if effective_since:
+        if not since or since < effective_since:
+            since = effective_since
+    until = until_arg
+
+    try:
+        n = store.count_city_incidents_filtered(
+            city_slug,
+            since_iso=since,
+            until_iso=until,
+            severity_category=cat,
+        )
+    except Exception as e:
+        logger.warning("pulse-chat count_incidents failed: %s", e)
+        return {"error": "count_unavailable", "detail": str(e)[:120]}
+
+    if n < 0:
+        return {
+            "error": "count_unavailable",
+            "detail": "Backend does not support aggregate count on this deployment.",
+        }
+    return {
+        "count": n,
+        "city": city_slug,
+        "severity_category": cat,
+        "since": since,
+        "until": until,
+        "clamped_to_user_window": bool(effective_since) and (since == effective_since) and bool(since_arg) and since_arg < (effective_since or ""),
+        "hint": "Aggregate from Firestore .count(); not a list of incidents. Pair with search_incidents if the user needs the text.",
+    }
+
+
 @app.post("/api/pulse-chat")
 async def pulse_chat(
     body: PulseChatRequest,
@@ -1838,8 +1937,15 @@ async def pulse_chat(
             f"``fetch_older_incidents`` at most {PULSE_CHAT_FS_TOOL_FETCHES_MAX} time(s) total — each call loads "
             f"one older page (capped at {PULSE_CHAT_FS_TOOL_PAGE_CAP} rows; uses Firestore document reads). "
             "Prefer search_incidents first; use fetch_older_incidents only when the prefetch window is not enough.\n"
+            "- ``count_incidents`` returns a TRUE aggregate count (one Firestore op, full city history within the "
+            "user's allowed window) for questions about totals / frequencies / 'has anything happened in the last N "
+            "days'. ALWAYS use it before guessing from the JSON sample — the sample is the latest few hundred "
+            "incidents, NOT the year/month total, so counting it is wrong. See the tool's severity_category enum "
+            "for the exact category names and phrase mapping; multi-faceted questions (e.g. 'how many shootings') "
+            "often need two calls — one for violent_weapon and one for shots_heard — and then a sum.\n"
             "- Ground factual claims in the initial JSON, tool outputs, and user messages. If tools return no "
-            "matches or fetch budget is exhausted, say that in one short sentence.\n"
+            "matches or fetch budget is exhausted, say that in one short sentence. Never count occurrences of "
+            "a word inside a transcript and report it as 'happened N times'.\n"
         )
 
     system = (
@@ -1967,6 +2073,18 @@ async def pulse_chat(
                             )
 
                         out = await starlette.concurrency.run_in_threadpool(_fetch_sync)
+                    elif name == "count_incidents":
+                        # Aggregate counts are cheap (one Firestore op
+                        # regardless of result size); not subject to the
+                        # fs_used page budget.
+                        def _count_sync():
+                            return _pulse_tool_exec_count(
+                                city_slug=city_slug,
+                                effective_since=effective_since,
+                                args=args,
+                            )
+
+                        out = await starlette.concurrency.run_in_threadpool(_count_sync)
                     else:
                         out = {"error": "unknown_tool", "name": name}
                     messages_loop.append(
