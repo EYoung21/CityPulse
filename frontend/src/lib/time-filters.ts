@@ -8,6 +8,11 @@ export type TimeFilterRow = {
   label: string;
   hours: number;
   pro: boolean;
+  /** Surface this chip inline in the map/feed strip. Non-primary chips
+   *  live behind a "More" dropdown so the strip stays scannable —
+   *  see <TimeWindowChips/>. Every chip remains valid for stored
+   *  preferences and saved presets. */
+  primary?: boolean;
 };
 
 export const TIME_FILTERS: readonly TimeFilterRow[] = [
@@ -17,26 +22,33 @@ export const TIME_FILTERS: readonly TimeFilterRow[] = [
   { label: "15m", hours: 15 / 60, pro: false },
   { label: "30m", hours: 0.5, pro: false },
   { label: "45m", hours: 0.75, pro: false },
-  { label: "1h", hours: 1, pro: false },
+  { label: "1h", hours: 1, pro: false, primary: true },
   // Pro: depth / lookback
   { label: "2h", hours: 2, pro: true },
   { label: "3h", hours: 3, pro: true },
-  { label: "6h", hours: 6, pro: true },
+  { label: "6h", hours: 6, pro: true, primary: true },
   { label: "12h", hours: 12, pro: true },
-  { label: "24h", hours: 24, pro: true },
+  { label: "24h", hours: 24, pro: true, primary: true },
   { label: "2d", hours: 48, pro: true },
   { label: "3d", hours: 72, pro: true },
   { label: "5d", hours: 120, pro: true },
-  { label: "1w", hours: 168, pro: true },
+  { label: "1w", hours: 168, pro: true, primary: true },
   { label: "2w", hours: 336, pro: true },
-  { label: "1mo", hours: 720, pro: true },
+  { label: "1mo", hours: 720, pro: true, primary: true },
   { label: "2mo", hours: 1440, pro: true },
   { label: "3mo", hours: 2160, pro: true },
   { label: "6mo", hours: 4320, pro: true },
   { label: "1y", hours: 8760, pro: true },
   // Infinity → client filter accepts all merged rows; extended paging has no lower bound.
-  { label: "All", hours: Number.POSITIVE_INFINITY, pro: true },
+  { label: "All", hours: Number.POSITIVE_INFINITY, pro: true, primary: true },
 ] as const;
+
+/** Default inline chips: 1h / 6h / 24h / 1w / 1mo / All. Cover 95%+ of
+ *  the windows real users pick; the rest live in the More dropdown. */
+export const PRIMARY_TIME_FILTERS: readonly TimeFilterRow[] =
+  TIME_FILTERS.filter((t) => t.primary);
+export const SECONDARY_TIME_FILTERS: readonly TimeFilterRow[] =
+  TIME_FILTERS.filter((t) => !t.primary);
 
 /** Values accepted by GET /api/stats/count?hours= */
 export const COUNT_API_ALLOWED_HOURS = new Set(
