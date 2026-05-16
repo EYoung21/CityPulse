@@ -1,0 +1,79 @@
+name: Server Bump uvicorn Workers
+
+# Updates philly-pulse-api.service to run uvicorn with --workers 4 so
+# /api/ingest can process requests from all four cities concurrently
+# instead of serializing them through a single Python process.
+#
+# Background: under load (Philly's 24 feeds + NYC/SF/Chattanooga
+# combined), each ingest blocks on a 10-25s LLM extraction call. With
+# one worker the API throughput cap is ~3-6 requests/min and Philly's
+# extractions pile up faster than they drain, so most LLM calls time
+# out and the rows never become map incidents.
+#
+# This workflow:
+#   1. Reads the current ExecStart line from the unit
+#   2. Idempotently inserts `--workers 4` if it isn't there
+#   3. Reloads systemd + restarts the service
+#   4. Confirms the new process is running and curls /api/health
+#
+# Idempotent: re-run is a no-op once `--workers 4` is in place.
+
+on:
+  workflow_dispatch:
+    inputs:
+      worker_count:
+        description: "uvicorn --workers count"
+        required: false
+        default: "4"
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update philly-pulse-api unit + restart
+        uses: appleboy/ssh-action@v1
+        env:
+          WORKER_COUNT: ${{ inputs.worker_count }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 4m
+          envs: WORKER_COUNT
+          script: |
+            set -euo pipefail
+            UNIT=/etc/systemd/system/philly-pulse-api.service
+            test -f "$UNIT" || { echo "FATAL: $UNIT missing"; exit 1; }
+
+            echo "===> Current ExecStart"
+            grep -E '^ExecStart' "$UNIT" || true
+
+            if grep -qE '^ExecStart=.*--workers\s+[0-9]+' "$UNIT"; then
+              echo "===> --workers already present; normalizing to $WORKER_COUNT"
+              sed -i -E "s|(--workers)\s+[0-9]+|\1 ${WORKER_COUNT}|" "$UNIT"
+            else
+              echo "===> Inserting --workers $WORKER_COUNT"
+              # Insert before any trailing `>>` redirection if present.
+              sed -i -E "s|(^ExecStart=.*uvicorn[^$]*?--port[[:space:]]+[0-9]+)|\1 --workers ${WORKER_COUNT}|" "$UNIT" || true
+              # Fallback: append to end of ExecStart line if the regex above missed.
+              if ! grep -qE '^ExecStart=.*--workers' "$UNIT"; then
+                sed -i -E "s|(^ExecStart=.*)$|\1 --workers ${WORKER_COUNT}|" "$UNIT"
+              fi
+            fi
+
+            echo "===> New ExecStart"
+            grep -E '^ExecStart' "$UNIT"
+
+            systemctl daemon-reload
+            systemctl restart philly-pulse-api
+            sleep 4
+
+            echo "===> Service status"
+            systemctl is-active philly-pulse-api && echo "SERVICE: active" || { echo "SERVICE: FAILED"; exit 1; }
+
+            echo "===> Worker process tree"
+            ps -eo pid,ppid,cmd --forest 2>/dev/null | grep -E 'uvicorn|philly_pulse.server' | head -12 || true
+
+            echo "===> /api/health"
+            curl -sS http://127.0.0.1:8765/api/health | head -c 500
+            echo ""

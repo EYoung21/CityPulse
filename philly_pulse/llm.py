@@ -113,7 +113,16 @@ def configure_llm(
 
 
 _LLM_LOCAL_MAX_CHARS = int(os.environ.get("LLM_LOCAL_CONTEXT_MAX_CHARS", "1700"))
-_LLM_TIMEOUT_SEC = float(os.environ.get("LLM_TIMEOUT_SEC", "30"))
+# Lambda Ollama (qwen2.5:7b-q5_K_M) typically completes /api/ingest's
+# extraction prompt in 10-25s; under load (Philly's 24 feeds firehose +
+# NYC/SF/Chattanooga) the tail stretches into the 40-60s range. The
+# previous 30s default caused mass "LLM failed, storing raw extraction"
+# warnings — those extractions never became map incidents, dragging
+# Philly's promotion rate to ~5% while NYC's stayed near 33%. Override
+# via LLM_TIMEOUT_SEC env var; raise this if the model gets slower, not
+# lower (a 30s false-timeout that loses the row is worse than a 90s
+# real wait that succeeds).
+_LLM_TIMEOUT_SEC = float(os.environ.get("LLM_TIMEOUT_SEC", "60"))
 
 
 def _truncate_local_context(blob: str, max_chars: int = _LLM_LOCAL_MAX_CHARS) -> str:
