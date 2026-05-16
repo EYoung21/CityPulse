@@ -608,10 +608,18 @@
   top: var(--pp-below-app-topnav-top);
 }
 
-/* Mobile-only: lift bottom controls above the tab bar + home indicator
-   (matches map filter strip; see MobileBottomNav MOBILE_NAV_HEIGHT_PX). */
+/* Mobile floor for bottom-anchored floating UI.
+   Clears (bottom-up): home indicator → MobileBottomNav (64px) → gap →
+   the 2-row map filter strip (time pill + category/preset row).
+   Anything that opens from the bottom on mobile (right-column controls,
+   Pulse Network sheet, future sheets) should anchor at or above this. */
+:root {
+  --pp-mobile-bottom-rail: calc(
+    64px + env(safe-area-inset-bottom, 0px) + 0.75rem + 5.5rem
+  );
+}
 .pp-bottom-controls {
-  bottom: calc(0.75rem + 64px + env(safe-area-inset-bottom, 0px));
+  bottom: var(--pp-mobile-bottom-rail);
 }
 @media (min-width: 768px) {
   .pp-bottom-controls { bottom: 4.5rem; }

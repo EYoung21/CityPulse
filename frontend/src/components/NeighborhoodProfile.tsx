@@ -28,9 +28,8 @@ import { getSeverity } from "@/lib/severity";
 import Sparkline from "@/components/charts/Sparkline";
 import DonutChart from "@/components/charts/DonutChart";
 import HourClock from "@/components/charts/HourClock";
-import { fetchIncidentsSnapshotOnce } from "@/lib/firestore";
+import { subscribeIncidents } from "@/lib/firestore";
 import { isFirebaseConfigured } from "@/lib/firebase";
-import { enrichIncidents } from "@/lib/incident-weights";
 import { incidentAudioSrc } from "@/lib/public-api-base";
 
 interface Props {
@@ -43,15 +42,11 @@ export default function NeighborhoodProfile({ slug }: Props) {
 
   useEffect(() => {
     if (!isFirebaseConfigured()) return;
-    let cancelled = false;
-    void fetchIncidentsSnapshotOnce()
-      .then((rows) => {
-        if (!cancelled) setAllIncidents(enrichIncidents(rows));
-      })
-      .catch((e) => console.error("Firestore:", e));
-    return () => {
-      cancelled = true;
-    };
+    const unsub = subscribeIncidents(
+      (rows) => setAllIncidents(rows),
+      (e) => console.error("Firestore:", e)
+    );
+    return () => unsub();
   }, []);
 
   if (!hood) {

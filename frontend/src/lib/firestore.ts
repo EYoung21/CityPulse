@@ -17,14 +17,12 @@ import { enrichIncidents } from "@/lib/incident-weights";
 import { getCurrentCity } from "@/lib/pulse-cities";
 
 const COLLECTION = "incidents";
-/** Map + live listener: cap sync size for fast first paint. Recent
- *  incidents dominate the viewport; each doc in the query is billed on
- *  initial load and on listener updates — keep this conservative. */
-const MAP_SYNC_LIMIT = 800;
-/** Hard ceiling for the one-shot extended-history fetch (used when the
- *  user picks a multi-week/month time window). Limits worst-case reads
- *  per session when paging through history. */
-const EXTENDED_HISTORY_LIMIT = 5000;
+/** Map + live listener: recent incidents for first paint + live updates. */
+export const MAP_SYNC_LIMIT = 1200;
+/** Default chunk size when backfilling a user-selected time window. */
+export const EXTENDED_HISTORY_PAGE_SIZE = 2000;
+/** Per-query page ceiling (not a session total — paging runs until the window is full). */
+const EXTENDED_HISTORY_MAX_PAGE = 10_000;
 
 function toISOString(val: unknown): string {
   if (!val) return new Date().toISOString();
@@ -162,12 +160,14 @@ export async function fetchExtendedHistoryPage(opts: {
   /** Previous page's `nextCursor` — ISO string of the last doc in the
    *  prior page. Omit on the first call. */
   cursor?: string | null;
-  /** Page size; defaults to 750. Stays well under EXTENDED_HISTORY_LIMIT
-   *  so several pages fit per hard ceiling. */
+  /** Page size; defaults to {@link EXTENDED_HISTORY_PAGE_SIZE}. */
   pageSize?: number;
 }): Promise<{ rows: Incident[]; nextCursor: string | null }> {
   const db = getFirestoreDb();
-  const size = Math.max(1, Math.min(opts.pageSize ?? 750, EXTENDED_HISTORY_LIMIT));
+  const size = Math.max(
+    1,
+    Math.min(opts.pageSize ?? EXTENDED_HISTORY_PAGE_SIZE, EXTENDED_HISTORY_MAX_PAGE)
+  );
   // Note: NO `where("reported_at", ">=", …)` clause. Sorting desc and
   // walking the cursor is enough — once a page's last row is older than
   // `sinceISO`, we set `nextCursor = null` and stop paging.
@@ -306,9 +306,7 @@ export async function fetchIncidentPageFromFirestore(opts: {
   const sinceIso = (opts.since || "").trim();
 
   if (isNear) {
-    // Pull up to 500 recent incidents in the city, then haversine-sort.
-    // 7 days window keeps payload bounded; matches the server's
-    // `mode=near` heuristic of "recent enough to still be useful".
+    // Pull recent incidents in the city, then haversine-sort (matches API `mode=near`).
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
     const lowerBound = sinceIso && sinceIso > sevenDaysAgo ? sinceIso : sevenDaysAgo;
     const q = query(
@@ -316,7 +314,7 @@ export async function fetchIncidentPageFromFirestore(opts: {
       where("city", "==", citySlug),
       where("reported_at", ">=", lowerBound),
       orderBy("reported_at", "desc"),
-      limitFn(220),
+      limitFn(500),
     );
     const snap = await getDocs(q);
     const list: (Incident & { distance_km?: number })[] = [];
@@ -526,7 +524,7 @@ export function subscribeExtractions(
     where("reported_at", ">=", since.toISOString()),
     where("reported_at", "<=", until.toISOString()),
     orderBy("reported_at", "desc"),
-    limitFn(800)
+    limitFn(2000)
   );
 
   return onSnapshot(
@@ -556,7 +554,7 @@ export function subscribeAllExtractions(
     where("reported_at", ">=", since.toISOString()),
     where("reported_at", "<=", until.toISOString()),
     orderBy("reported_at", "desc"),
-    limitFn(800)
+    limitFn(2000)
   );
 
   return onSnapshot(

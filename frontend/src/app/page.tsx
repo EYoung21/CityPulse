@@ -119,6 +119,13 @@ import {
   type Incident,
   type StatsResponse,
 } from "@/lib/api";
+import {
+  TIME_FILTERS,
+  normalizeTimeFilterHours,
+  sinceIsoForTimeFilterHours,
+  timeFilterNeedsExtendedFetch,
+} from "@/lib/time-filters";
+import { EXTENDED_HISTORY_PAGE_SIZE } from "@/lib/firestore";
 import { useTheme } from "@/lib/theme";
 import AuthBar from "@/components/AuthBar";
 import { isFirebaseConfigured } from "@/lib/firebase";
@@ -173,53 +180,8 @@ const CATEGORY_PILLS = INCIDENT_CATEGORY_GROUPS.map((pill, i) => ({
   icon: CATEGORY_PILL_ICONS[i],
 }));
 
-const TIME_FILTERS = [
-  // Free tier: every "live view" window ≤1h is free (5m, 10m, 30m, 1h).
-  // Pro tier: everything 3h+ — that's the "depth / lookback" pitch the
-  // upgrade modal sells. Paywalling sub-hour windows is backwards
-  // (a more constrained view than the free 1h is *less* premium, not
-  // more), and it punishes free users for tapping a tighter chip.
-  // The click handler at the render site (around line 1738) reads
-  // `pro` to decide whether to fire the upgrade modal vs apply the
-  // filter; nothing else needs to change to flip a chip's gating.
-  { label: "5m", hours: 5 / 60, pro: false },
-  { label: "10m", hours: 10 / 60, pro: false },
-  { label: "30m", hours: 0.5, pro: false },
-  { label: "1h", hours: 1, pro: false },
-  { label: "3h", hours: 3, pro: true },
-  { label: "6h", hours: 6, pro: true },
-  { label: "24h", hours: 24, pro: true },
-  { label: "3d", hours: 72, pro: true },
-  { label: "1w", hours: 168, pro: true },
-  { label: "1mo", hours: 720, pro: true },
-  { label: "3mo", hours: 2160, pro: true },
-  { label: "6mo", hours: 4320, pro: true },
-  { label: "1y", hours: 8760, pro: true },
-  // Infinity = "show everything we have on disk". Backfills go back
-  // 180 days on Broadcastify-sourced cities; older data is preserved
-  // forever once ingested. The filter math (Date.now() - hours*ms)
-  // resolves to -Infinity, which the `t >= cutoff` predicate trivially
-  // accepts — no special-casing needed in the filter loop.
-  { label: "All", hours: Number.POSITIVE_INFINITY, pro: true },
-] as const;
-
 const STORAGE_TIME_FILTER_HOURS = "pulse_time_filter_hours";
 const STORAGE_ACTIVE_CATS = "pulse_active_cats";
-
-/** Map a stored float back to a canonical TIME_FILTERS.hours (avoids 5/60 drift). */
-function normalizeTimeFilterHours(h: number): number {
-  if (typeof h !== "number" || Number.isNaN(h)) return 1;
-  if (!Number.isFinite(h)) {
-    const row = TIME_FILTERS.find((t) => !Number.isFinite(t.hours));
-    return row ? row.hours : 1;
-  }
-  const exact = TIME_FILTERS.find((t) => t.hours === h);
-  if (exact) return h;
-  const near = TIME_FILTERS.find(
-    (t) => Number.isFinite(t.hours) && Math.abs(t.hours - h) < 1e-4
-  );
-  return near ? near.hours : 1;
-}
 
 function readStoredTimeFilterHours(): number {
   if (typeof window === "undefined") return 1;
@@ -1307,12 +1269,9 @@ function MapHome() {
     };
   }, [mapBounds]);
 
-  /** When the global time filter exceeds the live-listener's coverage
-   *  (1w+), kick off a Firestore aggregate count + paged historical
-   *  read so the count actually grows. We fetch in ~750-doc chunks so the
-   *  cost is paid progressively and the UI can paint as pages arrive;
-   *  changing the filter (or unmounting) cancels mid-stream. Short
-   *  windows clear the slice so we don't keep stale history merged in. */
+  /** When the selected chip is wider than the live listener window, page
+   *  through Firestore until the whole timeframe is loaded (or the user
+   *  changes chips). Sub-hour chips rely on the listener only. */
   useEffect(() => {
     if (!useFirestoreData) {
       setExtendedIncidents([]);
@@ -1320,14 +1279,7 @@ function MapHome() {
       setExtendedLoading(false);
       return;
     }
-    // Trigger extended history whenever the user picks a window the
-    // live listener (MAP_SYNC_LIMIT docs) may not fully cover. For
-    // high-ingest cities the ~800-doc cap can be exhausted in well
-    // under a day, so we kick in at 3h+ — short windows still pay
-    // nothing because the page.tsx state stays at [] and the
-    // shouldRenderIncident guard drops anything irrelevant.
-    const EXTENDED_THRESHOLD_HOURS = 3;
-    if (timeFilter < EXTENDED_THRESHOLD_HOURS) {
+    if (!timeFilterNeedsExtendedFetch(timeFilter)) {
       setExtendedIncidents([]);
       setExtendedTotal(null);
       setExtendedLoading(false);
@@ -1335,12 +1287,7 @@ function MapHome() {
     }
 
     let cancelled = false;
-    // The "All" pill sets timeFilter to Infinity (TIME_FILTERS table) —
-    // serialize that as `null` (no lower bound) instead of trying to
-    // build a -Infinity Date, which throws on `.toISOString()`.
-    const sinceISO = Number.isFinite(timeFilter)
-      ? new Date(Date.now() - timeFilter * 3600_000).toISOString()
-      : null;
+    const sinceISO = sinceIsoForTimeFilterHours(timeFilter);
 
     setExtendedIncidents([]);
     setExtendedTotal(null);
@@ -1366,6 +1313,7 @@ function MapHome() {
           const { rows, nextCursor } = await fetchExtendedHistoryPage({
             sinceISO,
             cursor,
+            pageSize: EXTENDED_HISTORY_PAGE_SIZE,
           });
           if (cancelled) return;
           if (rows.length > 0) {
@@ -2709,10 +2657,6 @@ function MapHome() {
         </button>
         <AuthBar />
         <PulseNetworkNav />
-
-
-
-
 
         {/* Alerts inbox bell — surfaces persisted off-screen / on-route
             alerts so users can scroll back through what they may have
