@@ -260,6 +260,15 @@ export default function PulseNetworkNav() {
     backdropFilter: "blur(8px)",
   };
 
+  // Hide entirely on mobile. The map's right tool-rail was getting
+  // crowded (6-8 buttons) and city-switching is a once-a-session action
+  // for power users — it's still reachable from the desktop top-right
+  // and the landing-page CitySwitcher. Keeping it off the mobile rail
+  // is the single biggest declutter we can make without losing real
+  // functionality. (Returning null after all hooks have run, per
+  // Rules of Hooks; `mounted` prevents an SSR/hydration flip.)
+  if (mounted && isMobile) return null;
+
   return (
     <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
       <button

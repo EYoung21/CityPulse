@@ -2665,8 +2665,12 @@ function MapHome() {
 
         {/* Alerts inbox bell — surfaces persisted off-screen / on-route
             alerts so users can scroll back through what they may have
-            missed. Unread badge updates live via the alerts-inbox pubsub. */}
-        <div className="relative">
+            missed. Unread badge updates live via the alerts-inbox pubsub.
+            Hidden on mobile because the bottom-nav Inbox tab opens the
+            same drawer (and `?inbox=…` deep links are redirected to
+            /inbox and /more by InboxUrlSync). Less buttons in the right
+            rail = a calmer mobile map. */}
+        <div className="relative hidden md:block">
           <button
             onClick={() => {
               setShowInbox(!showInbox);
