@@ -122,7 +122,12 @@ export default function PulseNetworkNav() {
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [open]);
 
+  // Anchor the mobile sheet above the bottom nav AND the 2-row filter
+  // strip that sits above the nav on the map page. `--pp-mobile-bottom-rail`
+  // is the shared baseline used by `.pp-bottom-controls` so the sheet
+  // and the trigger button stay vertically aligned as a unit.
   const navLift = `calc(${MOBILE_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom, 0px))`;
+  const mobileSheetBottom = `var(--pp-mobile-bottom-rail, calc(${navLift} + 0.75rem))`;
 
   const menuChrome = {
     background: "rgba(20, 20, 30, 0.95)",
@@ -156,7 +161,7 @@ export default function PulseNetworkNav() {
               position: "fixed",
               left: 12,
               right: 12,
-              bottom: `calc(${navLift} + 10px)`,
+              bottom: mobileSheetBottom,
               maxHeight: `min(72dvh, calc(100dvh - env(safe-area-inset-top, 0px) - ${MOBILE_NAV_HEIGHT_PX}px - env(safe-area-inset-bottom, 0px) - 40px))`,
               zIndex: MOBILE_MENU_Z,
               overflow: "hidden",
@@ -234,11 +239,14 @@ export default function PulseNetworkNav() {
       )
     ) : null;
 
+  // Trigger spacing/padding tightens on mobile via CSS-class media query
+  // rather than JS `isMobile` checks — useSyncExternalStore returns the
+  // server snapshot (desktop) on the first render, so a JS-driven width
+  // would flicker from wide → narrow on hydration. The label text
+  // ("Pulse Network") is hidden with the same `.pp-pulse-net-label` rule.
   const triggerBase = {
     display: "flex" as const,
     alignItems: "center" as const,
-    gap: isMobile ? "4px" : "8px",
-    padding: isMobile ? "8px 10px" : "8px 16px",
     border: "1px solid rgba(255,255,255,0.15)",
     borderRadius: "10px",
     background: "rgba(255,255,255,0.06)",
@@ -259,6 +267,7 @@ export default function PulseNetworkNav() {
         aria-haspopup="dialog"
         aria-label="Pulse Network · Switch cities"
         title="Pulse Network · Switch cities"
+        className="pp-pulse-net-trigger"
         style={triggerBase}
         onMouseEnter={(e) => {
           e.currentTarget.style.background = "rgba(255,255,255,0.12)";
@@ -270,7 +279,7 @@ export default function PulseNetworkNav() {
         }}
       >
         <span style={{ fontSize: "18px" }}>🌐</span>
-        {!isMobile && <span>Pulse Network</span>}
+        <span className="pp-pulse-net-label">Pulse Network</span>
         <span
           style={{
             fontSize: "11px",
@@ -342,6 +351,12 @@ export default function PulseNetworkNav() {
         @keyframes fadeSlideIn {
           from { opacity: 0; transform: translateY(-4px); }
           to   { opacity: 1; transform: translateY(0); }
+        }
+        .pp-pulse-net-trigger { gap: 8px; padding: 8px 16px; }
+        .pp-pulse-net-label { display: inline; }
+        @media (max-width: 767px) {
+          .pp-pulse-net-trigger { gap: 4px; padding: 8px 10px; }
+          .pp-pulse-net-label { display: none; }
         }
       `}</style>
     </div>

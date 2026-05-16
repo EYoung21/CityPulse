@@ -3,7 +3,8 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Crosshair, Download, Code, Zap, Activity } from "lucide-react";
+import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Crosshair, Download, Code, Zap, Activity, Lock } from "lucide-react";
+import { TIME_FILTERS, sinceIsoForTimeFilterHours } from "@/lib/time-filters";
 import IncidentFeed from "@/components/IncidentFeed";
 import IncidentTypeFilterChips from "@/components/IncidentTypeFilterChips";
 import { incidentMatchesCategoryFilter } from "@/lib/incident-category-groups";
@@ -88,6 +89,7 @@ function FeedMobileTabSwipeHost({ expandedId }: { expandedId: string | null }) {
 
 export default function FeedPage() {
   const [mode, setMode] = useState<FeedMode>("recent");
+  const [timeFilter, setTimeFilter] = useState(1);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [activeCats, setActiveCats] = useState<Set<string>>(() => new Set());
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -100,6 +102,11 @@ export default function FeedPage() {
     () => new Date(Date.now() - 60 * 60 * 1000).toISOString(),
     []
   );
+
+  const feedSinceIso = useMemo(() => {
+    if (!isPro) return freeSinceIso;
+    return sinceIsoForTimeFilterHours(timeFilter) ?? undefined;
+  }, [isPro, timeFilter, freeSinceIso]);
 
   const {
     incidents,
@@ -120,7 +127,7 @@ export default function FeedPage() {
     citySlug: city.slug,
     mode,
     onModeChange: setMode,
-    sinceIso: isPro ? undefined : freeSinceIso,
+    sinceIso: feedSinceIso,
   });
 
   const visibleIncidents = useMemo(
@@ -249,7 +256,7 @@ export default function FeedPage() {
           </Link>
           {!isPro && (
             <Link
-              href="/feed?inbox=settings"
+              href="/more"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium shadow-lg shadow-purple-500/20"
               style={{ background: "linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)", color: "#fff" }}
             >
@@ -258,6 +265,40 @@ export default function FeedPage() {
           )}
         </div>
       </header>
+
+      <div
+        className="px-3 py-2 overflow-x-auto no-scrollbar flex items-center gap-1 shrink-0"
+        style={{ borderBottom: "1px solid var(--panel-border, rgba(148,163,184,0.15))" }}
+      >
+        <Clock className="w-3.5 h-3.5 shrink-0 ml-1" style={{ color: "var(--panel-text-muted)" }} />
+        {TIME_FILTERS.map((tf) => {
+          const locked = tf.pro && !isPro;
+          return (
+            <button
+              key={tf.label}
+              type="button"
+              onClick={() => {
+                if (locked) {
+                  window.location.href = "/more";
+                  return;
+                }
+                setTimeFilter(tf.hours);
+              }}
+              className={`px-2.5 py-1 rounded-full text-[11px] font-medium shrink-0 relative ${
+                timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
+              } ${locked ? "opacity-50" : ""}`}
+              style={
+                timeFilter !== tf.hours
+                  ? { color: locked ? "var(--panel-text-muted)" : "var(--panel-text-secondary)" }
+                  : undefined
+              }
+            >
+              {tf.label}
+              {locked && <Lock className="w-2.5 h-2.5 absolute -top-0.5 -right-0.5 text-purple-400" />}
+            </button>
+          );
+        })}
+      </div>
 
       <div
         className="px-4 py-2 flex items-center gap-2"

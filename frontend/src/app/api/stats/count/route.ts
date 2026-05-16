@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
+import { COUNT_API_ALLOWED_HOURS } from "@/lib/time-filters";
 
 /**
  * Public read-only count endpoint.
@@ -14,13 +15,7 @@ import { getFirestore } from "firebase-admin/firestore";
  */
 
 const COLLECTION = "incidents";
-const ALLOWED_HOURS = new Set([
-  // Mirror the TIME_FILTERS table in src/app/page.tsx — restrict the
-  // accepted values so an attacker can't burn reads with arbitrary
-  // queries. The "All" pill (hours = Infinity client-side) is encoded
-  // as the literal string "all" and is handled separately below.
-  5 / 60, 10 / 60, 0.5, 1, 3, 6, 24, 72, 168, 720, 2160, 4320, 8760,
-]);
+const ALLOWED_HOURS = COUNT_API_ALLOWED_HOURS;
 // Slug-safe city: lowercase letters + dashes only; nothing weird leaks
 // into the Firestore query.
 const CITY_RE = /^[a-z][a-z0-9-]{0,40}$/;
