@@ -28,6 +28,7 @@ import {
   Plus,
 } from "lucide-react";
 import { geocodePhilly, assessSafety } from "@/lib/search";
+import { withAlpha } from "@/lib/colors";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
 import {
   getRoute,
@@ -723,7 +724,7 @@ export default function SearchBar({
                     onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "var(--panel-hover)"; }}
                     onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
                   >
-                    <div className="w-3 h-3 rounded-full mt-1 shrink-0 ring-2" style={{ backgroundColor: sev.markerColor, ["--tw-ring-color" as string]: sev.markerColor + "40" }} />
+                    <div className="w-3 h-3 rounded-full mt-1 shrink-0 ring-2" style={{ backgroundColor: sev.markerColor, ["--tw-ring-color" as string]: withAlpha(sev.markerColor, 25) }} />
                     <div className="min-w-0 flex-1">
                       <p className="text-xs truncate" style={{ color: "var(--panel-text)" }}>{inc.location_text || "Unknown location"}</p>
                       <div className="flex items-center gap-2 mt-0.5">

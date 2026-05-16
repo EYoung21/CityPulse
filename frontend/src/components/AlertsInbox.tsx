@@ -176,7 +176,7 @@ export default function AlertsInbox({
       ? {
           // Fill viewport down to the top of the mobile bottom nav.
           bottom: `calc(${MOBILE_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom, 0px))`,
-          zIndex: 2147483005,
+          zIndex: "var(--pp-z-mobile-overlay)",
         }
       : {
           border: "1px solid var(--panel-border)",
@@ -184,7 +184,7 @@ export default function AlertsInbox({
           ...(placement === "mobileAboveNav"
             ? {
                 bottom: `calc(${MOBILE_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom, 0px) + 10px)`,
-                zIndex: 2147483010,
+                zIndex: "var(--pp-z-mobile-menu)",
               }
             : {}),
         }),

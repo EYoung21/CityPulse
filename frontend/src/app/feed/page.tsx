@@ -53,8 +53,11 @@ function FeedAlertsInboxHost() {
       {open && (
         <button
           type="button"
-          className="fixed inset-0 z-[2147483009] cursor-default border-0 p-0"
-          style={{ background: "rgba(0,0,0,0.45)" }}
+          className="fixed inset-0 cursor-default border-0 p-0"
+          style={{
+            background: "var(--pp-overlay-medium)",
+            zIndex: "var(--pp-z-mobile-overlay)",
+          }}
           aria-label="Close alerts"
           onClick={onClose}
         />
@@ -237,7 +240,7 @@ export default function FeedPage() {
             <Link
               href="/?view=analytics"
               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium"
-              style={{ background: "rgba(59,130,246,0.12)", color: "#60a5fa" }}
+              style={{ background: "var(--pp-accent-soft)", color: "var(--pp-accent)" }}
             >
               <Activity className="w-3 h-3" />
               {activeNow} active

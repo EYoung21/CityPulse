@@ -129,6 +129,29 @@
   html {
     @apply font-sans;
   }
+  /* Consistent keyboard focus ring across every interactive element.
+   * Touch/mouse users never see this; only triggers on tab-driven focus.
+   * Components can opt out with `[data-no-focus-ring]` or by setting
+   * `outline: none` in a more-specific rule. */
+  :focus-visible {
+    outline: 2px solid var(--pp-accent-ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+    transition: outline-offset var(--pp-motion-fast) var(--pp-ease-standard);
+  }
+  [data-no-focus-ring]:focus-visible {
+    outline: none;
+  }
+  /* Honor the user's reduced-motion preference for all animation
+   * tokens. Components shouldn't have to opt in individually. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }
 
 /* === CityPulse Brand Tokens ===
@@ -161,6 +184,74 @@
   --cp-incident-burglary: #FACC15;
   --cp-incident-disorder: #C084FC;
   --cp-incident-admin:    #94A3B8;
+}
+
+/* === Design Tokens — theme-independent ===
+ * Scattered `rgba(59, 130, 246, ...)`, magic z-indexes, ad-hoc blur
+ * amounts, and one-off transition durations across page.tsx,
+ * feed/page.tsx, PulseNetworkNav, AlertsInbox, and friends collapse
+ * into the variables below. Touch a token here and the whole site
+ * updates; before adding a new hardcoded value, pick the nearest
+ * token instead.
+ *
+ * Accent: keep `--pp-accent` aligned with Tailwind's `blue-500`
+ * (rgb(59, 130, 246)) so utility classes like `text-blue-500` stay
+ * visually unified with token-driven surfaces. */
+:root {
+  /* Brand accent (selection / active state / focus ring) */
+  --pp-accent:               rgb(59, 130, 246);
+  --pp-accent-soft:          rgba(59, 130, 246, 0.08);
+  --pp-accent-bg:            rgba(59, 130, 246, 0.15);
+  --pp-accent-bg-strong:     rgba(59, 130, 246, 0.25);
+  --pp-accent-border:        rgba(59, 130, 246, 0.30);
+  --pp-accent-ring:          rgba(59, 130, 246, 0.55);
+
+  /* Overlay scrims for sheets and modals */
+  --pp-overlay-light:        rgba(0, 0, 0, 0.35);
+  --pp-overlay-medium:       rgba(0, 0, 0, 0.45);
+  --pp-overlay-heavy:        rgba(0, 0, 0, 0.60);
+
+  /* Backdrop blur scale */
+  --pp-blur-soft:            blur(8px);
+  --pp-blur-medium:          blur(12px);
+  --pp-blur-strong:          blur(20px);
+
+  /* Elevation (soft, panel, sheet) */
+  --pp-shadow-sm:            0 1px 2px rgba(0, 0, 0, 0.10);
+  --pp-shadow-md:            0 2px 12px rgba(0, 0, 0, 0.18);
+  --pp-shadow-lg:            0 12px 40px rgba(0, 0, 0, 0.45);
+
+  /* Motion — keep below 250ms; longer = sluggish on touch UI */
+  --pp-motion-fast:          120ms;
+  --pp-motion-normal:        180ms;
+  --pp-motion-slow:          240ms;
+  --pp-ease-standard:        cubic-bezier(0.2, 0, 0, 1);
+
+  /* Z-index scale. The MobileBottomNav is portaled into <body> so
+   * the map page's own stacking context cannot trap it; everything
+   * above the nav (mobile menus, modals) lives in the same global
+   * stratosphere. Resist the urge to invent ad-hoc large numbers. */
+  --pp-z-base:               1;
+  --pp-z-map-controls:       1001;   /* compass, locate, filter strip */
+  --pp-z-map-overlay:        1002;   /* category-banner-style overlays */
+  --pp-z-toast:              1200;   /* undo toasts, alerts */
+  --pp-z-modal:              2400;   /* about / upgrade dialogs */
+  --pp-z-mobile-nav:         2147483000;  /* MobileBottomNav portal floor */
+  --pp-z-mobile-overlay:     2147483005;  /* full-screen mobile drawers (AlertsInbox) */
+  --pp-z-mobile-menu:        2147483010;  /* sheets that sit over the nav */
+}
+
+.dark {
+  /* Slightly brighter accent surfaces against the dark theme so the
+   * 8-15% alpha layers don't disappear into the panel background. */
+  --pp-accent-soft:          rgba(96, 165, 250, 0.10);
+  --pp-accent-bg:            rgba(96, 165, 250, 0.18);
+  --pp-accent-bg-strong:     rgba(96, 165, 250, 0.28);
+  --pp-accent-border:        rgba(96, 165, 250, 0.35);
+
+  --pp-shadow-sm:            0 1px 2px rgba(0, 0, 0, 0.50);
+  --pp-shadow-md:            0 4px 18px rgba(0, 0, 0, 0.55);
+  --pp-shadow-lg:            0 16px 48px rgba(0, 0, 0, 0.70);
 }
 
 /* === PHLPulse Theme Variables === */

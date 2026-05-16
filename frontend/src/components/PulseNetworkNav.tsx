@@ -15,8 +15,10 @@ import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
 import { MOBILE_NAV_HEIGHT_PX } from "@/components/MobileBottomNav";
 
 const MOBILE_LAYOUT_QUERY = "(max-width: 767px)";
-/** Above MobileBottomNav portal (`z-index: 2147483000`). */
-const MOBILE_MENU_Z = 2147483010;
+/** Above the MobileBottomNav portal. Scrim uses the overlay layer just
+ *  below so a stray tap on the scrim doesn't fight the menu it sits under. */
+const MOBILE_MENU_Z = "var(--pp-z-mobile-menu)";
+const MOBILE_SCRIM_Z = "var(--pp-z-mobile-overlay)";
 
 function subscribeMobileLayout(onStoreChange: () => void) {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -147,8 +149,8 @@ export default function PulseNetworkNav() {
             style={{
               position: "fixed",
               inset: 0,
-              zIndex: MOBILE_MENU_Z - 1,
-              background: "rgba(0,0,0,0.45)",
+              zIndex: MOBILE_SCRIM_Z,
+              background: "var(--pp-overlay-medium)",
             }}
             onPointerDown={() => setOpen(false)}
           />

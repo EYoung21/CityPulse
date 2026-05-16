@@ -198,7 +198,7 @@ function MobileBottomNavInner() {
         left: 0,
         right: 0,
         bottom: 0,
-        zIndex: 2147483000,
+        zIndex: "var(--pp-z-mobile-nav)",
         isolation: "isolate",
         transform: "translateZ(0)",
         display: "flex",
