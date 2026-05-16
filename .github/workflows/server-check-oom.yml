@@ -29,7 +29,7 @@ jobs:
             echo "######################################################"
             echo "# 2. Per-transcriber: status, restart count, memory.peak"
             echo "######################################################"
-            for city in sf nyc philly chattanooga; do
+            for city in sf nyc philly philly2 chattanooga; do
               echo "--- pulse-live@${city} ---"
               systemctl show "pulse-live@${city}" \
                 -p ActiveState,SubState,NRestarts,ExecMainStartTimestamp,MemoryMax 2>/dev/null
@@ -52,7 +52,7 @@ jobs:
             echo "######################################################"
             echo "# 4. Recent pulse-live restarts (last 15 min)"
             echo "######################################################"
-            for city in sf nyc philly chattanooga; do
+            for city in sf nyc philly philly2 chattanooga; do
               echo "--- pulse-live@${city} restarts ---"
               journalctl -u "pulse-live@${city}" --since '15 min ago' --no-pager 2>/dev/null \
                 | grep -E 'Started|Stopped|killed|Main process exited' | tail -8

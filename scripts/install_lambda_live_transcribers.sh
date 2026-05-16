@@ -37,7 +37,14 @@ PYTHON="${PYTHON:-/usr/bin/python3}"
 BRIDGE_URL="${BRIDGE_URL:-https://api.phlpulse.com/api/ingest}"
 # Space-separated list of city slugs to enable. Matches the Hetzner
 # ACTIVE_CITIES set in deploy-backend-hetzner.sh.
-ACTIVE_CITIES="${ACTIVE_CITIES:-sf nyc philly chattanooga}"
+#
+# philly + philly2 are two systemd services that share one Firestore slug
+# ("philly"). Philly's 24 feeds wouldn't fit a single Whisper worker pool
+# (queue grew to 2800+, freshness lagged 2h), so the suburb half lives in
+# cities/philly2/config.yaml under the same slug. The transcriber treats
+# them as separate units; philly_pulse/city_registry.py merges the feed
+# lists so the API/admin see one combined inventory.
+ACTIVE_CITIES="${ACTIVE_CITIES:-sf nyc philly philly2 chattanooga}"
 
 echo "==> 0. Sanity: repo exists at $REPO_DIR"
 test -f "$REPO_DIR/multi_transcriber.py" \

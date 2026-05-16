@@ -1,12 +1,29 @@
-# PhillyPulse — Philadelphia, PA
-# This is the reference config; values migrated from the root config.yaml.
+# PhillyPulse — secondary transcriber (suburb feeds)
+#
+# This file mirrors cities/philly/config.yaml but only carries the
+# DelCo per-sector + MontCo/Chester suburban feeds. It runs under a
+# separate systemd service, `pulse-live@philly2.service`, on the Lambda
+# GPU box so the two services share Whisper inference across their own
+# worker pools instead of fighting one queue.
+#
+# Both services emit `city: "philly"` to the ingest endpoint — the slug
+# below is intentionally "philly", and city_registry.py merges feed
+# lists when it encounters more than one config file pointing at the
+# same slug. From the API/frontend's perspective there is one city.
+#
+# Why split: Philly's Greater Metro footprint covers Philadelphia +
+# DelCo (7 sectors) + ChesCo + MontCo (3 trunks). 24 simultaneous
+# Broadcastify streams overwhelmed a single Whisper worker pool — see
+# `[Status] feeds=24/24 queue=2847 uptime=1051m` in the diagnostics
+# log. Splitting ~12/12 with two worker pools brings the queue depth
+# in line with NYC/SF (queue=0).
 
 city:
   name: "Philadelphia"
   short: "PHL"
   slug: "philly"
   domain: "phlpulse.com"
-  region: "Greater Philadelphia, PA (Philadelphia + DelCo/ChesCo/MontCo/Bucks)"
+  region: "Greater Philadelphia, PA (DelCo / ChesCo / MontCo suburban feeds)"
   tagline: "Google Maps tells you the fastest way. PhillyPulse tells you the safest."
 
 map:
@@ -14,19 +31,8 @@ map:
   center_lng: -75.1652
   default_zoom: 12
 
-# Greater Philadelphia metro: Philadelphia city + Delaware, Chester,
-# Montgomery, and Bucks counties. The original Philly-only bounds
-# (lng_min: -75.30) was rejecting every geocoded incident from the
-# DelCo/ChesCo/MontCo scanner feeds — Swarthmore (-75.35), Media
-# (-75.39), Chester (-75.36), West Chester (-75.60), Pottstown
-# (-75.65) all sit west of the old western edge, so suburban dispatch
-# was being captured + transcribed but the resulting addresses fell
-# outside the bbox and were thrown away.
-#
-# `, PA` (rather than `, Philadelphia, PA`) lets Nominatim resolve the
-# city/borough from the street itself, so "1234 Chester Pike" becomes
-# "1234 Chester Pike, PA" and resolves into Delaware County instead
-# of being forced into Philadelphia where it doesn't exist.
+# Same metro bounds as the primary Philly config so suburban
+# addresses pass geocode validation.
 geocode:
   viewbox: "-75.70,39.78,-74.85,40.30"
   bounds:
@@ -36,59 +42,50 @@ geocode:
     lng_max: -74.85
   suffix: ", PA"
 
-# Whisper worker pool. NYC/SF use 5 workers for ~9 feeds; Philly handles
-# the city-core feeds here and the suburbs in cities/philly2/config.yaml
-# under the same slug, so each service stays around the NYC/SF density.
-#
-# max_queue + max_segment_lag_sec are the backstop in case audio rate ever
-# again outstrips drain rate (Philly's pre-split incident: queue=2847,
-# freshness lag 2h). 300 is well above steady-state (NYC/SF sit at 0);
-# 180s is the point past which transcribed audio is no longer useful as
-# "live" intelligence.
 transcriber:
   num_workers: 5
   max_queue: 300
   max_segment_lag_sec: 180
 
-# Tighter VAD than the root default (1 / 1.5s / 3.0s). Philly metro's
-# 24 simultaneous Broadcastify feeds carry a lot of dead-air + carrier
-# noise; aggressiveness=2 is stricter about what counts as speech, and
-# the 2.2s silence_limit closes the segment sooner so the queue stays
-# shallow even during the dispatch lulls. Mirror any changes here in
-# cities/philly2/config.yaml.
+# Match cities/philly/config.yaml — the metro's two shards run the same
+# VAD profile so the throughput characteristics stay aligned. If you
+# loosen this here, also loosen it on the primary; we don't want one
+# half of Philly producing noticeably more transcripts than the other.
 vad_and_silence:
   vad_aggressiveness: 2
   min_speech_seconds: 1.5
   silence_limit: 2.2
 
-# ── PHILLY CORE FEEDS (city of Philadelphia + the high-volume DelCo
-#    countywide trunks) ──────────────────────────────────────────────
-# This file is the primary Philly transcriber. The DelCo per-sector
-# trunks + MontCo/Chester suburban feeds live in cities/philly2/config.yaml,
-# loaded by pulse-live@philly2.service. Both services emit `city: "philly"`
-# so ingest lands in the same Firestore bucket; city_registry.py merges
-# their feed lists when surfacing the per-city Broadcastify inventory.
+# ── PHILLY SUBURB FEEDS ────────────────────────────────────────────
+# DelCo per-sector trunks: cleaner-than-countywide audio that lets
+# the LLM bias geocoding to the right cluster of municipalities. See
+# cities/philly/config.yaml for the full per-sector geographic key.
 feeds:
-  - feed_id: "4603"
-    label: "PPD Citywide"
-    jurisdiction_hint: "Philadelphia Police citywide dispatch; prefer Philadelphia streets over suburban counties unless units name DelCo/MontCo towns."
-  - { feed_id: "17310", label: "PPD Central" }
-  - { feed_id: "21297", label: "PPD East" }
-  - { feed_id: "45495", label: "PPD Northeast" }
-  - { feed_id: "18836", label: "PPD Northwest" }
-  - { feed_id: "15102", label: "PPD South" }
-  - { feed_id: "15195", label: "PPD Southwest/West" }
-  - { feed_id: "34250", label: "PFD South Fire/Medics" }
-  - { feed_id: "15747", label: "PFD North Fire" }
-  - { feed_id: "44308", label: "SEPTA Transit Police" }
-  - { feed_id: "36323", label: "Delaware Co Police Dispatch" }
-  - { feed_id: "46438", label: "DelCo Fire/EMS - Countywide Ops" }
+  - { feed_id: "46436", label: "DelCo PD Sector 1 (Brookhaven/Aston/Chichester/Marcus Hook)" }
+  - feed_id: "46437"
+    label: "DelCo PD Sector 2 (Swarthmore/Media/Springfield/Marple/Newtown)"
+    jurisdiction_hint: "Delaware County Sector 2 (Swarthmore, Media, Springfield, Marple, Nether Providence, Newtown Twp)."
+    geocode_bounds: "-75.45,39.86,-75.30,39.98"
+  - { feed_id: "46444", label: "DelCo PD Sector 3 (Chester City)" }
+  - { feed_id: "46443", label: "DelCo PD Sector 4 (Lansdowne/Yeadon/Sharon Hill/Folcroft/Darby)" }
+  - { feed_id: "46442", label: "DelCo PD Sector 5 (Ridley/Eddystone/Glenolden/Prospect Park/Norwood/Tinicum)" }
+  - { feed_id: "46441", label: "DelCo PD Sector 6 (Upper Darby/Millbourne)" }
+  - { feed_id: "46440", label: "DelCo PD Sector 7 (Haverford/Radnor/Main Line)" }
+  - { feed_id: "46435", label: "DelCo Fire East (Upper Darby/Lansdowne corridor)" }
+  - { feed_id: "24104", label: "Chester Co Law Enforcement Dispatch" }
+  - { feed_id: "10489", label: "MontCo Fire and EMS - East" }
+  - { feed_id: "25767", label: "MontCo Police, Fire and EMS - Region 3" }
+  # MontCo 18335 broadcasts the entire county Fire/EMS trunk — countywide
+  # dispatch + all regions + Event channels. Lower Merion PD itself is
+  # fully encrypted, so this is the only way we hear anything from
+  # Bryn Mawr / Ardmore / Wynnewood / Bala Cynwyd / Narberth.
+  - { feed_id: "18335", label: "MontCo Fire/EMS All-Regions (Lower Merion/Bryn Mawr/Main Line)" }
 
 tuning:
-  # Whisper "initial_prompt": biases the acoustic model toward names it
-  # would otherwise mis-hear. We list both Philadelphia neighborhoods AND
-  # the surrounding counties' towns/landmarks because the same backend
-  # transcribes DelCo, ChesCo, MontCo, and Bucks scanner feeds.
+  # Identical Whisper biasing as the primary config — the acoustic
+  # vocabulary is the same metro, and keeping these in sync avoids
+  # accidental quality drift between the two services. If you tune
+  # one, mirror the change here.
   initial_prompt: >-
     Greater Philadelphia PA dispatch (Philadelphia, Delaware County,
     Chester County, Montgomery County, Bucks County). PPD districts 1-26.

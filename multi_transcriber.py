@@ -137,8 +137,74 @@ RAW_CLIPS_FOLDER = "audio_clips_raw/"
 os.makedirs(RAW_CLIPS_FOLDER, exist_ok=True)
 
 # ── Shared transcription queue ──────────────────────────────────────
+#
+# Optional backpressure knobs from the city config's `transcriber:` block:
+#   max_queue              — hard cap on queued segments. 0/missing = unbounded
+#                            (the historical behavior). When set, the producer
+#                            evicts the OLDEST queued segment to make room for
+#                            a fresh one, so backlog can't push live audio
+#                            arbitrarily far into the future (Philly's pre-split
+#                            failure mode: queue=2847 → freshness lag 2h).
+#   max_segment_lag_sec    — if a worker pops a segment whose `segment_start_utc`
+#                            is older than this, skip transcription and just
+#                            log+drop. Lets the queue catch up after a stall
+#                            instead of spending GPU cycles on stale audio that
+#                            no longer matches "now" by the time it'd surface.
+#                            0/missing = never skip.
+_transcriber_cfg = (_city_config.get("transcriber") or {}) if isinstance(_city_config, dict) else {}
+try:
+    MAX_QUEUE = int(_transcriber_cfg.get("max_queue") or 0)
+except (TypeError, ValueError):
+    MAX_QUEUE = 0
+try:
+    MAX_SEGMENT_LAG_SEC = float(_transcriber_cfg.get("max_segment_lag_sec") or 0)
+except (TypeError, ValueError):
+    MAX_SEGMENT_LAG_SEC = 0.0
 
-transcription_queue = queue.Queue()
+transcription_queue: "queue.Queue" = queue.Queue(maxsize=MAX_QUEUE) if MAX_QUEUE > 0 else queue.Queue()
+
+
+def _enqueue_segment(item: tuple) -> None:
+    """Producer-side put with drop-oldest fallback when the queue is capped.
+    Called from feed_capture_thread; never blocks the audio capture path."""
+    if MAX_QUEUE <= 0:
+        transcription_queue.put(item)
+        return
+    try:
+        transcription_queue.put_nowait(item)
+    except queue.Full:
+        # Drop oldest queued segment, then enqueue the fresh one. If we still
+        # can't put (another producer raced us), drop the new one and move on.
+        try:
+            dropped = transcription_queue.get_nowait()
+            transcription_queue.task_done()
+            print(
+                f"   [Queue] full ({MAX_QUEUE}) — dropped oldest segment "
+                f"[{dropped[1] if len(dropped) > 1 else '?'}] to admit new one"
+            )
+        except queue.Empty:
+            pass
+        try:
+            transcription_queue.put_nowait(item)
+        except queue.Full:
+            print(
+                f"   [Queue] still full ({MAX_QUEUE}) after eviction — "
+                f"dropping new segment [{item[1] if len(item) > 1 else '?'}]"
+            )
+
+
+def _segment_too_stale(segment_start_utc: str | None) -> float | None:
+    """Return the segment's age in seconds if it exceeds MAX_SEGMENT_LAG_SEC,
+    otherwise None. Workers call this on dequeue to drop transcribes the GPU
+    would just waste cycles on."""
+    if MAX_SEGMENT_LAG_SEC <= 0 or not segment_start_utc:
+        return None
+    try:
+        started = datetime.datetime.fromisoformat(segment_start_utc.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    age = (datetime.datetime.now(datetime.timezone.utc) - started).total_seconds()
+    return age if age > MAX_SEGMENT_LAG_SEC else None
 
 # ── Load ONE Whisper model ──────────────────────────────────────────
 
@@ -295,6 +361,18 @@ def transcriber_worker(worker_id):
             feed_id, feed_label, timestamp, segment_start_utc, raw_pcm = item
 
             if not PP_ENABLED:
+                transcription_queue.task_done()
+                continue
+
+            # Drop segments that have been queued so long they no longer
+            # represent "live" radio — transcribing them just makes the
+            # backlog look worse. Configurable via transcriber.max_segment_lag_sec.
+            _stale_age = _segment_too_stale(segment_start_utc)
+            if _stale_age is not None:
+                print(
+                    f"   [Worker-{worker_id}] [{feed_label}] dropping stale "
+                    f"segment ({_stale_age:.0f}s > {MAX_SEGMENT_LAG_SEC:.0f}s cap)"
+                )
                 transcription_queue.task_done()
                 continue
 
@@ -484,7 +562,7 @@ def feed_capture_thread(feed_id, feed_label):
 
                     if duration >= MIN_SPEECH_SECONDS:
                         ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                        transcription_queue.put(
+                        _enqueue_segment(
                             (feed_id, feed_label, ts, segment_start_utc, raw_pcm.copy())
                         )
                         print(f"   [{feed_label}] QUEUED {duration:.1f}s segment")

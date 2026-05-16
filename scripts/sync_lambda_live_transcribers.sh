@@ -16,7 +16,10 @@ if [[ ! -f "$SSH_KEY" ]]; then
 fi
 
 SSH_OPTS=(-i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
-ACTIVE_CITIES="${ACTIVE_CITIES:-sf nyc philly chattanooga}"
+# philly2 is a shard of Philly (same slug, suburb feeds only) so two
+# Whisper worker pools can drain the metro's 24-feed firehose. Keep in
+# sync with install_lambda_live_transcribers.sh + deploy-backend-hetzner.sh.
+ACTIVE_CITIES="${ACTIVE_CITIES:-sf nyc philly philly2 chattanooga}"
 
 echo "==> Rsync transcriber + city configs → $LAMBDA_USER@$LAMBDA_IP:$DEST"
 rsync -az -e "ssh ${SSH_OPTS[*]}" \
@@ -30,10 +33,16 @@ rsync -az -e "ssh ${SSH_OPTS[*]}" \
   "$REPO/philly_pulse/bridge.py" \
   "$LAMBDA_USER@$LAMBDA_IP:$DEST/philly_pulse/"
 
-echo "==> Restart pulse-live@ ($ACTIVE_CITIES)"
+echo "==> Enable + restart pulse-live@ ($ACTIVE_CITIES)"
+# `enable` is idempotent and a no-op for cities already enabled; pairing
+# it with `restart` here means a brand-new city slug (e.g. when we shard
+# Philly into philly + philly2) starts on the next sync without anyone
+# having to SSH and run install_lambda_live_transcribers.sh by hand.
+# pulse-live@.service is a template, so no new unit file is needed for
+# new instances — only the enable + restart pair.
 for city in $ACTIVE_CITIES; do
   ssh "${SSH_OPTS[@]}" "$LAMBDA_USER@$LAMBDA_IP" \
-    "sudo systemctl restart pulse-live@${city}.service" || true
+    "sudo systemctl enable pulse-live@${city}.service 2>&1 | tail -1 ; sudo systemctl restart pulse-live@${city}.service" || true
 done
 
 sleep 5
