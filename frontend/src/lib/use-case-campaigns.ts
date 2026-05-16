@@ -7,6 +7,7 @@ export const USE_CASE_SLUGS = [
   "logistics",
   "newsroom",
   "venue",
+  "analytics",
   "research",
   "api",
 ] as const;
@@ -50,21 +51,22 @@ export const USE_CASE_CAMPAIGNS: Record<UseCaseSlug, UseCaseCampaign> = {
   },
   newsroom: {
     slug: "newsroom",
-    cardTitle: "Press & newsroom alerts",
-    pageTitle: `Keyword and push alerts (Pro) | ${site}`,
-    metaDescription: `Keyword-based scanner alerts for newsrooms on ${site}. Pro subscribers manage watches in notification settings.`,
+    cardTitle: "Press & newsroom (alerts + Ask Pulse)",
+    pageTitle: `Keyword alerts and Ask Pulse for newsrooms (Pro) | ${site}`,
+    metaDescription: `Two newsroom workflows on ${site}: keyword-based scanner alerts for breaking stories, and Ask Pulse — an LLM that answers "what happened today" questions over recent incidents. Both Pro.`,
     pro: true,
-    headline: "Keyword alerts for breaking stories",
+    headline: "Two ways to stay on top of the radio",
     paragraphs: [
-      "Assigners and producers can get **push-style keyword watches** when incidents match phrases you care about (for example structure fire, shots fired, or a major crash), within Pro access and fair-use limits.",
-      "Watches sit next to **notification settings** in the alerts drawer, not a separate newsroom app. Sign in, open the bell, then the **Settings** tab to add and manage keywords.",
+      "**Keyword alerts.** Assigners and producers can get push-style watches when incidents match phrases you care about (structure fire, shots fired, a major crash) — within Pro access and fair-use limits. Watches sit next to notification settings in the alerts drawer; sign in, open the bell, then the **Settings** tab to add and manage keywords.",
+      "**Ask Pulse.** The newer Pro tab lets you skip setup and just ask: *“what's been happening in Kensington this morning?”*, *“how many shootings overnight?”*. The LLM grounds answers in real `count_incidents` aggregates and pulls the supporting incidents on demand — useful when a watch list would be overkill but you still need a quick read of the radio.",
     ],
     ctas: [
+      { label: "Open Ask Pulse", href: "/?view=ask" },
       { label: "Map → alert & keyword settings", href: "/?inbox=settings" },
       { label: "Sign in", href: "/login" },
     ],
     footnote:
-      "Pro subscription required for keyword watches. Scanner-derived data only.",
+      "Pro subscription required for keyword watches and Ask Pulse. Scanner-derived; verify before publishing.",
   },
   venue: {
     slug: "venue",
@@ -80,17 +82,37 @@ export const USE_CASE_CAMPAIGNS: Record<UseCaseSlug, UseCaseCampaign> = {
     footnote:
       "Not a replacement for official event or police coordination. Scanner-derived only.",
   },
+  analytics: {
+    slug: "analytics",
+    cardTitle: "Analytics & Ask Pulse",
+    pageTitle: `Analytics dashboards and Ask Pulse Q&A | ${site}`,
+    metaDescription: `Pro tabs on ${site}: Analytics (hotspots, categories, timing, data-quality, routes) plus Ask Pulse — an LLM that answers questions over recent incidents with grounded aggregate counts.`,
+    pro: true,
+    headline: "Pre-built dashboards and an LLM that actually counts",
+    paragraphs: [
+      "The **Analytics** tab is a Pro surface with six views: an Overview snapshot, **Hotspots** by neighborhood, **Categories** trends over 30 days, **Timing** (time-of-day grid), **Data quality**, and **Routes** (your trip history). Every chart exports to SVG so it drops straight into a brief.",
+      "**Ask Pulse** is the LLM tab. Ask things like *“how many gunshots in the last week”* or *“what's been happening near my office”* and the model uses three grounded tools — `count_incidents` for aggregates, `search_incidents` for keyword filtering, and `fetch_older_incidents` for paged history — so the numbers come from real Firestore counts, not pattern-matching a snippet.",
+    ],
+    ctas: [
+      { label: "Open Analytics", href: "/?view=analytics" },
+      { label: "Open Ask Pulse", href: "/?view=ask" },
+      { label: "Sign in for Pro", href: "/login" },
+    ],
+    footnote:
+      "Pro subscription required for both tabs. Ask Pulse output is grounded in scanner-derived data; double-check anything load-bearing.",
+  },
   research: {
     slug: "research",
     cardTitle: "Research & public-good",
     pageTitle: `Research and incident stream | ${site}`,
-    metaDescription: `Searchable, paginated incident data on ${site}. Public API window is about one hour without Pro. Pro unlocks deeper history for analysis.`,
+    metaDescription: `Searchable, paginated incident data on ${site}. Public API window is about one hour without Pro. Pro unlocks deeper history plus pre-built Analytics dashboards.`,
     headline: "Structured stream for analysis and civic tooling",
     paragraphs: [
       "Incidents include category, location text, timestamps, and (when geocoded) coordinates. That is enough for many oversight, academic, and civic use cases—treat outputs as research inputs, not certified records.",
-      "Without Pro, HTTP reads are clamped to roughly the **last hour** of incidents. **Pro** unlocks longer history for the same endpoints. The **full-screen feed** at `/feed` is another way to browse the stream without the main map chrome.",
+      "Without Pro, HTTP reads are clamped to roughly the **last hour** of incidents. **Pro** unlocks longer history for the same endpoints **plus the Analytics tab** — pre-built neighborhood hotspots, 30-day category trends, time-of-day grids, and data-quality charts (SVG export per chart). The **full-screen feed** at `/feed` is another way to browse the stream without the main map chrome.",
     ],
     ctas: [
+      { label: "Open Analytics", href: "/?view=analytics" },
       { label: "Browse the incident feed", href: "/feed" },
       { label: "Sign in for Pro & history", href: "/login" },
     ],

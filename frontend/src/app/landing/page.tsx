@@ -609,7 +609,7 @@ export default function LandingPage() {
         <div className="lp-usecases-inner">
           <div className="lp-usecases-foot" style={{ flexDirection: "column", gap: "14px" }}>
             <span className="lp-usecases-note">
-              Data is scanner-derived and not verified as fact&mdash;see <strong>About</strong> on the map for the full disclaimer. Without signing in, incident reads are about the <strong>last hour</strong>; <strong>Pro</strong> adds deeper history, <strong>keyword push alerts</strong>, and <strong>programmatic access</strong>.{" "}
+              Data is scanner-derived and not verified as fact&mdash;see <strong>About</strong> on the map for the full disclaimer. Without signing in, incident reads are about the <strong>last hour</strong>; <strong>Pro</strong> adds the <strong>Analytics tab</strong> (hotspots, categories, timing), <strong>Ask Pulse</strong> (LLM Q&amp;A with grounded counts), deeper history, <strong>keyword push alerts</strong>, and <strong>programmatic access</strong>.{" "}
               <Link
                 href="/teams"
                 className="lp-usecases-teams-link"
