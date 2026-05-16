@@ -1,5 +1,6 @@
 import Link from "next/link";
 import "@/app/landing/landing.css";
+import MarketingHeaderActions from "@/components/MarketingHeaderActions";
 
 interface Props {
   children: React.ReactNode;
@@ -7,6 +8,8 @@ interface Props {
 
 /**
  * Shared chrome for lightweight marketing routes (`/teams`, `/use-cases/*`).
+ * The right-side CTA flips between "Create Account / Sign In" (signed-out)
+ * and the user's name + "Open app" (signed-in) — see [[MarketingHeaderActions]].
  */
 export default function MarketingPageShell({ children }: Props) {
   return (
@@ -18,9 +21,7 @@ export default function MarketingPageShell({ children }: Props) {
           <span className="lp-header-wordmark">CityPulse</span>
         </Link>
         <div className="lp-header-actions">
-          <Link href="/login" className="lp-header-cta">
-            Create Account / Sign In
-          </Link>
+          <MarketingHeaderActions />
         </div>
       </header>
 

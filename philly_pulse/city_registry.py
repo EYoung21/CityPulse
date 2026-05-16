@@ -85,15 +85,22 @@ def load_city_registry() -> None:
             elif not isinstance(llm_local, str):
                 llm_local = str(llm_local)
 
-            CITY_REGISTRY[slug] = {
-                "city_name": city_name,
-                "geocode_suffix": geo.get("suffix", f", {city_name}"),
-                "center_lat": center_lat,
-                "center_lng": center_lng,
-                "bounds": bounds,
-                "viewbox": geo.get("viewbox", ""),
-                "llm_local_context": llm_local.strip(),
-            }
+            # Multi-config split: if a slug appears in more than one
+            # cities/<dir>/config.yaml (e.g. cities/philly + cities/philly2,
+            # used to shard one city's feeds across two transcriber
+            # services), keep the first registry entry — they describe
+            # the same city — and below we MERGE the feeds list onto the
+            # existing entry instead of overwriting it.
+            if slug not in CITY_REGISTRY:
+                CITY_REGISTRY[slug] = {
+                    "city_name": city_name,
+                    "geocode_suffix": geo.get("suffix", f", {city_name}"),
+                    "center_lat": center_lat,
+                    "center_lng": center_lng,
+                    "bounds": bounds,
+                    "viewbox": geo.get("viewbox", ""),
+                    "llm_local_context": llm_local.strip(),
+                }
             feeds_list: list[dict[str, str]] = []
             for feed in cfg.get("feeds") or []:
                 if not isinstance(feed, dict):
@@ -137,8 +144,23 @@ def load_city_registry() -> None:
                         )
                     continue
                 FEED_LABELS[k] = str(lab).strip()
-            CITY_FEEDS[slug] = feeds_list
-            logger.info("Registered city: %s (%s)", city_name, slug)
+            # Merge with any pre-existing feeds for this slug (split
+            # configs); keep insertion order, drop dup feed_ids.
+            existing = CITY_FEEDS.get(slug, [])
+            seen = {f["feed_id"] for f in existing}
+            merged = existing + [f for f in feeds_list if f["feed_id"] not in seen]
+            CITY_FEEDS[slug] = merged
+            if slug in CITY_REGISTRY and existing:
+                logger.info(
+                    "Merged %d additional feed(s) into city %s from %s "
+                    "(total now %d)",
+                    len(merged) - len(existing),
+                    slug,
+                    cfg_path,
+                    len(merged),
+                )
+            else:
+                logger.info("Registered city: %s (%s)", city_name, slug)
         except Exception as e:
             logger.warning("Failed to load city config %s: %s", cfg_path, e)
 

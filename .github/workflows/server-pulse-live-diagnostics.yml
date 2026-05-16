@@ -1,7 +1,10 @@
 name: Pulse Live Diagnostics (Lambda)
 
-# SSH Hetzner → Lambda: pulse-live@nyc/sf/philly status + recent log lines.
+# SSH Hetzner → Lambda: pulse-live@nyc/sf/philly/philly2/chattanooga status + recent log lines.
 # Use after feed feels slow; read queue= and QUEUED rates.
+# philly + philly2 are two services sharing one Firestore slug (philly) so
+# the metro's 24 feeds split across two Whisper worker pools — see
+# cities/philly2/config.yaml.
 
 on:
   workflow_dispatch:
@@ -35,10 +38,10 @@ jobs:
             SSH_OPTS="-i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
 
             echo "######################################################"
-            echo "# systemd pulse-live@ (nyc sf philly chattanooga)"
+            echo "# systemd pulse-live@ (nyc sf philly philly2 chattanooga)"
             echo "######################################################"
             ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "
-              for c in nyc sf philly chattanooga; do
+              for c in nyc sf philly philly2 chattanooga; do
                 echo -n \"pulse-live@\${c}: \"
                 sudo systemctl is-active pulse-live@\${c}.service 2>/dev/null || echo inactive
               done

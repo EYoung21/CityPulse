@@ -1,0 +1,145 @@
+# PhillyPulse — secondary transcriber (suburb feeds)
+#
+# This file mirrors cities/philly/config.yaml but only carries the
+# DelCo per-sector + MontCo/Chester suburban feeds. It runs under a
+# separate systemd service, `pulse-live@philly2.service`, on the Lambda
+# GPU box so the two services share Whisper inference across their own
+# worker pools instead of fighting one queue.
+#
+# Both services emit `city: "philly"` to the ingest endpoint — the slug
+# below is intentionally "philly", and city_registry.py merges feed
+# lists when it encounters more than one config file pointing at the
+# same slug. From the API/frontend's perspective there is one city.
+#
+# Why split: Philly's Greater Metro footprint covers Philadelphia +
+# DelCo (7 sectors) + ChesCo + MontCo (3 trunks). 24 simultaneous
+# Broadcastify streams overwhelmed a single Whisper worker pool — see
+# `[Status] feeds=24/24 queue=2847 uptime=1051m` in the diagnostics
+# log. Splitting ~12/12 with two worker pools brings the queue depth
+# in line with NYC/SF (queue=0).
+
+city:
+  name: "Philadelphia"
+  short: "PHL"
+  slug: "philly"
+  domain: "phlpulse.com"
+  region: "Greater Philadelphia, PA (DelCo / ChesCo / MontCo suburban feeds)"
+  tagline: "Google Maps tells you the fastest way. PhillyPulse tells you the safest."
+
+map:
+  center_lat: 39.9526
+  center_lng: -75.1652
+  default_zoom: 12
+
+# Same metro bounds as the primary Philly config so suburban
+# addresses pass geocode validation.
+geocode:
+  viewbox: "-75.70,39.78,-74.85,40.30"
+  bounds:
+    lat_min: 39.78
+    lat_max: 40.30
+    lng_min: -75.70
+    lng_max: -74.85
+  suffix: ", PA"
+
+transcriber:
+  num_workers: 5
+  max_queue: 300
+  max_segment_lag_sec: 180
+
+# Match cities/philly/config.yaml — the metro's two shards run the same
+# VAD profile so the throughput characteristics stay aligned. If you
+# loosen this here, also loosen it on the primary; we don't want one
+# half of Philly producing noticeably more transcripts than the other.
+vad_and_silence:
+  vad_aggressiveness: 2
+  min_speech_seconds: 1.5
+  silence_limit: 2.2
+
+# ── PHILLY SUBURB FEEDS ────────────────────────────────────────────
+# DelCo per-sector trunks: cleaner-than-countywide audio that lets
+# the LLM bias geocoding to the right cluster of municipalities. See
+# cities/philly/config.yaml for the full per-sector geographic key.
+feeds:
+  - { feed_id: "46436", label: "DelCo PD Sector 1 (Brookhaven/Aston/Chichester/Marcus Hook)" }
+  - feed_id: "46437"
+    label: "DelCo PD Sector 2 (Swarthmore/Media/Springfield/Marple/Newtown)"
+    jurisdiction_hint: "Delaware County Sector 2 (Swarthmore, Media, Springfield, Marple, Nether Providence, Newtown Twp)."
+    geocode_bounds: "-75.45,39.86,-75.30,39.98"
+  - { feed_id: "46444", label: "DelCo PD Sector 3 (Chester City)" }
+  - { feed_id: "46443", label: "DelCo PD Sector 4 (Lansdowne/Yeadon/Sharon Hill/Folcroft/Darby)" }
+  - { feed_id: "46442", label: "DelCo PD Sector 5 (Ridley/Eddystone/Glenolden/Prospect Park/Norwood/Tinicum)" }
+  - { feed_id: "46441", label: "DelCo PD Sector 6 (Upper Darby/Millbourne)" }
+  - { feed_id: "46440", label: "DelCo PD Sector 7 (Haverford/Radnor/Main Line)" }
+  - { feed_id: "46435", label: "DelCo Fire East (Upper Darby/Lansdowne corridor)" }
+  - { feed_id: "24104", label: "Chester Co Law Enforcement Dispatch" }
+  - { feed_id: "10489", label: "MontCo Fire and EMS - East" }
+  - { feed_id: "25767", label: "MontCo Police, Fire and EMS - Region 3" }
+  # MontCo 18335 broadcasts the entire county Fire/EMS trunk — countywide
+  # dispatch + all regions + Event channels. Lower Merion PD itself is
+  # fully encrypted, so this is the only way we hear anything from
+  # Bryn Mawr / Ardmore / Wynnewood / Bala Cynwyd / Narberth.
+  - { feed_id: "18335", label: "MontCo Fire/EMS All-Regions (Lower Merion/Bryn Mawr/Main Line)" }
+
+tuning:
+  # Identical Whisper biasing as the primary config — the acoustic
+  # vocabulary is the same metro, and keeping these in sync avoids
+  # accidental quality drift between the two services. If you tune
+  # one, mirror the change here.
+  initial_prompt: >-
+    Greater Philadelphia PA dispatch (Philadelphia, Delaware County,
+    Chester County, Montgomery County, Bucks County). PPD districts 1-26.
+    Units: Charlie, David, Edward, Frank, King, Mary, Nora.
+    Philly: Broad St, Market St, Kensington Ave, Germantown Ave, Roosevelt
+    Blvd, Girard Ave, Spring Garden, Fairmount, University City, Center
+    City, North Philly, South Philly, West Philly, Fishtown, Manayunk,
+    Chestnut Hill, Mt Airy, Olney, Frankford.
+    Delaware County: Chester, Upper Darby, Media, Swarthmore, Wallingford,
+    Rutledge, Rose Valley, Nether Providence, Springfield, Drexel Hill,
+    Lansdowne, Yeadon, Darby, Folcroft, Ridley, Sharon Hill, Aston,
+    Brookhaven, Marcus Hook, Havertown, Haverford, Brookline, Manoa,
+    Broomall, Newtown Square, Wayne, Villanova, Rosemont, St Davids,
+    Radnor, Bryn Mawr (PA), Chester Pike, MacDade Blvd, Baltimore Pike,
+    Providence Road, West Chester Pike, Lancaster Avenue, Eagle Road,
+    Darby Road, Township Line.
+    Chester County: West Chester, Coatesville, Phoenixville, Downingtown,
+    Kennett Square, Exton, Paoli, Berwyn, Tredyffrin, Lincoln Highway,
+    Route 30.
+    Montgomery County (Lower Merion / Main Line): Bryn Mawr, Ardmore,
+    Wynnewood, Narberth, Bala Cynwyd, Cynwyd, Penn Valley, Gladwyne,
+    Merion Station, Belmont Hills, Lower Merion, City Avenue, Montgomery
+    Avenue, Lancaster Avenue, Old Lancaster Road.
+    Montgomery County (other): Norristown, Pottstown, King of Prussia,
+    Lansdale, Plymouth Meeting, Conshohocken, Cheltenham, Souderton.
+    Bucks County: Doylestown, Levittown, Bensalem, Bristol, Newtown.
+    Hospitals: Temple, Jefferson, Penn, Hahnemann, Einstein, Crozer,
+    Riddle, Bryn Mawr Hospital, Paoli Hospital, Lankenau, Abington,
+    Main Line Health, Bryn Mawr Rehab.
+    Colleges: Swarthmore College, Bryn Mawr College, Haverford College,
+    Villanova, Penn, Drexel, Temple, St Joseph's, La Salle, Eastern,
+    Cabrini, Rosemont College.
+    Phrases: responding, en route, on location, in service, 10-4, copy,
+    radio, highway, shots fired, person with a gun, robbery in progress,
+    assist officer. Short dispatch. Numbers spoken separately.
+  llm_local_context: >-
+    Greater Philadelphia PA metro: Philadelphia city plus Delaware, Chester,
+    Montgomery, and Bucks counties. Prefer the county implied by the scanner
+    feed (PPD citywide vs DelCo sectors vs MontCo/Chester) over forcing
+    “Philadelphia” when the street name exists in the suburbs.
+    Philadelphia: Center City, North/South/West Philly, Kensington, Fishtown,
+    Manayunk, Germantown, University City, neighborhoods along Broad, Market,
+    Girard, Roosevelt Blvd, Schuylkill Expressway I-76, Vine St Expy.
+    Delaware County: Upper Darby, Media, Springfield, Swarthmore, Chester,
+    Ridley, Lansdowne, Yeadon, Havertown/Haverford Twp, Drexel Hill, Newtown
+    Square, Wayne, Villanova, Radnor, Rosemont; Chester Pike, MacDade,
+    Baltimore Pike, Providence Rd, West Chester Pike, Township Line.
+    Chester County: West Chester, Coatesville, Exton, Downingtown, Kennett,
+    Paoli, Great Valley, Route 30.
+    Montgomery County: Norristown, King of Prussia, Plymouth Meeting,
+    Conshohocken, Lower Merion, Bryn Mawr, Ardmore, Narberth, Wynnewood,
+    Lansdale, Pottstown; City Ave, Lancaster Ave, Germantown Pike.
+    Bucks: Bensalem, Bristol, Doylestown, Levittown.
+    Hospitals: Temple, Jefferson, Penn, Einstein, Crozer, Riddle, Bryn Mawr
+    Hospital, Lankenau, Paoli, Abington, Main Line Health.
+    Colleges: Penn, Drexel, Temple, Villanova, Swarthmore, Bryn Mawr,
+    Haverford, St Joe’s, La Salle.

@@ -2182,10 +2182,14 @@ function MapHome() {
         onMobileOpenChange={setSidebarOpen}
       />
 
-      {/* Map filters — mobile: bottom strip above nav; desktop: top-right on
-          the canvas so they don't stack under the search bar / sidebar. */}
+      {/* Map filters — mobile: bottom strip above nav; desktop: top-right
+          BELOW the floating SearchInput pill (which lives at top:0 left of
+          the sidebar rail, width up to 440px). Anchoring at top-2 used to
+          let the filter strip extend left under the search bar on narrower
+          desktop widths; top-[60px] clears the search bar's ~52px height
+          plus an 8px gap. */}
       <div
-        className="pointer-events-none absolute z-[1001] max-md:bottom-[calc(64px+env(safe-area-inset-bottom,0px)+0.75rem)] max-md:inset-x-3 max-md:top-auto md:top-2 md:right-3 md:left-auto md:max-w-[min(920px,calc(100vw-var(--pp-map-sidebar-width,72px)-1.5rem))]"
+        className="pointer-events-none absolute z-[1001] max-md:bottom-[calc(64px+env(safe-area-inset-bottom,0px)+0.75rem)] max-md:inset-x-3 max-md:top-auto md:top-[60px] md:right-3 md:left-auto md:max-w-[min(920px,calc(100vw-var(--pp-map-sidebar-width,72px)-1.5rem))]"
       >
         <div className="flex max-md:flex-col md:flex-row md:flex-wrap items-stretch md:items-center justify-end gap-1.5 md:gap-2 no-scrollbar pointer-events-auto">
           <div
