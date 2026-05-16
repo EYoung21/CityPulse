@@ -2193,7 +2193,7 @@ function MapHome() {
       >
         <div className="flex max-md:flex-col md:flex-row md:flex-wrap items-stretch md:items-center justify-end gap-1.5 md:gap-2 no-scrollbar pointer-events-auto">
           <div
-            className="flex items-center rounded-full shadow-lg shrink-0 backdrop-blur-md overflow-x-auto no-scrollbar max-md:w-full"
+            className="flex items-center rounded-full shadow-lg backdrop-blur-md overflow-x-auto no-scrollbar min-w-0 max-w-full max-md:w-full"
             style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)" }}
           >
             <Clock className="w-4 h-4 ml-3 md:ml-4 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
