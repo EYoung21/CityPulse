@@ -346,6 +346,16 @@
 @media (min-width: 768px) {
   :root {
     --pp-app-topnav-height: 3.25rem;
+    /* Right edge of the floating SearchInput pill + gap — map filters
+       must not extend left of this line (see SearchSidebar search slot). */
+    --pp-map-filters-left: max(
+      calc(
+        var(--pp-map-sidebar-width, 72px)
+        + min(440px, calc(100vw - var(--pp-map-sidebar-width, 72px) - 2rem))
+        + 0.75rem
+      ),
+      42%
+    );
   }
 
   /* Grid keeps tab panels out from under the desktop top bar. */
@@ -697,6 +707,16 @@
 }
 .safe-top-offset {
   top: var(--pp-below-app-topnav-top);
+}
+
+/* Desktop map filter rail — stacked rows in the map canvas right of search. */
+@media (min-width: 768px) {
+  .pp-map-filter-rail {
+    top: 0.75rem;
+    right: 0.75rem;
+    left: var(--pp-map-filters-left, 28rem);
+    max-width: none;
+  }
 }
 
 /* Mobile floor for bottom-anchored floating UI.

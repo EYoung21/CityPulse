@@ -2182,18 +2182,14 @@ function MapHome() {
         onMobileOpenChange={setSidebarOpen}
       />
 
-      {/* Map filters — mobile: bottom strip above nav; desktop: top-right
-          BELOW the floating SearchInput pill (which lives at top:0 left of
-          the sidebar rail, width up to 440px). Anchoring at top-2 used to
-          let the filter strip extend left under the search bar on narrower
-          desktop widths; top-[60px] clears the search bar's ~52px height
-          plus an 8px gap. */}
+      {/* Map filters — mobile: bottom strip above nav; desktop: stacked rows
+          in the map canvas right of SearchInput (--pp-map-filters-left). */}
       <div
-        className="pointer-events-none absolute z-[1001] max-md:bottom-[calc(64px+env(safe-area-inset-bottom,0px)+0.75rem)] max-md:inset-x-3 max-md:top-auto md:top-[60px] md:right-3 md:left-auto md:max-w-[min(920px,calc(100vw-var(--pp-map-sidebar-width,72px)-1.5rem))]"
+        className="pp-map-filter-rail pointer-events-none absolute z-[1001] max-md:bottom-[calc(64px+env(safe-area-inset-bottom,0px)+0.75rem)] max-md:inset-x-3 max-md:top-auto max-md:left-3 max-md:right-3"
       >
-        <div className="flex max-md:flex-col md:flex-row md:flex-wrap items-stretch md:items-center justify-end gap-1.5 md:gap-2 no-scrollbar pointer-events-auto">
+        <div className="flex flex-col items-stretch gap-2.5 md:gap-3 min-w-0 pointer-events-auto">
           <div
-            className="flex items-center rounded-full shadow-lg backdrop-blur-md overflow-x-auto no-scrollbar min-w-0 max-w-full max-md:w-full"
+            className="flex items-center rounded-full shadow-lg backdrop-blur-md overflow-x-auto no-scrollbar min-w-0 w-full"
             style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)" }}
           >
             <Clock className="w-4 h-4 ml-3 md:ml-4 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
@@ -2219,9 +2215,7 @@ function MapHome() {
             })}
           </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar max-md:w-full">
-            <div className="w-px h-6 shrink-0 hidden md:block" style={{ background: "var(--pill-border)" }} />
-
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0 w-full">
             <FilterPresetsBar
               activeCats={activeCats}
               timeFilterHours={timeFilter}
