@@ -702,6 +702,28 @@ export default function LandingPage() {
         </section>
       )}
 
+      {/* ═══ Contact ═══
+              Plain mailto so users get a reply path that doesn't depend
+              on Firebase/auth being up. The in-app Feedback modal still
+              exists for structured submissions; this is the escape
+              hatch surfaced on the public landing page. */}
+      <section className="lp-usecases" aria-label="Contact">
+        <div className="lp-usecases-inner">
+          <div className="lp-usecases-foot" style={{ flexDirection: "column", gap: 6, textAlign: "center" }}>
+            <span className="lp-usecases-note">
+              <strong>Bugs or feature requests?</strong> Email{" "}
+              <a
+                href="mailto:eliyoung4now@gmail.com?subject=CityPulse%20feedback"
+                style={{ color: "rgb(var(--accent-rgb))", textDecoration: "underline", textUnderlineOffset: 3 }}
+              >
+                eliyoung4now@gmail.com
+              </a>
+              {" "}— we read every message.
+            </span>
+          </div>
+        </div>
+      </section>
+
       {/* ═══ CTA ═══ */}
       <footer className="lp-cta">
         <h2 className="lp-cta-title">Listen to {city.name}.</h2>
