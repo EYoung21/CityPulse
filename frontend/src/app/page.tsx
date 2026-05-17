@@ -2102,6 +2102,7 @@ function MapHome() {
             setTripMode(active && m ? m : null);
             setTripSteps(active && steps && steps.length > 0 ? steps : null);
             if (active) {
+              setTripProgress(0);
               // Snapshot the trip's static metadata at start so we can
               // build a recap card when it ends (the SearchSidebar's
               // `routeInfo` is gone by then).
@@ -2204,6 +2205,7 @@ function MapHome() {
                 setTripRecapHistoryId(null);
               }
               tripStatsRef.current = null;
+              setTripProgress(0);
             }
           }}
         onPreviewPins={(origin, dest) => {

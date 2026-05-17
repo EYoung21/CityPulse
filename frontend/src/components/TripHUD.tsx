@@ -38,6 +38,7 @@ interface Props {
   stops: { query: string }[];
   activeMode: TransportMode;
   tripProgress: number;
+  gpsStatus?: "idle" | "loading" | "found" | "denied";
   onResetTrip: () => void;
   recentIncidents: Incident[];
   onSelectIncident: (id: string) => void;
@@ -55,6 +56,7 @@ export default function TripHUD({
   stops,
   activeMode,
   tripProgress,
+  gpsStatus = "found",
   onResetTrip,
   recentIncidents,
   onSelectIncident,
@@ -177,6 +179,14 @@ export default function TripHUD({
             <AlertTriangle className="w-4 h-4 shrink-0" />
             {routeInfo.nearbyCount} incident{routeInfo.nearbyCount > 1 ? "s" : ""} near route —
             proceed with caution
+          </div>
+        )}
+        {gpsStatus !== "found" && (
+          <div className="mt-3 flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400/70 bg-amber-500/10 rounded-lg px-3 py-2">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            {gpsStatus === "denied"
+              ? "Location is blocked — live navigation is paused."
+              : "Waiting for GPS — movement will update from your real location."}
           </div>
         )}
       </div>

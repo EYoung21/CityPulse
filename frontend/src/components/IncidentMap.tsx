@@ -890,7 +890,7 @@ function incidentMarkerSignature(
 }
 
 type TripLiveLayers = {
-  marker: L.Marker;
+  marker: L.Marker | null;
   traveled: L.Polyline;
   remaining: L.Polyline;
   remainingGlow: L.Polyline;
@@ -2499,7 +2499,9 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     if (cone) cone.style.transform = `rotate(${userHeading}deg)`;
   }, [userHeading]);
 
-  // Trip: live GPS (snap to route) or simulated playback
+  // Trip: live GPS only. We deliberately do not animate along the
+  // polyline when GPS is unavailable; Start Navigation should never look
+  // like real movement unless it is driven by actual location updates.
   useEffect(() => {
     const map = mapRef.current;
     const trailLayer = trailLayerRef.current;
@@ -2529,75 +2531,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }
 
     const geo = tripRouteGeometry;
-    const icon = createTransportIcon(tripMode, heatmapDemoBoost);
     const routeColor = "#22c55e";
     const traveledColor = "#3b82f6";
-
-    // —— Live GPS trip: layers updated in a separate effect on userLocation ——
-    if (liveTripGps) {
-      const marker = L.marker(geo[0], {
-        icon,
-        zIndexOffset: 3000,
-        interactive: false,
-      }).addTo(map);
-      transportMarkerRef.current = marker;
-      if (tripModeUses3dHeading(tripMode) && geo.length >= 2) {
-        setTransportMarkerHeading(marker, bearingDegrees(geo[0], geo[1]));
-      }
-
-      const remainingLine = L.polyline(geo, {
-        color: routeColor,
-        weight: 6,
-        opacity: 0.95,
-        lineCap: "round",
-        lineJoin: "round",
-      }).addTo(trailLayer!);
-
-      const remainingGlow = L.polyline(geo, {
-        color: routeColor,
-        weight: 16,
-        opacity: 0.12,
-      }).addTo(trailLayer!);
-
-      const traveledLine = L.polyline([], {
-        color: traveledColor,
-        weight: 6,
-        opacity: 0.9,
-        lineCap: "round",
-        lineJoin: "round",
-      }).addTo(trailLayer!);
-
-      tripLiveLayersRef.current = {
-        marker,
-        traveled: traveledLine,
-        remaining: remainingLine,
-        remainingGlow,
-      };
-
-      return () => {
-        tripLiveLayersRef.current = null;
-        liveTripDistAlongRef.current = 0;
-        if (transportMarkerRef.current) {
-          map.removeLayer(transportMarkerRef.current);
-          transportMarkerRef.current = null;
-        }
-        trailLayer?.clearLayers();
-        for (const pl of safePolylinesRef.current) {
-          (pl as L.Polyline).setStyle({ opacity: pl.options.weight === 16 ? 0.12 : 0.95 });
-        }
-      };
-    }
-
-    // —— Demo: play along polyline when GPS unavailable ——
-    const marker = L.marker(geo[0], {
-      icon,
-      zIndexOffset: 3000,
-      interactive: false,
-    }).addTo(map);
-    transportMarkerRef.current = marker;
-    if (tripModeUses3dHeading(tripMode) && geo.length >= 2) {
-      setTransportMarkerHeading(marker, bearingDegrees(geo[0], geo[1]));
-    }
 
     const remainingLine = L.polyline(geo, {
       color: routeColor,
@@ -2614,57 +2549,20 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }).addTo(trailLayer!);
 
     const traveledLine = L.polyline([], {
-      color: "#555",
+      color: traveledColor,
       weight: 6,
-      opacity: 0.35,
+      opacity: 0.9,
       lineCap: "round",
       lineJoin: "round",
-      dashArray: "8 6",
     }).addTo(trailLayer!);
 
-    let idx = 0;
-    const totalPts = geo.length;
-    const speed = tripMode === "driving-car" ? 3 : tripMode === "cycling-regular" ? 2 : 1;
-    const msPerStep = 80 / speed;
-    let lastTime = 0;
-    let lastTrailUpdate = -1;
-    const trailUpdateEvery = 3;
-
-    function step(time: number) {
-      if (time - lastTime < msPerStep) {
-        animFrameRef.current = requestAnimationFrame(step);
-        return;
-      }
-      lastTime = time;
-      idx = (idx + 1) % totalPts;
-      const pt = geo[idx];
-      marker.setLatLng(pt);
-      if (tripModeUses3dHeading(tripMode)) {
-        const next = geo[(idx + 1) % totalPts];
-        setTransportMarkerHeading(marker, bearingDegrees(pt, next));
-      }
-
-      if (Math.abs(idx - lastTrailUpdate) >= trailUpdateEvery || idx === 0) {
-        lastTrailUpdate = idx;
-        const progress = idx / (totalPts - 1);
-        onTripProgressRef.current?.(progress);
-
-        if (idx === 0) {
-          traveledLine.setLatLngs([]);
-          remainingLine.setLatLngs(geo);
-          remainingGlow.setLatLngs(geo);
-        } else {
-          const traveled = geo.slice(0, idx + 1);
-          traveledLine.setLatLngs(traveled);
-          const remaining = geo.slice(idx);
-          remainingLine.setLatLngs(remaining);
-          remainingGlow.setLatLngs(remaining);
-        }
-      }
-
-      animFrameRef.current = requestAnimationFrame(step);
-    }
-    animFrameRef.current = requestAnimationFrame(step);
+    tripLiveLayersRef.current = {
+      marker: null,
+      traveled: traveledLine,
+      remaining: remainingLine,
+      remainingGlow,
+    };
+    onTripProgressRef.current?.(0);
 
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -2679,7 +2577,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     };
   }, [tripMode, tripRouteGeometry, liveTripGps, heatmapDemoBoost]);
 
-  // Live trip: move vehicle and split polylines from GPS (SearchBar watchPosition)
+  // Live trip: move vehicle and split polylines from real GPS.
   useEffect(() => {
     if (!liveTripGps || !tripMode || !tripRouteGeometry || tripRouteGeometry.length < 2) {
       return;
@@ -2696,6 +2594,18 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       geo,
       liveTripDistAlongRef.current
     );
+
+    if (!layers.marker) {
+      const map = mapRef.current;
+      if (!map) return;
+      const liveMarker = L.marker(marker, {
+        icon: createTransportIcon(tripMode, heatmapDemoBoost),
+        zIndexOffset: 3000,
+        interactive: false,
+      }).addTo(map);
+      layers.marker = liveMarker;
+      transportMarkerRef.current = liveMarker;
+    }
 
     layers.marker.setLatLng(marker);
     layers.traveled.setLatLngs(traveled);
@@ -2715,7 +2625,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     const p =
       snap.totalLen > 0 ? Math.min(1, liveTripDistAlongRef.current / snap.totalLen) : 0;
     onTripProgressRef.current?.(p);
-  }, [userLocation, tripMode, tripRouteGeometry, liveTripGps]);
+  }, [userLocation, tripMode, tripRouteGeometry, liveTripGps, heatmapDemoBoost]);
 
   return <div id="incident-map" className="w-full h-full" />;
 });
