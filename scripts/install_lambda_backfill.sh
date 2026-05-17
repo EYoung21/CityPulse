@@ -110,6 +110,13 @@ BACKFILL_DELAY_JITTER=3
 BACKFILL_BACKOFF_BASE=60
 COOLDOWN_AFTER_QUOTA=7200
 CYCLE_SLEEP_S=600
+# Bumped from defaults (120s client / 180s server) on 2026-05-17: the
+# local ingest API queues backfill POSTs behind realtime LLM/geocode
+# work and the original 120s budget timed out before the queue drained.
+# Raise both together — client must be > server so failures surface as
+# upstream errors instead of opaque client-side aborts.
+BACKFILL_INGEST_TIMEOUT_SEC=600
+BRIDGE_POST_TIMEOUT_SEC=540
 PYTHONUNBUFFERED=1
 EOF
     sudo chmod 640 "$ENV_FILE"
@@ -144,6 +151,8 @@ append_if_missing LLM_BASE_URL http://127.0.0.1:11434/v1
 append_if_missing LLM_API_KEY ollama
 append_if_missing LLM_MODEL qwen2.5:7b-instruct-q5_K_M
 append_if_missing LLM_PROVIDER_NAME ollama-local
+append_if_missing BACKFILL_INGEST_TIMEOUT_SEC 600
+append_if_missing BRIDGE_POST_TIMEOUT_SEC 540
 
 echo "==> 5. systemd: local ingest API ($INGEST_API_SERVICE_FILE)"
 sudo tee "$INGEST_API_SERVICE_FILE" >/dev/null <<EOF
