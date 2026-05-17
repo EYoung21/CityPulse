@@ -35,7 +35,6 @@ interface Props {
  *  `onOpenChange(false)` so the parent's "open sidebar" button
  *  reappears. */
 const SNAP_POINTS: (string | number)[] = ["140px", 0.55, 0.92, 1];
-const PEEK = SNAP_POINTS[0];
 const HALF = SNAP_POINTS[1];
 const EXPANDED = SNAP_POINTS[2];
 const FULLSCREEN = SNAP_POINTS[3];
@@ -61,7 +60,10 @@ export default function MobileSheet({
 
   useEffect(() => {
     if (!expandKey) return;
-    setSnap(coverBottomNav ? EXPANDED : HALF);
+    const id = window.setTimeout(() => {
+      setSnap(coverBottomNav ? EXPANDED : HALF);
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [expandKey, coverBottomNav]);
 
   /** Track the on-screen keyboard height via VisualViewport so the
