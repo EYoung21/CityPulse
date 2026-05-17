@@ -10,6 +10,9 @@ interface Props {
   /** When the inner view changes (e.g. user opened Directions) we briefly
    *  bump the sheet to a more useful snap. Pass a key string. */
   expandKey?: string;
+  /** Route planning / active trip sheets need the full bottom edge for
+   *  primary controls, so they sit above the app's mobile tab bar. */
+  coverBottomNav?: boolean;
   children: ReactNode;
 }
 
@@ -37,15 +40,29 @@ const HALF = SNAP_POINTS[1];
 const EXPANDED = SNAP_POINTS[2];
 const FULLSCREEN = SNAP_POINTS[3];
 
-export default function MobileSheet({ open, onOpenChange, expandKey, children }: Props) {
+function snapToVisibleHeight(snap: number | string | null): string {
+  const active = snap ?? HALF;
+  if (typeof active === "string") return active;
+  return `${Math.round(active * 100)}dvh`;
+}
+
+export default function MobileSheet({
+  open,
+  onOpenChange,
+  expandKey,
+  coverBottomNav = false,
+  children,
+}: Props) {
   const [snap, setSnap] = useState<number | string | null>(HALF);
   const isFullscreen = snap === FULLSCREEN;
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const visibleHeight = snapToVisibleHeight(snap);
+  const sheetChromeHeight = isFullscreen ? "44px" : "28px";
 
   useEffect(() => {
     if (!expandKey) return;
-    setSnap(HALF);
-  }, [expandKey]);
+    setSnap(coverBottomNav ? EXPANDED : HALF);
+  }, [expandKey, coverBottomNav]);
 
   /** Track the on-screen keyboard height via VisualViewport so the
    *  sheet's scrollable content can pad above it. Exported as a CSS
@@ -79,6 +96,16 @@ export default function MobileSheet({ open, onOpenChange, expandKey, children }:
     }
     return () => document.documentElement.classList.remove(cls);
   }, [isFullscreen]);
+
+  useEffect(() => {
+    const cls = "pp-mobile-sheet-over-nav";
+    if (open && coverBottomNav) {
+      document.documentElement.classList.add(cls);
+    } else {
+      document.documentElement.classList.remove(cls);
+    }
+    return () => document.documentElement.classList.remove(cls);
+  }, [open, coverBottomNav]);
 
   /** When the user focuses an input inside the sheet, snap to
    *  fullscreen. Capture-phase listener catches any descendant
@@ -164,6 +191,7 @@ export default function MobileSheet({ open, onOpenChange, expandKey, children }:
           aria-describedby={undefined}
           className="fixed left-0 right-0 bottom-0 z-[2000] flex flex-col outline-none shadow-2xl"
           style={{
+            zIndex: coverBottomNav ? "var(--pp-z-mobile-menu)" : 2000,
             background: "var(--panel-bg)",
             border: "1px solid var(--panel-border)",
             borderBottom: "none",
@@ -219,6 +247,8 @@ export default function MobileSheet({ open, onOpenChange, expandKey, children }:
           <div
             className="flex-1 min-h-0 flex flex-col overflow-hidden"
             style={{
+              height: `calc(${visibleHeight} - ${sheetChromeHeight})`,
+              maxHeight: `calc(${visibleHeight} - ${sheetChromeHeight})`,
               // Pad the inner content so the on-screen keyboard never
               // buries the bottom of the sheet's result list.
               paddingBottom: "var(--pp-keyboard-h, 0px)",

@@ -595,8 +595,12 @@ export default function SearchSidebar({
     });
     setRerouteAlert(null);
     setView("trip");
-    setDrawerOpen(true);
-    setActiveDesktopPanel(null);
+    if (isMobile) {
+      onMobileOpenChange?.(false);
+    } else {
+      setDrawerOpen(true);
+      setActiveDesktopPanel(null);
+    }
     const active = routeData.chosen ?? routeData.safe ?? routeData.normal;
     const geom = active?.geometry;
     activeRouteRef.current = geom ?? null;
@@ -625,7 +629,17 @@ export default function SearchSidebar({
       startedAt: Date.now(),
       progress: 0,
     });
-  }, [originLoc, destLoc, stops, activeMode, handleRoutesChange, onTripActive, incidents]);
+  }, [
+    originLoc,
+    destLoc,
+    stops,
+    activeMode,
+    handleRoutesChange,
+    onTripActive,
+    incidents,
+    isMobile,
+    onMobileOpenChange,
+  ]);
 
   // Auto-reroute: watch for new incidents near the active route geometry
   const activeRouteRef = useRef<[number, number][] | null>(null);
@@ -973,7 +987,13 @@ export default function SearchSidebar({
           // lets the panel claim the remaining sheet height; the
           // overflow lives on this wrapper, not inside the panel,
           // so the panel's own layout assumptions stay untouched. */}
-          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          <div
+            className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y"
+            style={{
+              WebkitOverflowScrolling: "touch",
+              paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)",
+            }}
+          >
             <DirectionsPanel
               incidents={incidents}
               originLoc={originLoc}
@@ -1071,6 +1091,7 @@ export default function SearchSidebar({
         open={mobileOpen}
         onOpenChange={(o) => onMobileOpenChange?.(o)}
         expandKey={view}
+        coverBottomNav={view !== "search"}
       >
         {innerContent}
       </MobileSheet>
@@ -1193,32 +1214,34 @@ export default function SearchSidebar({
   const desktopDrawerContent = (() => {
     if (view === "directions") {
       return (
-        <DirectionsPanel
-          incidents={incidents}
-          originLoc={originLoc}
-          setOriginLoc={setOriginLoc}
-          originQuery={originQuery}
-          setOriginQuery={setOriginQuery}
-          destLoc={destLoc}
-          setDestLoc={setDestLoc}
-          destQuery={destQuery}
-          setDestQuery={setDestQuery}
-          stops={stops}
-          setStops={setStops}
-          activeMode={activeMode}
-          setActiveMode={setActiveMode}
-          userPos={userPos}
-          gpsStatus={gpsStatus}
-          onBack={closeDesktopDrawer}
-          onFlyTo={onFlyTo}
-          onRoutesChange={handleRoutesChange}
-          onPreviewPins={onPreviewPins}
-          onPreviewWaypoints={onPreviewWaypoints}
-          onStartTrip={startTrip}
-          avoidPrefs={avoidPrefs}
-          onAvoidPrefsChange={setAvoidPrefs}
-          timeFilterHours={timeFilterHours ?? 24}
-        />
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          <DirectionsPanel
+            incidents={incidents}
+            originLoc={originLoc}
+            setOriginLoc={setOriginLoc}
+            originQuery={originQuery}
+            setOriginQuery={setOriginQuery}
+            destLoc={destLoc}
+            setDestLoc={setDestLoc}
+            destQuery={destQuery}
+            setDestQuery={setDestQuery}
+            stops={stops}
+            setStops={setStops}
+            activeMode={activeMode}
+            setActiveMode={setActiveMode}
+            userPos={userPos}
+            gpsStatus={gpsStatus}
+            onBack={closeDesktopDrawer}
+            onFlyTo={onFlyTo}
+            onRoutesChange={handleRoutesChange}
+            onPreviewPins={onPreviewPins}
+            onPreviewWaypoints={onPreviewWaypoints}
+            onStartTrip={startTrip}
+            avoidPrefs={avoidPrefs}
+            onAvoidPrefsChange={setAvoidPrefs}
+            timeFilterHours={timeFilterHours ?? 24}
+          />
+        </div>
       );
     }
 
