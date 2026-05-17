@@ -31,19 +31,15 @@ interface Props {
 export default function SpeedChip({ mps, loc = null }: Props) {
   const unit = preferredSpeedUnit();
   const { limitKmh } = useSpeedLimit(loc ?? null, mps !== null);
-
-  if (mps === null) return null;
-
-  const value = formatSpeed(mps, unit);
-  const label = unit === "mph" ? "mph" : "km/h";
   const limit = formatSpeedLimit(limitKmh, unit);
+  const value = mps === null ? null : formatSpeed(mps, unit);
 
   // "Meaningfully over" = >5 mph / >8 km/h. Below that is rounding +
   // GPS noise. Above it the shield turns red so the user can react
   // without doing the conversion in their head.
   const speedingThreshold = unit === "mph" ? 5 : 8;
   const isSpeeding =
-    limit != null && Number(value) - Number(limit) >= speedingThreshold;
+    value !== null && limit != null && Number(value) - Number(limit) >= speedingThreshold;
 
   // Sustained-speeding voice warning. We arm a timer the moment the
   // chip flips into the speeding state, fire a single TTS cue when
@@ -82,6 +78,10 @@ export default function SpeedChip({ mps, loc = null }: Props) {
     }, SPEEDING_SUSTAINED_MS);
     return () => window.clearTimeout(t);
   }, [isSpeeding, limit]);
+
+  if (mps === null || value === null) return null;
+
+  const label = unit === "mph" ? "mph" : "km/h";
 
   return (
     <div

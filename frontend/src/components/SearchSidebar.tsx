@@ -988,7 +988,7 @@ export default function SearchSidebar({
           // overflow lives on this wrapper, not inside the panel,
           // so the panel's own layout assumptions stay untouched. */}
           <div
-            className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y"
+            className="flex-1 min-h-0 overflow-y-auto overscroll-contain"
             style={{
               WebkitOverflowScrolling: "touch",
               paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)",
