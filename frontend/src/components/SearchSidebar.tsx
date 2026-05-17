@@ -393,6 +393,7 @@ export default function SearchSidebar({
 
   const openDirections = useCallback(
     (destName?: string, destCoords?: { lat: number; lng: number }) => {
+      setSelectedPlace(null);
       setView("directions");
       setDrawerOpen(true);
       setActiveDesktopPanel("directions");
@@ -403,6 +404,41 @@ export default function SearchSidebar({
       }
     },
     [originLoc, onPreviewPins]
+  );
+
+  const clearSelectedPlacePreview = useCallback(() => {
+    setSelectedPlace(null);
+    setDestQuery("");
+    setDestLoc(null);
+    setStops([]);
+    handleRoutesChange(null);
+    onPreviewWaypoints?.(null);
+    onPreviewPins?.(originLoc, null);
+  }, [handleRoutesChange, onPreviewPins, onPreviewWaypoints, originLoc]);
+
+  const handlePlaceSelected = useCallback(
+    (place: SelectedPlace) => {
+      const coords = { lat: place.lat, lng: place.lng };
+      setSelectedPlace(place);
+      setDestQuery(place.name);
+      setDestLoc({ display_name: place.name, ...coords });
+      setStops([]);
+      setView("search");
+      setDrawerOpen(true);
+      setActiveDesktopPanel(null);
+      handleRoutesChange(null);
+      onPreviewWaypoints?.(null);
+      onPreviewPins?.(originLoc, coords);
+    },
+    [handleRoutesChange, onPreviewPins, onPreviewWaypoints, originLoc]
+  );
+
+  const openSelectedPlaceDirections = useCallback(
+    (place: SelectedPlace) => {
+      setSelectedPlace(null);
+      openDirections(place.name, { lat: place.lat, lng: place.lng });
+    },
+    [openDirections]
   );
 
   /** Listen for cross-component "plan a route to/from this place" events
@@ -762,7 +798,7 @@ export default function SearchSidebar({
               onDirections={openDirections}
               timeFilterHours={timeFilterHours}
               onSelectIncident={onSelectIncident}
-              onPlaceSelected={setSelectedPlace}
+              onPlaceSelected={handlePlaceSelected}
             />
 
             {selectedPlace ? (
@@ -772,11 +808,8 @@ export default function SearchSidebar({
               // overwhelmed and the Directions CTA is the hero.
               <SearchedPlaceCard
                 place={selectedPlace}
-                onDirections={(p) => {
-                  setSelectedPlace(null);
-                  openDirections(p.name, { lat: p.lat, lng: p.lng });
-                }}
-                onClose={() => setSelectedPlace(null)}
+                onDirections={openSelectedPlaceDirections}
+                onClose={clearSelectedPlacePreview}
               />
             ) : (
               <>
@@ -1085,13 +1118,19 @@ export default function SearchSidebar({
     </>
   );
 
+  const placeCardOpen = view === "search" && selectedPlace !== null;
+  const mobileExpandKey = placeCardOpen
+    ? `${view}:place:${selectedPlace.lat.toFixed(5)},${selectedPlace.lng.toFixed(5)}`
+    : view;
+
   if (isMobile) {
     return (
       <MobileSheet
         open={mobileOpen}
         onOpenChange={(o) => onMobileOpenChange?.(o)}
-        expandKey={view}
-        coverBottomNav={view !== "search"}
+        expandKey={mobileExpandKey}
+        coverBottomNav={view !== "search" || placeCardOpen}
+        preferExpanded={placeCardOpen}
       >
         {innerContent}
       </MobileSheet>
@@ -1129,6 +1168,7 @@ export default function SearchSidebar({
   const drawerTitle =
     view === "directions" ? "Directions" :
     view === "trip" ? "Trip" :
+    selectedPlace ? selectedPlace.name :
     activeDesktopPanel === "feed" ? "Live incidents" :
     activeDesktopPanel === "saved" ? "Saved" :
     activeDesktopPanel === "recents" ? "Recents" :
@@ -1297,6 +1337,18 @@ export default function SearchSidebar({
       );
     }
 
+    if (view === "search" && selectedPlace) {
+      return (
+        <div className="overflow-y-auto pb-4 pt-3">
+          <SearchedPlaceCard
+            place={selectedPlace}
+            onDirections={openSelectedPlaceDirections}
+            onClose={clearSelectedPlacePreview}
+          />
+        </div>
+      );
+    }
+
     if (activeDesktopPanel === "feed") return desktopIncidentFeed;
     if (activeDesktopPanel === "saved") {
       return (
@@ -1434,7 +1486,7 @@ export default function SearchSidebar({
             onDirections={openDirections}
             timeFilterHours={timeFilterHours}
             onSelectIncident={onSelectIncident}
-            onPlaceSelected={setSelectedPlace}
+            onPlaceSelected={handlePlaceSelected}
           />
         </div>
       )}
