@@ -341,11 +341,11 @@ export default function SearchSidebar({
 
     if (!navigator.geolocation) {
       setGpsStatus("denied");
+      setUserPos(null);
       const fb = cityCenter();
       setOriginLoc({ display_name: fb.label, lat: fb.lat, lng: fb.lng });
       setOriginQuery(fb.label);
       onPreviewPinsRef.current?.({ lat: fb.lat, lng: fb.lng }, null);
-      onUserLocationRef.current?.(fb.lat, fb.lng);
       return;
     }
     setGpsStatus("loading");
@@ -379,11 +379,11 @@ export default function SearchSidebar({
       () => {
         navigator.geolocation.clearWatch(watchId);
         setGpsStatus("denied");
+        setUserPos(null);
         const fb = cityCenter();
         setOriginLoc({ display_name: fb.label, lat: fb.lat, lng: fb.lng });
         setOriginQuery(fb.label);
         onPreviewPinsRef.current?.({ lat: fb.lat, lng: fb.lng }, null);
-        onUserLocationRef.current?.(fb.lat, fb.lng);
       },
       { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }
     );
@@ -440,6 +440,37 @@ export default function SearchSidebar({
     },
     [openDirections]
   );
+
+  const requestNavigationLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      setGpsStatus("denied");
+      setUserPos(null);
+      return Promise.resolve<StopLoc | null>(null);
+    }
+
+    setGpsStatus("loading");
+    return new Promise<StopLoc | null>((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const loc = {
+            display_name: "Your location",
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          };
+          setUserPos({ lat: loc.lat, lng: loc.lng });
+          setGpsStatus("found");
+          onUserLocationRef.current?.(loc.lat, loc.lng);
+          resolve(loc);
+        },
+        () => {
+          setGpsStatus("denied");
+          setUserPos(null);
+          resolve(null);
+        },
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 12000 }
+      );
+    });
+  }, []);
 
   /** Listen for cross-component "plan a route to/from this place" events
    *  dispatched by PlaceActions buttons inside cards. mode:"to" pre-fills
@@ -566,14 +597,31 @@ export default function SearchSidebar({
   const startTrip = useCallback(async () => {
     if (!originLoc || !destLoc) return;
 
+    const gpsOrigin =
+      gpsStatus === "found" && userPos
+        ? { display_name: "Your location", lat: userPos.lat, lng: userPos.lng }
+        : await requestNavigationLocation();
+
+    if (!gpsOrigin) {
+      throw new Error("Enable location to start live navigation.");
+    }
+
+    const navOriginLoc: StopLoc = gpsOrigin;
+    setOriginLoc(navOriginLoc);
+    setOriginQuery("Your location");
+    onPreviewPins?.({ lat: navOriginLoc.lat, lng: navOriginLoc.lng }, { lat: destLoc.lat, lng: destLoc.lng });
+
     // If the picker has already produced a chosen route, prefer that —
     // it may be an alternate, "Safer", "No tolls", etc., and re-running
     // routing here would discard the user's selection.
     const picked = latestRouteDataRef.current;
+    const pickedMatchesLiveOrigin = originLoc
+      ? haversineM(originLoc.lat, originLoc.lng, navOriginLoc.lat, navOriginLoc.lng) < 25
+      : false;
     let routeData: RouteData | null = null;
     let meta: { distanceKm: number; durationMin: number; isSafe: boolean; nearbyCount: number } | null = null;
 
-    if (picked && picked.chosen) {
+    if (picked && picked.chosen && pickedMatchesLiveOrigin) {
       routeData = picked;
       meta = {
         distanceKm: picked.chosen.distanceKm,
@@ -583,7 +631,7 @@ export default function SearchSidebar({
       };
     } else {
       const waypoints: [number, number][] = [
-        [originLoc.lat, originLoc.lng],
+        [navOriginLoc.lat, navOriginLoc.lng],
         ...stops.filter((s) => s.loc).map((s) => [s.loc!.lat, s.loc!.lng] as [number, number]),
         [destLoc.lat, destLoc.lng],
       ];
@@ -646,7 +694,7 @@ export default function SearchSidebar({
       durationMin: meta.durationMin,
       nearbyCount: meta.nearbyCount,
       isSafe: meta.isSafe,
-      origin: { display_name: originLoc.display_name, lat: originLoc.lat, lng: originLoc.lng },
+      origin: { display_name: navOriginLoc.display_name, lat: navOriginLoc.lat, lng: navOriginLoc.lng },
       dest: { display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng },
     });
 
@@ -654,7 +702,7 @@ export default function SearchSidebar({
     // a "Resume trip?" pill on next mount. Geometry isn't stored — we
     // rerun startTrip() with the same waypoints to rebuild it.
     saveTripSnapshot({
-      origin: { display_name: originLoc.display_name, lat: originLoc.lat, lng: originLoc.lng },
+      origin: { display_name: navOriginLoc.display_name, lat: navOriginLoc.lat, lng: navOriginLoc.lng },
       dest: { display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng },
       stops: stops.map((s) => ({
         id: s.id,
@@ -672,9 +720,13 @@ export default function SearchSidebar({
     activeMode,
     handleRoutesChange,
     onTripActive,
+    onPreviewPins,
     incidents,
     isMobile,
     onMobileOpenChange,
+    gpsStatus,
+    userPos,
+    requestNavigationLocation,
   ]);
 
   // Auto-reroute: watch for new incidents near the active route geometry
@@ -1088,6 +1140,7 @@ export default function SearchSidebar({
           stops={stops}
           activeMode={activeMode}
           tripProgress={tripProgress}
+          gpsStatus={gpsStatus}
           onResetTrip={resetTrip}
           recentIncidents={incidents.slice(0, 12)}
           onSelectIncident={(id) => onSelectIncident?.(id)}
@@ -1308,6 +1361,7 @@ export default function SearchSidebar({
             stops={stops}
             activeMode={activeMode}
             tripProgress={tripProgress}
+            gpsStatus={gpsStatus}
             onResetTrip={resetTrip}
             recentIncidents={incidents.slice(0, 12)}
             onSelectIncident={(id) => onSelectIncident?.(id)}

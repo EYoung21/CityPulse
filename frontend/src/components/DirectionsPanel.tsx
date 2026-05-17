@@ -238,6 +238,7 @@ export default function DirectionsPanel({
   );
   const [routeError, setRouteError] = useState<string | null>(null);
   const [startNavBusy, setStartNavBusy] = useState(false);
+  const [startNavError, setStartNavError] = useState<string | null>(null);
   // Optional shifted-departure: when null, ETA is computed against
   // "now". When set to a future Date, the displayed ETA is shifted by
   // the offset (no actual time-of-day routing — OSRM/ORS free tier
@@ -453,8 +454,13 @@ export default function DirectionsPanel({
 
   const handleStartTrip = async () => {
     setStartNavBusy(true);
+    setStartNavError(null);
     try {
       await onStartTrip();
+    } catch (err) {
+      setStartNavError(
+        err instanceof Error ? err.message : "Could not start live navigation."
+      );
     } finally {
       setStartNavBusy(false);
     }
@@ -1214,6 +1220,20 @@ export default function DirectionsPanel({
             </button>
           )}
         </div>
+        {startNavError && (
+          <div
+            className="mt-2 flex items-start gap-2 rounded-lg px-3 py-2 text-xs"
+            style={{
+              background: "rgba(245,158,11,0.12)",
+              border: "1px solid rgba(245,158,11,0.28)",
+              color: "#f59e0b",
+            }}
+            role="alert"
+          >
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>{startNavError}</span>
+          </div>
+        )}
 
         {/* Rideshare bail-out — surfaced once a destination is set, so
             users can hand the trip off to Uber/Lyft if they're not
