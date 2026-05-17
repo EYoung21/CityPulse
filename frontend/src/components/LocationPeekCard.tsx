@@ -23,6 +23,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Clock, MapPin, X } from "lucide-react";
 import type { Incident } from "@/lib/api";
 import { reverseGeocode } from "@/lib/search";
+import TransitArrivalsCard from "@/components/TransitArrivalsCard";
 
 interface CategoryPill {
   readonly label: string;
@@ -221,6 +222,12 @@ export default function LocationPeekCard({
           )}
         </>
       )}
+
+      {/* Nearby transit arrivals — dispatches by city (SEPTA in
+          philly, BART in sf). Self-gates: renders nothing when no
+          station is within range or when the active city has no
+          supported provider, so mounting it unconditionally is safe. */}
+      <TransitArrivalsCard lat={lat} lng={lng} />
     </div>
   );
 }

@@ -43,6 +43,7 @@ import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
 import SearchInput from "@/components/SearchInput";
 import SavedPlaces from "@/components/SavedPlaces";
+import NearbyChips from "@/components/NearbyChips";
 import TripHistory from "@/components/TripHistory";
 import DirectionsPanel from "@/components/DirectionsPanel";
 import TripHUD from "@/components/TripHUD";
@@ -742,6 +743,15 @@ export default function SearchSidebar({
               onDirections={openDirections}
               timeFilterHours={timeFilterHours}
               onSelectIncident={onSelectIncident}
+            />
+
+            {/* OSM Overpass-backed "Find nearby" chips. Self-contained;
+                results render inline. Sits above the directions CTA
+                so the row reads as "search → nearby → directions". */}
+            <NearbyChips
+              userPos={userPos}
+              onFlyTo={onFlyTo}
+              onDirections={openDirections}
             />
 
             <button

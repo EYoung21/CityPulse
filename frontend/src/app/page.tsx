@@ -2047,6 +2047,36 @@ function MapHome() {
         {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
       </button>
 
+      {/* Mobile top search pill — Google-Maps-style entry into the search
+          sheet. Hidden on desktop (sidebar is always visible there) and
+          while the bottom sheet is open (the real search input is then
+          on-screen so a duplicate affordance would be noise). */}
+      {!sidebarOpen && (
+        <button
+          onClick={() => {
+            setSidebarOpen(true);
+            // Let the vaul snap-in finish before stealing focus, otherwise
+            // mobile Safari can race the animation and skip the keyboard.
+            window.setTimeout(() => {
+              window.dispatchEvent(new CustomEvent("pp:focus-search"));
+            }, 260);
+          }}
+          className="md:hidden fixed z-[2001] left-3 right-3 flex items-center gap-2 px-3.5 py-2.5 rounded-full backdrop-blur-md shadow-lg"
+          style={{
+            top: "calc(env(safe-area-inset-top, 0px) + 0.625rem)",
+            background: "var(--pill-bg)",
+            border: "1px solid var(--pill-border)",
+            color: "var(--pill-text)",
+          }}
+          aria-label="Search places, addresses, or set a route"
+        >
+          <Search className="w-4 h-4 opacity-75 shrink-0" aria-hidden />
+          <span className="text-sm opacity-75 truncate text-left flex-1">
+            Search places, addresses, set a route
+          </span>
+        </button>
+      )}
+
       {/* Sidebar (desktop: side panel; mobile: vaul snap-point bottom sheet) */}
       <SearchSidebar
         incidents={filteredIncidents}
