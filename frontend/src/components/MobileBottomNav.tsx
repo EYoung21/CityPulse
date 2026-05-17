@@ -193,6 +193,7 @@ function MobileBottomNavInner() {
   const nav = (
     <nav
       aria-label="Primary"
+      className="pp-mobile-bottom-nav"
       style={{
         position: "fixed",
         left: 0,
