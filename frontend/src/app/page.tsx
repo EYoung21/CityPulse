@@ -458,6 +458,15 @@ function MapHome() {
     mapRef.current?.panTo?.(userLocation.lat, userLocation.lng);
   }, [followMe, userLocation]);
   const [tripGeometry, setTripGeometry] = useState<[number, number][] | null>(null);
+  useEffect(() => {
+    const cls = "pp-mobile-trip-active";
+    if (tripGeometry) {
+      document.documentElement.classList.add(cls);
+    } else {
+      document.documentElement.classList.remove(cls);
+    }
+    return () => document.documentElement.classList.remove(cls);
+  }, [tripGeometry]);
   /** Whether the "Search along route" overlay panel is open. Only
    *  meaningful when a trip is active — toggling closes the panel
    *  when the trip ends so it doesn't persist into a stale state. */
@@ -2051,7 +2060,7 @@ function MapHome() {
           sheet. Hidden on desktop (sidebar is always visible there) and
           while the bottom sheet is open (the real search input is then
           on-screen so a duplicate affordance would be noise). */}
-      {!sidebarOpen && (
+      {!sidebarOpen && !tripGeometry && (
         <button
           onClick={() => {
             setSidebarOpen(true);

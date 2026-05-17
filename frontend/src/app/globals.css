@@ -759,6 +759,10 @@
 html.pp-mobile-search-fullscreen .pp-mobile-bottom-nav {
   display: none !important;
 }
+html.pp-mobile-sheet-over-nav .pp-mobile-bottom-nav,
+html.pp-mobile-trip-active .pp-mobile-bottom-nav {
+  display: none !important;
+}
 html.pp-mobile-search-fullscreen #incident-map .leaflet-control-zoom,
 html.pp-mobile-search-fullscreen .pp-alert-toast {
   display: none !important;
