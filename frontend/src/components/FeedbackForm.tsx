@@ -273,6 +273,24 @@ export default function FeedbackForm() {
                   {status.kind === "submitting" ? "Sending…" : "Send"}
                 </button>
               </div>
+
+              {/* Email escape hatch — if sign-in or Firebase itself is the
+                  thing that's broken, the form above can't get through.
+                  A plain mailto always works. */}
+              <p
+                className="text-[10px] leading-snug text-center pt-1"
+                style={{ color: "var(--panel-text-muted)" }}
+              >
+                Form acting up? Email{" "}
+                <a
+                  href="mailto:eliyoung4now@gmail.com?subject=PhillyPulse%20feedback"
+                  className="underline"
+                  style={{ color: "var(--panel-text)" }}
+                >
+                  eliyoung4now@gmail.com
+                </a>{" "}
+                directly.
+              </p>
             </div>
           </motion.div>
         </motion.div>
