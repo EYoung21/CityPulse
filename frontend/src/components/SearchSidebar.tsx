@@ -45,6 +45,7 @@ import SearchInput from "@/components/SearchInput";
 import SavedPlaces from "@/components/SavedPlaces";
 import NearbyChips from "@/components/NearbyChips";
 import TripHistory from "@/components/TripHistory";
+import SearchedPlaceCard, { type SelectedPlace } from "@/components/SearchedPlaceCard";
 import DirectionsPanel from "@/components/DirectionsPanel";
 import TripHUD from "@/components/TripHUD";
 import IncidentFeed from "@/components/IncidentFeed";
@@ -178,6 +179,10 @@ export default function SearchSidebar({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeDesktopPanel, setActiveDesktopPanel] = useState<DesktopPanel>(null);
   const [view, setView] = useState<View>("search");
+  /** Set when the user taps a search-result row. Shows the
+   *  Directions/Save/Share card in place of the default search shelf
+   *  (saved places, trip history, etc.) until dismissed. */
+  const [selectedPlace, setSelectedPlace] = useState<SelectedPlace | null>(null);
   const { user } = useAuth();
   const desktopPanelVisible = !isMobile && (drawerOpen || activeDesktopPanel !== null || view === "directions" || view === "trip");
   const desktopOccupiedWidth = desktopPanelVisible ? MAP_RAIL_WIDTH + sidebarWidthPx : MAP_RAIL_WIDTH;
@@ -743,28 +748,44 @@ export default function SearchSidebar({
               onDirections={openDirections}
               timeFilterHours={timeFilterHours}
               onSelectIncident={onSelectIncident}
+              onPlaceSelected={setSelectedPlace}
             />
 
-            {/* OSM Overpass-backed "Find nearby" chips. Self-contained;
-                results render inline. Sits above the directions CTA
-                so the row reads as "search → nearby → directions". */}
-            <NearbyChips
-              userPos={userPos}
-              onFlyTo={onFlyTo}
-              onDirections={openDirections}
-            />
+            {selectedPlace ? (
+              // Tap-result place card. Mounted only while a place is
+              // selected; replaces the default search shelf (chips,
+              // saved places, trip history) so the user isn't
+              // overwhelmed and the Directions CTA is the hero.
+              <SearchedPlaceCard
+                place={selectedPlace}
+                onDirections={(p) => {
+                  setSelectedPlace(null);
+                  openDirections(p.name, { lat: p.lat, lng: p.lng });
+                }}
+                onClose={() => setSelectedPlace(null)}
+              />
+            ) : (
+              <>
+                {/* OSM Overpass-backed "Find nearby" chips. Self-contained;
+                    results render inline. Sits above the directions CTA
+                    so the row reads as "search → nearby → directions". */}
+                <NearbyChips
+                  userPos={userPos}
+                  onFlyTo={onFlyTo}
+                  onDirections={openDirections}
+                />
 
-            <button
-              onClick={() => openDirections()}
-              className="mx-4 mb-2 w-[calc(100%-2rem)] flex items-center gap-3 px-4 py-2.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/15 border border-blue-500/20 transition-all text-sm text-blue-500 font-medium"
-            >
-              <Navigation className="w-4 h-4" />
-              Get Safe Directions
-            </button>
+                <button
+                  onClick={() => openDirections()}
+                  className="mx-4 mb-2 w-[calc(100%-2rem)] flex items-center gap-3 px-4 py-2.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/15 border border-blue-500/20 transition-all text-sm text-blue-500 font-medium"
+                >
+                  <Navigation className="w-4 h-4" />
+                  Get Safe Directions
+                </button>
 
-            <SavedPlaces onFlyTo={onFlyTo} onDirections={openDirections} userPos={userPos} />
+                <SavedPlaces onFlyTo={onFlyTo} onDirections={openDirections} userPos={userPos} />
 
-            <TripHistory
+                <TripHistory
               onReplay={(entry) => {
                 if (!entry.origin || !entry.dest) return;
                 // Reuse the existing pp:resume-trip codepath so the
@@ -937,6 +958,8 @@ export default function SearchSidebar({
                 CityPulse · AI-Powered Community Safety
               </span>
             </div>
+              </>
+            )}
           </>
         )}
 
@@ -1377,6 +1400,7 @@ export default function SearchSidebar({
             onDirections={openDirections}
             timeFilterHours={timeFilterHours}
             onSelectIncident={onSelectIncident}
+            onPlaceSelected={setSelectedPlace}
           />
         </div>
       )}
