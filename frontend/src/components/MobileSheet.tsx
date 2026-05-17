@@ -13,6 +13,9 @@ interface Props {
   /** Route planning / active trip sheets need the full bottom edge for
    *  primary controls, so they sit above the app's mobile tab bar. */
   coverBottomNav?: boolean;
+  /** Some child views, like a selected-place card, should open high enough
+   *  that their primary action is immediately reachable. */
+  preferExpanded?: boolean;
   children: ReactNode;
 }
 
@@ -50,6 +53,7 @@ export default function MobileSheet({
   onOpenChange,
   expandKey,
   coverBottomNav = false,
+  preferExpanded = false,
   children,
 }: Props) {
   const [snap, setSnap] = useState<number | string | null>(HALF);
@@ -61,10 +65,10 @@ export default function MobileSheet({
   useEffect(() => {
     if (!expandKey) return;
     const id = window.setTimeout(() => {
-      setSnap(coverBottomNav ? EXPANDED : HALF);
+      setSnap(coverBottomNav || preferExpanded ? EXPANDED : HALF);
     }, 0);
     return () => window.clearTimeout(id);
-  }, [expandKey, coverBottomNav]);
+  }, [expandKey, coverBottomNav, preferExpanded]);
 
   /** Track the on-screen keyboard height via VisualViewport so the
    *  sheet's scrollable content can pad above it. Exported as a CSS
@@ -171,7 +175,9 @@ export default function MobileSheet({
         sheetEl?.contains(active) &&
         (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
       if (!stillTextInside) {
-        setSnap((s) => (s === FULLSCREEN ? HALF : s));
+        setSnap((s) =>
+          s === FULLSCREEN ? (coverBottomNav || preferExpanded ? EXPANDED : HALF) : s
+        );
       }
     }, 0);
   };
@@ -185,7 +191,7 @@ export default function MobileSheet({
       setActiveSnapPoint={setSnap}
       modal={false}
       shouldScaleBackground={false}
-      handleOnly
+      handleOnly={isFullscreen}
     >
       <Drawer.Portal>
         <Drawer.Content

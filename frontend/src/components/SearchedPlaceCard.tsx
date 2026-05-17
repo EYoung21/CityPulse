@@ -35,8 +35,12 @@ interface Props {
 }
 
 export default function SearchedPlaceCard({ place, onDirections, onClose }: Props) {
-  const [address, setAddress] = useState<string | null>(null);
-  const [addressLoading, setAddressLoading] = useState(true);
+  const placeKey = `${place.lat.toFixed(6)},${place.lng.toFixed(6)}`;
+  const [addressResult, setAddressResult] = useState<{
+    key: string;
+    address: string | null;
+    loading: boolean;
+  } | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [shareState, setShareState] = useState<"idle" | "sharing" | "done">("idle");
   const { addDestination, destinations } = useSavedDestinations();
@@ -50,22 +54,21 @@ export default function SearchedPlaceCard({ place, onDirections, onClose }: Prop
   // Single shot; on failure we silently fall back to coords.
   useEffect(() => {
     let cancelled = false;
-    setAddress(null);
-    setAddressLoading(true);
     reverseGeocode(place.lat, place.lng)
       .then((label) => {
-        if (!cancelled) setAddress(label);
+        if (!cancelled) {
+          setAddressResult({ key: placeKey, address: label, loading: false });
+        }
       })
       .catch(() => {
-        /* fall through to coords */
-      })
-      .finally(() => {
-        if (!cancelled) setAddressLoading(false);
+        if (!cancelled) {
+          setAddressResult({ key: placeKey, address: null, loading: false });
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [place.lat, place.lng]);
+  }, [place.lat, place.lng, placeKey]);
 
   const handleSave = async () => {
     if (saveState === "saving" || alreadySaved) return;
@@ -98,6 +101,9 @@ export default function SearchedPlaceCard({ place, onDirections, onClose }: Prop
       setShareState("idle");
     }
   };
+
+  const address = addressResult?.key === placeKey ? addressResult.address : null;
+  const addressLoading = addressResult?.key !== placeKey || addressResult.loading;
 
   const subtitle = address
     ? address
