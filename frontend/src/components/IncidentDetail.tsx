@@ -90,6 +90,19 @@ function WaveformPlayer({
     return { words, effectiveHasTimings };
   }, [transcript, wordTimings]);
 
+  // Stable string identifier for the audio source set. The parent
+  // (IncidentDetail) re-derives `incident` on every live-feed tick,
+  // which yields a fresh `src` array reference even when the URLs
+  // haven't changed. Keying the fetch+playback effect on the array
+  // reference (`[src]`) tore the audio element down mid-playback —
+  // calling `audio.pause()` + `audio.src = ""` and resetting the
+  // user's position. Keying on the joined URL string keeps the
+  // effect stable across no-op parent renders.
+  const srcKey = useMemo(
+    () => (Array.isArray(src) ? src.filter(Boolean).join("|") : (src ?? "")),
+    [src]
+  );
+
   useEffect(() => {
     let objectUrl: string | null = null;
     const audio = new Audio();
@@ -166,7 +179,8 @@ function WaveformPlayer({
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       if (animRef.current) cancelAnimationFrame(animRef.current);
     };
-  }, [src]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcKey]);
 
   const drawWaveform = useCallback(() => {
     const canvas = canvasRef.current;
