@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertTriangle, Radio } from "lucide-react";
+import { AlertTriangle, Radio, X as XIcon } from "lucide-react";
 import type { Incident } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
 
@@ -56,14 +56,21 @@ export default function AlertToast({ incidents }: Props) {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: -30, scale: 0.95 }}
           transition={{ type: "spring", damping: 20, stiffness: 300 }}
-          className="pp-below-app-topnav fixed left-1/2 -translate-x-1/2 z-[2100]"
-          style={{ top: "calc(var(--pp-below-app-topnav-top) + 0.5rem)" }}
+          className="pp-alert-toast fixed left-1/2 -translate-x-1/2 z-[2100]"
+          // On mobile, anchor below the top search pill (shared CSS var)
+          // so the toast never covers the pill. Desktop keeps the
+          // original "below-topnav" anchor. Both fall through Tailwind
+          // because the inline `top` wins on mobile and the @media rule
+          // in globals.css overrides for ≥768px.
+          style={{ top: "calc(var(--pp-mobile-pill-bottom) + 0.5rem)" }}
         >
           <div
-            className="rounded-xl px-4 py-3 flex items-center gap-3 border border-red-500/30 shadow-[0_0_30px_rgba(239,68,68,0.15)] min-w-[280px] backdrop-blur-xl"
+            className="rounded-xl pl-4 pr-2 py-3 flex items-center gap-3 border border-red-500/30 shadow-[0_0_30px_rgba(239,68,68,0.15)] backdrop-blur-xl w-[calc(100vw-1.5rem)] max-w-[420px] sm:w-auto sm:min-w-[320px]"
             style={{ background: "var(--panel-bg)" }}
+            role="status"
+            aria-live="polite"
           >
-            <div className="relative">
+            <div className="relative shrink-0">
               <AlertTriangle className="w-5 h-5 text-red-400" />
               <div className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-400 rounded-full animate-pulse" />
             </div>
@@ -82,6 +89,15 @@ export default function AlertToast({ incidents }: Props) {
                 {toast.location_text?.split(",")[0] || "Unknown location"}
               </p>
             </div>
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              aria-label="Dismiss alert"
+              className="shrink-0 p-1.5 -m-1 rounded-md hover:bg-white/[0.06] transition-colors"
+              style={{ color: "var(--panel-text-muted, #9ca3af)" }}
+            >
+              <XIcon className="w-4 h-4" />
+            </button>
           </div>
         </motion.div>
       )}

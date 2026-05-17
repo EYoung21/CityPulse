@@ -307,10 +307,12 @@
   height: 100% !important;
 }
 
-/* Mobile map chrome: 44px zoom targets, respect safe area (notch / island). */
+/* Mobile map chrome: 44px zoom targets, respect safe area (notch / island).
+   The top margin clears the mobile search pill so they never collide;
+   the pill height is defined once in --pp-mobile-pill-bottom. */
 @media (max-width: 767px) {
   #incident-map .leaflet-control-zoom {
-    margin-top: calc(env(safe-area-inset-top, 0px) + 6px) !important;
+    margin-top: calc(var(--pp-mobile-pill-bottom) + 0.5rem) !important;
     margin-right: calc(env(safe-area-inset-right, 0px) + 4px) !important;
     border: none !important;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35) !important;
@@ -341,6 +343,22 @@
   --pp-below-app-topnav-top: calc(
     env(safe-area-inset-top, 0px) + var(--pp-app-topnav-height) + var(--pp-below-topnav-gap)
   );
+
+  /* Mobile top lane. Single source of truth for the "where is the
+     mobile search pill" math — the AlertToast and the Leaflet zoom
+     controls both anchor off these so they can never re-collide.
+     Adjust the pill height here and everything moves with it. */
+  --pp-mobile-pill-top: calc(env(safe-area-inset-top, 0px) + 0.625rem);
+  --pp-mobile-pill-height: 2.5rem;
+  --pp-mobile-pill-bottom: calc(
+    var(--pp-mobile-pill-top) + var(--pp-mobile-pill-height)
+  );
+
+  /* On-screen keyboard offset, kept up-to-date by MobileSheet via
+     visualViewport. The MobileSheet's scrollable content pads its
+     bottom by this so the keyboard never buries the last result.
+     Defaults to 0 when no keyboard is shown. */
+  --pp-keyboard-h: 0px;
 }
 
 @media (min-width: 768px) {
@@ -723,6 +741,14 @@
   #incident-map .leaflet-control-zoom {
     margin-top: 0.75rem !important;
     margin-right: 0.75rem !important;
+  }
+
+  /* Desktop AlertToast lives below the app topnav; on mobile it
+     anchors below the search pill via inline style (see
+     AlertToast.tsx). This override wins on desktop because of
+     `!important`, which the inline style does not have. */
+  .pp-alert-toast {
+    top: calc(var(--pp-below-app-topnav-top) + 0.5rem) !important;
   }
 }
 

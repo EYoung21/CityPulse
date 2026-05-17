@@ -2061,9 +2061,14 @@ function MapHome() {
               window.dispatchEvent(new CustomEvent("pp:focus-search"));
             }, 260);
           }}
-          className="md:hidden fixed z-[2001] left-3 right-3 flex items-center gap-2 px-3.5 py-2.5 rounded-full backdrop-blur-md shadow-lg"
+          className="md:hidden fixed z-[2001] left-3 right-3 flex items-center gap-2 px-3.5 rounded-full backdrop-blur-md shadow-lg"
           style={{
-            top: "calc(env(safe-area-inset-top, 0px) + 0.625rem)",
+            // Top + height come from shared CSS vars so AlertToast +
+            // Leaflet zoom controls stay in lockstep with us — adjust
+            // --pp-mobile-pill-{top,height} in globals.css to move
+            // them all together.
+            top: "var(--pp-mobile-pill-top)",
+            height: "var(--pp-mobile-pill-height)",
             background: "var(--pill-bg)",
             border: "1px solid var(--pill-border)",
             color: "var(--pill-text)",
