@@ -964,42 +964,53 @@ export default function SearchSidebar({
         )}
 
         {view === "directions" && (
-          <DirectionsPanel
-            incidents={incidents}
-            originLoc={originLoc}
-            setOriginLoc={setOriginLoc}
-            originQuery={originQuery}
-            setOriginQuery={setOriginQuery}
-            destLoc={destLoc}
-            setDestLoc={setDestLoc}
-            destQuery={destQuery}
-            setDestQuery={setDestQuery}
-            stops={stops}
-            setStops={setStops}
-            activeMode={activeMode}
-            setActiveMode={setActiveMode}
-            userPos={userPos}
-            gpsStatus={gpsStatus}
-            onBack={() => {
-              setView("search");
-              setActiveDesktopPanel(null);
-              setDrawerOpen(false);
-              setDestLoc(null);
-              setDestQuery("");
-              setStops([]);
-              handleRoutesChange(null);
-              onPreviewPins?.(originLoc, null);
-              onPreviewWaypoints?.(null);
-            }}
-            onFlyTo={onFlyTo}
-            onRoutesChange={handleRoutesChange}
-            onPreviewPins={onPreviewPins}
-            onPreviewWaypoints={onPreviewWaypoints}
-            onStartTrip={startTrip}
-            avoidPrefs={avoidPrefs}
-            onAvoidPrefsChange={setAvoidPrefs}
-            timeFilterHours={timeFilterHours ?? 24}
-          />
+          // Wrap in a scrollable container so the panel content
+          // (mode tabs → avoid pills → severity → within → origin/
+          // dest rows → Start button → route preview → step list)
+          // is reachable inside the bottom sheet. Without this the
+          // sheet's overflow-hidden clips everything past ~55vh and
+          // the user can't get to the Start button. `flex-1 min-h-0`
+          // lets the panel claim the remaining sheet height; the
+          // overflow lives on this wrapper, not inside the panel,
+          // so the panel's own layout assumptions stay untouched. */}
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+            <DirectionsPanel
+              incidents={incidents}
+              originLoc={originLoc}
+              setOriginLoc={setOriginLoc}
+              originQuery={originQuery}
+              setOriginQuery={setOriginQuery}
+              destLoc={destLoc}
+              setDestLoc={setDestLoc}
+              destQuery={destQuery}
+              setDestQuery={setDestQuery}
+              stops={stops}
+              setStops={setStops}
+              activeMode={activeMode}
+              setActiveMode={setActiveMode}
+              userPos={userPos}
+              gpsStatus={gpsStatus}
+              onBack={() => {
+                setView("search");
+                setActiveDesktopPanel(null);
+                setDrawerOpen(false);
+                setDestLoc(null);
+                setDestQuery("");
+                setStops([]);
+                handleRoutesChange(null);
+                onPreviewPins?.(originLoc, null);
+                onPreviewWaypoints?.(null);
+              }}
+              onFlyTo={onFlyTo}
+              onRoutesChange={handleRoutesChange}
+              onPreviewPins={onPreviewPins}
+              onPreviewWaypoints={onPreviewWaypoints}
+              onStartTrip={startTrip}
+              avoidPrefs={avoidPrefs}
+              onAvoidPrefsChange={setAvoidPrefs}
+              timeFilterHours={timeFilterHours ?? 24}
+            />
+          </div>
         )}
 
         {view === "trip" && rerouteAlert && (
