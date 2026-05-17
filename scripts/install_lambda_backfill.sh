@@ -104,7 +104,11 @@ LLM_PROVIDER_NAME=ollama-local
 WHISPER_MODEL_SIZE=large-v3-turbo
 BACKFILL_DAY_LIMIT=150
 BACKFILL_HEARTBEAT=$HEARTBEAT
-BACKFILL_CITY_GLOB="philly chattanooga nyc sf"
+# Order is the run order (see lambda_backfill_runner.discover_cities).
+# SF goes first so it gets the freshest Broadcastify daily quota after
+# each midnight-ET reset — historically it was last and 429'd out of
+# every cycle while the other cities drained the quota.
+BACKFILL_CITY_GLOB="sf chattanooga nyc philly"
 BACKFILL_DELAY_BASE=8
 BACKFILL_DELAY_JITTER=3
 BACKFILL_BACKOFF_BASE=60

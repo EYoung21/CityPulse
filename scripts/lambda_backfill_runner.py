@@ -75,14 +75,28 @@ def heartbeat(state: dict) -> None:
 
 
 def discover_cities() -> list[Path]:
-    """All cities/<slug>/config.yaml in the repo, alphabetical for
-    deterministic ordering across restarts."""
-    cfgs = sorted(REPO_ROOT.glob("cities/*/config.yaml"))
+    """Resolve which cities/<slug>/config.yaml files to process and in
+    what order.
+
+    When BACKFILL_CITY_GLOB is set, the listed order is preserved as
+    the run order. That matters because Broadcastify enforces a daily
+    download quota per account: whichever city goes first gets the
+    freshest quota window after each midnight-ET reset. Cities later in
+    the rotation can find the quota already drained and 429 out of an
+    entire pass before producing a single segment. Putting the most-
+    sensitive city first lets operators give it priority without
+    rebuilding the wrapper.
+
+    When unset, fall back to alphabetical for deterministic ordering
+    across restarts."""
     glob_filter = os.environ.get("BACKFILL_CITY_GLOB", "").split()
     if glob_filter:
-        keep = set(glob_filter)
-        cfgs = [c for c in cfgs if c.parent.name in keep]
-    return cfgs
+        all_cfgs = {c.parent.name: c for c in REPO_ROOT.glob("cities/*/config.yaml")}
+        # Preserve the BACKFILL_CITY_GLOB order; silently skip slugs
+        # that don't have a config file (typo / removed city) so a
+        # stale env var doesn't crash the whole run.
+        return [all_cfgs[slug] for slug in glob_filter if slug in all_cfgs]
+    return sorted(REPO_ROOT.glob("cities/*/config.yaml"))
 
 
 def run_one_city(cfg: Path) -> tuple[int, int]:
