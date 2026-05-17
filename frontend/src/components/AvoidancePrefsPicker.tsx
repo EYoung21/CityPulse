@@ -75,7 +75,13 @@ export default function AvoidancePrefsPicker({ prefs, onChange }: Props) {
   return (
     <div ref={containerRef} style={{ borderBottom: "1px solid var(--panel-border)" }}>
       {/* Bucket pills with chevrons */}
-      <div className="px-4 py-2.5 flex items-center gap-2 overflow-x-auto no-scrollbar">
+      <div
+        className="px-4 py-2.5 flex items-center gap-2 overflow-x-auto no-scrollbar"
+        style={{
+          WebkitOverflowScrolling: "touch",
+          touchAction: "pan-x",
+        }}
+      >
         <Shield className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
         <span
           className="text-[10px] font-semibold uppercase tracking-wider shrink-0"
@@ -260,7 +266,13 @@ export default function AvoidancePrefsPicker({ prefs, onChange }: Props) {
           building avoid zones. Independent of the global map filter so
           users can route conservatively (e.g. "avoid anything in the
           last 6h") even while viewing a tighter window. */}
-      <div className="px-4 py-2.5 flex items-center gap-2 overflow-x-auto no-scrollbar">
+      <div
+        className="px-4 py-2.5 flex items-center gap-2 overflow-x-auto no-scrollbar"
+        style={{
+          WebkitOverflowScrolling: "touch",
+          touchAction: "pan-x",
+        }}
+      >
         <Clock className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
         <span
           className="text-[10px] font-semibold uppercase tracking-wider shrink-0"
