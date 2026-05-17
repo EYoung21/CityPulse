@@ -752,6 +752,18 @@
   }
 }
 
+/* Mobile "search takeover" mode — set by MobileSheet when an input is
+   focused (snap=100%). Mirrors Google Maps: the sheet covers the whole
+   viewport, the bottom nav and the floating top-of-map chrome step out
+   of the way so they don't peek through. */
+html.pp-mobile-search-fullscreen .pp-mobile-bottom-nav {
+  display: none !important;
+}
+html.pp-mobile-search-fullscreen #incident-map .leaflet-control-zoom,
+html.pp-mobile-search-fullscreen .pp-alert-toast {
+  display: none !important;
+}
+
 /* Mobile floor for bottom-anchored floating UI.
    Clears (bottom-up): home indicator → MobileBottomNav (64px) → gap →
    the 2-row map filter strip (time pill + category/preset row).
