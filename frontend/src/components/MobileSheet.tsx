@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Drawer } from "vaul";
 import { ArrowLeft } from "lucide-react";
 
@@ -40,6 +40,7 @@ const FULLSCREEN = SNAP_POINTS[3];
 export default function MobileSheet({ open, onOpenChange, expandKey, children }: Props) {
   const [snap, setSnap] = useState<number | string | null>(HALF);
   const isFullscreen = snap === FULLSCREEN;
+  const contentRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!expandKey) return;
@@ -100,15 +101,50 @@ export default function MobileSheet({ open, onOpenChange, expandKey, children }:
   };
 
   const exitFullscreen = () => {
-    setSnap(HALF);
-    // Blur whatever input is focused so the keyboard dismisses, otherwise
-    // the keyboard hangs around and re-triggers fullscreen on the next tap.
+    // Blur whatever input is focused so the keyboard dismisses,
+    // otherwise the keyboard hangs around and re-triggers fullscreen
+    // on the next tap that hits the input.
     if (typeof document !== "undefined") {
       const active = document.activeElement as HTMLElement | null;
       if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) {
         active.blur();
       }
     }
+    // Reset snap so the next time the sheet opens, it's at half (not
+    // stuck at fullscreen from the last session).
+    setSnap(HALF);
+    // Google Maps' back arrow returns to the map view, not to a
+    // half-open sheet. Fully dismiss; the parent's "open menu" FAB
+    // brings the sheet back when the user wants it.
+    onOpenChange(false);
+  };
+
+  /** When focus leaves an input and nothing else inside the sheet is
+   *  focused, drop out of fullscreen. This is what lets "tap a search
+   *  result → directions panel opens" feel right: SearchInput blurs
+   *  the input on select, we snap back to half here, and the user
+   *  sees the route preview on the map instead of a fullscreen sheet
+   *  hiding it. */
+  const handleBlurCapture = (e: React.FocusEvent) => {
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    const wasText =
+      target.tagName === "INPUT" || target.tagName === "TEXTAREA";
+    if (!wasText) return;
+    // Defer so the next focus (e.g. tab between inputs) has time to
+    // land. If focus moved to another text input inside the sheet,
+    // we leave the snap alone.
+    window.setTimeout(() => {
+      const active = document.activeElement as HTMLElement | null;
+      const sheetEl = contentRef.current;
+      const stillTextInside =
+        active &&
+        sheetEl?.contains(active) &&
+        (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+      if (!stillTextInside) {
+        setSnap((s) => (s === FULLSCREEN ? HALF : s));
+      }
+    }, 0);
   };
 
   return (
@@ -124,6 +160,7 @@ export default function MobileSheet({ open, onOpenChange, expandKey, children }:
     >
       <Drawer.Portal>
         <Drawer.Content
+          ref={contentRef}
           aria-describedby={undefined}
           className="fixed left-0 right-0 bottom-0 z-[2000] flex flex-col outline-none shadow-2xl"
           style={{
@@ -145,6 +182,7 @@ export default function MobileSheet({ open, onOpenChange, expandKey, children }:
             transition: "border-radius 180ms ease, padding-top 180ms ease",
           }}
           onFocusCapture={handleFocusCapture}
+          onBlurCapture={handleBlurCapture}
         >
           <Drawer.Title className="sr-only">Map controls and incident feed</Drawer.Title>
 

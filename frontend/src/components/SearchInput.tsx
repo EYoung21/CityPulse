@@ -30,13 +30,19 @@ interface Props {
   /** When the user picks an incident result we surface it on the map
    *  via the same selection pipeline used by `IncidentFeed`. */
   onSelectIncident?: (id: string) => void;
+  /** Fired when the user taps a place from suggestions or recents.
+   *  Parent uses this to show a Google-Maps-style "place card" with
+   *  Directions / Save / Share — instead of jumping straight into
+   *  routing, which is too eager when the user might only have
+   *  wanted to see the place on the map. */
+  onPlaceSelected?: (place: { name: string; lat: number; lng: number }) => void;
 }
 
 type SearchMode = "places" | "incidents";
 
 const FREE_INCIDENT_SEARCH_HOURS = 1;
 
-export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 24, onSelectIncident }: Props) {
+export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 24, onSelectIncident, onPlaceSelected }: Props) {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<SearchMode>("places");
   const [suggestions, setSuggestions] = useState<GeoResult[]>([]);
@@ -162,11 +168,23 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
   }, []);
 
   const handleSelect = (s: GeoResult) => {
+    const primary = s.display_name.split(",")[0];
     onFlyTo(s.lat, s.lng);
-    setQuery(s.display_name.split(",")[0]);
+    setQuery(primary);
     setSuggestions([]);
     setOpen(false);
     remember(s);
+    // Tell the parent so it can show a place card (name + address +
+    // Directions/Save/Share). Blur the input so MobileSheet drops out
+    // of fullscreen-search mode and the map + dropped pin are visible
+    // above the card. Falls back to direct routing if no card handler
+    // is wired up (preserves the prior one-tap-to-directions UX).
+    if (onPlaceSelected) {
+      onPlaceSelected({ name: primary, lat: s.lat, lng: s.lng });
+    } else {
+      onDirections(primary, { lat: s.lat, lng: s.lng });
+    }
+    inputRef.current?.blur();
   };
 
   const stopVoice = useCallback(() => {
