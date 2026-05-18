@@ -84,10 +84,7 @@ export default function SpeedChip({ mps, loc = null }: Props) {
   const label = unit === "mph" ? "mph" : "km/h";
 
   return (
-    <div
-      className="pointer-events-none absolute z-[1001] left-3 flex items-center gap-2"
-      style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }}
-    >
+    <div className="pp-speed-chip pointer-events-none absolute z-[1001] left-3 flex items-center gap-2">
       <div
         className={`flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-xl shadow-2xl ${isSpeeding ? "speedchip-overspeed" : ""}`}
         style={{
