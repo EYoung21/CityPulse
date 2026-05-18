@@ -71,6 +71,7 @@ export function useModeETAs(
           const res = await fetch(apiUrl("/api/route-directions"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            cache: "no-store",
             body: JSON.stringify({ waypoints, mode }),
             signal: controller.signal,
           });

@@ -58,6 +58,9 @@ export interface RouteResult {
   durationMin: number;
   isSafe: boolean;
   steps?: ManeuverStep[];
+  /** True when the routing proxy had to use a mode-specific estimate
+   *  because an upstream profile was unavailable. */
+  estimated?: boolean;
   /** ORS-defined road features avoided when this route was computed
    *  (e.g. ["tollways", "highways"]). Empty/undefined when the call was
    *  not constrained. */
@@ -443,8 +446,9 @@ function decodePolyline(encoded: string): [number, number][] {
 }
 
 /**
- * Street-level routing via OSRM, proxied through PhillyPulse API (/api/route-directions).
- * Direct browser calls to router.project-osrm.org are blocked by CORS, so we never hit OSRM from the client.
+ * Street-level routing through the PhillyPulse routing proxy
+ * (/api/route-directions). The proxy owns the provider/profile mapping
+ * so each UI mode can get mode-specific geometry and fallback timing.
  */
 async function getRouteOSRM(
   mode: TransportMode,
@@ -456,13 +460,14 @@ async function getRouteOSRM(
     const res = await fetch(routeDirectionsUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ waypoints, mode: orsProfile(mode) }),
+      body: JSON.stringify({ waypoints, mode }),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as {
       geometry?: [number, number][];
       distanceKm?: number;
       durationMin?: number;
+      estimated?: boolean;
     };
     if (!data.geometry || !Array.isArray(data.geometry) || data.geometry.length < 2) {
       return null;
@@ -472,6 +477,7 @@ async function getRouteOSRM(
       distanceKm: data.distanceKm ?? 0,
       durationMin: data.durationMin ?? 0,
       isSafe,
+      estimated: data.estimated,
     };
   } catch {
     return null;

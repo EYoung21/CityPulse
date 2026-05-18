@@ -301,13 +301,13 @@ export default function SearchSidebar({
   // `startTrip` so the option the user picked (e.g. "No tolls" /
   // "Safer") becomes the active trip rather than always defaulting to
   // safe ?? normal.
-  const latestRouteDataRef = useRef<RouteData | null>(null);
+  const latestRouteDataRef = useRef<{ data: RouteData; mode: TransportMode } | null>(null);
   const handleRoutesChange = useCallback(
     (data: RouteData | null) => {
-      latestRouteDataRef.current = data;
+      latestRouteDataRef.current = data ? { data, mode: activeMode } : null;
       onRoutesChange(data);
     },
-    [onRoutesChange]
+    [activeMode, onRoutesChange]
   );
   const [rerouteAlert, setRerouteAlert] = useState<string | null>(null);
   const [userPos, setUserPos] = useState<{ lat: number; lng: number } | null>(null);
@@ -621,13 +621,13 @@ export default function SearchSidebar({
     let routeData: RouteData | null = null;
     let meta: { distanceKm: number; durationMin: number; isSafe: boolean; nearbyCount: number } | null = null;
 
-    if (picked && picked.chosen && pickedMatchesLiveOrigin) {
-      routeData = picked;
+    if (picked && picked.data.chosen && picked.mode === activeMode && pickedMatchesLiveOrigin) {
+      routeData = picked.data;
       meta = {
-        distanceKm: picked.chosen.distanceKm,
-        durationMin: picked.chosen.durationMin,
-        isSafe: picked.chosen.isSafe,
-        nearbyCount: picked.avoidZones.length,
+        distanceKm: picked.data.chosen.distanceKm,
+        durationMin: picked.data.chosen.durationMin,
+        isSafe: picked.data.chosen.isSafe,
+        nearbyCount: picked.data.avoidZones.length,
       };
     } else {
       const waypoints: [number, number][] = [

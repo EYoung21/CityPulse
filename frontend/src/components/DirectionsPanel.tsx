@@ -229,6 +229,11 @@ export default function DirectionsPanel({
   /** Full ORS variant list (incl. fastest) — kept for RouteData + map layers while UI may be filtered. */
   const rawRouteOptionsRef = useRef<RouteOption[]>([]);
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
+  const selectedOptionIdRef = useRef<string | null>(null);
+  const updateSelectedOptionId = useCallback((id: string | null) => {
+    selectedOptionIdRef.current = id;
+    setSelectedOptionId(id);
+  }, []);
   // Per-route incident-density scores. Recomputed whenever the option
   // set changes _or_ the incident stream updates — both are cheap (few
   // hundred incidents × <10 routes × ~50 polyline points), and a memo
@@ -365,11 +370,19 @@ export default function DirectionsPanel({
   useEffect(() => {
     if (!originLoc || !destLoc) {
       setPreviewRoute(null);
+      setRouteOptions([]);
+      updateSelectedOptionId(null);
+      rawRouteOptionsRef.current = [];
+      onRoutesChange(null);
       return;
     }
     const intermediateReady = stops.every((s) => s.query.trim() === "" || s.loc !== null);
     if (!intermediateReady) {
       setPreviewRoute(null);
+      setRouteOptions([]);
+      updateSelectedOptionId(null);
+      rawRouteOptionsRef.current = [];
+      onRoutesChange(null);
       return;
     }
 
@@ -379,6 +392,11 @@ export default function DirectionsPanel({
 
     setPreviewLoading(true);
     setRouteError(null);
+    setPreviewRoute(null);
+    setRouteOptions([]);
+    updateSelectedOptionId(null);
+    rawRouteOptionsRef.current = [];
+    onRoutesChange(null);
 
     const waypoints: [number, number][] = [
       [originLoc.lat, originLoc.lng],
@@ -407,7 +425,7 @@ export default function DirectionsPanel({
           onRoutesChange(null);
           setRouteOptions([]);
           rawRouteOptionsRef.current = [];
-          setSelectedOptionId(null);
+          updateSelectedOptionId(null);
           setPreviewRoute(null);
           setRouteError("Could not load a street route. Check your network or try another mode.");
           return;
@@ -418,11 +436,12 @@ export default function DirectionsPanel({
 
         // Default selection: keep prior choice if still present, otherwise
         // pick whatever sorted to the top (safer, then fastest).
+        const currentSelectedOptionId = selectedOptionIdRef.current;
         const keepPrior =
-          selectedOptionId && uiOpts.find((o) => o.id === selectedOptionId);
+          currentSelectedOptionId && uiOpts.find((o) => o.id === currentSelectedOptionId);
         const chosen = keepPrior || uiOpts[0];
         setRouteOptions(uiOpts);
-        setSelectedOptionId(chosen.id);
+        updateSelectedOptionId(chosen.id);
 
         const directRoute =
           rawOpts.find((o) => !o.isSafer && o.avoidedFeatures.length === 0)?.route ??
@@ -448,7 +467,7 @@ export default function DirectionsPanel({
           rawRouteOptionsRef.current = [];
           setPreviewRoute(null);
           setRouteOptions([]);
-          setSelectedOptionId(null);
+          updateSelectedOptionId(null);
           onRoutesChange(null);
           setRouteError("Routing request failed.");
         }
@@ -458,7 +477,7 @@ export default function DirectionsPanel({
     })();
 
     return () => controller.abort();
-  }, [originLoc, destLoc, stops, activeMode, onRoutesChange, avoidPrefs]);
+  }, [originLoc, destLoc, stops, activeMode, onRoutesChange, avoidPrefs, updateSelectedOptionId]);
 
   const swapLocations = () => {
     const tmpQ = originQuery;
@@ -490,7 +509,7 @@ export default function DirectionsPanel({
     (id: string) => {
       const opt = routeOptions.find((o) => o.id === id);
       if (!opt) return;
-      setSelectedOptionId(id);
+      updateSelectedOptionId(id);
       const raw = rawRouteOptionsRef.current;
       const direct =
         raw.find((o) => !o.isSafer && o.avoidedFeatures.length === 0)?.route ??
@@ -515,7 +534,7 @@ export default function DirectionsPanel({
         nearbyCount: zones.length,
       });
     },
-    [routeOptions, avoidPrefs, onRoutesChange]
+    [routeOptions, avoidPrefs, onRoutesChange, updateSelectedOptionId]
   );
 
   const renderSuggestion = (
