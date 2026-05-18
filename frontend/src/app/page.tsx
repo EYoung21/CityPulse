@@ -2594,16 +2594,19 @@ function MapHome() {
             }}
           >
             <div className="mx-auto mb-2 h-1.5 w-10 rounded-full" style={{ background: "var(--panel-text-muted)", opacity: 0.5 }} />
-            <div className="flex items-center justify-between gap-3">
+            <div className="grid grid-cols-[3rem_minmax(0,1fr)_3rem] items-center gap-3">
               <button
                 type="button"
-                onClick={() => window.dispatchEvent(new CustomEvent("pp:end-trip"))}
-                className="h-14 w-14 shrink-0 rounded-full border text-[var(--panel-text-secondary)] flex items-center justify-center active:scale-95"
+                onClick={() => {
+                  if (tripSteps && tripSteps.length > 0) setShowTurnList(true);
+                }}
+                disabled={!tripSteps || tripSteps.length === 0}
+                className="h-12 w-12 shrink-0 rounded-xl border flex items-center justify-center active:scale-95 disabled:opacity-45"
                 style={{ borderColor: "var(--panel-border)", background: "var(--panel-input-bg)" }}
-                aria-label="End navigation"
-                title="End navigation"
+                aria-label="Show route steps"
+                title="Show route steps"
               >
-                <X className="h-7 w-7" />
+                <List className="h-6 w-6" />
               </button>
 
               <div className="min-w-0 flex-1 text-center">
@@ -2621,16 +2624,13 @@ function MapHome() {
 
               <button
                 type="button"
-                onClick={() => {
-                  if (tripSteps && tripSteps.length > 0) setShowTurnList(true);
-                }}
-                disabled={!tripSteps || tripSteps.length === 0}
-                className="h-14 w-14 shrink-0 rounded-full border flex items-center justify-center active:scale-95 disabled:opacity-45"
+                onClick={() => window.dispatchEvent(new CustomEvent("pp:end-trip"))}
+                className="h-12 w-12 shrink-0 rounded-xl border flex items-center justify-center active:scale-95"
                 style={{ borderColor: "var(--panel-border)", background: "var(--panel-input-bg)", color: "var(--panel-text-secondary)" }}
-                aria-label="Show route steps"
-                title="Show route steps"
+                aria-label="End navigation"
+                title="End navigation"
               >
-                <List className="h-7 w-7" />
+                <X className="h-6 w-6" />
               </button>
             </div>
             {gpsStatus !== "found" && (
