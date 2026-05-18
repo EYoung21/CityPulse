@@ -1183,6 +1183,9 @@ export default function SearchSidebar({
     : view;
 
   if (isMobile) {
+    if (view === "trip") {
+      return null;
+    }
     return (
       <MobileSheet
         open={mobileOpen}
