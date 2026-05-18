@@ -32,6 +32,9 @@ const AGE_PILLS: { id: number | null; label: string }[] = [
   { id: 24, label: "24h" },
 ];
 
+const SCROLL_ROW_CLASS =
+  "px-4 py-2.5 flex items-center gap-2 overflow-x-auto overscroll-x-contain no-scrollbar touch-pan-x";
+
 /** Detailed avoidance picker: a row of expandable bucket pills (each
  *  showing "X/Y" leaves on), and below it a 4-stop severity floor that
  *  gates everything regardless of which leaves are selected. Designed
@@ -76,7 +79,7 @@ export default function AvoidancePrefsPicker({ prefs, onChange }: Props) {
     <div ref={containerRef} style={{ borderBottom: "1px solid var(--panel-border)" }}>
       {/* Bucket pills with chevrons */}
       <div
-        className="px-4 py-2.5 flex items-center gap-2 overflow-x-auto no-scrollbar"
+        className={SCROLL_ROW_CLASS}
         style={{
           WebkitOverflowScrolling: "touch",
           touchAction: "pan-x",
@@ -211,7 +214,13 @@ export default function AvoidancePrefsPicker({ prefs, onChange }: Props) {
         })()}
 
       {/* Severity floor selector */}
-      <div className="px-4 py-2.5 flex items-center gap-2">
+      <div
+        className={SCROLL_ROW_CLASS}
+        style={{
+          WebkitOverflowScrolling: "touch",
+          touchAction: "pan-x",
+        }}
+      >
         {prefs.minSeverity === "high" || prefs.minSeverity === "medium" ? (
           <ShieldAlert className="w-3.5 h-3.5 shrink-0" style={{ color: "#f59e0b" }} />
         ) : (
@@ -267,7 +276,7 @@ export default function AvoidancePrefsPicker({ prefs, onChange }: Props) {
           users can route conservatively (e.g. "avoid anything in the
           last 6h") even while viewing a tighter window. */}
       <div
-        className="px-4 py-2.5 flex items-center gap-2 overflow-x-auto no-scrollbar"
+        className={SCROLL_ROW_CLASS}
         style={{
           WebkitOverflowScrolling: "touch",
           touchAction: "pan-x",

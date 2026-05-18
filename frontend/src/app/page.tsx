@@ -162,6 +162,20 @@ import { onUpgradeRequested } from "@/lib/upgrade";
 
 const WEIGHT_REFRESH_MS = 15000;
 
+function formatTripDuration(min: number): string {
+  const rounded = Math.max(0, Math.ceil(min));
+  if (rounded < 60) return `${rounded} min`;
+  const h = Math.floor(rounded / 60);
+  const m = rounded % 60;
+  return m > 0 ? `${h} hr ${m} min` : `${h} hr`;
+}
+
+function formatTripDistance(km: number): string {
+  const miles = Math.max(0, km) * 0.621371;
+  if (miles < 0.1) return `${Math.round(miles * 5280)} ft`;
+  return `${miles.toFixed(miles < 10 ? 1 : 0)} mi`;
+}
+
 function statsFromIncidents(incidents: Incident[]): StatsResponse {
   const inhibitor_stats: Record<string, number> = {};
   for (const i of incidents) {
@@ -437,10 +451,11 @@ function MapHome() {
   // their own house. Auto-flipped ON when a trip starts (so the map
   // tracks the driver), and re-enabled by tapping the Re-center pill.
   const [followMe, setFollowMe] = useState(false);
+  const [tripGeometry, setTripGeometry] = useState<[number, number][] | null>(null);
   // Auto-pan the map to the user when their GPS updates *and* a trip is
   // active *and* follow-me hasn't been turned off by manual drag. We use
-  // the cheap panTo (no zoom change) instead of flyTo to avoid fighting
-  // the user during gentle position adjustments.
+  // a close flyTo at trip start, then cheap panTo updates so the camera
+  // feels like navigation without fighting every noisy GPS tick.
   const lastFollowPanRef = useRef<{ lat: number; lng: number; t: number } | null>(null);
   useEffect(() => {
     if (!followMe || !userLocation) return;
@@ -455,9 +470,12 @@ function MapHome() {
       if (dLat < 0.0001 && dLng < 0.0001) return;
     }
     lastFollowPanRef.current = { lat: userLocation.lat, lng: userLocation.lng, t: now };
-    mapRef.current?.panTo?.(userLocation.lat, userLocation.lng);
-  }, [followMe, userLocation]);
-  const [tripGeometry, setTripGeometry] = useState<[number, number][] | null>(null);
+    if (tripGeometry && (!last || now - last.t > 7000)) {
+      mapRef.current?.flyTo(userLocation.lat, userLocation.lng, 17);
+    } else {
+      mapRef.current?.panTo?.(userLocation.lat, userLocation.lng);
+    }
+  }, [followMe, userLocation, tripGeometry]);
   useEffect(() => {
     const cls = "pp-mobile-trip-active";
     if (tripGeometry) {
@@ -765,6 +783,7 @@ function MapHome() {
     totalDistanceKm: number;
     mode: string;
     nearbyIncidents: number;
+    durationMin: number;
     wasSafeRoute: boolean;
     origin?: { display_name: string; lat: number; lng: number };
     dest?: { display_name: string; lat: number; lng: number };
@@ -1775,6 +1794,26 @@ function MapHome() {
 
   useMobilePrimaryTabSwipe({ enabled: mobilePrimarySwipeEnabled });
 
+  const activeTripStats = tripStatsRef.current;
+  const mobileTripRemainingMin =
+    tripGeometry && activeTripStats
+      ? Math.max(0, Math.ceil(activeTripStats.durationMin * (1 - tripProgress)))
+      : null;
+  const mobileTripRemainingKm =
+    tripGeometry && activeTripStats
+      ? Math.max(0, activeTripStats.totalDistanceKm * (1 - tripProgress))
+      : null;
+  const mobileTripEta =
+    mobileTripRemainingMin !== null
+      ? new Date(Date.now() + mobileTripRemainingMin * 60_000).toLocaleTimeString(
+          "en-US",
+          { hour: "numeric", minute: "2-digit" }
+        )
+      : null;
+  const mobileTripDockVisible = Boolean(
+    tripGeometry && !showTurnList && !alongRouteOpen && !safetyEscapeOpen
+  );
+
   return (
     <div className="pp-app-shell relative w-full h-dvh min-h-0 overflow-hidden flex flex-col" style={{ background: "var(--map-bg)" }}>
       <MobileBottomNav />
@@ -1782,7 +1821,7 @@ function MapHome() {
         onInboxChange={handleInboxUrlChange} 
         onViewChange={(v) => { if (v) setViewTab(v); }} 
       />
-      <AlertToast incidents={incidents} />
+      {!tripGeometry && <AlertToast incidents={incidents} />}
 
       {/* ──── Top Tab Bar (Map / Feed / Analytics) ──── */}
       {/* API Docs lives at /use-cases/api and is reachable from the More menu
@@ -2097,7 +2136,7 @@ function MapHome() {
         onFlyTo={(lat, lng) => mapRef.current?.flyTo(lat, lng)}
         onRoutesChange={setRoutes}
         onUserLocation={(lat, lng) => setUserLocation({ lat, lng })}
-          onTripActive={(active, geometry, m, steps, meta) => {
+        onTripActive={(active, geometry, m, steps, meta) => {
             setTripGeometry(active && geometry ? geometry : null);
             setTripMode(active && m ? m : null);
             setTripSteps(active && steps && steps.length > 0 ? steps : null);
@@ -2133,6 +2172,7 @@ function MapHome() {
                 tripStatsRef.current = {
                   startedAt: Date.now(),
                   totalDistanceKm: meta.distanceKm,
+                  durationMin: meta.durationMin,
                   mode: m || "driving-car",
                   nearbyIncidents: meta.nearbyCount,
                   wasSafeRoute: meta.isSafe,
@@ -2140,6 +2180,12 @@ function MapHome() {
                   dest: meta.dest,
                   geometry: geomForHistory,
                 };
+                const startOrigin = meta.origin;
+                if (startOrigin) {
+                  requestAnimationFrame(() => {
+                    mapRef.current?.flyTo(startOrigin.lat, startOrigin.lng, 17);
+                  });
+                }
                 // Spoken departure summary — once at trip start. We
                 // delay slightly so the manuever chip's first
                 // "in 200m, turn left" doesn't get cut off; "info"
@@ -2230,90 +2276,92 @@ function MapHome() {
 
       {/* Map filters — mobile: bottom strip above nav; desktop: stacked rows
           in the map canvas right of SearchInput (--pp-map-filters-left). */}
-      <div
-        className="pp-map-filter-rail pointer-events-none absolute z-[1001] max-md:bottom-[calc(64px+env(safe-area-inset-bottom,0px)+0.75rem)] max-md:inset-x-3 max-md:top-auto max-md:left-3 max-md:right-3"
-      >
-        <div className="flex flex-col items-stretch gap-2.5 md:gap-3 min-w-0 pointer-events-auto">
-          <div
-            className="flex items-center rounded-full shadow-lg backdrop-blur-md overflow-x-auto no-scrollbar min-w-0 w-full"
-            style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)" }}
-          >
-            <Clock className="w-4 h-4 ml-3 md:ml-4 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
-            {TIME_FILTERS.map((tf) => {
-              const locked = tf.pro && !isPro;
-              return (
-                <button
-                  key={tf.label}
-                  onClick={() => {
-                    if (locked) { setShowUpgrade("Extended History"); return; }
-                    setTimeFilter(tf.hours);
-                  }}
-                  className={`px-3 md:px-4 py-2 md:py-2.5 text-xs md:text-sm font-medium transition-colors relative shrink-0 ${
-                    timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
-                  } ${locked ? "opacity-50" : ""}`}
-                  style={timeFilter !== tf.hours ? { color: locked ? "var(--panel-text-muted)" : "var(--pill-text)" } : {}}
-                  title={locked ? "Pro feature · upgrade to unlock" : undefined}
-                >
-                  {tf.label}
-                  {locked && <Lock className="w-3 h-3 absolute -top-0.5 -right-0.5 text-purple-400" />}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0 w-full">
-            <FilterPresetsBar
-              activeCats={activeCats}
-              timeFilterHours={timeFilter}
-              onApply={(cats, hours) => {
-                setActiveCats(cats);
-                const tf = TIME_FILTERS.find((t) => t.hours === hours);
-                if (tf?.pro && !isPro) {
-                  setShowUpgrade("Extended History");
-                  return;
-                }
-                setTimeFilter(hours);
-              }}
-            />
-
-            <button
-              onClick={() => setActiveCats(new Set())}
-              className={`flex items-center gap-1.5 px-3 md:px-4 py-2 md:py-2.5 rounded-full text-xs md:text-sm font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
-                activeCats.size === 0 ? "bg-blue-500/15 text-blue-500 ring-1 ring-blue-500/30" : "opacity-70 hover:opacity-100"
-              }`}
-              style={activeCats.size > 0 ? { background: "var(--pill-bg)", border: "1px solid var(--pill-border)", color: "var(--pill-text)" } : { background: "var(--pp-accent-bg)", border: "1px solid var(--pp-accent-border)" }}
+      {!tripGeometry && (
+        <div
+          className="pp-map-filter-rail pointer-events-none absolute z-[1001] max-md:bottom-[calc(64px+env(safe-area-inset-bottom,0px)+0.75rem)] max-md:inset-x-3 max-md:top-auto max-md:left-3 max-md:right-3"
+        >
+          <div className="flex flex-col items-stretch gap-2.5 md:gap-3 min-w-0 pointer-events-auto">
+            <div
+              className="flex items-center rounded-full shadow-lg backdrop-blur-md overflow-x-auto no-scrollbar min-w-0 w-full"
+              style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)" }}
             >
-              All
-            </button>
+              <Clock className="w-4 h-4 ml-3 md:ml-4 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
+              {TIME_FILTERS.map((tf) => {
+                const locked = tf.pro && !isPro;
+                return (
+                  <button
+                    key={tf.label}
+                    onClick={() => {
+                      if (locked) { setShowUpgrade("Extended History"); return; }
+                      setTimeFilter(tf.hours);
+                    }}
+                    className={`px-3 md:px-4 py-2 md:py-2.5 text-xs md:text-sm font-medium transition-colors relative shrink-0 ${
+                      timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
+                    } ${locked ? "opacity-50" : ""}`}
+                    style={timeFilter !== tf.hours ? { color: locked ? "var(--panel-text-muted)" : "var(--pill-text)" } : {}}
+                    title={locked ? "Pro feature · upgrade to unlock" : undefined}
+                  >
+                    {tf.label}
+                    {locked && <Lock className="w-3 h-3 absolute -top-0.5 -right-0.5 text-purple-400" />}
+                  </button>
+                );
+              })}
+            </div>
 
-            {CATEGORY_PILLS.map((pill) => {
-              const Icon = pill.icon;
-              const isActive = pill.cats.some((c) => activeCats.has(c));
-              const count = filteredIncidents.filter(i => (pill.cats as readonly string[]).includes(i.severity_category)).length;
-              return (
-                <button
-                  key={pill.label}
-                  onClick={() => toggleCat(pill.cats)}
-                  className={`flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 md:py-2.5 rounded-full text-xs md:text-sm font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
-                    isActive ? "ring-1" : "opacity-70 hover:opacity-100"
-                  }`}
-                  style={{
-                    background: isActive ? withAlpha(pill.color, 9) : "var(--pill-bg)",
-                    border: `1px solid ${isActive ? withAlpha(pill.color, 25) : "var(--pill-border)"}`,
-                    color: isActive ? pill.color : "var(--pill-text)",
-                  }}
-                >
-                  <Icon className="w-4 h-4 md:w-4.5 md:h-4.5" />
-                  <span className="hidden md:inline">{pill.label}</span>
-                  {count > 0 && (
-                    <span className="text-[11px] font-mono" style={{ opacity: isActive ? 1 : 0.5 }}>{count}</span>
-                  )}
-                </button>
-              );
-            })}
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0 w-full">
+              <FilterPresetsBar
+                activeCats={activeCats}
+                timeFilterHours={timeFilter}
+                onApply={(cats, hours) => {
+                  setActiveCats(cats);
+                  const tf = TIME_FILTERS.find((t) => t.hours === hours);
+                  if (tf?.pro && !isPro) {
+                    setShowUpgrade("Extended History");
+                    return;
+                  }
+                  setTimeFilter(hours);
+                }}
+              />
+
+              <button
+                onClick={() => setActiveCats(new Set())}
+                className={`flex items-center gap-1.5 px-3 md:px-4 py-2 md:py-2.5 rounded-full text-xs md:text-sm font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
+                  activeCats.size === 0 ? "bg-blue-500/15 text-blue-500 ring-1 ring-blue-500/30" : "opacity-70 hover:opacity-100"
+                }`}
+                style={activeCats.size > 0 ? { background: "var(--pill-bg)", border: "1px solid var(--pill-border)", color: "var(--pill-text)" } : { background: "var(--pp-accent-bg)", border: "1px solid var(--pp-accent-border)" }}
+              >
+                All
+              </button>
+
+              {CATEGORY_PILLS.map((pill) => {
+                const Icon = pill.icon;
+                const isActive = pill.cats.some((c) => activeCats.has(c));
+                const count = filteredIncidents.filter(i => (pill.cats as readonly string[]).includes(i.severity_category)).length;
+                return (
+                  <button
+                    key={pill.label}
+                    onClick={() => toggleCat(pill.cats)}
+                    className={`flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 md:py-2.5 rounded-full text-xs md:text-sm font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
+                      isActive ? "ring-1" : "opacity-70 hover:opacity-100"
+                    }`}
+                    style={{
+                      background: isActive ? withAlpha(pill.color, 9) : "var(--pill-bg)",
+                      border: `1px solid ${isActive ? withAlpha(pill.color, 25) : "var(--pill-border)"}`,
+                      color: isActive ? pill.color : "var(--pill-text)",
+                    }}
+                  >
+                    <Icon className="w-4 h-4 md:w-4.5 md:h-4.5" />
+                    <span className="hidden md:inline">{pill.label}</span>
+                    {count > 0 && (
+                      <span className="text-[11px] font-mono" style={{ opacity: isActive ? 1 : 0.5 }}>{count}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Recipient view of a "Share my live ETA" link (?trip=<token>). */}
       {sharedTrip && (
@@ -2395,7 +2443,7 @@ function MapHome() {
 
       {/* Off-screen incident chip — pops up for fresh, high-severity
           incidents outside the current viewport. Tap to fly there. */}
-      {offscreenAlert && (
+      {offscreenAlert && !tripGeometry && (
         <OffscreenIncidentChip
           incident={offscreenAlert.incident}
           bearingDeg={offscreenAlert.bearingDeg}
@@ -2503,7 +2551,7 @@ function MapHome() {
         <div
           className="absolute z-[1002] left-1/2 -translate-x-1/2 pointer-events-none flex justify-center"
           style={{
-            top: "calc(env(safe-area-inset-top, 0px) + 4rem)",
+            top: "calc(env(safe-area-inset-top, 0px) + 1rem)",
             width: "min(440px, calc(100vw - 1.5rem))",
           }}
         >
@@ -2524,6 +2572,65 @@ function MapHome() {
           tripProgress={tripProgress}
           onClose={() => setShowTurnList(false)}
         />
+      )}
+
+      {mobileTripDockVisible && (
+        <div className="md:hidden absolute inset-x-0 bottom-0 z-[1004] pointer-events-none">
+          <div
+            className="pointer-events-auto rounded-t-[1.75rem] px-5 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] shadow-2xl"
+            style={{
+              background: "var(--panel-bg)",
+              borderTop: "1px solid var(--panel-border)",
+              color: "var(--panel-text)",
+            }}
+          >
+            <div className="mx-auto mb-2 h-1.5 w-10 rounded-full" style={{ background: "var(--panel-text-muted)", opacity: 0.5 }} />
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent("pp:end-trip"))}
+                className="h-14 w-14 shrink-0 rounded-full border text-[var(--panel-text-secondary)] flex items-center justify-center active:scale-95"
+                style={{ borderColor: "var(--panel-border)", background: "var(--panel-input-bg)" }}
+                aria-label="End navigation"
+                title="End navigation"
+              >
+                <X className="h-7 w-7" />
+              </button>
+
+              <div className="min-w-0 flex-1 text-center">
+                <div className="text-3xl font-semibold leading-tight tabular-nums">
+                  {mobileTripRemainingMin !== null ? formatTripDuration(mobileTripRemainingMin) : "Navigation"}
+                </div>
+                <div className="text-base leading-tight" style={{ color: "var(--panel-text-secondary)" }}>
+                  {mobileTripRemainingKm !== null && mobileTripEta
+                    ? `${formatTripDistance(mobileTripRemainingKm)} · ${mobileTripEta}`
+                    : gpsStatus === "found"
+                      ? "Live GPS active"
+                      : "Waiting for GPS"}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (tripSteps && tripSteps.length > 0) setShowTurnList(true);
+                }}
+                disabled={!tripSteps || tripSteps.length === 0}
+                className="h-14 w-14 shrink-0 rounded-full border flex items-center justify-center active:scale-95 disabled:opacity-45"
+                style={{ borderColor: "var(--panel-border)", background: "var(--panel-input-bg)", color: "var(--panel-text-secondary)" }}
+                aria-label="Show route steps"
+                title="Show route steps"
+              >
+                <List className="h-7 w-7" />
+              </button>
+            </div>
+            {gpsStatus !== "found" && (
+              <div className="mt-3 rounded-xl px-3 py-2 text-center text-xs font-medium" style={{ background: "rgba(245,158,11,0.14)", color: "#f59e0b" }}>
+                Location is required for live movement.
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Bottom-right controls (lifted so map markers under corner overlap UI less) */}
@@ -2615,24 +2722,26 @@ function MapHome() {
             trip metadata. Tucked into the bottom-right column so it
             sits next to the other trip-only controls. */}
         {tripGeometry && tripGeometry.length > 1 && (
-          <LiveSharePill
-            active={Boolean(tripGeometry)}
-            userLocation={userLocation}
-            userHeading={userHeading}
-            progressPct={tripProgress}
-            speedMps={tripSpeedMps}
-            totalDistanceKm={tripStatsRef.current?.totalDistanceKm ?? 0}
-            dest={
-              tripStatsRef.current?.dest
-                ? {
-                    lat: tripStatsRef.current.dest.lat,
-                    lng: tripStatsRef.current.dest.lng,
-                    name: tripStatsRef.current.dest.display_name.split(",")[0] || "destination",
-                  }
-                : null
-            }
-            mode={tripMode}
-          />
+          <div className="hidden md:block">
+            <LiveSharePill
+              active={Boolean(tripGeometry)}
+              userLocation={userLocation}
+              userHeading={userHeading}
+              progressPct={tripProgress}
+              speedMps={tripSpeedMps}
+              totalDistanceKm={tripStatsRef.current?.totalDistanceKm ?? 0}
+              dest={
+                tripStatsRef.current?.dest
+                  ? {
+                      lat: tripStatsRef.current.dest.lat,
+                      lng: tripStatsRef.current.dest.lng,
+                      name: tripStatsRef.current.dest.display_name.split(",")[0] || "destination",
+                    }
+                  : null
+              }
+              mode={tripMode}
+            />
+          </div>
         )}
         {/* Get-to-safety — always visible. Distinct red shield with a
             subtle breathing pulse so it's findable at a glance when
@@ -2653,14 +2762,14 @@ function MapHome() {
             onClick={() => setAlongRouteOpen((v) => !v)}
             title="Search along route"
             aria-label="Search along route"
-            className="w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors active:scale-95"
+            className="w-12 h-12 md:w-10 md:h-10 flex items-center justify-center rounded-full md:rounded-lg backdrop-blur-md shadow-lg transition-colors active:scale-95"
             style={{
               background: alongRouteOpen ? "var(--pp-accent-bg)" : "var(--pill-bg)",
               border: `1px solid ${alongRouteOpen ? "var(--pp-accent-border)" : "var(--pill-border)"}`,
               color: alongRouteOpen ? "#3b82f6" : "var(--pill-text)",
             }}
           >
-            <Search className="w-4 h-4" />
+            <Search className="w-5 h-5 md:w-4 md:h-4" />
           </button>
         )}
         {/* Compass — only renders when the device is publishing a
@@ -2691,7 +2800,7 @@ function MapHome() {
           onClick={recenterCity}
           title="City overview"
           aria-label={`Recenter map on ${cityDisplayName}`}
-          className="w-12 h-12 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-opacity hover:opacity-90 active:scale-95"
+          className={`w-12 h-12 ${tripGeometry ? "hidden md:flex" : "flex"} items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-opacity hover:opacity-90 active:scale-95`}
           style={{
             background: "var(--pill-bg)",
             border: "1px solid var(--pill-border)",
@@ -2700,8 +2809,12 @@ function MapHome() {
         >
           <House className="w-5 h-5" />
         </button>
-        <AuthBar />
-        <PulseNetworkNav />
+        <div className={tripGeometry ? "hidden md:block" : ""}>
+          <AuthBar />
+        </div>
+        <div className={tripGeometry ? "hidden md:block" : ""}>
+          <PulseNetworkNav />
+        </div>
 
         {/* Alerts inbox bell — surfaces persisted off-screen / on-route
             alerts so users can scroll back through what they may have

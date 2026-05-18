@@ -839,6 +839,12 @@ export default function SearchSidebar({
     activeRouteRef.current = null;
   }, [onRoutesChange, onTripActive, onPreviewPins, onPreviewWaypoints, originLoc]);
 
+  useEffect(() => {
+    const onEndTrip = () => resetTrip();
+    window.addEventListener("pp:end-trip", onEndTrip);
+    return () => window.removeEventListener("pp:end-trip", onEndTrip);
+  }, [resetTrip]);
+
   const highCount = incidents.filter((i) => i.s_base >= 0.7).length;
 
   const innerContent = (

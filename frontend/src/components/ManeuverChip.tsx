@@ -139,24 +139,24 @@ export default function ManeuverChip({ steps, geometry, tripProgress, onShowStep
     <div
       role="status"
       aria-live="polite"
-      className="pointer-events-auto inline-flex items-center gap-3 px-3 py-2 rounded-2xl shadow-2xl backdrop-blur-xl max-w-[calc(100vw-2rem)]"
+      className="pointer-events-auto flex w-full items-center gap-4 rounded-2xl px-4 py-4 shadow-2xl backdrop-blur-xl md:w-auto md:max-w-[calc(100vw-2rem)] md:gap-3 md:px-3 md:py-2"
       style={{
-        background: "var(--panel-bg)",
-        border: `1px solid ${accent}40`,
-        color: "var(--panel-text)",
+        background: arriving ? "#047857" : "#006c67",
+        border: `1px solid ${accent}55`,
+        color: "#fff",
       }}
     >
       <div
-        className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center"
-        style={{ background: `${accent}1a`, color: accent }}
+        className="shrink-0 w-14 h-14 rounded-2xl flex items-center justify-center md:h-9 md:w-9 md:rounded-xl"
+        style={{ background: "rgba(255,255,255,0.14)", color: "#fff" }}
       >
-        <Icon className="w-5 h-5" />
+        <Icon className="h-9 w-9 md:h-5 md:w-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: accent }}>
+        <p className="text-xs font-semibold uppercase tracking-wider md:text-[11px]" style={{ color: "rgba(255,255,255,0.72)" }}>
           {arriving ? "Arriving" : `In ${fmtMeters(distanceToManeuver)}`}
         </p>
-        <p className="text-sm leading-snug truncate" title={step.instruction}>
+        <p className="truncate text-3xl font-semibold leading-tight md:text-sm md:font-normal md:leading-snug" title={step.instruction}>
           {step.instruction}
         </p>
       </div>
@@ -166,11 +166,11 @@ export default function ManeuverChip({ steps, geometry, tripProgress, onShowStep
         title={muted ? "Unmute voice guidance" : "Mute voice guidance"}
         aria-label={muted ? "Unmute voice guidance" : "Mute voice guidance"}
         aria-pressed={muted}
-        className="shrink-0 w-8 h-8 rounded-lg inline-flex items-center justify-center"
+        className="shrink-0 w-12 h-12 rounded-full inline-flex items-center justify-center md:h-8 md:w-8 md:rounded-lg"
         style={{
-          background: "var(--panel-input-bg)",
-          color: muted ? "var(--panel-text-muted)" : accent,
-          border: "1px solid var(--panel-border)",
+          background: "rgba(255,255,255,0.14)",
+          color: muted ? "rgba(255,255,255,0.55)" : "#fff",
+          border: "1px solid rgba(255,255,255,0.18)",
         }}
       >
         {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
@@ -181,11 +181,11 @@ export default function ManeuverChip({ steps, geometry, tripProgress, onShowStep
           onClick={onShowSteps}
           title="Show all turn-by-turn steps"
           aria-label="Show all turn-by-turn steps"
-          className="shrink-0 px-2 h-8 rounded-lg inline-flex items-center justify-center text-[10px] font-bold uppercase tracking-wider"
+          className="shrink-0 px-3 h-12 rounded-full inline-flex items-center justify-center text-[10px] font-bold uppercase tracking-wider md:h-8 md:rounded-lg md:px-2"
           style={{
-            background: "var(--panel-input-bg)",
-            color: "var(--panel-text-secondary)",
-            border: "1px solid var(--panel-border)",
+            background: "rgba(255,255,255,0.14)",
+            color: "#fff",
+            border: "1px solid rgba(255,255,255,0.18)",
           }}
         >
           Steps
@@ -205,4 +205,3 @@ function haversine(aLat: number, aLng: number, bLat: number, bLng: number): numb
     Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 }
-

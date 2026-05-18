@@ -781,8 +781,12 @@ html.pp-mobile-search-fullscreen .pp-alert-toast {
 .pp-bottom-controls {
   bottom: var(--pp-mobile-bottom-rail);
 }
+.pp-speed-chip {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 7.75rem);
+}
 @media (min-width: 768px) {
   .pp-bottom-controls { bottom: 4.5rem; }
+  .pp-speed-chip { bottom: 1rem; }
 }
 
 /* Custom scrollbar for sidebar */
