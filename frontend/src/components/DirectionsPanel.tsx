@@ -116,6 +116,7 @@ function DraggableStopRow({
 }
 import { loadRecent, type RecentSearch } from "@/lib/recent-searches";
 import { Clock as ClockIcon } from "lucide-react";
+import { useModeETAs, formatEtaShort } from "@/hooks/useModeETAs";
 
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
@@ -279,6 +280,23 @@ export default function DirectionsPanel({
   const previewAbortRef = useRef<AbortController | null>(null);
   const incidentsRef = useRef(incidents);
   incidentsRef.current = incidents;
+
+  // Memoize the mode id list so `useModeETAs` doesn't see a fresh array
+  // every render (the hook keys its abort/refetch logic on the join).
+  const modeIds = useMemo<TransportMode[]>(() => MODES.map((m) => m.id), []);
+  const stopLocs = useMemo(
+    () =>
+      stops
+        .filter((s): s is typeof s & { loc: StopLoc } => s.loc !== null)
+        .map((s) => ({ lat: s.loc.lat, lng: s.loc.lng })),
+    [stops]
+  );
+  const modeEtas = useModeETAs(
+    modeIds,
+    originLoc ? { lat: originLoc.lat, lng: originLoc.lng } : null,
+    destLoc ? { lat: destLoc.lat, lng: destLoc.lng } : null,
+    stopLocs
+  );
 
   const { destinations: savedDests, canSave, addDestination } = useSavedDestinations();
 
@@ -561,17 +579,36 @@ export default function DirectionsPanel({
         {MODES.map((m) => {
           const Icon = m.icon;
           const active = activeMode === m.id;
+          const eta = modeEtas[m.id];
           return (
             <button
               key={m.id}
               onClick={() => setActiveMode(m.id)}
-              className={`flex-1 flex flex-col items-center gap-1 py-3 text-[10px] font-medium transition-all border-b-2 ${
+              className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition-all border-b-2 ${
                 active ? "border-blue-500 text-blue-500" : "border-transparent"
               }`}
               style={!active ? { color: "var(--panel-text-secondary)" } : {}}
             >
               <Icon className="w-5 h-5" />
-              {m.label}
+              <span className="leading-none">{m.label}</span>
+              {/* Per-mode ETA strip — gives the user a Google-Maps-style
+                  cross-mode comparison without forcing them to tap each
+                  tab. The empty placeholder keeps row heights identical
+                  before origin/dest are set so the layout doesn't shift. */}
+              <span
+                className="text-[10px] font-semibold leading-none mt-0.5 min-h-[12px]"
+                style={{
+                  color: active ? "#3b82f6" : "var(--panel-text-muted)",
+                }}
+              >
+                {eta?.status === "ready" && typeof eta.durationMin === "number"
+                  ? formatEtaShort(eta.durationMin)
+                  : eta?.status === "loading"
+                    ? "…"
+                    : eta?.status === "error"
+                      ? "—"
+                      : ""}
+              </span>
             </button>
           );
         })}
