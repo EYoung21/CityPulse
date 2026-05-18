@@ -680,109 +680,42 @@ function createUserIcon(radiate = false, heading: number | null = null): L.DivIc
   });
 }
 
-/** Small pseudo-3D car (gradients + shadow); no outline icon. Ids are fixed — only one trip marker exists. */
-function transportCar3dSvg(): string {
-  return `<svg viewBox="0 0 48 48" width="32" height="32" style="display:block" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+/** Live-trip marker: one simple forward arrow for every travel mode. */
+function transportForwardArrowSvg(): string {
+  return `<svg viewBox="0 0 48 48" width="34" height="34" style="display:block" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
   <defs>
-    <linearGradient id="pp-car-body" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#7ee8dc"/>
-      <stop offset="0.4" stop-color="#2dd4bf"/>
-      <stop offset="1" stop-color="#0f766e"/>
-    </linearGradient>
-    <linearGradient id="pp-car-roof" x1="0" y1="0" x2="1" y2="0">
+    <linearGradient id="pp-trip-arrow-fill" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#ecfeff"/>
-      <stop offset="1" stop-color="#5eead4"/>
-    </linearGradient>
-    <linearGradient id="pp-car-bumper" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#134e4a"/>
-      <stop offset="1" stop-color="#042f2e"/>
-    </linearGradient>
-  </defs>
-  <ellipse cx="24" cy="41" rx="17" ry="5" fill="rgba(0,0,0,0.28)"/>
-  <g transform="translate(24,22)">
-    <path d="M-15 4 L-13 -9 Q-12 -14 -6 -14 L6 -14 Q12 -14 13 -9 L15 4 Q15 9 10 11 L-10 11 Q-15 9 -15 4Z"
-      fill="url(#pp-car-body)" stroke="#0f3d3a" stroke-width="1.2" stroke-linejoin="round"/>
-    <path d="M-9 -12 L-8 -5 L8 -5 L9 -12 Q9 -13 0 -13 Q-9 -13 -9 -12Z"
-      fill="url(#pp-car-roof)" stroke="#0d9488" stroke-width="0.9" opacity="0.96"/>
-    <path d="M-14 6 L14 6 L13 9 L-13 9 Z" fill="url(#pp-car-bumper)" opacity="0.9"/>
-    <ellipse cx="-10" cy="9" rx="4" ry="2.5" fill="#0c4a6e"/>
-    <ellipse cx="-10" cy="8.3" rx="1.3" ry="0.85" fill="#94a3b8"/>
-    <ellipse cx="10" cy="9" rx="4" ry="2.5" fill="#0c4a6e"/>
-    <ellipse cx="10" cy="8.3" rx="1.3" ry="0.85" fill="#94a3b8"/>
-    <path d="M-4 -5 L4 -5 L3 -2 L-3 -2 Z" fill="rgba(15,118,110,0.35)"/>
-  </g>
-</svg>`;
-}
-
-/** Pseudo-3D pedestrian: gradients + ground shadow; faces top of viewBox = route forward. */
-function transportWalk3dSvg(): string {
-  return `<svg viewBox="0 0 48 48" width="32" height="32" style="display:block" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-  <defs>
-    <linearGradient id="pp-walk-skin" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#fde68a"/>
-      <stop offset="1" stop-color="#d97706"/>
-    </linearGradient>
-    <linearGradient id="pp-walk-shirt" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#93c5fd"/>
+      <stop offset="0.42" stop-color="#38bdf8"/>
       <stop offset="1" stop-color="#2563eb"/>
     </linearGradient>
-    <linearGradient id="pp-walk-pants" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#64748b"/>
-      <stop offset="1" stop-color="#1e293b"/>
+    <linearGradient id="pp-trip-arrow-edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#cffafe"/>
+      <stop offset="1" stop-color="#1e40af"/>
     </linearGradient>
   </defs>
-  <ellipse cx="24" cy="40" rx="14" ry="4" fill="rgba(0,0,0,0.26)"/>
-  <g transform="translate(24,21)">
-    <circle cx="0" cy="-12" r="5" fill="url(#pp-walk-skin)" stroke="#b45309" stroke-width="0.9"/>
-    <path d="M-5 -6 Q-6 2 -4 10 L-2 14 L2 14 L4 10 Q6 2 5 -6 Q0 -8 -5 -6Z" fill="url(#pp-walk-shirt)" stroke="#1d4ed8" stroke-width="0.85"/>
-    <path d="M-4 10 L-6 18 L-2 20 L0 14" fill="url(#pp-walk-pants)" stroke="#334155" stroke-width="0.7"/>
-    <path d="M4 10 L6 18 L2 20 L0 14" fill="url(#pp-walk-pants)" stroke="#334155" stroke-width="0.7"/>
-    <ellipse cx="-8" cy="-2" rx="2.5" ry="2" fill="url(#pp-walk-skin)" opacity="0.9"/>
-    <ellipse cx="8" cy="0" rx="2.5" ry="2" fill="url(#pp-walk-skin)" opacity="0.9"/>
-  </g>
+  <ellipse cx="24" cy="40.5" rx="13" ry="4" fill="rgba(0,0,0,0.28)"/>
+  <path
+    d="M24 6.5 L38 38.5 Q38.8 40.8 36.4 39.8 L24 34.2 L11.6 39.8 Q9.2 40.8 10 38.5 Z"
+    fill="url(#pp-trip-arrow-fill)"
+    stroke="url(#pp-trip-arrow-edge)"
+    stroke-width="1.6"
+    stroke-linejoin="round"
+  />
+  <path d="M24 11.5 L24 30.5" stroke="rgba(255,255,255,0.62)" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M19.5 35.8 L24 33.8 L28.5 35.8" fill="none" stroke="rgba(15,23,42,0.22)" stroke-width="1.6" stroke-linecap="round"/>
 </svg>`;
 }
 
-/** Pseudo-3D cyclist: chunky wheels + frame + rider; forward toward top of viewBox. */
-function transportBike3dSvg(): string {
-  return `<svg viewBox="0 0 48 48" width="32" height="32" style="display:block" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-  <defs>
-    <radialGradient id="pp-bike-tire" cx="35%" cy="35%" r="65%">
-      <stop offset="0" stop-color="#475569"/>
-      <stop offset="1" stop-color="#0f172a"/>
-    </radialGradient>
-    <linearGradient id="pp-bike-rim" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#e2e8f0"/>
-      <stop offset="1" stop-color="#94a3b8"/>
-    </linearGradient>
-    <linearGradient id="pp-bike-frame" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#fb923c"/>
-      <stop offset="1" stop-color="#c2410c"/>
-    </linearGradient>
-    <linearGradient id="pp-bike-rider" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#fdba74"/>
-      <stop offset="1" stop-color="#9a3412"/>
-    </linearGradient>
-  </defs>
-  <ellipse cx="24" cy="41" rx="16" ry="4.5" fill="rgba(0,0,0,0.25)"/>
-  <g transform="translate(24,22)">
-    <circle cx="-10" cy="8" r="7" fill="url(#pp-bike-tire)" stroke="#020617" stroke-width="1"/>
-    <circle cx="-10" cy="8" r="3.2" fill="url(#pp-bike-rim)" stroke="#64748b" stroke-width="0.6"/>
-    <circle cx="10" cy="8" r="7" fill="url(#pp-bike-tire)" stroke="#020617" stroke-width="1"/>
-    <circle cx="10" cy="8" r="3.2" fill="url(#pp-bike-rim)" stroke="#64748b" stroke-width="0.6"/>
-    <path d="M-10 8 L-2 -8 L8 -6 L10 8" fill="none" stroke="url(#pp-bike-frame)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M-2 -8 L6 8" fill="none" stroke="url(#pp-bike-frame)" stroke-width="2.2" stroke-linecap="round"/>
-    <circle cx="-1" cy="-11" r="4" fill="url(#pp-bike-rider)" stroke="#7c2d12" stroke-width="0.8"/>
-    <path d="M-3 -7 L-4 2 L-2 6 L2 6 L5 0 L4 -5 L0 -7Z" fill="url(#pp-bike-rider)" stroke="#7c2d12" stroke-width="0.75" opacity="0.95"/>
-    <ellipse cx="1" cy="-13" rx="3.5" ry="2.2" fill="#f97316" stroke="#9a3412" stroke-width="0.6"/>
-  </g>
-</svg>`;
-}
+const TRIP_FORWARD_ARROW_SVG = transportForwardArrowSvg();
 
 const TRIP_MODES_3D: Record<string, string> = {
-  "foot-walking": transportWalk3dSvg(),
-  "cycling-regular": transportBike3dSvg(),
-  "driving-car": transportCar3dSvg(),
+  "foot-walking": TRIP_FORWARD_ARROW_SVG,
+  "cycling-regular": TRIP_FORWARD_ARROW_SVG,
+  "driving-car": TRIP_FORWARD_ARROW_SVG,
+  wheelchair: TRIP_FORWARD_ARROW_SVG,
+  "transit-train": TRIP_FORWARD_ARROW_SVG,
+  "transit-subway": TRIP_FORWARD_ARROW_SVG,
 };
 
 type TripVisualStyle = {
