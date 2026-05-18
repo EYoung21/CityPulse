@@ -22,7 +22,8 @@ function fmtAgo(ms: number): string {
 /** Top-anchored pill prompting the user to pick up where their trip
  *  left off after a refresh / accidental tab close. Mirrors the visual
  *  language of OffscreenIncidentChip / IncidentAheadChip so the alert
- *  surfaces feel cohesive. */
+ *  surfaces feel cohesive. The positioning class keeps it out of the
+ *  floating search lane on both mobile and desktop. */
 export default function ResumeTripPill({
   destName,
   startedAt,
@@ -37,7 +38,7 @@ export default function ResumeTripPill({
 
   return (
     <div
-      className="pp-below-app-topnav pointer-events-none fixed inset-x-0 z-[1100] flex justify-center px-3"
+      className="pp-resume-trip-pill pointer-events-none fixed inset-x-0 z-[1100] flex justify-center px-3"
       style={{
         opacity: enter ? 1 : 0,
         transform: enter ? "translateY(0)" : "translateY(-8px)",

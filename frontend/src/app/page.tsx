@@ -485,6 +485,15 @@ function MapHome() {
     }
     return () => document.documentElement.classList.remove(cls);
   }, [tripGeometry]);
+  useEffect(() => {
+    const cls = "pp-resume-trip-active";
+    if (resumeSnap && !tripGeometry) {
+      document.documentElement.classList.add(cls);
+    } else {
+      document.documentElement.classList.remove(cls);
+    }
+    return () => document.documentElement.classList.remove(cls);
+  }, [resumeSnap, tripGeometry]);
   /** Whether the "Search along route" overlay panel is open. Only
    *  meaningful when a trip is active — toggling closes the panel
    *  when the trip ends so it doesn't persist into a stale state. */
@@ -2029,7 +2038,7 @@ function MapHome() {
         previewDest={previewDest}
         previewWaypoints={previewWaypoints}
         tripMode={tripMode}
-        heatmapEnabled={heatmapEnabled}
+        heatmapEnabled={heatmapEnabled || Boolean(tripGeometry)}
         todHourFocus={todHourFocus}
         safetyPois={safetyPois}
         nearbyPois={nearbyPois}

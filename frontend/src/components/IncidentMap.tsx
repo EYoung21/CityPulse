@@ -231,13 +231,12 @@ function createIncidentGlyphIcon(
   greyed: boolean
 ): L.DivIcon {
   const kind = resolveBlipKind(inc);
-  const mc = monoColor(kind);
   const base = 18;
   const box = 22;
   const half = 11;
-  const opacity = greyed ? 0.25 : 0.92;
+  const opacity = greyed ? 0.54 : 0.92;
   const filt = greyed
-    ? "filter:grayscale(0.6) saturate(0.3) brightness(0.85);"
+    ? "filter:saturate(0.65) brightness(0.9) drop-shadow(0 1px 2px rgba(0,0,0,0.35));"
     : "filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5));";
   const svg = monoGlyphSvg(kind, uid);
   return L.divIcon({
@@ -582,7 +581,7 @@ function splitRouteAtDistance(
 
 
 /** Route start / end / via: plain round dots (A/B are color-only); other labels show inside a slightly larger dot. */
-function createEndpointDotIcon(label: string, bgColor: string, _glowColor: string): L.DivIcon {
+function createEndpointDotIcon(label: string, bgColor: string, glowColor: string): L.DivIcon {
   const plainAB = label === "A" || label === "B";
   const size = plainAB ? 14 : 22;
   const half = size / 2;
@@ -596,7 +595,7 @@ function createEndpointDotIcon(label: string, bgColor: string, _glowColor: strin
     className: "",
     iconSize: [size, size],
     iconAnchor: [half, half],
-    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${bgColor};border:2px solid rgba(255,255,255,0.95);box-shadow:0 2px 10px rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;">${labelHtml}</div>`,
+    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${bgColor};border:2px solid rgba(255,255,255,0.95);box-shadow:0 0 0 4px ${glowColor},0 2px 10px rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;">${labelHtml}</div>`,
   });
 }
 
@@ -786,6 +785,60 @@ const TRIP_MODES_3D: Record<string, string> = {
   "driving-car": transportCar3dSvg(),
 };
 
+type TripVisualStyle = {
+  remainingColor: string;
+  traveledColor: string;
+  glowColor: string;
+  remainingWeight: number;
+  traveledWeight: number;
+  glowWeight: number;
+  glowOpacity: number;
+  dashArray?: string;
+  guideColor?: string;
+  guideWeight?: number;
+  guideDashArray?: string;
+};
+
+function tripVisualStyle(mode: string | null | undefined): TripVisualStyle {
+  switch (mode) {
+    case "cycling-regular":
+      return {
+        remainingColor: "#0891b2",
+        traveledColor: "#2563eb",
+        glowColor: "#22d3ee",
+        remainingWeight: 5,
+        traveledWeight: 5,
+        glowWeight: 15,
+        glowOpacity: 0.16,
+        guideColor: "#cffafe",
+        guideWeight: 2.5,
+        guideDashArray: "1 12",
+      };
+    case "foot-walking":
+      return {
+        remainingColor: "#8b5cf6",
+        traveledColor: "#a78bfa",
+        glowColor: "#c4b5fd",
+        remainingWeight: 5,
+        traveledWeight: 5,
+        glowWeight: 14,
+        glowOpacity: 0.15,
+        dashArray: "10 10",
+      };
+    case "driving-car":
+    default:
+      return {
+        remainingColor: "#22c55e",
+        traveledColor: "#3b82f6",
+        glowColor: "#22c55e",
+        remainingWeight: 6,
+        traveledWeight: 6,
+        glowWeight: 16,
+        glowOpacity: 0.12,
+      };
+  }
+}
+
 function tripModeUses3dHeading(mode: string | null | undefined): boolean {
   return mode != null && Object.prototype.hasOwnProperty.call(TRIP_MODES_3D, mode);
 }
@@ -894,7 +947,11 @@ type TripLiveLayers = {
   traveled: L.Polyline;
   remaining: L.Polyline;
   remainingGlow: L.Polyline;
+  guide?: L.Polyline;
 };
+
+type IncidentMarker = L.Marker & { _ppIncidentId?: string };
+type ClusterClickEvent = L.LeafletEvent & { layer: L.MarkerCluster };
 
 const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   {
@@ -1159,7 +1216,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }).addTo(map);
 
     markersRef.current.on("clusterclick", (e: L.LeafletEvent) => {
-      const cluster = (e as any).layer as L.MarkerCluster;
+      const cluster = (e as ClusterClickEvent).layer;
       const bounds = cluster.getBounds();
       const span =
         Math.abs(bounds.getNorth() - bounds.getSouth()) +
@@ -1169,10 +1226,10 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       // - markers are very close together (< ~110m), OR
       // - we're already zoomed in close (≥16) so further zooming won't help
       if (span < 0.001 || currentZoom >= 16) {
-        const ids: string[] = cluster
-          .getAllChildMarkers()
-          .map((m: any) => m._ppIncidentId as string)
-          .filter(Boolean);
+        const childMarkers = cluster.getAllChildMarkers() as L.Marker[];
+        const ids: string[] = childMarkers
+          .map((m: L.Marker) => (m as IncidentMarker)._ppIncidentId)
+          .filter((id: string | undefined): id is string => Boolean(id));
         if (ids.length > 0) onClusterClickRef.current?.(ids);
       } else {
         map.fitBounds(bounds, { padding: [40, 40], maxZoom: 18 });
@@ -1480,7 +1537,11 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         }
         if (isTripMode && tripRouteGeometry) {
           const dist = minDistToRouteKm([inc.lat, inc.lng], tripRouteGeometry);
-          if (dist <= TRIP_PROXIMITY_KM) heatData.push([inc.lat, inc.lng, weight]);
+          const onRoute = dist <= TRIP_PROXIMITY_KM;
+          const tripWeight = onRoute
+            ? Math.min(1, weight * 1.2)
+            : Math.max(0.18, weight * 0.55);
+          heatData.push([inc.lat, inc.lng, tripWeight]);
         } else {
           heatData.push([inc.lat, inc.lng, weight]);
         }
@@ -1511,10 +1572,10 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
           0.9: "#ef2020",
           1.0: "#ff0040",
         };
-        const baseRadius = useDensity ? 40 : softRadius;
-        const baseBlur = useDensity ? 30 : softBlur;
-        const heatMax = useDensity ? 1.0 : 0.85;
-        const heatMinOp = useDensity ? 0.3 : 0.42;
+        const baseRadius = isTripMode ? (isMobileViewport() ? 48 : 64) : useDensity ? 40 : softRadius;
+        const baseBlur = isTripMode ? (isMobileViewport() ? 28 : 38) : useDensity ? 30 : softBlur;
+        const heatMax = isTripMode ? 0.9 : useDensity ? 1.0 : 0.85;
+        const heatMinOp = isTripMode ? 0.5 : useDensity ? 0.3 : 0.42;
         const gradient = useDensity ? legacyGradient : vividGradient;
         const heat = L.heatLayer(heatData, {
           radius: baseRadius,
@@ -1555,8 +1616,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         inc.s_base >= 0.7,
         greyed
       );
-      const marker = L.marker([inc.lat, inc.lng], { icon });
-      (marker as any)._ppIncidentId = inc.id;
+      const marker = L.marker([inc.lat, inc.lng], { icon }) as IncidentMarker;
+      marker._ppIncidentId = inc.id;
       if (!greyed) marker.on("click", () => stableOnSelect(inc.id));
       markers.addLayer(marker);
       incidentMarkersRef.current.set(inc.id, { marker, signature });
@@ -1887,7 +1948,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       }
     }
 
-    perimeterPoints.forEach(([lat, lng], i) => {
+    perimeterPoints.forEach(([lat, lng]) => {
       const icon = L.divIcon({
         className: "pp-perimeter-vertex",
         iconSize: [12, 12],
@@ -2531,29 +2592,41 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }
 
     const geo = tripRouteGeometry;
-    const routeColor = "#22c55e";
-    const traveledColor = "#3b82f6";
+    const tripStyle = tripVisualStyle(tripMode);
 
     const remainingLine = L.polyline(geo, {
-      color: routeColor,
-      weight: 6,
+      color: tripStyle.remainingColor,
+      weight: tripStyle.remainingWeight,
       opacity: 0.95,
       lineCap: "round",
       lineJoin: "round",
+      dashArray: tripStyle.dashArray,
     }).addTo(trailLayer!);
 
     const remainingGlow = L.polyline(geo, {
-      color: routeColor,
-      weight: 16,
-      opacity: 0.12,
+      color: tripStyle.glowColor,
+      weight: tripStyle.glowWeight,
+      opacity: tripStyle.glowOpacity,
     }).addTo(trailLayer!);
 
+    const guideLine = tripStyle.guideColor
+      ? L.polyline(geo, {
+          color: tripStyle.guideColor,
+          weight: tripStyle.guideWeight ?? 2,
+          opacity: 0.9,
+          lineCap: "round",
+          lineJoin: "round",
+          dashArray: tripStyle.guideDashArray,
+        }).addTo(trailLayer!)
+      : undefined;
+
     const traveledLine = L.polyline([], {
-      color: traveledColor,
-      weight: 6,
+      color: tripStyle.traveledColor,
+      weight: tripStyle.traveledWeight,
       opacity: 0.9,
       lineCap: "round",
       lineJoin: "round",
+      dashArray: tripStyle.dashArray,
     }).addTo(trailLayer!);
 
     tripLiveLayersRef.current = {
@@ -2561,6 +2634,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       traveled: traveledLine,
       remaining: remainingLine,
       remainingGlow,
+      guide: guideLine,
     };
     onTripProgressRef.current?.(0);
 
@@ -2611,6 +2685,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     layers.traveled.setLatLngs(traveled);
     layers.remaining.setLatLngs(remaining);
     layers.remainingGlow.setLatLngs(remaining);
+    layers.guide?.setLatLngs(remaining);
 
     if (tripModeUses3dHeading(tripMode)) {
       let deg = 0;

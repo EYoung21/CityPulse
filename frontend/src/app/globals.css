@@ -312,10 +312,13 @@
    the pill height is defined once in --pp-mobile-pill-bottom. */
 @media (max-width: 767px) {
   #incident-map .leaflet-control-zoom {
-    margin-top: calc(var(--pp-mobile-pill-bottom) + 0.5rem) !important;
+    margin-top: calc(var(--pp-mobile-pill-bottom) + 0.875rem) !important;
     margin-right: calc(env(safe-area-inset-right, 0px) + 4px) !important;
     border: none !important;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35) !important;
+  }
+  html.pp-resume-trip-active #incident-map .leaflet-control-zoom {
+    margin-top: calc(var(--pp-mobile-pill-bottom) + 4.75rem) !important;
   }
   #incident-map .leaflet-control-zoom a {
     width: 44px !important;
@@ -398,6 +401,20 @@
 /* Fixed / sticky toast & pill chrome below the desktop tab bar. */
 .pp-below-app-topnav {
   top: var(--pp-below-app-topnav-top);
+}
+
+.pp-resume-trip-pill {
+  top: calc(var(--pp-mobile-pill-bottom) + 0.625rem);
+}
+
+@media (min-width: 768px) {
+  .pp-resume-trip-pill {
+    top: calc(var(--pp-below-app-topnav-top) + 0.25rem);
+    left: var(--pp-map-filters-left, 28rem);
+    right: var(--pp-map-filters-right, calc(0.75rem + 3.25rem));
+    padding-left: 0;
+    padding-right: 0;
+  }
 }
 
 
@@ -739,8 +756,11 @@
   }
 
   #incident-map .leaflet-control-zoom {
-    margin-top: 0.75rem !important;
+    margin-top: 1.25rem !important;
     margin-right: 0.75rem !important;
+  }
+  html.pp-resume-trip-active #incident-map .leaflet-control-zoom {
+    margin-top: 4.75rem !important;
   }
 
   /* Desktop AlertToast lives below the app topnav; on mobile it
