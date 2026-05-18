@@ -11,12 +11,15 @@ export const dynamic = "force-dynamic";
  * different geometries (the OSRM demo aliases foot/bike to car, which made
  * Walk/Bike/Drive all draw the same polyline).
  *
- * Fallback: OSRM demo for driving only, then a mode-specific estimate.
- * We deliberately do not reuse the driving fallback for walking, biking,
- * wheelchair, or transit because that makes every mode show the same trip.
+ * Fallback: mode-specific OpenStreetMap routing services, OSRM demo for
+ * driving, then a mode-specific estimate. We deliberately avoid reusing
+ * the driving route for walking/biking/wheelchair because that makes
+ * every mode show the same trip.
  */
 const VALHALLA_URL = "https://valhalla1.openstreetmap.de/route";
 const OSRM_BASE = "https://router.project-osrm.org/route/v1";
+const OSM_ROUTING_BASE = "https://routing.openstreetmap.de";
+const OTP_URL = process.env.TRANSIT_OTP_URL || "";
 
 const VALHALLA_COSTING: Record<string, string> = {
   "foot-walking": "pedestrian",
@@ -29,6 +32,13 @@ const VALHALLA_COSTING: Record<string, string> = {
 
 const OSRM_PROFILES: Record<string, string> = {
   "driving-car": "driving",
+};
+
+const OSM_ROUTING_PROFILES: Record<string, { service: string; profile: string }> = {
+  "foot-walking": { service: "routed-foot", profile: "foot" },
+  wheelchair: { service: "routed-foot", profile: "foot" },
+  "cycling-regular": { service: "routed-bike", profile: "bike" },
+  "driving-car": { service: "routed-car", profile: "car" },
 };
 
 const ESTIMATED_SPEED_KMH: Record<string, number> = {
@@ -48,6 +58,30 @@ const DISTANCE_FACTORS: Record<string, number> = {
   "transit-subway": 1.3,
   "driving-car": 1.28,
 };
+
+type TransitStation = {
+  lat: number;
+  lng: number;
+  kind: "rail" | "subway";
+};
+
+const PHILLY_TRANSIT_STATIONS: TransitStation[] = [
+  { lat: 39.9015, lng: -75.35, kind: "rail" },
+  { lat: 39.9117, lng: -75.3287, kind: "rail" },
+  { lat: 39.9156, lng: -75.3088, kind: "rail" },
+  { lat: 39.9234, lng: -75.2962, kind: "rail" },
+  { lat: 39.9376, lng: -75.2718, kind: "rail" },
+  { lat: 39.9457, lng: -75.2389, kind: "rail" },
+  { lat: 39.9558, lng: -75.1819, kind: "rail" },
+  { lat: 39.9544, lng: -75.1683, kind: "rail" },
+  { lat: 39.9528, lng: -75.1582, kind: "rail" },
+  { lat: 39.9697, lng: -75.2588, kind: "subway" },
+  { lat: 39.9558, lng: -75.1819, kind: "subway" },
+  { lat: 39.9531, lng: -75.1656, kind: "subway" },
+  { lat: 39.953, lng: -75.1635, kind: "subway" },
+  { lat: 39.9476, lng: -75.1655, kind: "subway" },
+  { lat: 39.9061, lng: -75.1714, kind: "subway" },
+];
 
 type Body = { waypoints?: unknown; mode?: string };
 
@@ -88,6 +122,34 @@ function decodePolyline6(encoded: string): [number, number][] {
     } while (b >= 0x20);
     lng += result & 1 ? ~(result >> 1) : result >> 1;
     points.push([lat / 1e6, lng / 1e6]);
+  }
+  return points;
+}
+
+function decodePolyline5(encoded: string): [number, number][] {
+  const points: [number, number][] = [];
+  let index = 0;
+  let lat = 0;
+  let lng = 0;
+  while (index < encoded.length) {
+    let b: number;
+    let shift = 0;
+    let result = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    lat += result & 1 ? ~(result >> 1) : result >> 1;
+    shift = 0;
+    result = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    lng += result & 1 ? ~(result >> 1) : result >> 1;
+    points.push([lat / 1e5, lng / 1e5]);
   }
   return points;
 }
@@ -151,6 +213,23 @@ function estimateRoute(pts: [number, number][], mode: string): RoutePayload | nu
   };
 }
 
+function nearestTransitStation(
+  point: [number, number],
+  mode: string
+): [number, number] | null {
+  const wantedKind = mode === "transit-subway" ? "subway" : "rail";
+  const maxKm = mode === "transit-subway" ? 18 : 10;
+  let best: { point: [number, number]; km: number } | null = null;
+  for (const station of PHILLY_TRANSIT_STATIONS) {
+    if (station.kind !== wantedKind) continue;
+    const stationPoint: [number, number] = [station.lat, station.lng];
+    const km = haversineKm(point, stationPoint);
+    if (km > maxKm) continue;
+    if (!best || km < best.km) best = { point: stationPoint, km };
+  }
+  return best?.point ?? null;
+}
+
 function isImplausibleForMode(result: RoutePayload, mode: string): boolean {
   if (!Number.isFinite(result.durationMin) || result.durationMin <= 0) return true;
   const speedKmh = result.distanceKm / (result.durationMin / 60);
@@ -165,6 +244,38 @@ function isImplausibleForMode(result: RoutePayload, mode: string): boolean {
     default:
       return false;
   }
+}
+
+async function withProviderTimeout<T>(
+  ms: number,
+  run: (signal: AbortSignal) => Promise<T>
+): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ms);
+  try {
+    return await run(controller.signal);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function mergeRouteLegs(legs: [number, number][][]): [number, number][] {
+  const geometry: [number, number][] = [];
+  for (const leg of legs) {
+    if (leg.length === 0) continue;
+    if (geometry.length === 0) {
+      geometry.push(...leg);
+      continue;
+    }
+    const last = geometry[geometry.length - 1];
+    const first = leg[0];
+    const start =
+      Math.abs(last[0] - first[0]) < 1e-6 && Math.abs(last[1] - first[1]) < 1e-6
+        ? 1
+        : 0;
+    geometry.push(...leg.slice(start));
+  }
+  return geometry;
 }
 
 async function tryValhalla(
@@ -224,14 +335,14 @@ async function tryValhalla(
   }
 }
 
-async function tryOsrm(
+async function tryOsrmService(
   pts: [number, number][],
-  mode: string,
+  baseUrl: string,
+  profile: string,
   signal: AbortSignal
 ): Promise<RoutePayload | null> {
-  const profile = OSRM_PROFILES[mode] ?? "driving";
   const coordStr = pts.map(([lat, lng]) => `${lng},${lat}`).join(";");
-  const url = `${OSRM_BASE}/${profile}/${coordStr}?overview=full&geometries=geojson`;
+  const url = `${baseUrl}/${profile}/${coordStr}?overview=full&geometries=geojson`;
   try {
     const resp = await fetch(url, {
       headers: {
@@ -264,6 +375,154 @@ async function tryOsrm(
   }
 }
 
+async function tryOsrm(
+  pts: [number, number][],
+  mode: string,
+  signal: AbortSignal
+): Promise<RoutePayload | null> {
+  const profile = OSRM_PROFILES[mode] ?? "driving";
+  return tryOsrmService(pts, OSRM_BASE, profile, signal);
+}
+
+async function tryOsmRouting(
+  pts: [number, number][],
+  mode: string,
+  signal: AbortSignal
+): Promise<RoutePayload | null> {
+  const cfg = OSM_ROUTING_PROFILES[mode];
+  if (!cfg) return null;
+  return tryOsrmService(
+    pts,
+    `${OSM_ROUTING_BASE}/${cfg.service}/route/v1`,
+    cfg.profile,
+    signal
+  );
+}
+
+async function tryOsmRoutingChained(
+  pts: [number, number][],
+  mode: string
+): Promise<RoutePayload | null> {
+  if (pts.length < 2) return null;
+  const legs: [number, number][][] = [];
+  let distanceKm = 0;
+  let durationMin = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const leg = await withProviderTimeout(5000, (signal) =>
+      tryOsmRouting([pts[i], pts[i + 1]], mode, signal)
+    );
+    if (!leg) return null;
+    legs.push(leg.geometry);
+    distanceKm += leg.distanceKm;
+    durationMin += leg.durationMin;
+  }
+  const geometry = mergeRouteLegs(legs);
+  if (geometry.length < 2) return null;
+  return { geometry, distanceKm, durationMin };
+}
+
+async function tryOtpTransit(
+  pts: [number, number][],
+  mode: string,
+  signal: AbortSignal
+): Promise<RoutePayload | null> {
+  if (!OTP_URL || pts.length !== 2) return null;
+  const otpMode = mode === "transit-subway" ? "SUBWAY" : "RAIL";
+  const now = new Date().toISOString();
+  const params = new URLSearchParams({
+    fromPlace: `${pts[0][0]},${pts[0][1]}`,
+    toPlace: `${pts[1][0]},${pts[1][1]}`,
+    date: now.slice(0, 10),
+    time: now.slice(11, 16),
+    mode: `WALK,${otpMode}`,
+    numItineraries: "1",
+    maxWalkDistance: "1500",
+    arriveBy: "false",
+  });
+  try {
+    const resp = await fetch(`${OTP_URL}/otp/routers/default/plan?${params.toString()}`, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "CityPulse/1.0",
+      },
+      cache: "no-store",
+      signal,
+    });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as {
+      plan?: {
+        itineraries?: Array<{
+          duration: number;
+          legs: Array<{
+            distance?: number;
+            from: { lat: number; lon: number };
+            to: { lat: number; lon: number };
+            legGeometry?: { points?: string };
+          }>;
+        }>;
+      };
+    };
+    const itinerary = data.plan?.itineraries?.[0];
+    if (!itinerary?.legs?.length) return null;
+    const legs: [number, number][][] = [];
+    let distanceKm = 0;
+    for (const leg of itinerary.legs) {
+      distanceKm += (leg.distance ?? 0) / 1000;
+      const decoded = leg.legGeometry?.points ? decodePolyline5(leg.legGeometry.points) : [];
+      legs.push(
+        decoded.length >= 2
+          ? decoded
+          : [
+              [leg.from.lat, leg.from.lon],
+              [leg.to.lat, leg.to.lon],
+            ]
+      );
+    }
+    const geometry = mergeRouteLegs(legs);
+    if (geometry.length < 2) return null;
+    return {
+      geometry,
+      distanceKm,
+      durationMin: itinerary.duration / 60,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function tryTransitFallback(
+  pts: [number, number][],
+  mode: string
+): Promise<RoutePayload | null> {
+  const estimate = estimateRoute(pts, mode);
+  if (!estimate) return null;
+
+  if (pts.length === 2) {
+    const startStation = nearestTransitStation(pts[0], mode);
+    const endStation = nearestTransitStation(pts[1], mode);
+    if (startStation && endStation) {
+      const stationWaypoints = [pts[0], startStation, endStation, pts[1]];
+      const stationRoute = await tryOsmRoutingChained(stationWaypoints, "foot-walking");
+      if (stationRoute) {
+        return {
+          ...stationRoute,
+          durationMin: estimate.durationMin,
+          estimated: true,
+        };
+      }
+    }
+  }
+
+  const routed = await tryOsmRoutingChained(pts, "foot-walking");
+  return routed
+    ? {
+        ...routed,
+        durationMin: estimate.durationMin,
+        estimated: true,
+      }
+    : null;
+}
+
 export async function POST(request: Request) {
   let body: Body;
   try {
@@ -292,26 +551,33 @@ export async function POST(request: Request) {
   }
 
   const pts = waypoints as [number, number][];
+  const isTransit = mode === "transit-train" || mode === "transit-subway";
 
-  // Per-request abort so we never wedge a Vercel function on a slow upstream.
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  try {
-    const valhalla =
-      mode === "transit-train" || mode === "transit-subway"
-        ? null
-        : await tryValhalla(pts, mode, controller.signal);
-    const usableValhalla =
-      valhalla && !isImplausibleForMode(valhalla, mode) ? valhalla : null;
-    const result =
-      usableValhalla ||
-      (mode === "driving-car" ? await tryOsrm(pts, mode, controller.signal) : null) ||
-      estimateRoute(pts, mode);
-    if (!result) {
-      return NextResponse.json({ error: "No route found" }, { status: 404 });
-    }
-    return NextResponse.json(result);
-  } finally {
-    clearTimeout(timeout);
+  const valhalla = isTransit
+    ? null
+    : await withProviderTimeout(4500, (signal) => tryValhalla(pts, mode, signal));
+  const usableValhalla =
+    valhalla && !isImplausibleForMode(valhalla, mode) ? valhalla : null;
+  const osmProfileRoute =
+    !usableValhalla && !isTransit
+      ? await tryOsmRoutingChained(pts, mode)
+      : null;
+  const drivingFallback =
+    !usableValhalla && !osmProfileRoute && mode === "driving-car"
+      ? await withProviderTimeout(5000, (signal) => tryOsrm(pts, mode, signal))
+      : null;
+  const transitRoute = isTransit
+    ? (await withProviderTimeout(6000, (signal) => tryOtpTransit(pts, mode, signal))) ||
+      (await tryTransitFallback(pts, mode))
+    : null;
+  const result =
+    usableValhalla ||
+    osmProfileRoute ||
+    drivingFallback ||
+    transitRoute ||
+    estimateRoute(pts, mode);
+  if (!result) {
+    return NextResponse.json({ error: "No route found" }, { status: 404 });
   }
+  return NextResponse.json(result);
 }

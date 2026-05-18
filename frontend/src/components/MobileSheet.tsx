@@ -238,16 +238,17 @@ export default function MobileSheet({
               </button>
             </div>
           ) : (
-            // Standard drag handle — enlarged tap area so users don't
-            // have to pixel-hunt the bar to swipe the sheet up.
+            // Standard drag handle. The sheet itself remains draggable;
+            // avoiding data-vaul-handle here prevents Vaul's default
+            // handle bar from stacking with our custom hit area.
             <div
-              data-vaul-handle
               className="flex flex-col items-center justify-center shrink-0 cursor-grab active:cursor-grabbing"
-              style={{ minHeight: 28, paddingTop: 10, paddingBottom: 6 }}
+              aria-hidden="true"
+              style={{ minHeight: 30, paddingTop: 12, paddingBottom: 7 }}
             >
               <div
-                className="w-12 h-1.5 rounded-full"
-                style={{ background: "var(--panel-text-muted)", opacity: 0.55 }}
+                className="w-11 h-1.5 rounded-full"
+                style={{ background: "var(--panel-text-muted)", opacity: 0.42 }}
               />
             </div>
           )}
