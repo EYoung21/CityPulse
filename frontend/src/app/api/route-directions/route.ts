@@ -11,9 +11,9 @@ export const dynamic = "force-dynamic";
  * different geometries (the OSRM demo aliases foot/bike to car, which made
  * Walk/Bike/Drive all draw the same polyline).
  *
- * Fallback: OSRM demo. Kept so a single mode (driving) still works when
- * Valhalla is rate-limited or down. The fallback geometry will be the
- * same for every mode, but at least the route renders.
+ * Fallback: OSRM demo for driving only, then a mode-specific estimate.
+ * We deliberately do not reuse the driving fallback for walking, biking,
+ * wheelchair, or transit because that makes every mode show the same trip.
  */
 const VALHALLA_URL = "https://valhalla1.openstreetmap.de/route";
 const OSRM_BASE = "https://router.project-osrm.org/route/v1";
@@ -25,19 +25,38 @@ const VALHALLA_COSTING: Record<string, string> = {
   // No truly wheelchair-tuned costing in stock Valhalla; pedestrian with
   // sidewalk preferences is the closest free option.
   wheelchair: "pedestrian",
-  // Transit modes draw the walking leg only — the OTP /api/transit-directions
-  // endpoint covers the real itinerary when configured.
-  "transit-train": "pedestrian",
-  "transit-subway": "pedestrian",
 };
 
 const OSRM_PROFILES: Record<string, string> = {
-  "foot-walking": "foot",
-  "cycling-regular": "bike",
-  "driving-car": "car",
+  "driving-car": "driving",
+};
+
+const ESTIMATED_SPEED_KMH: Record<string, number> = {
+  "foot-walking": 4.8,
+  wheelchair: 4.0,
+  "cycling-regular": 15.5,
+  "transit-train": 32,
+  "transit-subway": 24,
+  "driving-car": 34,
+};
+
+const DISTANCE_FACTORS: Record<string, number> = {
+  "foot-walking": 1.18,
+  wheelchair: 1.22,
+  "cycling-regular": 1.22,
+  "transit-train": 1.35,
+  "transit-subway": 1.3,
+  "driving-car": 1.28,
 };
 
 type Body = { waypoints?: unknown; mode?: string };
+
+type RoutePayload = {
+  geometry: [number, number][];
+  distanceKm: number;
+  durationMin: number;
+  estimated?: boolean;
+};
 
 /**
  * Valhalla emits its `shape` field as a Google-style encoded polyline but
@@ -73,11 +92,86 @@ function decodePolyline6(encoded: string): [number, number][] {
   return points;
 }
 
+function haversineKm(a: [number, number], b: [number, number]): number {
+  const R = 6371;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b[0] - a[0]);
+  const dLng = toRad(b[1] - a[1]);
+  const lat1 = toRad(a[0]);
+  const lat2 = toRad(b[0]);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function interpolateRoute(pts: [number, number][]): [number, number][] {
+  const geometry: [number, number][] = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const start = pts[i];
+    const end = pts[i + 1];
+    const steps = Math.max(1, Math.ceil(haversineKm(start, end) / 1.2));
+    for (let j = 0; j <= steps; j++) {
+      if (geometry.length > 0 && j === 0) continue;
+      const t = j / steps;
+      geometry.push([
+        start[0] + (end[0] - start[0]) * t,
+        start[1] + (end[1] - start[1]) * t,
+      ]);
+    }
+  }
+  return geometry;
+}
+
+function estimateRoute(pts: [number, number][], mode: string): RoutePayload | null {
+  if (pts.length < 2) return null;
+  const directKm = pts.reduce(
+    (sum, pt, idx) => (idx === 0 ? sum : sum + haversineKm(pts[idx - 1], pt)),
+    0
+  );
+  if (!Number.isFinite(directKm) || directKm <= 0) return null;
+
+  const factor = DISTANCE_FACTORS[mode] ?? 1.25;
+  const distanceKm = directKm * factor;
+  const speedKmh = ESTIMATED_SPEED_KMH[mode] ?? ESTIMATED_SPEED_KMH["driving-car"];
+  const fixedAccessMin =
+    mode === "transit-train"
+      ? 12
+      : mode === "transit-subway"
+        ? 9
+        : mode === "driving-car"
+          ? 3
+          : 0;
+
+  return {
+    geometry: interpolateRoute(pts),
+    distanceKm,
+    durationMin: Math.max(1, (distanceKm / speedKmh) * 60 + fixedAccessMin),
+    estimated: true,
+  };
+}
+
+function isImplausibleForMode(result: RoutePayload, mode: string): boolean {
+  if (!Number.isFinite(result.durationMin) || result.durationMin <= 0) return true;
+  const speedKmh = result.distanceKm / (result.durationMin / 60);
+  if (!Number.isFinite(speedKmh)) return true;
+  switch (mode) {
+    case "foot-walking":
+      return speedKmh > 9;
+    case "wheelchair":
+      return speedKmh > 7;
+    case "cycling-regular":
+      return speedKmh > 30;
+    default:
+      return false;
+  }
+}
+
 async function tryValhalla(
   pts: [number, number][],
   mode: string,
   signal: AbortSignal
-): Promise<{ geometry: [number, number][]; distanceKm: number; durationMin: number } | null> {
+): Promise<RoutePayload | null> {
   const costing = VALHALLA_COSTING[mode] ?? "auto";
   try {
     const resp = await fetch(VALHALLA_URL, {
@@ -134,8 +228,8 @@ async function tryOsrm(
   pts: [number, number][],
   mode: string,
   signal: AbortSignal
-): Promise<{ geometry: [number, number][]; distanceKm: number; durationMin: number } | null> {
-  const profile = OSRM_PROFILES[mode] ?? "car";
+): Promise<RoutePayload | null> {
+  const profile = OSRM_PROFILES[mode] ?? "driving";
   const coordStr = pts.map(([lat, lng]) => `${lng},${lat}`).join(";");
   const url = `${OSRM_BASE}/${profile}/${coordStr}?overview=full&geometries=geojson`;
   try {
@@ -203,9 +297,16 @@ export async function POST(request: Request) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
+    const valhalla =
+      mode === "transit-train" || mode === "transit-subway"
+        ? null
+        : await tryValhalla(pts, mode, controller.signal);
+    const usableValhalla =
+      valhalla && !isImplausibleForMode(valhalla, mode) ? valhalla : null;
     const result =
-      (await tryValhalla(pts, mode, controller.signal)) ||
-      (await tryOsrm(pts, mode, controller.signal));
+      usableValhalla ||
+      (mode === "driving-car" ? await tryOsrm(pts, mode, controller.signal) : null) ||
+      estimateRoute(pts, mode);
     if (!result) {
       return NextResponse.json({ error: "No route found" }, { status: 404 });
     }

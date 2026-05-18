@@ -343,9 +343,6 @@
   /* Desktop Map / Feed / Analytics / Ask tab bar — 0 on mobile (bottom nav instead). */
   --pp-app-topnav-height: 0px;
   --pp-below-topnav-gap: 0.75rem;
-  --pp-below-app-topnav-top: calc(
-    env(safe-area-inset-top, 0px) + var(--pp-app-topnav-height) + var(--pp-below-topnav-gap)
-  );
 
   /* Mobile top lane. Single source of truth for the "where is the
      mobile search pill" math — the AlertToast and the Leaflet zoom
@@ -355,6 +352,17 @@
   --pp-mobile-pill-height: 2.5rem;
   --pp-mobile-pill-bottom: calc(
     var(--pp-mobile-pill-top) + var(--pp-mobile-pill-height)
+  );
+
+  /* Anchor for fixed banners (OffscreenIncidentChip, ReminderBanner,
+     TripRecapCard, SharedTripCard). On mobile the desktop tab bar
+     isn't rendered — the search pill occupies that lane instead — so
+     anchoring off the topnav alone (height 0px) lands the banner
+     right on top of the pill. Default to "below the pill" on mobile;
+     the desktop @media block below overrides this once the topnav
+     comes back. */
+  --pp-below-app-topnav-top: calc(
+    var(--pp-mobile-pill-bottom) + var(--pp-below-topnav-gap)
   );
 
   /* On-screen keyboard offset, kept up-to-date by MobileSheet via
@@ -367,6 +375,11 @@
 @media (min-width: 768px) {
   :root {
     --pp-app-topnav-height: 3.25rem;
+    /* Desktop: anchor banners under the tab bar, not the (hidden)
+       mobile pill — restores the pre-mobile-pill behavior. */
+    --pp-below-app-topnav-top: calc(
+      env(safe-area-inset-top, 0px) + var(--pp-app-topnav-height) + var(--pp-below-topnav-gap)
+    );
     /* Right edge of the floating SearchInput pill + gap — map filters
        must not extend left of this line (see SearchSidebar search slot). */
     --pp-map-filters-left: max(
