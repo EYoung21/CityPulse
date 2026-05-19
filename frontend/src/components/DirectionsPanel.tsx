@@ -141,6 +141,21 @@ interface StopLoc {
   lng: number;
 }
 
+function routeCoordKey(loc: { lat: number; lng: number }): string {
+  // Route previews should not churn for every tiny GPS jitter on mobile.
+  // Four decimals is roughly 10 m in Philly, which is precise enough
+  // for a preview while keeping network requests stable.
+  return `${loc.lat.toFixed(4)},${loc.lng.toFixed(4)}`;
+}
+
+function avoidancePrefsKey(prefs: AvoidancePrefs): string {
+  return [
+    prefs.minSeverity,
+    prefs.maxAgeHours ?? "window",
+    Array.from(prefs.leaves).sort().join(","),
+  ].join("|");
+}
+
 interface Props {
   incidents: Incident[];
   originLoc: StopLoc | null;
@@ -224,6 +239,10 @@ export default function DirectionsPanel({
     isSafe: boolean;
     nearbyCount: number;
   } | null>(null);
+  const previewRouteRef = useRef<typeof previewRoute>(null);
+  useEffect(() => {
+    previewRouteRef.current = previewRoute;
+  }, [previewRoute]);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [routeOptions, setRouteOptions] = useState<RouteOption[]>([]);
   /** Full ORS variant list (incl. fastest) — kept for RouteData + map layers while UI may be filtered. */
@@ -296,6 +315,42 @@ export default function DirectionsPanel({
         .map((s) => ({ lat: s.loc.lat, lng: s.loc.lng })),
     [stops]
   );
+  const avoidPrefsStableKey = useMemo(() => avoidancePrefsKey(avoidPrefs), [avoidPrefs]);
+  const routeRequestKey = useMemo(() => {
+    if (!originLoc || !destLoc) return "missing";
+    if (stops.some((s) => s.query.trim() !== "" && s.loc === null)) {
+      return "incomplete";
+    }
+    return [
+      "ready",
+      activeMode,
+      routeCoordKey(originLoc),
+      stopLocs.map(routeCoordKey).join(";"),
+      routeCoordKey(destLoc),
+      avoidPrefsStableKey,
+    ].join("|");
+  }, [
+    originLoc,
+    destLoc,
+    stops,
+    stopLocs,
+    activeMode,
+    avoidPrefsStableKey,
+  ]);
+  const routeInputsRef = useRef({
+    originLoc,
+    destLoc,
+    stops,
+    activeMode,
+    avoidPrefs,
+  });
+  routeInputsRef.current = {
+    originLoc,
+    destLoc,
+    stops,
+    activeMode,
+    avoidPrefs,
+  };
   const modeEtas = useModeETAs(
     modeIds,
     originLoc ? { lat: originLoc.lat, lng: originLoc.lng } : null,
@@ -368,21 +423,33 @@ export default function DirectionsPanel({
   }, [originLoc, destLoc, stops, syncPreviewPins]);
 
   useEffect(() => {
-    if (!originLoc || !destLoc) {
+    const clearPreview = () => {
+      if (previewAbortRef.current) previewAbortRef.current.abort();
+      previewAbortRef.current = null;
+      previewRouteRef.current = null;
+      setPreviewLoading(false);
       setPreviewRoute(null);
       setRouteOptions([]);
       updateSelectedOptionId(null);
       rawRouteOptionsRef.current = [];
       onRoutesChange(null);
+    };
+
+    if (startNavBusy) {
+      if (previewAbortRef.current) previewAbortRef.current.abort();
+      previewAbortRef.current = null;
+      setPreviewLoading(false);
       return;
     }
-    const intermediateReady = stops.every((s) => s.query.trim() === "" || s.loc !== null);
-    if (!intermediateReady) {
-      setPreviewRoute(null);
-      setRouteOptions([]);
-      updateSelectedOptionId(null);
-      rawRouteOptionsRef.current = [];
-      onRoutesChange(null);
+
+    const snapshot = routeInputsRef.current;
+    const { originLoc, destLoc, stops, activeMode, avoidPrefs } = snapshot;
+    if (routeRequestKey === "missing" || !originLoc || !destLoc) {
+      clearPreview();
+      return;
+    }
+    if (routeRequestKey === "incomplete") {
+      clearPreview();
       return;
     }
 
@@ -392,11 +459,15 @@ export default function DirectionsPanel({
 
     setPreviewLoading(true);
     setRouteError(null);
-    setPreviewRoute(null);
-    setRouteOptions([]);
-    updateSelectedOptionId(null);
-    rawRouteOptionsRef.current = [];
-    onRoutesChange(null);
+
+    const hadExistingRoute =
+      previewRouteRef.current !== null || rawRouteOptionsRef.current.length > 0;
+    if (!hadExistingRoute) {
+      setRouteOptions([]);
+      updateSelectedOptionId(null);
+      rawRouteOptionsRef.current = [];
+      onRoutesChange(null);
+    }
 
     const waypoints: [number, number][] = [
       [originLoc.lat, originLoc.lng],
@@ -426,6 +497,7 @@ export default function DirectionsPanel({
           setRouteOptions([]);
           rawRouteOptionsRef.current = [];
           updateSelectedOptionId(null);
+          previewRouteRef.current = null;
           setPreviewRoute(null);
           setRouteError("Could not load a street route. Check your network or try another mode.");
           return;
@@ -455,21 +527,28 @@ export default function DirectionsPanel({
           chosen: chosen.route,
           chosenLabel: chosen.label,
         });
-        setPreviewRoute({
+        const nextPreview = {
           distanceKm: chosen.route.distanceKm,
           durationMin: chosen.route.durationMin,
           isSafe: chosen.isSafer,
           nearbyCount: zones.length,
-        });
+        };
+        previewRouteRef.current = nextPreview;
+        setPreviewRoute(nextPreview);
         setRouteError(null);
       } catch {
         if (!controller.signal.aborted) {
-          rawRouteOptionsRef.current = [];
-          setPreviewRoute(null);
-          setRouteOptions([]);
-          updateSelectedOptionId(null);
-          onRoutesChange(null);
-          setRouteError("Routing request failed.");
+          if (hadExistingRoute) {
+            setRouteError("Could not refresh route. Keeping the last route.");
+          } else {
+            rawRouteOptionsRef.current = [];
+            previewRouteRef.current = null;
+            setPreviewRoute(null);
+            setRouteOptions([]);
+            updateSelectedOptionId(null);
+            onRoutesChange(null);
+            setRouteError("Routing request failed.");
+          }
         }
       } finally {
         if (!controller.signal.aborted) setPreviewLoading(false);
@@ -477,7 +556,7 @@ export default function DirectionsPanel({
     })();
 
     return () => controller.abort();
-  }, [originLoc, destLoc, stops, activeMode, onRoutesChange, avoidPrefs, updateSelectedOptionId]);
+  }, [routeRequestKey, startNavBusy, onRoutesChange, updateSelectedOptionId]);
 
   const swapLocations = () => {
     const tmpQ = originQuery;
@@ -620,7 +699,7 @@ export default function DirectionsPanel({
                   color: active ? "#3b82f6" : "var(--panel-text-muted)",
                 }}
               >
-                {eta?.status === "ready" && typeof eta.durationMin === "number"
+                {eta && typeof eta.durationMin === "number"
                   ? formatEtaShort(eta.durationMin)
                   : eta?.status === "loading"
                     ? "…"
