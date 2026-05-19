@@ -1059,6 +1059,22 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const cityCenterRef = useRef<[number, number]>([39.9526, -75.1652]);
   const defaultZoomRef = useRef(12);
 
+  // Distinguishes our own panTo()/flyTo()/fitBounds() calls from real
+  // user drags & pinches so the follow-me cancel logic only fires on
+  // actual gestures.
+  const programmaticPanRef = useRef(false);
+  const programmaticPanClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const markProgrammaticCamera = useCallback((holdMs = 800) => {
+    programmaticPanRef.current = true;
+    if (programmaticPanClearRef.current) {
+      clearTimeout(programmaticPanClearRef.current);
+    }
+    programmaticPanClearRef.current = setTimeout(() => {
+      programmaticPanRef.current = false;
+      programmaticPanClearRef.current = null;
+    }, holdMs);
+  }, []);
+
   const flyToOffset = useCallback((lat: number, lng: number, zoom = 14) => {
     const map = mapRef.current;
     if (!map) return;
@@ -1079,26 +1095,24 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     const offsetY = isMobile ? -100 : 0;
     const shifted = L.point(targetPoint.x - offsetX, targetPoint.y - offsetY);
     const shiftedLatLng = map.unproject(shifted, targetZoom);
+    // 900ms covers the 800ms flyTo duration plus slack for zoomend.
+    markProgrammaticCamera(900);
     map.flyTo(shiftedLatLng, targetZoom, { duration: 0.8 });
-  }, []);
+  }, [markProgrammaticCamera]);
 
   useImperativeHandle(ref, () => ({
     flyTo: (lat: number, lng: number, zoom = 14) => {
       flyToOffset(lat, lng, zoom);
     },
     resetView: () => {
+      markProgrammaticCamera(900);
       mapRef.current?.flyTo(cityCenterRef.current, defaultZoomRef.current, { duration: 0.75 });
     },
     panTo: (lat: number, lng: number) => {
       const map = mapRef.current;
       if (!map) return;
-      // 250ms eased pan keeps follow-me smooth without "jumping". The flag
-      // tells the dragstart listener to ignore the implicit drag this pan
-      // would otherwise look like to Leaflet's internals.
-      programmaticPanRef.current = true;
+      markProgrammaticCamera(320);
       map.panTo([lat, lng], { animate: true, duration: 0.25 });
-      // Clear the flag after the pan settles.
-      setTimeout(() => { programmaticPanRef.current = false; }, 320);
     },
     getBounds: () => {
       const map = mapRef.current;
@@ -1123,10 +1137,6 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       return map.getContainer();
     },
   }));
-
-  // Distinguishes our own panTo() calls from real user drags so the
-  // follow-me cancel logic only fires on actual gestures.
-  const programmaticPanRef = useRef(false);
 
   const onMapTapRef = useRef(onMapTap);
   onMapTapRef.current = onMapTap;
@@ -1241,6 +1251,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
           .filter((id: string | undefined): id is string => Boolean(id));
         if (ids.length > 0) onClusterClickRef.current?.(ids);
       } else {
+        markProgrammaticCamera(700);
         map.fitBounds(bounds, { padding: [40, 40], maxZoom: 18 });
       }
     });
@@ -1304,9 +1315,12 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     map.on("moveend", dispatchMove);
     map.on("zoomend", dispatchMove);
 
-    // Manual-drag detection for follow-me cancellation. We attach to
-    // dragstart (real user gesture) and ignore programmatic panTo() calls
-    // that we mark via `programmaticPanRef`.
+    // Manual-drag / pinch-zoom detection for follow-me cancellation. We
+    // attach to dragstart + zoomstart and ignore programmatic panTo() /
+    // flyTo() calls flagged via `programmaticPanRef`. Without the
+    // zoomstart hook, pinch-zooming mid-trip wouldn't disengage
+    // follow-me and the next GPS tick would re-snap to the user
+    // location at the prior zoom.
     const onDragStart = () => {
       mapInteractingRef.current = true;
       if (programmaticPanRef.current) return;
@@ -1322,6 +1336,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     map.on("dragend", onInteractionEnd);
     const onZoomStart = () => {
       mapInteractingRef.current = true;
+      if (programmaticPanRef.current) return;
+      onUserDragRef.current?.();
     };
     map.on("zoomstart", onZoomStart);
     map.on("zoomend", onInteractionEnd);
@@ -2443,10 +2459,11 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       const bounds = L.latLngBounds(allPts);
       if (contextSig !== lastRouteFitContextSigRef.current && !mapInteractingRef.current) {
         lastRouteFitContextSigRef.current = contextSig;
+        markProgrammaticCamera(900);
         map.fitBounds(bounds, { padding: [100, 100], maxZoom: 15 });
       }
     }
-  }, [routes, previewOrigin, previewDest, previewWaypoints]);
+  }, [routes, previewOrigin, previewDest, previewWaypoints, markProgrammaticCamera]);
 
   // Shared-trip overlay (recipient view of a "Share ETA" link).
   // Visually distinct from the user's own active trip — dashed cyan stroke
@@ -2486,8 +2503,9 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }
 
     const bounds = L.latLngBounds(sharedTripGeometry.map((p) => L.latLng(p[0], p[1])));
+    markProgrammaticCamera(900);
     map.fitBounds(bounds, { padding: [100, 100], maxZoom: 15 });
-  }, [sharedTripGeometry, sharedTripDestination]);
+  }, [sharedTripGeometry, sharedTripDestination, markProgrammaticCamera]);
 
   // Preview waypoint pins (before GO is pressed)
   useEffect(() => {
@@ -2516,6 +2534,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         if (tailChanged) {
           previewFitWaypointsTailRef.current = tailSig;
           const bounds = L.latLngBounds(previewWaypoints.map((wp) => L.latLng(wp.lat, wp.lng)));
+          markProgrammaticCamera(900);
           map.fitBounds(bounds, { padding: [100, 100], maxZoom: 14 });
         }
       } else {
@@ -2550,6 +2569,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
               L.latLng(previewOrigin.lat, previewOrigin.lng),
               L.latLng(previewDest.lat, previewDest.lng),
             ]);
+            markProgrammaticCamera(900);
             map.fitBounds(bounds, { padding: [100, 100], maxZoom: 14 });
           }
         }
@@ -2557,7 +2577,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         previewFitDestRef.current = null;
       }
     }
-  }, [previewOrigin, previewDest, previewWaypoints, routes]);
+  }, [previewOrigin, previewDest, previewWaypoints, routes, markProgrammaticCamera]);
 
   // User location dot (search view only — directions use preview pin A instead)
   useEffect(() => {
@@ -2602,10 +2622,39 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   // Trip: live GPS only. We deliberately do not animate along the
   // polyline when GPS is unavailable; Start Navigation should never look
   // like real movement unless it is driven by actual location updates.
+  //
+  // Gate the teardown/rebuild on a geometry-signature change so harmless
+  // prop refreshes (a new array reference with identical points, the
+  // periodic `routes` settle after a reroute, a GPS-status flip) don't
+  // flash the blue line off and reset live progress. When the shape is
+  // unchanged, the existing polylines + traveled distance stay put.
+  //
+  // We intentionally don't use a returned-cleanup pattern here: React
+  // would run that cleanup before every re-render of the effect, which
+  // — combined with our early-return for unchanged signatures — would
+  // tear the polylines down without rebuilding them. Instead we do the
+  // teardown inline only when the signature actually changes, and rely
+  // on the trailLayer being attached to the map for unmount cleanup.
+  const lastTripGeomSigRef = useRef<string | null>(null);
+  const lastTripModeSigRef = useRef<string | null>(null);
   useEffect(() => {
     const map = mapRef.current;
     const trailLayer = trailLayerRef.current;
     if (!map) return;
+
+    const tripActive = Boolean(
+      tripMode && tripRouteGeometry && tripRouteGeometry.length >= 2
+    );
+    const newGeomSig = tripActive ? geometrySignature(tripRouteGeometry) : "none";
+    const newModeSig = tripActive ? tripMode || "" : "none";
+    if (
+      newGeomSig === lastTripGeomSigRef.current &&
+      newModeSig === lastTripModeSigRef.current
+    ) {
+      return;
+    }
+    lastTripGeomSigRef.current = newGeomSig;
+    lastTripModeSigRef.current = newModeSig;
 
     if (animFrameRef.current) {
       cancelAnimationFrame(animFrameRef.current);
@@ -2619,7 +2668,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     liveTripDistAlongRef.current = 0;
     if (trailLayer) trailLayer.clearLayers();
 
-    if (!tripMode || !tripRouteGeometry || tripRouteGeometry.length < 2) {
+    if (!tripActive || !tripMode || !tripRouteGeometry || tripRouteGeometry.length < 2) {
       for (const pl of safePolylinesRef.current) {
         (pl as L.Polyline).setStyle({ opacity: pl.options.weight === 16 ? 0.12 : 0.95 });
       }
@@ -2676,19 +2725,29 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       guide: guideLine,
     };
     onTripProgressRef.current?.(0);
+    // `liveTripGps` and `heatmapDemoBoost` aren't read here — they only
+    // matter to the live-tick effect below. Keeping them out of deps
+    // avoids rebuilding the polylines (and zeroing live progress) every
+    // time GPS status flickers or the heat boost toggles.
+  }, [tripMode, tripRouteGeometry]);
 
+  // Stand-alone unmount guard for the trip layer: cancels any pending
+  // animation frame and removes the transport marker if the component
+  // tears down mid-trip. The polylines themselves live on `trailLayer`,
+  // which is removed when the map instance is disposed.
+  useEffect(() => {
     return () => {
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-      if (transportMarkerRef.current) {
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current);
+        animFrameRef.current = null;
+      }
+      const map = mapRef.current;
+      if (map && transportMarkerRef.current) {
         map.removeLayer(transportMarkerRef.current);
         transportMarkerRef.current = null;
       }
-      trailLayer?.clearLayers();
-      for (const pl of safePolylinesRef.current) {
-        (pl as L.Polyline).setStyle({ opacity: pl.options.weight === 16 ? 0.12 : 0.95 });
-      }
     };
-  }, [tripMode, tripRouteGeometry, liveTripGps, heatmapDemoBoost]);
+  }, []);
 
   // Live trip: move vehicle and split polylines from real GPS.
   useEffect(() => {
