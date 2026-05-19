@@ -833,6 +833,79 @@ function formatHashView(zoom: number, lat: number, lng: number): string {
   return `#${zoom.toFixed(zoom < 14 ? 0 : 1)}/${lat.toFixed(4)}/${lng.toFixed(4)}`;
 }
 
+function latLngTupleSignature(point: [number, number] | null | undefined): string {
+  if (!point) return "none";
+  return `${point[0].toFixed(5)},${point[1].toFixed(5)}`;
+}
+
+function pointSignature(point: { lat: number; lng: number } | null | undefined): string {
+  if (!point) return "none";
+  return `${point.lat.toFixed(5)},${point.lng.toFixed(5)}`;
+}
+
+function geometrySignature(geometry: [number, number][] | null | undefined): string {
+  if (!geometry || geometry.length === 0) return "none";
+  const step = Math.max(1, Math.floor(geometry.length / 24));
+  const pieces: string[] = [];
+  for (let i = 0; i < geometry.length; i += step) {
+    pieces.push(latLngTupleSignature(geometry[i]));
+  }
+  const last = geometry[geometry.length - 1];
+  const lastSig = latLngTupleSignature(last);
+  if (pieces[pieces.length - 1] !== lastSig) pieces.push(lastSig);
+  return `${geometry.length}:${pieces.join("|")}`;
+}
+
+function waypointSignature(waypoints: WaypointPin[] | null | undefined): string {
+  if (!waypoints || waypoints.length === 0) return "none";
+  return waypoints
+    .map((w) => `${w.label}:${w.lat.toFixed(5)},${w.lng.toFixed(5)}:${w.color}`)
+    .join("|");
+}
+
+function routeContextSignature(
+  previewOrigin: { lat: number; lng: number } | null | undefined,
+  previewDest: { lat: number; lng: number } | null | undefined,
+  previewWaypoints: WaypointPin[] | null | undefined,
+  primaryGeometry: [number, number][] | null | undefined
+): string | null {
+  if (previewWaypoints && previewWaypoints.length > 0) {
+    // The first waypoint is commonly "Your location" and can drift with
+    // GPS. Fit the map to a route context when the destination/via stops
+    // change, not when the origin jitters a meter or two.
+    const stableWaypoints =
+      previewWaypoints.length > 1 ? previewWaypoints.slice(1) : previewWaypoints;
+    return `waypoints:${waypointSignature(stableWaypoints)}`;
+  }
+  if (previewDest) {
+    return `dest:${pointSignature(previewDest)}`;
+  }
+  if (previewOrigin) {
+    return `origin:${pointSignature(previewOrigin)}`;
+  }
+  if (primaryGeometry && primaryGeometry.length >= 2) {
+    return `geom:${latLngTupleSignature(primaryGeometry[0])}>${latLngTupleSignature(primaryGeometry[primaryGeometry.length - 1])}`;
+  }
+  return null;
+}
+
+function routeLayerSignature(
+  routes: RouteData,
+  previewWaypoints: WaypointPin[] | null | undefined
+): string {
+  const avoidSig = routes.avoidZones
+    .map((z) => `${latLngTupleSignature(z.center)}:${Math.round(z.radiusM)}`)
+    .join("|");
+  const chosenFeatures = routes.chosen?.avoidedFeatures?.join(",") ?? "";
+  return [
+    `normal:${geometrySignature(routes.normal?.geometry)}`,
+    `safe:${geometrySignature(routes.safe?.geometry)}`,
+    `chosen:${geometrySignature(routes.chosen?.geometry)}:${routes.chosen?.isSafe ? 1 : 0}:${chosenFeatures}`,
+    `avoid:${avoidSig}`,
+    `wps:${waypointSignature(previewWaypoints)}`,
+  ].join("||");
+}
+
 const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 const LIGHT_TILES = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
 const POSITRON_TILES = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
@@ -940,6 +1013,9 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const heatRef = useRef<L.Layer | null>(null);
   const heatPulseRafRef = useRef<number | null>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
+  const lastRouteRenderSigRef = useRef<string | null>(null);
+  const lastRouteContextSigRef = useRef<string | null>(null);
+  const lastRouteFitContextSigRef = useRef<string | null>(null);
   const safetyPoiLayerRef = useRef<L.LayerGroup | null>(null);
   const nearbyPoiLayerRef = useRef<L.LayerGroup | null>(null);
   const savedPlacesLayerRef = useRef<L.LayerGroup | null>(null);
@@ -2194,15 +2270,43 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }
   }, [districtsEnabled, incidents, districtsVersion]);
 
-  // Routes, avoidance zones, A/B pins — only re-draws when routes object changes
+  // Routes, avoidance zones, A/B pins — redraw by route signature, not
+  // object identity, so route refreshes don't fight mobile pan/zoom.
   useEffect(() => {
     const map = mapRef.current;
     const routeLayer = routeLayerRef.current;
     if (!map || !routeLayer) return;
 
+    const primary = routes?.chosen || routes?.safe || routes?.normal || null;
+    const contextSig = routeContextSignature(
+      previewOrigin,
+      previewDest,
+      previewWaypoints,
+      primary?.geometry ?? null
+    );
+
+    if (!routes) {
+      const hasSamePendingRoute =
+        contextSig != null && contextSig === lastRouteContextSigRef.current;
+      // While the directions panel refreshes/recalculates the same trip,
+      // keep the last visible route on the map instead of flashing it off.
+      if (hasSamePendingRoute && lastRouteRenderSigRef.current != null) return;
+
+      routeLayer.clearLayers();
+      safePolylinesRef.current = [];
+      lastRouteRenderSigRef.current = null;
+      lastRouteContextSigRef.current = contextSig;
+      if (!contextSig) lastRouteFitContextSigRef.current = null;
+      return;
+    }
+
+    const renderSig = routeLayerSignature(routes, previewWaypoints);
+    lastRouteContextSigRef.current = contextSig;
+    if (renderSig === lastRouteRenderSigRef.current) return;
+    lastRouteRenderSigRef.current = renderSig;
+
     routeLayer.clearLayers();
     safePolylinesRef.current = [];
-    if (!routes) return;
 
     for (const zone of routes.avoidZones) {
       L.circle(zone.center, {
@@ -2311,7 +2415,6 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       safePolylinesRef.current = [glow, line];
     }
 
-    const primary = routes.chosen || routes.safe || routes.normal;
     if (primary?.geometry && primary.geometry.length >= 2) {
       if (previewWaypoints && previewWaypoints.length > 0) {
         for (const wp of previewWaypoints) {
@@ -2338,9 +2441,12 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
       const allPts = primary.geometry.map((p) => L.latLng(p[0], p[1]));
       const bounds = L.latLngBounds(allPts);
-      map.fitBounds(bounds, { padding: [100, 100], maxZoom: 15 });
+      if (contextSig !== lastRouteFitContextSigRef.current && !mapInteractingRef.current) {
+        lastRouteFitContextSigRef.current = contextSig;
+        map.fitBounds(bounds, { padding: [100, 100], maxZoom: 15 });
+      }
     }
-  }, [routes, previewWaypoints]);
+  }, [routes, previewOrigin, previewDest, previewWaypoints]);
 
   // Shared-trip overlay (recipient view of a "Share ETA" link).
   // Visually distinct from the user's own active trip — dashed cyan stroke
