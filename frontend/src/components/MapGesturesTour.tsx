@@ -172,7 +172,7 @@ export default function MapGesturesTour() {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
-          className="fixed inset-0 z-[1100] flex items-end sm:items-center justify-center"
+          className="fixed inset-0 z-[var(--pp-z-mobile-menu)] flex items-end sm:items-center justify-center px-2 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] sm:p-4"
           // Backdrop click → close. Stop propagation in the inner card.
           onClick={close}
         >
@@ -185,8 +185,12 @@ export default function MapGesturesTour() {
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 24, opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="relative w-full sm:max-w-md mx-2 mb-4 sm:mb-0 rounded-2xl shadow-2xl overflow-hidden"
-            style={{ background: "var(--panel-bg)", border: "1px solid var(--panel-border)" }}
+            className="relative flex w-full flex-col overflow-hidden rounded-2xl shadow-2xl sm:max-w-md"
+            style={{
+              background: "var(--panel-bg)",
+              border: "1px solid var(--panel-border)",
+              maxHeight: "calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 1.5rem)",
+            }}
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
@@ -213,7 +217,7 @@ export default function MapGesturesTour() {
               </button>
             </div>
 
-            <div className="px-5 pt-5 pb-4 flex flex-col items-center text-center">
+            <div className="min-h-0 overflow-y-auto px-5 pt-5 pb-4 flex flex-col items-center text-center">
               <div
                 className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3"
                 style={{
