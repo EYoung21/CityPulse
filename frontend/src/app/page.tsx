@@ -3112,7 +3112,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
+            className="pp-map-floating-panel absolute left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
           >
             <SafetyScoreCard
               lat={mapTap.lat}
@@ -3131,7 +3131,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-72 max-w-[calc(100vw-5rem)]"
+            className="pp-map-floating-panel absolute left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-72 max-w-[calc(100vw-5rem)]"
           >
             <LocationPeekCard
               lat={peekAnchor.lat}
@@ -3151,7 +3151,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
+            className="pp-map-floating-panel absolute left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
           >
             <DistrictCard
               district={selectedDistrict.district}
@@ -3179,7 +3179,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
+            className="pp-map-floating-panel absolute left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
           >
             <ClusterListPanel
               incidents={clusterIncidents}
@@ -3197,7 +3197,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
+            className="pp-map-floating-panel absolute left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-96 max-w-[calc(100vw-5rem)]"
           >
             <IncidentDetail
               incident={selected}
