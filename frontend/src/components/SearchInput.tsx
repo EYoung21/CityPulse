@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Search, MapPin, Loader2, X, Navigation, Mic, Clock, Trash2, Home, Briefcase, Star, Radio, Lock, Bookmark } from "lucide-react";
+import { Search, MapPin, Loader2, X, Navigation, Mic, Clock, Trash2, Home, Briefcase, Star, Radio, Lock, Bookmark, Plus } from "lucide-react";
 import { geocodePhilly } from "@/lib/search";
 import { isVoiceSearchSupported, startVoiceSearch } from "@/lib/voice";
 import { clearRecent, loadRecent, pushRecent, removeRecent, subscribeRecent, type RecentSearch } from "@/lib/recent-searches";
@@ -13,6 +13,7 @@ import { subscribeTripHistory } from "@/lib/trip-history";
 import { searchIncidentsApi, type Incident } from "@/lib/api";
 import { getCurrentCity } from "@/lib/pulse-cities";
 import { useAuth } from "@/contexts/AuthContext";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 interface GeoResult {
   display_name: string;
@@ -66,6 +67,11 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
   const voiceRef = useRef<{ stop: () => void } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const { isPro } = useAuth();
+  const isMobile = useIsMobile();
+  /** Set when the user taps an unset Home/Work shortcut chip — the next
+   *  place the user picks is saved into that slot instead of becoming
+   *  a destination. Mirrors Google Maps' "Set location" flow. */
+  const [pendingSaveAs, setPendingSaveAs] = useState<"home" | "work" | null>(null);
 
   useEffect(() => {
     setVoiceSupported(isVoiceSearchSupported());
@@ -169,6 +175,28 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
 
   const handleSelect = (s: GeoResult) => {
     const primary = s.display_name.split(",")[0];
+
+    // "Set home" / "Set work" flow: when the user tapped an unset
+    // Home/Work chip we redirect the next selection into that slot
+    // instead of jumping straight into the place card. Mirrors Google
+    // Maps where tapping "Home · Set location" opens a search whose
+    // pick writes back to the Home shortcut.
+    if (pendingSaveAs && canSavePlaces) {
+      void addDestination(primary, s.lat, s.lng, pendingSaveAs).catch(() => {
+        // Home/Work are singletons and exempt from the free-tier limit,
+        // so the realistic failure mode is a transient network error.
+        // Falling through silently is fine — the user can retry.
+      });
+      setPendingSaveAs(null);
+      onFlyTo(s.lat, s.lng);
+      setQuery("");
+      setSuggestions([]);
+      setOpen(false);
+      remember(s);
+      inputRef.current?.blur();
+      return;
+    }
+
     onFlyTo(s.lat, s.lng);
     setQuery(primary);
     setSuggestions([]);
@@ -231,7 +259,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
   // search input is focused and empty. Drawn from the user's saved
   // destinations, with `category === "home" | "work"` (set by the Save-as
   // picker in PlaceActions).
-  const { destinations } = useSavedDestinations();
+  const { destinations, canSave: canSavePlaces, addDestination } = useSavedDestinations();
   const homePlace = destinations.find((d) => d.category === "home") || null;
   const workPlace = destinations.find((d) => d.category === "work") || null;
 
@@ -260,7 +288,19 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
 
   // We render the shortcuts row whenever the search is focused with
   // an empty query AND there's at least one chip to show.
-  const hasShortcuts = open && query.trim().length < 2 && (homePlace || workPlace || hasPrediction);
+  // On mobile we always render the shortcuts row when the search is
+  // focused with an empty query — even with nothing saved yet — so the
+  // surface matches Google Maps' always-on Home / Work / More entry.
+  // Tapping an unset Home/Work chip drops into "set <category>" mode
+  // (see handleSelect). Desktop keeps the original "only when there's
+  // something to show" gate to avoid noisy empty chips.
+  const hasShortcuts =
+    open && query.trim().length < 2 &&
+    (
+      isMobile
+        ? canSavePlaces || homePlace || workPlace || hasPrediction
+        : homePlace || workPlace || hasPrediction
+    );
 
   // When typing (≥2 chars), surface matching saved places + recents
   // *above* the geocoded suggestions. Saves a network round-trip for
@@ -415,7 +455,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
 
       {hasShortcuts && (
         <div className="mt-2 flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1 pb-1">
-          {homePlace && (
+          {homePlace ? (
             <button
               type="button"
               onClick={() => onDirections(homePlace.name, { lat: homePlace.lat, lng: homePlace.lng })}
@@ -430,8 +470,33 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
             >
               <Home className="w-3.5 h-3.5" /> Home
             </button>
-          )}
-          {workPlace && (
+          ) : isMobile && canSavePlaces ? (
+            <button
+              type="button"
+              onClick={() => {
+                setPendingSaveAs("home");
+                inputRef.current?.focus();
+              }}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors active:scale-95"
+              style={{
+                background: "transparent",
+                color: "var(--panel-text-secondary)",
+                border: "1px solid var(--panel-border)",
+              }}
+              aria-pressed={pendingSaveAs === "home"}
+              aria-label="Set home location"
+              title="Set your home address"
+            >
+              <Home className="w-3.5 h-3.5" />
+              <span className="flex items-baseline gap-1">
+                Home
+                <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+                  Set location
+                </span>
+              </span>
+            </button>
+          ) : null}
+          {workPlace ? (
             <button
               type="button"
               onClick={() => onDirections(workPlace.name, { lat: workPlace.lat, lng: workPlace.lng })}
@@ -446,18 +511,92 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
             >
               <Briefcase className="w-3.5 h-3.5" /> Work
             </button>
+          ) : isMobile && canSavePlaces ? (
+            <button
+              type="button"
+              onClick={() => {
+                setPendingSaveAs("work");
+                inputRef.current?.focus();
+              }}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors active:scale-95"
+              style={{
+                background: "transparent",
+                color: "var(--panel-text-secondary)",
+                border: "1px solid var(--panel-border)",
+              }}
+              aria-pressed={pendingSaveAs === "work"}
+              aria-label="Set work location"
+              title="Set your work address"
+            >
+              <Briefcase className="w-3.5 h-3.5" />
+              <span className="flex items-baseline gap-1">
+                Work
+                <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+                  Set location
+                </span>
+              </span>
+            </button>
+          ) : null}
+          {isMobile && (
+            <button
+              type="button"
+              onClick={() => {
+                // Blur the input so MobileSheet drops out of fullscreen
+                // search; the user lands on the half-height shelf where
+                // Saved Places + Trip History are already rendered. That
+                // mirrors Google Maps' "More" chip, which exits the
+                // takeover search to reveal the broader saved-places UI.
+                inputRef.current?.blur();
+                setOpen(false);
+              }}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors active:scale-95"
+              style={{
+                background: "transparent",
+                color: "var(--panel-text-secondary)",
+                border: "1px solid var(--panel-border)",
+              }}
+              aria-label="More saved places and categories"
+              title="More"
+            >
+              <Plus className="w-3.5 h-3.5" /> More
+            </button>
           )}
           <CommutePredictionPill onPlan={(label, dest) => onDirections(label, dest)} />
         </div>
       )}
 
+      {pendingSaveAs && (
+        <div
+          className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
+          style={{
+            background: pendingSaveAs === "home" ? "rgba(34,197,94,0.10)" : "rgba(59,130,246,0.10)",
+            color: pendingSaveAs === "home" ? "#22c55e" : "#3b82f6",
+            border: `1px solid ${pendingSaveAs === "home" ? "rgba(34,197,94,0.30)" : "rgba(59,130,246,0.30)"}`,
+          }}
+        >
+          {pendingSaveAs === "home" ? <Home className="w-3.5 h-3.5 shrink-0" /> : <Briefcase className="w-3.5 h-3.5 shrink-0" />}
+          <span className="flex-1">
+            Pick a place to set as your {pendingSaveAs === "home" ? "Home" : "Work"} address.
+          </span>
+          <button
+            type="button"
+            onClick={() => setPendingSaveAs(null)}
+            className="p-0.5 -m-0.5 rounded"
+            aria-label="Cancel set location"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {showRecents && (
         <div
-          className="mt-2 rounded-xl overflow-hidden shadow-lg"
-          style={{
-            background: "var(--panel-bg-secondary)",
-            border: "1px solid var(--panel-border)",
-          }}
+          className={isMobile ? "mt-2 -mx-4 overflow-hidden" : "mt-2 rounded-xl overflow-hidden shadow-lg"}
+          style={
+            isMobile
+              ? { borderTop: "1px solid var(--panel-border)" }
+              : { background: "var(--panel-bg-secondary)", border: "1px solid var(--panel-border)" }
+          }
         >
           <div
             className="flex items-center justify-between px-4 py-2"
@@ -493,15 +632,22 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
               <div key={`${r.lat},${r.lng},${i}`} style={{ borderBottom: "1px solid var(--panel-border)" }}>
                 <div
                   onClick={() => handleSelect(r)}
-                  className="w-full text-left px-4 py-2.5 flex items-start gap-3 transition-colors cursor-pointer"
+                  className={`w-full text-left flex items-start gap-3 transition-colors cursor-pointer ${
+                    isMobile ? "px-4 py-3.5" : "px-4 py-2.5"
+                  }`}
                   onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   <div
-                    className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+                    className={`rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+                      isMobile ? "w-9 h-9" : "w-7 h-7"
+                    }`}
                     style={{ background: "var(--panel-input-bg)" }}
                   >
-                    <Clock className="w-3.5 h-3.5" style={{ color: "var(--panel-text-muted)" }} />
+                    <Clock
+                      className={isMobile ? "w-4 h-4" : "w-3.5 h-3.5"}
+                      style={{ color: "var(--panel-text-muted)" }}
+                    />
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm truncate" style={{ color: "var(--panel-text)" }}>{primary}</p>
@@ -511,35 +657,44 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
                       </p>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSaveTarget(expanded ? null : key);
-                    }}
-                    className="shrink-0 mt-1 transition-colors"
-                    style={{ color: saved ? "#a855f7" : "var(--panel-text-muted)" }}
-                    title={saved ? "Already saved" : "Save place"}
-                    aria-label={saved ? `Already saved ${primary}` : `Save ${primary}`}
-                    aria-pressed={expanded}
-                  >
-                    <Bookmark
-                      className="w-3.5 h-3.5"
-                      {...(saved ? { fill: "currentColor" } : {})}
-                    />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDirections(primary, { lat: r.lat, lng: r.lng });
-                      remember({ display_name: r.display_name, lat: r.lat, lng: r.lng });
-                    }}
-                    className="text-blue-500/50 hover:text-blue-500 shrink-0 mt-1"
-                    title="Get directions"
-                    aria-label={`Get directions to ${primary}`}
-                  >
-                    <Navigation className="w-4 h-4" />
-                  </button>
+                  {/* Desktop keeps the trailing bookmark + directions
+                      micro-actions; on mobile the row is the only tap
+                      target so it visually matches Google Maps' clean
+                      recent list. The remove × stays everywhere so
+                      users can prune their history. */}
+                  {!isMobile && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSaveTarget(expanded ? null : key);
+                        }}
+                        className="shrink-0 mt-1 transition-colors"
+                        style={{ color: saved ? "#a855f7" : "var(--panel-text-muted)" }}
+                        title={saved ? "Already saved" : "Save place"}
+                        aria-label={saved ? `Already saved ${primary}` : `Save ${primary}`}
+                        aria-pressed={expanded}
+                      >
+                        <Bookmark
+                          className="w-3.5 h-3.5"
+                          {...(saved ? { fill: "currentColor" } : {})}
+                        />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDirections(primary, { lat: r.lat, lng: r.lng });
+                          remember({ display_name: r.display_name, lat: r.lat, lng: r.lng });
+                        }}
+                        className="text-blue-500/50 hover:text-blue-500 shrink-0 mt-1"
+                        title="Get directions"
+                        aria-label={`Get directions to ${primary}`}
+                      >
+                        <Navigation className="w-4 h-4" />
+                      </button>
+                    </>
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -573,11 +728,12 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
           the user has already proven these are interesting to them. */}
       {showLocalMatches && (
         <div
-          className="mt-2 rounded-xl overflow-hidden shadow-lg"
-          style={{
-            background: "var(--panel-bg-secondary)",
-            border: "1px solid var(--panel-border)",
-          }}
+          className={isMobile ? "mt-2 -mx-4 overflow-hidden" : "mt-2 rounded-xl overflow-hidden shadow-lg"}
+          style={
+            isMobile
+              ? { borderTop: "1px solid var(--panel-border)" }
+              : { background: "var(--panel-bg-secondary)", border: "1px solid var(--panel-border)" }
+          }
         >
           <div
             className="px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
@@ -657,11 +813,12 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
 
       {showSuggestions && (
         <div
-          className="mt-2 rounded-xl overflow-hidden shadow-lg"
-          style={{
-            background: "var(--panel-bg-secondary)",
-            border: "1px solid var(--panel-border)",
-          }}
+          className={isMobile ? "mt-2 -mx-4 overflow-hidden" : "mt-2 rounded-xl overflow-hidden shadow-lg"}
+          style={
+            isMobile
+              ? { borderTop: "1px solid var(--panel-border)" }
+              : { background: "var(--panel-bg-secondary)", border: "1px solid var(--panel-border)" }
+          }
         >
           {loading && suggestions.length === 0 && (
             <div className="px-4 py-3 flex items-center gap-3">
@@ -682,12 +839,16 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
               <div key={i} style={{ borderBottom: "1px solid var(--panel-border)" }}>
                 <div
                   onClick={() => handleSelect(s)}
-                  className="w-full text-left px-4 py-3 flex items-start gap-3 transition-colors cursor-pointer"
+                  className={`w-full text-left flex items-start gap-3 transition-colors cursor-pointer ${
+                    isMobile ? "px-4 py-3.5" : "px-4 py-3"
+                  }`}
                   onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   <div
-                    className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+                    className={`rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+                      isMobile ? "w-9 h-9" : "w-8 h-8"
+                    }`}
                     style={{ background: "var(--panel-input-bg)" }}
                   >
                     <MapPin className="w-4 h-4" style={{ color: "var(--panel-text-muted)" }} />
@@ -702,35 +863,43 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
                       </p>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSaveTarget(expanded ? null : key);
-                    }}
-                    className="shrink-0 mt-1 transition-colors"
-                    style={{ color: saved ? "#a855f7" : "var(--panel-text-muted)" }}
-                    title={saved ? "Already saved" : "Save place"}
-                    aria-label={saved ? `Already saved ${primary}` : `Save ${primary}`}
-                    aria-pressed={expanded}
-                  >
-                    <Bookmark
-                      className="w-4 h-4"
-                      {...(saved ? { fill: "currentColor" } : {})}
-                    />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDirections(primary, s);
-                      remember(s);
-                    }}
-                    className="text-blue-500/50 hover:text-blue-500 shrink-0 mt-1"
-                    title="Get directions"
-                    aria-label={`Get directions to ${primary}`}
-                  >
-                    <Navigation className="w-4 h-4" />
-                  </button>
+                  {/* Mobile rows match Google Maps' clean "tap-to-open"
+                      pattern — the place card surfaces Save + Directions
+                      after selection. Desktop keeps the inline micro-
+                      actions for speed at hover distance. */}
+                  {!isMobile && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSaveTarget(expanded ? null : key);
+                        }}
+                        className="shrink-0 mt-1 transition-colors"
+                        style={{ color: saved ? "#a855f7" : "var(--panel-text-muted)" }}
+                        title={saved ? "Already saved" : "Save place"}
+                        aria-label={saved ? `Already saved ${primary}` : `Save ${primary}`}
+                        aria-pressed={expanded}
+                      >
+                        <Bookmark
+                          className="w-4 h-4"
+                          {...(saved ? { fill: "currentColor" } : {})}
+                        />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDirections(primary, s);
+                          remember(s);
+                        }}
+                        className="text-blue-500/50 hover:text-blue-500 shrink-0 mt-1"
+                        title="Get directions"
+                        aria-label={`Get directions to ${primary}`}
+                      >
+                        <Navigation className="w-4 h-4" />
+                      </button>
+                    </>
+                  )}
                 </div>
                 {expanded && (
                   <div className="px-4 pb-3">
@@ -750,11 +919,12 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
 
       {showIncidentResults && (
         <div
-          className="mt-2 rounded-xl overflow-hidden shadow-lg"
-          style={{
-            background: "var(--panel-bg-secondary)",
-            border: "1px solid var(--panel-border)",
-          }}
+          className={isMobile ? "mt-2 -mx-4 overflow-hidden" : "mt-2 rounded-xl overflow-hidden shadow-lg"}
+          style={
+            isMobile
+              ? { borderTop: "1px solid var(--panel-border)" }
+              : { background: "var(--panel-bg-secondary)", border: "1px solid var(--panel-border)" }
+          }
         >
           <div
             className="flex items-center justify-between px-4 py-2 text-[10px] font-semibold uppercase tracking-wider"
