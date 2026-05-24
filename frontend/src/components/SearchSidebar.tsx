@@ -441,6 +441,28 @@ export default function SearchSidebar({
     [openDirections]
   );
 
+  /** One-tap "Start" from the place card. Seeds the destination, flips
+   *  to the directions view so the trip HUD has a panel to mount into,
+   *  and arms `pendingResumeRef` so the existing
+   *  flush-then-startTrip effect kicks off live navigation as soon as
+   *  React commits the new destLoc. Mirrors Google Maps' Start button
+   *  which jumps the user straight into nav without a routing detour. */
+  const startTripFromPlace = useCallback(
+    (place: SelectedPlace) => {
+      setSelectedPlace(null);
+      setDestQuery(place.name);
+      setDestLoc({ display_name: place.name, lat: place.lat, lng: place.lng });
+      setStops([]);
+      setActiveMode("driving-car");
+      setView("directions");
+      setDrawerOpen(true);
+      setActiveDesktopPanel("directions");
+      onPreviewPins?.(originLoc, { lat: place.lat, lng: place.lng });
+      pendingResumeRef.current = true;
+    },
+    [onPreviewPins, originLoc]
+  );
+
   const requestNavigationLocation = useCallback(() => {
     if (!navigator.geolocation) {
       setGpsStatus("denied");
@@ -866,7 +888,9 @@ export default function SearchSidebar({
               // overwhelmed and the Directions CTA is the hero.
               <SearchedPlaceCard
                 place={selectedPlace}
+                userPos={userPos}
                 onDirections={openSelectedPlaceDirections}
+                onStart={startTripFromPlace}
                 onClose={clearSelectedPlacePreview}
               />
             ) : (
@@ -1402,7 +1426,9 @@ export default function SearchSidebar({
         <div className="overflow-y-auto pb-4 pt-3">
           <SearchedPlaceCard
             place={selectedPlace}
+            userPos={userPos}
             onDirections={openSelectedPlaceDirections}
+            onStart={startTripFromPlace}
             onClose={clearSelectedPlacePreview}
           />
         </div>
