@@ -1125,11 +1125,23 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }
 
     markersRef.current = L.markerClusterGroup({
-      maxClusterRadius: mobileViewport ? 72 : 60,
+      // Cluster radius drives how aggressively neighboring incident
+      // markers collapse into a numbered bubble. Leaflet's default is
+      // 80px, which on a 28px marker swallows anything within ~144px
+      // of pixel space — far more than visual overlap. We dial it
+      // down so a "cluster" only forms when the underlying markers
+      // really would draw on top of each other; otherwise the user
+      // sees individual pins and can tap straight through to the
+      // incident card instead of going through a list panel.
+      maxClusterRadius: mobileViewport ? 50 : 40,
       spiderfyOnMaxZoom: false,
       showCoverageOnHover: false,
       zoomToBoundsOnClick: false,
-      disableClusteringAtZoom: 18,
+      // Drop clustering entirely once the viewport is at block-level
+      // detail (zoom 16+). At that scale there's room for every pin,
+      // and a residual cluster bubble feels overzealous. Default
+      // would have kept us clustering up to zoom 18.
+      disableClusteringAtZoom: 16,
       animate: !mobileViewport,
       chunkedLoading: mobileViewport,
       chunkInterval: mobileViewport ? 120 : 200,
