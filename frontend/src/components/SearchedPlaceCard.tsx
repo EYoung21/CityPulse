@@ -3,22 +3,49 @@
 /** Compact "you tapped this place" card.
  *
  *  Shown inline by SearchSidebar when the user taps a search result.
- *  Mirrors Google Maps' "place card" pattern, scoped down to the
- *  three actions that actually work with the data we have on hand:
- *  Directions, Save, and Share. No photos, hours, or phone — OSM
- *  carries those tags inconsistently and an empty card row feels
- *  worse than no card at all.
+ *  Mirrors Google Maps' "place card" pattern as closely as we can
+ *  manage without a paid Places API:
  *
- *  The Directions button is the visual hero (full-width, blue)
- *  because that's what 90% of taps want; Save and Share are
- *  secondary icon buttons. */
+ *    - title + bookmark/share/close in the header row
+ *    - category ("Art museum"), open/closed status with hours, drive
+ *      ETA from the user's current location, and accessibility badge
+ *      pulled from free OSM tags via Overpass
+ *    - a four-button action row (Directions / Start / Ask / Site or
+ *      Call) instead of the single big Directions CTA
+ *
+ *  Everything degrades gracefully — if Overpass returns nothing or
+ *  ORS fails, the missing rows simply don't render. The card never
+ *  needs API keys or env config the user has to set up; ORS uses
+ *  the same baked-in default key the rest of the app uses, and OSM
+ *  Overpass / Nominatim are public endpoints. */
 
-import { useEffect, useMemo, useState } from "react";
-import { Navigation, Bookmark, Share2, X as XIcon, MapPin, Check } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Navigation,
+  Bookmark,
+  Share2,
+  X as XIcon,
+  MapPin,
+  Check,
+  Play,
+  Sparkles,
+  Globe,
+  Phone,
+  Accessibility,
+  Car,
+  Loader2,
+} from "lucide-react";
 import { reverseGeocode } from "@/lib/search";
 import { share as nativeShare } from "@/lib/native";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
 import { placesMatch } from "@/lib/saved-place-match";
+import { fetchPlaceAtPoint, type PlaceAtPoint } from "@/lib/overpass";
+import { evaluateOpeningHours, formatOpeningBadge } from "@/lib/opening-hours";
+import { getRoute } from "@/lib/routing";
+import { openAskPulseTab } from "@/lib/open-ask-pulse";
+
+const ORS_API_KEY =
+  process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
 
 export interface SelectedPlace {
   name: string;
@@ -28,47 +55,128 @@ export interface SelectedPlace {
 
 interface Props {
   place: SelectedPlace;
-  /** Fired when the user taps "Directions" — parent opens the
-   *  routing panel with this place pre-filled as the destination. */
+  /** Current GPS / fallback origin. Used to compute the drive-ETA pill
+   *  ("🚗 35 min") and to skip the ETA row entirely when we don't yet
+   *  have a position to route from. */
+  userPos?: { lat: number; lng: number } | null;
+  /** Fired when the user taps "Directions" — parent opens the routing
+   *  panel with this place pre-filled as the destination. */
   onDirections: (place: SelectedPlace) => void;
+  /** Optional one-tap "Start" — parent seeds the destination and kicks
+   *  off live navigation without the user round-tripping through the
+   *  directions panel. Matches Google Maps' Start button. */
+  onStart?: (place: SelectedPlace) => void;
   onClose: () => void;
 }
 
-export default function SearchedPlaceCard({ place, onDirections, onClose }: Props) {
+export default function SearchedPlaceCard({
+  place,
+  userPos,
+  onDirections,
+  onStart,
+  onClose,
+}: Props) {
   const placeKey = `${place.lat.toFixed(6)},${place.lng.toFixed(6)}`;
   const [addressResult, setAddressResult] = useState<{
     key: string;
     address: string | null;
     loading: boolean;
   } | null>(null);
+  const [details, setDetails] = useState<{ key: string; data: PlaceAtPoint | null } | null>(null);
+  const [eta, setEta] = useState<{ key: string; minutes: number | null; loading: boolean }>({
+    key: "",
+    minutes: null,
+    loading: false,
+  });
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [shareState, setShareState] = useState<"idle" | "sharing" | "done">("idle");
   const { addDestination, destinations } = useSavedDestinations();
+  const etaAbortRef = useRef<AbortController | null>(null);
 
   const alreadySaved = useMemo(
     () => destinations.some((d) => placesMatch(d.lat, d.lng, place.lat, place.lng)),
     [destinations, place.lat, place.lng]
   );
 
-  // Reverse-geocode for the subtitle — same pattern as LocationPeekCard.
-  // Single shot; on failure we silently fall back to coords.
+  // Reverse-geocode for the address subtitle — same pattern as
+  // LocationPeekCard. Single shot; on failure we silently fall back
+  // to the coords so the card never shows a blank row.
   useEffect(() => {
     let cancelled = false;
     reverseGeocode(place.lat, place.lng)
       .then((label) => {
-        if (!cancelled) {
-          setAddressResult({ key: placeKey, address: label, loading: false });
-        }
+        if (!cancelled) setAddressResult({ key: placeKey, address: label, loading: false });
       })
       .catch(() => {
-        if (!cancelled) {
-          setAddressResult({ key: placeKey, address: null, loading: false });
-        }
+        if (!cancelled) setAddressResult({ key: placeKey, address: null, loading: false });
       });
     return () => {
       cancelled = true;
     };
   }, [place.lat, place.lng, placeKey]);
+
+  // Overpass tag lookup — gets us "kind", opening_hours, phone,
+  // website, wheelchair without a paid Places API. 80m radius is
+  // generous enough that a Nominatim centroid for a building still
+  // resolves to the nearest tagged amenity node inside it.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchPlaceAtPoint(place.lat, place.lng, 80)
+      .then((data) => {
+        if (!cancelled) setDetails({ key: placeKey, data });
+      })
+      .catch(() => {
+        if (!cancelled) setDetails({ key: placeKey, data: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [place.lat, place.lng, placeKey]);
+
+  // Drive ETA from the user's current position. Mirrors the "🚗 35 min"
+  // pill in Google Maps' place card. Skipped (gracefully) when we don't
+  // have a position yet, when ORS is unreachable, or when the request
+  // is superseded by the user tapping a new place — that's what the
+  // AbortController is for.
+  useEffect(() => {
+    etaAbortRef.current?.abort();
+    // We do everything inside an async IIFE so all setEta() writes
+    // live in a promise tick, not synchronously inside the effect
+    // body (react-hooks/set-state-in-effect would otherwise flag a
+    // cascading-render risk).
+    let cancelled = false;
+    const controller = userPos ? new AbortController() : null;
+    if (controller) etaAbortRef.current = controller;
+    void (async () => {
+      if (!userPos) {
+        if (!cancelled) setEta({ key: placeKey, minutes: null, loading: false });
+        return;
+      }
+      if (!cancelled) setEta({ key: placeKey, minutes: null, loading: true });
+      try {
+        const route = await getRoute(
+          ORS_API_KEY,
+          "driving-car",
+          [userPos.lat, userPos.lng],
+          [place.lat, place.lng]
+        );
+        if (cancelled || controller!.signal.aborted) return;
+        setEta({
+          key: placeKey,
+          minutes: route ? Math.max(1, Math.ceil(route.durationMin)) : null,
+          loading: false,
+        });
+      } catch {
+        if (!cancelled && !controller!.signal.aborted) {
+          setEta({ key: placeKey, minutes: null, loading: false });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      controller?.abort();
+    };
+  }, [userPos, place.lat, place.lng, placeKey]);
 
   const handleSave = async () => {
     if (saveState === "saving" || alreadySaved) return;
@@ -104,6 +212,7 @@ export default function SearchedPlaceCard({ place, onDirections, onClose }: Prop
 
   const address = addressResult?.key === placeKey ? addressResult.address : null;
   const addressLoading = addressResult?.key !== placeKey || addressResult.loading;
+  const placeDetails = details?.key === placeKey ? details.data : null;
 
   const subtitle = address
     ? address
@@ -111,102 +220,266 @@ export default function SearchedPlaceCard({ place, onDirections, onClose }: Prop
       ? "Looking up address…"
       : `${place.lat.toFixed(4)}, ${place.lng.toFixed(4)}`;
 
+  const openingStatus = useMemo(
+    () => (placeDetails?.openingHours ? evaluateOpeningHours(placeDetails.openingHours) : null),
+    [placeDetails]
+  );
+  const openingBadge = useMemo(() => formatOpeningBadge(openingStatus), [openingStatus]);
+
+  // Map the opening-hours tone to a color that's legible in both
+  // dark and light theme. Stick to Tailwind tone hexes to match the
+  // rest of the UI's status accents.
+  const openingColor =
+    openingBadge?.tone === "open"
+      ? "#22c55e"
+      : openingBadge?.tone === "closing-soon"
+        ? "#f59e0b"
+        : openingBadge?.tone === "always"
+          ? "#22c55e"
+          : openingBadge?.tone === "closed"
+            ? "#ef4444"
+            : "var(--panel-text-secondary)";
+
+  // The fourth action button is contextual: prefer Website (rare and
+  // valuable enough to expose at the top), else Call (also rare but
+  // common enough on US POIs). If neither exists we hide that slot
+  // rather than render a dead button.
+  const websiteUrl = placeDetails?.website ?? null;
+  const phoneNumber = placeDetails?.phone ?? null;
+
+  const etaLabel =
+    eta.key === placeKey && eta.minutes != null
+      ? `${eta.minutes} min`
+      : eta.key === placeKey && eta.loading
+        ? null
+        : null;
+
   return (
-    <div className="mx-3 mb-3 mt-1 rounded-xl overflow-hidden"
+    <div
+      className="mx-3 mb-3 mt-1 rounded-xl overflow-hidden"
       style={{
         background: "var(--panel-bg)",
         border: "1px solid var(--panel-border)",
       }}
     >
       <div className="p-3.5">
+        {/* Header: title on the left, Save / Share / Close icon row on
+            the right — mirrors Google Maps' place card chrome. */}
         <div className="flex items-start justify-between gap-2 mb-2">
           <div className="min-w-0 flex-1">
             <h3
-              className="text-sm font-semibold leading-snug truncate"
+              className="text-base font-semibold leading-snug truncate"
               style={{ color: "var(--panel-text)" }}
             >
               {place.name}
             </h3>
+            {/* Category / accessibility / drive-ETA chip line — the
+                Google Maps "Art museum · 35 min" row, assembled from
+                whatever metadata we managed to pull. */}
+            {(placeDetails?.kind || etaLabel || eta.loading || placeDetails?.wheelchair) && (
+              <div
+                className="mt-1 flex items-center flex-wrap gap-x-2 gap-y-0.5 text-[12px]"
+                style={{ color: "var(--panel-text-secondary)" }}
+              >
+                {(etaLabel || eta.loading) && (
+                  <span
+                    className="inline-flex items-center gap-1"
+                    title="Estimated driving time from your location"
+                  >
+                    <Car className="w-3.5 h-3.5" aria-hidden />
+                    {etaLabel ?? <Loader2 className="w-3 h-3 animate-spin" aria-hidden />}
+                    {etaLabel ? <span className="sr-only"> driving</span> : null}
+                  </span>
+                )}
+                {(etaLabel || eta.loading) && placeDetails?.kind ? (
+                  <span aria-hidden style={{ color: "var(--panel-text-muted)" }}>·</span>
+                ) : null}
+                {placeDetails?.kind && <span className="truncate">{placeDetails.kind}</span>}
+                {placeDetails?.wheelchair === "yes" && (
+                  <>
+                    <span aria-hidden style={{ color: "var(--panel-text-muted)" }}>·</span>
+                    <span
+                      className="inline-flex items-center gap-1"
+                      title="Wheelchair accessible (OSM)"
+                    >
+                      <Accessibility className="w-3.5 h-3.5" aria-hidden />
+                      <span className="sr-only">Wheelchair accessible</span>
+                    </span>
+                  </>
+                )}
+              </div>
+            )}
+            {openingBadge && (
+              <p
+                className="mt-1 text-[12px] font-medium"
+                style={{ color: openingColor }}
+              >
+                {openingBadge.label}
+              </p>
+            )}
             <p
-              className="mt-0.5 text-[11px] flex items-start gap-1.5"
+              className="mt-1 text-[11px] flex items-start gap-1.5"
               style={{ color: "var(--panel-text-muted, #9ca3af)" }}
             >
               <MapPin className="w-3 h-3 shrink-0 mt-px" aria-hidden />
               <span className="truncate">{subtitle}</span>
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close place card"
-            className="p-1 -m-1 rounded shrink-0"
-            style={{ color: "var(--panel-text-muted, #9ca3af)" }}
-          >
-            <XIcon className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={saveState === "saving"}
+              aria-label={alreadySaved || saveState === "saved" ? "Already saved" : "Save place"}
+              title={alreadySaved || saveState === "saved" ? "Already saved" : "Save place"}
+              className="w-9 h-9 inline-flex items-center justify-center rounded-full transition-colors disabled:opacity-50"
+              style={{
+                background: "var(--panel-input-bg, rgba(255,255,255,0.05))",
+                color:
+                  alreadySaved || saveState === "saved"
+                    ? "#a855f7"
+                    : saveState === "error"
+                      ? "#ef4444"
+                      : "var(--panel-text)",
+              }}
+            >
+              {saveState === "saved" || alreadySaved ? (
+                <Bookmark className="w-4 h-4" fill="currentColor" />
+              ) : (
+                <Bookmark className="w-4 h-4" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleShare()}
+              disabled={shareState === "sharing"}
+              aria-label="Share place"
+              title="Share place"
+              className="w-9 h-9 inline-flex items-center justify-center rounded-full transition-colors disabled:opacity-50"
+              style={{
+                background: "var(--panel-input-bg, rgba(255,255,255,0.05))",
+                color: shareState === "done" ? "#22c55e" : "var(--panel-text)",
+              }}
+            >
+              {shareState === "done" ? (
+                <Check className="w-4 h-4" />
+              ) : (
+                <Share2 className="w-4 h-4" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close place card"
+              className="w-9 h-9 inline-flex items-center justify-center rounded-full"
+              style={{
+                background: "var(--panel-input-bg, rgba(255,255,255,0.05))",
+                color: "var(--panel-text-muted, #9ca3af)",
+              }}
+            >
+              <XIcon className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
-        {/* Primary CTA — Directions takes the full row so it's the
-            visual hero. Save and Share are secondary, icon-only,
-            sit on the right. */}
-        <div className="flex items-center gap-2 mt-3">
+        {/* Action button row — Directions stays the visual hero (filled
+            blue), Start / Ask / Site|Call are secondary pills that fan
+            out next to it. The row scrolls horizontally on narrow
+            screens so we never collapse a button into an icon-only
+            blob and never wrap below the address line. */}
+        <div className="mt-3 flex items-center gap-2 overflow-x-auto no-scrollbar -mx-1 px-1 pb-1">
           <button
             type="button"
             onClick={() => onDirections(place)}
-            className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-full text-sm font-semibold transition-colors"
-            style={{
-              background: "#3b82f6",
-              color: "white",
-            }}
+            className="shrink-0 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-colors"
+            style={{ background: "#3b82f6", color: "white" }}
           >
             <Navigation className="w-4 h-4" />
             Directions
           </button>
 
-          <button
-            type="button"
-            onClick={() => void handleSave()}
-            disabled={saveState === "saving"}
-            aria-label={alreadySaved || saveState === "saved" ? "Already saved" : "Save place"}
-            title={alreadySaved || saveState === "saved" ? "Already saved" : "Save place"}
-            className="shrink-0 w-10 h-10 inline-flex items-center justify-center rounded-full transition-colors disabled:opacity-50"
-            style={{
-              background: "var(--panel-input-bg, rgba(255,255,255,0.05))",
-              border: "1px solid var(--panel-input-border, rgba(255,255,255,0.08))",
-              color:
-                alreadySaved || saveState === "saved"
-                  ? "#a855f7"
-                  : saveState === "error"
-                    ? "#ef4444"
-                    : "var(--panel-text)",
-            }}
-          >
-            {saveState === "saved" || alreadySaved ? (
-              <Bookmark className="w-4 h-4" fill="currentColor" />
-            ) : (
-              <Bookmark className="w-4 h-4" />
-            )}
-          </button>
+          {onStart && (
+            <button
+              type="button"
+              onClick={() => onStart(place)}
+              className="shrink-0 inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium transition-colors"
+              style={{
+                background: "var(--panel-input-bg, rgba(255,255,255,0.05))",
+                border: "1px solid var(--panel-input-border, rgba(255,255,255,0.10))",
+                color: "var(--panel-text)",
+              }}
+              aria-label="Start live navigation"
+              title="Start live navigation"
+            >
+              <Play className="w-4 h-4 fill-current" />
+              Start
+            </button>
+          )}
 
           <button
             type="button"
-            onClick={() => void handleShare()}
-            disabled={shareState === "sharing"}
-            aria-label="Share place"
-            title="Share place"
-            className="shrink-0 w-10 h-10 inline-flex items-center justify-center rounded-full transition-colors disabled:opacity-50"
+            onClick={() => {
+              // Open Ask Pulse and seed it with this place. The Ask
+              // panel listens for `pp:ask-prompt` to pre-fill its
+              // input — falls back to plain panel open if the
+              // listener isn't ready yet.
+              try {
+                window.dispatchEvent(
+                  new CustomEvent("pp:ask-prompt", {
+                    detail: { prompt: `Tell me about ${place.name}` },
+                  })
+                );
+              } catch {
+                /* ignore */
+              }
+              openAskPulseTab();
+            }}
+            className="shrink-0 inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium transition-colors"
             style={{
               background: "var(--panel-input-bg, rgba(255,255,255,0.05))",
-              border: "1px solid var(--panel-input-border, rgba(255,255,255,0.08))",
-              color: shareState === "done" ? "#22c55e" : "var(--panel-text)",
+              border: "1px solid var(--panel-input-border, rgba(255,255,255,0.10))",
+              color: "var(--panel-text)",
             }}
+            aria-label="Ask Pulse about this place"
+            title="Ask Pulse about this place"
           >
-            {shareState === "done" ? (
-              <Check className="w-4 h-4" />
-            ) : (
-              <Share2 className="w-4 h-4" />
-            )}
+            <Sparkles className="w-4 h-4" />
+            Ask
           </button>
+
+          {websiteUrl ? (
+            <a
+              href={websiteUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium transition-colors"
+              style={{
+                background: "var(--panel-input-bg, rgba(255,255,255,0.05))",
+                border: "1px solid var(--panel-input-border, rgba(255,255,255,0.10))",
+                color: "var(--panel-text)",
+              }}
+              aria-label="Open website"
+              title="Open website"
+            >
+              <Globe className="w-4 h-4" />
+              Site
+            </a>
+          ) : phoneNumber ? (
+            <a
+              href={`tel:${phoneNumber.replace(/[^\d+]/g, "")}`}
+              className="shrink-0 inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium transition-colors"
+              style={{
+                background: "var(--panel-input-bg, rgba(255,255,255,0.05))",
+                border: "1px solid var(--panel-input-border, rgba(255,255,255,0.10))",
+                color: "var(--panel-text)",
+              }}
+              aria-label={`Call ${phoneNumber}`}
+              title={`Call ${phoneNumber}`}
+            >
+              <Phone className="w-4 h-4" />
+              Call
+            </a>
+          ) : null}
         </div>
       </div>
     </div>
