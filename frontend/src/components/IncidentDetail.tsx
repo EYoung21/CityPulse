@@ -408,10 +408,10 @@ export default function IncidentDetail({ incident, onClose }: Props) {
         style={{ background: `linear-gradient(90deg, ${sev.markerColor}, transparent)` }}
       />
 
-      <div className="p-4 space-y-3">
+      <div className="p-3 md:p-4 space-y-2.5 md:space-y-3 max-h-[60vh] md:max-h-none overflow-y-auto overscroll-contain">
         <div className="flex items-start justify-between">
           <div className="flex-1">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-1.5 md:mb-2">
               <span
                 className="text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md"
                 style={{ backgroundColor: withAlpha(sev.markerColor, 13), color: sev.markerColor }}
@@ -450,7 +450,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
         </div>
 
         <div
-          className="flex items-center gap-4 text-xs font-mono"
+          className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] md:text-xs font-mono"
           style={{ color: "var(--panel-text-secondary)" }}
         >
           <span className="flex items-center gap-1.5">
@@ -467,19 +467,22 @@ export default function IncidentDetail({ incident, onClose }: Props) {
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 
         {incident.description && (
-          <div className="rounded-lg p-3.5" style={{ background: "var(--panel-input-bg)" }}>
-            <p className="text-[11px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-2">
+          <div className="rounded-lg p-2.5 md:p-3.5" style={{ background: "var(--panel-input-bg)" }}>
+            <p className="text-[10px] md:text-[11px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-1.5 md:mb-2">
               SUMMARY
             </p>
-            <p className="text-sm leading-relaxed" style={{ color: "var(--panel-text)" }}>
+            <p
+              className="text-[13px] md:text-sm leading-snug md:leading-relaxed line-clamp-4 md:line-clamp-none"
+              style={{ color: "var(--panel-text)" }}
+            >
               {incident.description}
             </p>
           </div>
         )}
 
-        <div className="rounded-lg p-3.5" style={{ background: "var(--panel-input-bg)" }}>
-          <p className="text-[11px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-2">
-            <Radio className="w-3.5 h-3.5" /> SCANNER TRANSCRIPT
+        <div className="rounded-lg p-2.5 md:p-3.5" style={{ background: "var(--panel-input-bg)" }}>
+          <p className="text-[10px] md:text-[11px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-1.5 md:mb-2">
+            <Radio className="w-3 h-3 md:w-3.5 md:h-3.5" /> SCANNER TRANSCRIPT
           </p>
 
           {hasAudio ? (
@@ -490,7 +493,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
             />
           ) : (
             <p
-              className="text-sm leading-relaxed italic"
+              className="text-[13px] md:text-sm leading-snug md:leading-relaxed italic line-clamp-4 md:line-clamp-none"
               style={{ color: "var(--panel-text-secondary)" }}
             >
               &ldquo;{sanitizeScannerTranscriptForDisplay(incident.raw_text)}&rdquo;
@@ -505,7 +508,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
           )}
         </div>
 
-        <div className="flex gap-3">
+        <div className="flex gap-2 md:gap-3">
           {[
             {
               label: "CONFIDENCE",
@@ -516,26 +519,33 @@ export default function IncidentDetail({ incident, onClose }: Props) {
                   : confidencePct >= 50
                     ? "#f59e0b"
                     : "#ef4444",
+              mobile: true,
             },
-            { label: "SEVERITY", value: incident.s_base.toFixed(1), color: sev.markerColor },
+            {
+              label: "SEVERITY",
+              value: incident.s_base.toFixed(1),
+              color: sev.markerColor,
+              mobile: true,
+            },
             {
               label: "WEIGHT",
               value: incident.w_eff.toFixed(2),
               color: "var(--panel-text-secondary)",
+              mobile: false,
             },
           ].map((stat) => (
             <div
               key={stat.label}
-              className="flex-1 rounded-lg p-3 text-center"
+              className={`flex-1 rounded-lg p-2 md:p-3 text-center ${stat.mobile ? "" : "hidden md:block"}`}
               style={{ background: "var(--panel-input-bg)" }}
             >
               <p
-                className="text-[10px] font-mono mb-0.5"
+                className="text-[9px] md:text-[10px] font-mono mb-0.5"
                 style={{ color: "var(--panel-text-muted)" }}
               >
                 {stat.label}
               </p>
-              <p className="text-base font-bold font-mono" style={{ color: stat.color }}>
+              <p className="text-sm md:text-base font-bold font-mono" style={{ color: stat.color }}>
                 {stat.value}
               </p>
             </div>
@@ -620,7 +630,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
         )}
 
         <div
-          className="flex items-center gap-2 text-[10px] pt-1"
+          className="hidden md:flex items-center gap-2 text-[10px] pt-1"
           style={{ color: "var(--panel-text-muted)" }}
         >
           <Brain className="w-3 h-3" />
