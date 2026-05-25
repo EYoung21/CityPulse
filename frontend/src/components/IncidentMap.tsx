@@ -295,6 +295,12 @@ interface Props {
   previewOrigin?: { lat: number; lng: number } | null;
   previewDest?: { lat: number; lng: number } | null;
   previewWaypoints?: WaypointPin[] | null;
+  /** "You tapped a search result" pin — a Google-Maps-style red
+   *  lollipop dropped at the place's coords with a fly-to. Rendered
+   *  in its own layer, distinct from the A/B routing preview pins so
+   *  the place card can show its marker without claiming the
+   *  routing UI. Set to null to remove. */
+  searchedPlace?: { lat: number; lng: number; name?: string } | null;
   tripMode?: string | null;
   heatmapEnabled?: boolean;
   /** When set to an integer 0..23, the heatmap downweights incidents whose
@@ -581,6 +587,35 @@ function splitRouteAtDistance(
 
 
 /** Route start / end / via: plain round dots (A/B are color-only); other labels show inside a slightly larger dot. */
+/** Google-Maps-style red lollipop pin, used to mark a place the user
+ *  picked from search. Anchored at the bottom tip so the pin point
+ *  sits exactly on the coords. The SVG is intentionally chunky (38x48)
+ *  so it reads at thumbnail size on a phone screen — the existing
+ *  A/B dot icons (12-22px) get lost against the dark basemap. */
+function createSearchedPlacePinIcon(): L.DivIcon {
+  const w = 38;
+  const h = 48;
+  return L.divIcon({
+    className: "pp-searched-place-pin",
+    iconSize: [w, h],
+    iconAnchor: [w / 2, h - 2],
+    popupAnchor: [0, -h + 8],
+    html: `<svg viewBox="0 0 38 48" width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="display:block;filter:drop-shadow(0 4px 6px rgba(0,0,0,0.45));">
+  <defs>
+    <radialGradient id="pp-place-pin-grad" cx="0.5" cy="0.32" r="0.7">
+      <stop offset="0" stop-color="#fca5a5"/>
+      <stop offset="0.55" stop-color="#ef4444"/>
+      <stop offset="1" stop-color="#b91c1c"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="19" cy="46" rx="6" ry="1.3" fill="rgba(0,0,0,0.45)"/>
+  <path d="M19 1.6 C10.2 1.6 3.2 8.4 3.2 16.4 C3.2 28.6 19 45.6 19 45.6 C19 45.6 34.8 28.6 34.8 16.4 C34.8 8.4 27.8 1.6 19 1.6 Z" fill="url(#pp-place-pin-grad)" stroke="rgba(127,29,29,0.95)" stroke-width="1.4"/>
+  <circle cx="19" cy="16.2" r="6" fill="rgba(255,255,255,0.97)"/>
+  <circle cx="19" cy="16.2" r="3.6" fill="#dc2626"/>
+</svg>`,
+  });
+}
+
 function createEndpointDotIcon(label: string, bgColor: string, glowColor: string): L.DivIcon {
   const plainAB = label === "A" || label === "B";
   const size = plainAB ? 14 : 22;
@@ -925,6 +960,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     measurePoints = null,
     perimeterPoints = null,
     layersActive = true,
+    searchedPlace = null,
   },
   ref
 ) {
@@ -943,6 +979,13 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const safetyPoiLayerRef = useRef<L.LayerGroup | null>(null);
   const nearbyPoiLayerRef = useRef<L.LayerGroup | null>(null);
   const savedPlacesLayerRef = useRef<L.LayerGroup | null>(null);
+  const searchedPlaceLayerRef = useRef<L.LayerGroup | null>(null);
+  /** Coords of the place we last flew to for a search result — used
+   *  to skip redundant flyTo calls when React re-renders with the
+   *  same selection (Overpass / ETA fetches inside the place card
+   *  cause parent state churn that would otherwise re-fly the map
+   *  on every tick). */
+  const searchedPlaceFlyRef = useRef<{ lat: number; lng: number } | null>(null);
   const userAvoidLayerRef = useRef<L.LayerGroup | null>(null);
   const measureLayerRef = useRef<L.LayerGroup | null>(null);
   const perimeterLayerRef = useRef<L.LayerGroup | null>(null);
@@ -1189,6 +1232,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     safetyPoiLayerRef.current = L.layerGroup().addTo(map);
     nearbyPoiLayerRef.current = L.layerGroup().addTo(map);
     savedPlacesLayerRef.current = L.layerGroup().addTo(map);
+    searchedPlaceLayerRef.current = L.layerGroup().addTo(map);
     userAvoidLayerRef.current = L.layerGroup().addTo(map);
     measureLayerRef.current = L.layerGroup().addTo(map);
     perimeterLayerRef.current = L.layerGroup().addTo(map);
@@ -2464,6 +2508,42 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       }
     }
   }, [previewOrigin, previewDest, previewWaypoints, routes]);
+
+  // Searched-place pin. Drops a Google-Maps-style red lollipop at the
+  // place coords and flies the map to it at city-block zoom so the
+  // marker is actually visible above the bottom sheet on mobile. We
+  // skip the fly-to when the coords haven't changed (the place card's
+  // own Overpass/ETA fetches cause parent re-renders that would
+  // otherwise re-fly the map mid-look-around).
+  useEffect(() => {
+    const map = mapRef.current;
+    const layer = searchedPlaceLayerRef.current;
+    if (!map || !layer) return;
+    layer.clearLayers();
+    if (!searchedPlace) {
+      searchedPlaceFlyRef.current = null;
+      return;
+    }
+    L.marker([searchedPlace.lat, searchedPlace.lng], {
+      icon: createSearchedPlacePinIcon(),
+      // Sit above incident clusters but below the user-location dot
+      // so the user can still see "I am here" against the pin.
+      zIndexOffset: 2200,
+      interactive: false,
+      keyboard: false,
+    }).addTo(layer);
+    const last = searchedPlaceFlyRef.current;
+    const same =
+      last &&
+      Math.abs(last.lat - searchedPlace.lat) < 1e-6 &&
+      Math.abs(last.lng - searchedPlace.lng) < 1e-6;
+    if (!same) {
+      searchedPlaceFlyRef.current = { lat: searchedPlace.lat, lng: searchedPlace.lng };
+      // Use the same offset-aware helper as flyTo so the pin lands in
+      // the upper, sheet-uncovered half of the viewport on mobile.
+      flyToOffset(searchedPlace.lat, searchedPlace.lng, 16);
+    }
+  }, [searchedPlace, flyToOffset]);
 
   // User location dot (search view only — directions use preview pin A instead)
   useEffect(() => {
