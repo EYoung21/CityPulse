@@ -136,6 +136,11 @@ interface Props {
   ) => void;
   onPreviewPins?: (origin: { lat: number; lng: number } | null, dest: { lat: number; lng: number } | null) => void;
   onPreviewWaypoints?: (waypoints: WaypointPin[] | null) => void;
+  /** Fired when the searched-place pin should appear or disappear on
+   *  the map. Parent forwards the coords to IncidentMap so it can
+   *  drop a Google-Maps-style red lollipop at the tapped place and
+   *  fly the map to it. Null clears the pin. */
+  onSearchedPlaceChange?: (place: { lat: number; lng: number; name: string } | null) => void;
   onSelectIncident?: (id: string) => void;
   selectedId?: string | null;
   tripProgress?: number;
@@ -160,6 +165,7 @@ export default function SearchSidebar({
   onTripActive,
   onPreviewPins,
   onPreviewWaypoints,
+  onSearchedPlaceChange,
   onSelectIncident,
   selectedId,
   tripProgress = 0,
@@ -428,9 +434,12 @@ export default function SearchSidebar({
       setActiveDesktopPanel(null);
       handleRoutesChange(null);
       onPreviewWaypoints?.(null);
-      onPreviewPins?.(originLoc, coords);
+      // Clear any leftover routing A/B preview pins from a prior
+      // directions session — IncidentMap will instead drop the
+      // dedicated red place pin via onSearchedPlaceChange below.
+      onPreviewPins?.(null, null);
     },
-    [handleRoutesChange, onPreviewPins, onPreviewWaypoints, originLoc]
+    [handleRoutesChange, onPreviewPins, onPreviewWaypoints]
   );
 
   const openSelectedPlaceDirections = useCallback(
@@ -529,6 +538,20 @@ export default function SearchSidebar({
     window.addEventListener("pp:plan-route", handler);
     return () => window.removeEventListener("pp:plan-route", handler);
   }, [originLoc, onPreviewPins]);
+
+  // Tell the parent which place (if any) should get the dedicated
+  // red lollipop pin on the map. The pin is only meaningful while the
+  // place card itself is on-screen — once the user moves into
+  // directions or an active trip, the route's A/B/STOP markers take
+  // over and we clear the searched-place pin so it doesn't double up.
+  useEffect(() => {
+    const visible = view === "search" && selectedPlace !== null;
+    onSearchedPlaceChange?.(
+      visible
+        ? { lat: selectedPlace.lat, lng: selectedPlace.lng, name: selectedPlace.name }
+        : null
+    );
+  }, [view, selectedPlace, onSearchedPlaceChange]);
 
   /** Publish the current route-planning state so leaf components like
    *  PlaceActions can show context-aware controls (e.g. "Add as stop")
@@ -1212,8 +1235,8 @@ export default function SearchSidebar({
         open={mobileOpen}
         onOpenChange={(o) => onMobileOpenChange?.(o)}
         expandKey={mobileExpandKey}
-        coverBottomNav={view !== "search" || placeCardOpen}
-        preferExpanded={placeCardOpen}
+        coverBottomNav={view !== "search"}
+        preferExpanded={false}
       >
         {innerContent}
       </MobileSheet>

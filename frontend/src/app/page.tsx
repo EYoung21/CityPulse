@@ -528,6 +528,11 @@ function MapHome() {
   const [previewOrigin, setPreviewOrigin] = useState<{ lat: number; lng: number } | null>(null);
   const [previewDest, setPreviewDest] = useState<{ lat: number; lng: number } | null>(null);
   const [previewWaypoints, setPreviewWaypoints] = useState<WaypointPin[] | null>(null);
+  /** Set by SearchSidebar when the user taps a search result and the
+   *  place card is on-screen. IncidentMap drops a Google-Maps-style
+   *  red lollipop here and flies to it. Cleared automatically when
+   *  the user moves into directions or dismisses the card. */
+  const [searchedPlace, setSearchedPlace] = useState<{ lat: number; lng: number; name: string } | null>(null);
   const [showAbout, setShowAbout] = useState(false);
   const [showLayers, setShowLayers] = useState(false);
   // Map measurement tool. When `measureMode` is on, every map tap
@@ -2037,6 +2042,7 @@ function MapHome() {
         previewOrigin={previewOrigin}
         previewDest={previewDest}
         previewWaypoints={previewWaypoints}
+        searchedPlace={searchedPlace}
         tripMode={tripMode}
         heatmapEnabled={heatmapEnabled || Boolean(tripGeometry)}
         todHourFocus={todHourFocus}
@@ -2268,6 +2274,7 @@ function MapHome() {
           setPreviewDest(dest);
         }}
         onPreviewWaypoints={setPreviewWaypoints}
+        onSearchedPlaceChange={setSearchedPlace}
         onSelectIncident={setSelectedId}
         selectedId={selectedId}
         tripProgress={tripProgress}
