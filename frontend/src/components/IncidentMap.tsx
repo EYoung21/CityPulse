@@ -10,6 +10,13 @@ import {
 import L from "leaflet";
 import "@/lib/leaflet-heat.js";
 import "leaflet.markercluster";
+// Side-effect: extends L.Map with rotation support (two-finger pinch-
+// rotate on touch, `bearing` getter/setter, `rotate`/`touchRotate`
+// map options). The plugin patches Leaflet internals via
+// L.Class.include, so all existing layers (markers, polylines,
+// markercluster, heat, route overlays, etc.) inherit rotation
+// awareness automatically — no per-layer code changes needed.
+import "leaflet-rotate";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 // Side-effect import: registers `L.maplibreGL(...)` on the leaflet
@@ -1141,6 +1148,17 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       preferCanvas: mobileViewport,
       zoomAnimation: !mobileViewport,
       fadeAnimation: !mobileViewport,
+      // leaflet-rotate options. rotate enables the bearing-aware
+      // transform on the map pane; touchRotate enables the
+      // two-finger pinch-and-twist gesture (mirrors Google Maps).
+      // We deliberately leave rotateControl off — there's no visible
+      // compass widget; the user can two-finger-twist to reorient,
+      // and the recenter pill resets bearing to 0 on tap.
+      rotate: true,
+      touchRotate: true,
+      bearing: 0,
+      rotateControl: false,
+      shiftKeyRotate: false,
     } as L.MapOptions).setView(initialCenter, initialZoom);
 
     L.control.zoom({ position: "topright" }).addTo(map);
