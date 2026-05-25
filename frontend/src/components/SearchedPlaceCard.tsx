@@ -90,13 +90,15 @@ export default function SearchedPlaceCard({
   });
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [shareState, setShareState] = useState<"idle" | "sharing" | "done">("idle");
-  const { addDestination, destinations } = useSavedDestinations();
+  const { addDestination, removeDestination, destinations } = useSavedDestinations();
   const etaAbortRef = useRef<AbortController | null>(null);
 
-  const alreadySaved = useMemo(
-    () => destinations.some((d) => placesMatch(d.lat, d.lng, place.lat, place.lng)),
+  const savedDestId = useMemo(
+    () =>
+      destinations.find((d) => placesMatch(d.lat, d.lng, place.lat, place.lng))?.id ?? null,
     [destinations, place.lat, place.lng]
   );
+  const alreadySaved = savedDestId !== null;
 
   // Reverse-geocode for the address subtitle — same pattern as
   // LocationPeekCard. Single shot; on failure we silently fall back
@@ -179,14 +181,23 @@ export default function SearchedPlaceCard({
   }, [userPos, place.lat, place.lng, placeKey]);
 
   const handleSave = async () => {
-    if (saveState === "saving" || alreadySaved) return;
+    if (saveState === "saving") return;
     setSaveState("saving");
     try {
-      await addDestination(place.name, place.lat, place.lng, "favorite");
-      setSaveState("saved");
+      if (savedDestId) {
+        // Already saved → un-save. Drop back to the idle outline-
+        // bookmark state so the user gets the same visual feedback
+        // they would from the saved-places sidebar's trash button.
+        await removeDestination(savedDestId);
+        setSaveState("idle");
+      } else {
+        await addDestination(place.name, place.lat, place.lng, "favorite");
+        setSaveState("saved");
+      }
     } catch {
-      // Most common failure: the free-tier save cap. Show a brief
-      // error state; the user can re-tap to retry or just close.
+      // Most common failure on add: the free-tier save cap. On
+      // remove the realistic failure is a transient network blip.
+      // Either way we flash an error tint and let the user retry.
       setSaveState("error");
       window.setTimeout(() => setSaveState("idle"), 2500);
     }
@@ -330,8 +341,9 @@ export default function SearchedPlaceCard({
               type="button"
               onClick={() => void handleSave()}
               disabled={saveState === "saving"}
-              aria-label={alreadySaved || saveState === "saved" ? "Already saved" : "Save place"}
-              title={alreadySaved || saveState === "saved" ? "Already saved" : "Save place"}
+              aria-label={alreadySaved || saveState === "saved" ? "Remove from saved" : "Save place"}
+              title={alreadySaved || saveState === "saved" ? "Remove from saved" : "Save place"}
+              aria-pressed={alreadySaved || saveState === "saved"}
               className="w-9 h-9 inline-flex items-center justify-center rounded-full transition-colors disabled:opacity-50"
               style={{
                 background: "var(--panel-input-bg, rgba(255,255,255,0.05))",
