@@ -8,10 +8,26 @@ export type ModeETAStatus = "idle" | "loading" | "ready" | "error";
 
 export interface ModeETA {
   status: ModeETAStatus;
-  /** Minutes. Only meaningful when status === "ready". */
+  /** Minutes. May be a stale value while a refresh is loading/erroring. */
   durationMin?: number;
-  /** Kilometers. Only meaningful when status === "ready". */
+  /** Kilometers. May be a stale value while a refresh is loading/erroring. */
   distanceKm?: number;
+}
+
+function coordKey(point: { lat: number; lng: number } | null): string {
+  if (!point) return "";
+  // Mobile GPS tends to jitter by a few meters, which was enough to
+  // restart all six ETA requests and make the mode strip blink. For
+  // comparison ETAs, ~10 m precision is plenty and dramatically calmer.
+  return `${point.lat.toFixed(4)},${point.lng.toFixed(4)}`;
+}
+
+function keepPreviousOnError(prev: Record<string, ModeETA>, mode: TransportMode): ModeETA {
+  const prior = prev[mode];
+  if (typeof prior?.durationMin === "number") {
+    return { ...prior, status: "error" };
+  }
+  return { status: "error" };
 }
 
 /**
@@ -33,9 +49,13 @@ export function useModeETAs(
   const [etas, setEtas] = useState<Record<string, ModeETA>>({});
   const abortRef = useRef<AbortController | null>(null);
 
+  const originKey = coordKey(origin);
+  const destKey = coordKey(dest);
   // The stops array reference changes every render even when contents
   // are identical, so derive a stable key for the effect dep list.
-  const stopsKey = stops.map((s) => `${s.lat},${s.lng}`).join("|");
+  const stopsKey = stops.map(coordKey).join("|");
+  const inputsRef = useRef({ modes, origin, dest, stops });
+  inputsRef.current = { modes, origin, dest, stops };
 
   useEffect(() => {
     if (abortRef.current) abortRef.current.abort();
@@ -45,11 +65,12 @@ export function useModeETAs(
     }
     const controller = new AbortController();
     abortRef.current = controller;
+    const snapshot = inputsRef.current;
 
     const waypoints: [number, number][] = [
-      [origin.lat, origin.lng],
-      ...stops.map((s) => [s.lat, s.lng] as [number, number]),
-      [dest.lat, dest.lng],
+      [snapshot.origin!.lat, snapshot.origin!.lng],
+      ...snapshot.stops.map((s) => [s.lat, s.lng] as [number, number]),
+      [snapshot.dest!.lat, snapshot.dest!.lng],
     ];
 
     // Seed all modes as loading up front so the UI immediately shows a
@@ -57,8 +78,8 @@ export function useModeETAs(
     // pop-in as each request lands.
     setEtas((prev) => {
       const next: Record<string, ModeETA> = {};
-      for (const m of modes) {
-        next[m] = prev[m]?.status === "ready"
+      for (const m of snapshot.modes) {
+        next[m] = typeof prev[m]?.durationMin === "number"
           ? { ...prev[m], status: "loading" }
           : { status: "loading" };
       }
@@ -66,7 +87,7 @@ export function useModeETAs(
     });
 
     void Promise.all(
-      modes.map(async (mode) => {
+      snapshot.modes.map(async (mode) => {
         try {
           const res = await fetch(apiUrl("/api/route-directions"), {
             method: "POST",
@@ -77,7 +98,7 @@ export function useModeETAs(
           });
           if (controller.signal.aborted) return;
           if (!res.ok) {
-            setEtas((prev) => ({ ...prev, [mode]: { status: "error" } }));
+            setEtas((prev) => ({ ...prev, [mode]: keepPreviousOnError(prev, mode) }));
             return;
           }
           const data = (await res.json()) as {
@@ -86,7 +107,7 @@ export function useModeETAs(
           };
           if (controller.signal.aborted) return;
           if (typeof data.durationMin !== "number") {
-            setEtas((prev) => ({ ...prev, [mode]: { status: "error" } }));
+            setEtas((prev) => ({ ...prev, [mode]: keepPreviousOnError(prev, mode) }));
             return;
           }
           setEtas((prev) => ({
@@ -99,14 +120,14 @@ export function useModeETAs(
           }));
         } catch (err) {
           if ((err as { name?: string })?.name === "AbortError") return;
-          setEtas((prev) => ({ ...prev, [mode]: { status: "error" } }));
+          setEtas((prev) => ({ ...prev, [mode]: keepPreviousOnError(prev, mode) }));
         }
       })
     );
 
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [origin?.lat, origin?.lng, dest?.lat, dest?.lng, stopsKey, modes.join(",")]);
+  }, [originKey, destKey, stopsKey, modes.join(",")]);
 
   return etas;
 }
