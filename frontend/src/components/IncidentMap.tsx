@@ -2039,7 +2039,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     }
 
     return () => { highlight?.clearLayers(); };
-  }, [selectedId, flyToOffset]);
+  }, [selectedId, incidents, flyToOffset]);
 
   // "Parked here" sticky marker — distinct purple car badge so it
   // doesn't get confused with the user's location dot. Passive
