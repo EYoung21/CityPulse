@@ -353,6 +353,7 @@
   --pp-mobile-pill-bottom: calc(
     var(--pp-mobile-pill-top) + var(--pp-mobile-pill-height)
   );
+  --pp-mobile-nav-height: calc(64px + env(safe-area-inset-bottom, 0px));
 
   /* Anchor for fixed banners (OffscreenIncidentChip, ReminderBanner,
      TripRecapCard, SharedTripCard). On mobile the desktop tab bar
@@ -420,6 +421,14 @@
   top: calc(var(--pp-mobile-pill-bottom) + 0.625rem);
 }
 
+.pp-map-floating-panel {
+  bottom: calc(var(--pp-mobile-nav-height) + 0.75rem);
+  max-height: calc(100% - var(--pp-mobile-nav-height) - var(--pp-mobile-pill-bottom) - 1.5rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
 @media (min-width: 768px) {
   .pp-resume-trip-pill {
     top: calc(var(--pp-below-app-topnav-top) + 0.25rem);
@@ -427,6 +436,11 @@
     right: var(--pp-map-filters-right, calc(0.75rem + 3.25rem));
     padding-left: 0;
     padding-right: 0;
+  }
+
+  .pp-map-floating-panel {
+    bottom: 4rem;
+    max-height: calc(100% - 5rem);
   }
 }
 

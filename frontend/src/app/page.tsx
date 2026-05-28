@@ -456,7 +456,21 @@ function MapHome() {
   // active *and* follow-me hasn't been turned off by manual drag. We use
   // a close flyTo at trip start, then cheap panTo updates so the camera
   // feels like navigation without fighting every noisy GPS tick.
+  //
+  // Critically: after the initial trip-start flyTo we only ever panTo.
+  // The previous "re-flyTo to zoom 17 every 7s" behavior overrode the
+  // user's pinch-zoom mid-trip — they'd zoom in to inspect a block, and
+  // the map would zoom back out to 17 on the next GPS tick.
   const lastFollowPanRef = useRef<{ lat: number; lng: number; t: number } | null>(null);
+  const didInitialFollowFlyRef = useRef(false);
+  useEffect(() => {
+    if (!tripGeometry) {
+      // Reset the "first-fly" latch when the trip ends so a fresh trip
+      // gets its initial close-zoom recenter, but mid-trip taps to
+      // re-enable follow-me never re-snap the zoom.
+      didInitialFollowFlyRef.current = false;
+    }
+  }, [tripGeometry]);
   useEffect(() => {
     if (!followMe || !userLocation) return;
     // Limit follow-me pans to one every 1.5s so we don't churn the map
@@ -470,7 +484,8 @@ function MapHome() {
       if (dLat < 0.0001 && dLng < 0.0001) return;
     }
     lastFollowPanRef.current = { lat: userLocation.lat, lng: userLocation.lng, t: now };
-    if (tripGeometry && (!last || now - last.t > 7000)) {
+    if (tripGeometry && !didInitialFollowFlyRef.current) {
+      didInitialFollowFlyRef.current = true;
       mapRef.current?.flyTo(userLocation.lat, userLocation.lng, 17);
     } else {
       mapRef.current?.panTo?.(userLocation.lat, userLocation.lng);
@@ -3104,7 +3119,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
+            className="pp-map-floating-panel absolute left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
           >
             <SafetyScoreCard
               lat={mapTap.lat}
@@ -3123,7 +3138,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-72 max-w-[calc(100vw-5rem)]"
+            className="pp-map-floating-panel absolute left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-72 max-w-[calc(100vw-5rem)]"
           >
             <LocationPeekCard
               lat={peekAnchor.lat}
@@ -3143,7 +3158,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
+            className="pp-map-floating-panel absolute left-3 md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-80 max-w-[calc(100vw-5rem)]"
           >
             <DistrictCard
               district={selectedDistrict.district}
@@ -3171,7 +3186,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 right-3 md:right-auto md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-auto md:w-96 md:max-w-[calc(100vw-5rem)]"
+            className="pp-map-floating-panel absolute left-3 right-3 md:right-auto md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-auto md:w-96 md:max-w-[calc(100vw-5rem)]"
           >
             <ClusterListPanel
               incidents={clusterIncidents}
@@ -3189,7 +3204,7 @@ function MapHome() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-3 md:bottom-16 left-3 right-3 md:right-auto md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-auto md:w-96 md:max-w-[calc(100vw-5rem)]"
+            className="pp-map-floating-panel absolute left-3 right-3 md:right-auto md:left-[calc(var(--pp-map-sidebar-width,380px)+1rem)] z-[1000] w-auto md:w-96 md:max-w-[calc(100vw-5rem)]"
           >
             <IncidentDetail
               incident={selected}
