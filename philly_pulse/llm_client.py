@@ -266,6 +266,27 @@ async def _post_chat_completion_message(
     return _choice_message_from_body(body, provider=cfg.name)
 
 
+def _pulse_chat_provider_chain(
+    local_model: Optional[str],
+) -> list[tuple[ProviderConfig, Optional[str]]]:
+    """Ordered ``(provider, model)`` list to try for Ask Pulse.
+
+    DeepSeek goes FIRST when ``DEEPSEEK_API_KEY`` is set, so the user-facing chat
+    uses the fast cloud API instead of the GPU-contended local Ollama (which the
+    ingest / extraction pipeline keeps to itself via :func:`chat_completion`).
+    The local provider stays as a fallback for when DeepSeek is unreachable.
+    """
+    chain: list[tuple[ProviderConfig, Optional[str]]] = []
+    ds_cfg = _deepseek_pulse_fallback_config()
+    if ds_cfg is not None:
+        ds_model = (os.environ.get("PULSE_CHAT_DEEPSEEK_MODEL") or "").strip() or ds_cfg.default_model
+        chain.append((ds_cfg, ds_model))
+    local_cfg = _resolve_provider()
+    if local_cfg is not None:
+        chain.append((local_cfg, local_model))
+    return chain
+
+
 async def pulse_chat_completion_message(
     messages: list[dict[str, Any]],
     *,
@@ -276,16 +297,21 @@ async def pulse_chat_completion_message(
     tools: Optional[list[dict[str, Any]]] = None,
     tool_choice: Any = "auto",
 ) -> dict[str, Any]:
-    """Ask Pulse multi-turn: same provider fallback as :func:`pulse_chat_completion`, returns raw message dict."""
-    ds_cfg = _deepseek_pulse_fallback_config()
-    primary_cfg = _resolve_provider()
-
-    if primary_cfg is not None:
+    """Ask Pulse multi-turn (returns raw message dict). Prefers DeepSeek when
+    configured, then the local provider — see :func:`_pulse_chat_provider_chain`."""
+    chain = _pulse_chat_provider_chain(model)
+    if not chain:
+        raise LLMConfigError(
+            "No LLM provider configured. Set DEEPSEEK_API_KEY (preferred for Ask "
+            "Pulse), LAMBDA_API_KEY, or OPENAI_API_KEY."
+        )
+    for idx, (cfg, mdl) in enumerate(chain):
+        is_last = idx == len(chain) - 1
         try:
             return await _post_chat_completion_message(
-                primary_cfg,
+                cfg,
                 messages,
-                model=model,
+                model=mdl,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 timeout=timeout,
@@ -293,39 +319,17 @@ async def pulse_chat_completion_message(
                 tool_choice=tool_choice,
             )
         except LLMHTTPError as e:
-            if not _pulse_primary_should_fallback_http(e):
+            if is_last or not _pulse_primary_should_fallback_http(e):
                 raise
             logger.warning(
-                "Pulse chat (tools) primary failed (%s); trying DeepSeek fallback: %s",
-                e.status_code,
-                e,
+                "Pulse chat (tools) provider %s failed (%s); trying next: %s",
+                cfg.name, e.status_code, e,
             )
         except httpx.RequestError as e:
-            logger.warning("Pulse chat (tools) primary transport error; trying DeepSeek fallback: %s", e)
-    else:
-        if not ds_cfg:
-            raise LLMConfigError(
-                "No LLM provider configured. Set LAMBDA_API_KEY (preferred), "
-                "OPENAI_API_KEY, or DEEPSEEK_API_KEY for Ask Pulse."
-            )
-        logger.info("Pulse chat (tools): no primary LLM env; using DeepSeek for Ask Pulse only")
-
-    if ds_cfg is None:
-        raise LLMConfigError(
-            "Primary LLM failed and DEEPSEEK_API_KEY is not set — cannot fall back for Ask Pulse."
-        )
-
-    ds_model = (os.environ.get("PULSE_CHAT_DEEPSEEK_MODEL") or "").strip() or ds_cfg.default_model
-    return await _post_chat_completion_message(
-        ds_cfg,
-        messages,
-        model=ds_model,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        timeout=timeout,
-        tools=tools,
-        tool_choice=tool_choice,
-    )
+            if is_last:
+                raise
+            logger.warning("Pulse chat (tools) provider %s transport error; trying next: %s", cfg.name, e)
+    raise LLMConfigError("Ask Pulse: provider chain exhausted without a response.")
 
 
 async def chat_completion(
@@ -384,20 +388,26 @@ async def pulse_chat_completion(
     max_tokens: int = 1400,
     timeout: float = 75.0,
 ) -> str:
-    """Ask Pulse: primary provider (Lambda/OpenAI/custom) then optional DeepSeek.
+    """Ask Pulse: prefers DeepSeek when configured, then the local provider.
 
     Used only by ``POST /api/pulse-chat``. Ingest and extraction keep using
-    :func:`chat_completion` without DeepSeek so pipeline behavior stays stable.
+    :func:`chat_completion` (local provider only), so routing Ask Pulse to
+    DeepSeek keeps the user-facing chat off the GPU-contended local Ollama
+    without changing pipeline behavior. See :func:`_pulse_chat_provider_chain`.
     """
-    ds_cfg = _deepseek_pulse_fallback_config()
-    primary_cfg = _resolve_provider()
-
-    if primary_cfg is not None:
+    chain = _pulse_chat_provider_chain(model)
+    if not chain:
+        raise LLMConfigError(
+            "No LLM provider configured. Set DEEPSEEK_API_KEY (preferred for Ask "
+            "Pulse), LAMBDA_API_KEY, or OPENAI_API_KEY."
+        )
+    for idx, (cfg, mdl) in enumerate(chain):
+        is_last = idx == len(chain) - 1
         try:
             return await _post_chat_completion(
-                primary_cfg,
+                cfg,
                 messages,
-                model=model,
+                model=mdl,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 timeout=timeout,
@@ -405,35 +415,14 @@ async def pulse_chat_completion(
                 extra_payload=None,
             )
         except LLMHTTPError as e:
-            if not _pulse_primary_should_fallback_http(e):
+            if is_last or not _pulse_primary_should_fallback_http(e):
                 raise
-            logger.warning("Pulse chat primary failed (%s); trying DeepSeek fallback: %s", e.status_code, e)
+            logger.warning("Pulse chat provider %s failed (%s); trying next: %s", cfg.name, e.status_code, e)
         except httpx.RequestError as e:
-            logger.warning("Pulse chat primary transport error; trying DeepSeek fallback: %s", e)
-    else:
-        if not ds_cfg:
-            raise LLMConfigError(
-                "No LLM provider configured. Set LAMBDA_API_KEY (preferred), "
-                "OPENAI_API_KEY, or DEEPSEEK_API_KEY for Ask Pulse."
-            )
-        logger.info("Pulse chat: no primary LLM env; using DeepSeek for Ask Pulse only")
-
-    if ds_cfg is None:
-        raise LLMConfigError(
-            "Primary LLM failed and DEEPSEEK_API_KEY is not set — cannot fall back for Ask Pulse."
-        )
-
-    ds_model = (os.environ.get("PULSE_CHAT_DEEPSEEK_MODEL") or "").strip() or ds_cfg.default_model
-    return await _post_chat_completion(
-        ds_cfg,
-        messages,
-        model=ds_model,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        timeout=timeout,
-        response_format=None,
-        extra_payload=None,
-    )
+            if is_last:
+                raise
+            logger.warning("Pulse chat provider %s transport error; trying next: %s", cfg.name, e)
+    raise LLMConfigError("Ask Pulse: provider chain exhausted without a response.")
 
 
 def chat_completion_sync(
