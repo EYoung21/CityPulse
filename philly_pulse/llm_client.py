@@ -45,7 +45,10 @@ DEFAULT_LAMBDA_MODEL = "llama3.3-70b-instruct-fp8"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
-DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
+# Cheapest DeepSeek model that still supports tool calling (Ask Pulse needs it):
+# $0.14/M in, $0.28/M out. The old "deepseek-chat" alias maps here but is being
+# deprecated (2026-07-24), so pin the explicit id. Override via PULSE_CHAT_DEEPSEEK_MODEL.
+DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 
 
 class LLMConfigError(RuntimeError):
