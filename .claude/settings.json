@@ -4,7 +4,8 @@
       "Bash(curl -s *)",
       "Bash(npx tsc *)",
       "Bash(npx eslint *)",
-      "Bash(pnpm tsc *)"
+      "Bash(pnpm tsc *)",
+      "Bash(git branch *)"
     ]
   }
 }
