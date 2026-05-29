@@ -1,0 +1,38 @@
+name: Set DeepSeek Key (Ask Pulse)
+
+# Writes DEEPSEEK_API_KEY (a repo secret) into the Hetzner backend's
+# /etc/philly-pulse.env and restarts the API. Ask Pulse uses DeepSeek as its
+# primary LLM when this is set (see philly_pulse/llm_client.py), keeping the
+# user-facing chat off the GPU-contended local Ollama. Manual trigger only.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  set-deepseek-key:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write DEEPSEEK_API_KEY into philly-pulse.env and restart API
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: DEEPSEEK_API_KEY
+          command_timeout: 5m
+          script: |
+            set -e
+            ENV_FILE="/etc/philly-pulse.env"
+            touch "$ENV_FILE"
+            chmod 640 "$ENV_FILE"
+            # Idempotent: drop any prior line, then append the current secret.
+            sed -i '/^DEEPSEEK_API_KEY=/d' "$ENV_FILE"
+            printf 'DEEPSEEK_API_KEY=%s\n' "$DEEPSEEK_API_KEY" >> "$ENV_FILE"
+            systemctl restart philly-pulse-api
+            sleep 3
+            echo "=== status ==="
+            systemctl is-active philly-pulse-api && echo "API: running" || echo "API: failed"
+            # Confirm presence WITHOUT printing the value.
+            grep -q '^DEEPSEEK_API_KEY=.\+' "$ENV_FILE" && echo "DEEPSEEK_API_KEY: <set>" || echo "DEEPSEEK_API_KEY: <empty>"
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
