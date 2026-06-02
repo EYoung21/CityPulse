@@ -266,6 +266,7 @@
   --panel-hover: rgba(0, 0, 0, 0.03);
   --panel-input-bg: rgba(0, 0, 0, 0.04);
   --panel-input-border: rgba(0, 0, 0, 0.08);
+  --panel-code-bg: rgba(0, 0, 0, 0.08);
   --pill-bg: rgba(255, 255, 255, 0.95);
   --pill-border: rgba(0, 0, 0, 0.08);
   --pill-text: rgba(26, 26, 46, 0.55);
@@ -285,6 +286,7 @@
   --panel-hover: rgba(255, 255, 255, 0.03);
   --panel-input-bg: rgba(255, 255, 255, 0.06);
   --panel-input-border: rgba(255, 255, 255, 0.06);
+  --panel-code-bg: rgba(255, 255, 255, 0.12);
   --pill-bg: rgba(26, 26, 46, 0.9);
   --pill-border: rgba(255, 255, 255, 0.06);
   --pill-text: rgba(255, 255, 255, 0.5);

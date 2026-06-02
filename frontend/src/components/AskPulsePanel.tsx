@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { fetchPulseChat, type PulseChatMessage } from "@/lib/api";
+import { MarkdownMessage } from "@/components/MarkdownMessage";
 
 const STORAGE_KEY = "pulse_ask_pulse_v1";
 
@@ -409,11 +410,11 @@ export default function AskPulsePanel({
               <div
                 className={`max-w-[min(92%,520px)] rounded-2xl px-3.5 py-2.5 text-sm break-words ${
                   m.role === "user" ? "rounded-br-md" : "rounded-bl-md"
-                } ${isEditing ? "" : "whitespace-pre-wrap"}`}
+                } ${!isEditing && m.role === "user" ? "whitespace-pre-wrap" : ""}`}
                 style={
                   m.role === "user"
                     ? { background: "rgba(59,130,246,0.2)", color: "var(--panel-text)" }
-                    : { background: "var(--panel-input-bg)", color: "var(--panel-text-secondary)" }
+                    : { background: "var(--panel-input-bg)", color: "var(--panel-text)" }
                 }
               >
                 {m.role === "user" && !isEditing && (
@@ -475,6 +476,8 @@ export default function AskPulsePanel({
                       </button>
                     </div>
                   </div>
+                ) : m.role === "assistant" ? (
+                  <MarkdownMessage content={m.content} />
                 ) : (
                   m.content
                 )}
