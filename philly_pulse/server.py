@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import admin_events, city_registry, geocode, ingest_location, inhibitor, llm, llm_client, persistence as store, prefilter, push as push_mod, weights
+from . import admin_events, city_registry, geocode, ingest_location, inhibitor, llm, llm_client, persistence as store, prefilter, push as push_mod, spelling_guard, weights
 from .llm_client import LLMConfigError, LLMHTTPError
 from .llm import SEVERITY_CATEGORIES
 
@@ -689,6 +689,45 @@ async def ingest(req: IngestRequest):
         return {"status": "rejected", "reason": "Not dispatch-relevant"}
 
     category = extraction["severity_category"]
+
+    # Deterministic anti-hallucination backstop: a severe category on a line that
+    # is dominated by phonetic-alphabet spelling / unit-number readbacks (e.g. an
+    # officer spelling "Bird" as Boy-Ida-Robert-David, mis-heard as "murder") is
+    # almost always a mis-transcription, not a real incident. High-precision; only
+    # ever acts on severe categories. See spelling_guard.assess().
+    guard = spelling_guard.assess(req.text, category)
+    if guard.suppress:
+        logger.info(
+            "spelling_guard suppressed %s (%s): %s",
+            category,
+            guard.reason,
+            req.text[:160],
+        )
+        await admin_events.broadcast({
+            "type": "llm_result",
+            "correlation": correlation,
+            "feed_id": feed_id,
+            "is_relevant": False,
+            "category": "admin_or_noise",
+            "confidence": 0,
+            "location_text": None,
+            "guard_reason": guard.reason,
+        })
+        store.insert_extraction(
+            feed_id=feed_id,
+            raw_text=req.text,
+            reported_at=req_timestamp,
+            audio_clip=effective_audio_clip,
+            raw_audio_clip=req.raw_audio_clip,
+            preprocess_meta=req.preprocess_meta,
+            variants=req.variants,
+            llm_relevant=False,
+            llm_category=category,
+            llm_confidence=0.0,
+            city=city,
+        )
+        return {"status": "rejected", "reason": f"guard: {guard.reason}"}
+
     location_text = extraction["location_text"]
     geo_suffix = (city_geo_ctx or {}).get("suffix") or (city_llm_ctx or {}).get("geocode_suffix") or ""
     if location_text and geo_suffix:

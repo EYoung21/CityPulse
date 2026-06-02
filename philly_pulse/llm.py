@@ -149,6 +149,12 @@ def _build_system_prompt(
 ) -> str:
     city = ctx["city_name"]
     suffix = ctx["geocode_suffix"]
+    # For the few-shot example only: render the suffix with a leading ", " so the
+    # example never teaches malformed "streetCity" concatenation, regardless of
+    # whether a city's configured suffix already starts with a comma.
+    example_suffix = (
+        suffix if suffix.lstrip().startswith(",") else (f", {suffix}" if suffix else "")
+    )
     local = _truncate_local_context(str(ctx.get("llm_local_context") or ""))
 
     feed_block = ""
@@ -189,8 +195,8 @@ unit check-ins, or ambiguous fragments.
 - "severity_category": one of {json.dumps(SEVERITY_CATEGORIES)}. Pick the single \
 best match. Use "admin_or_noise" for non-dispatch content.
 - "location_text": string or null. The most specific location mentioned in direct \
-connection to the incident (intersection, block, address, landmark). Include \
-"{suffix}" for geocoding. null if no location is directly associated with the incident.
+connection to the incident (intersection, block, address, landmark). Append \
+"{example_suffix}" for geocoding. null if no location is directly associated with the incident.
 - "context_location_text": string or null. If "location_text" is null, look for \
 ANY location mentioned elsewhere in the transcript, even if it is not in the same \
 sentence as the incident. Officers often state their position before reporting an \
@@ -204,6 +210,33 @@ for a civilian reader. No jargon, no police codes. No em dashes and no semicolon
 Decode any radio codes into plain language.
 - "confidence": float 0.0-1.0. Your confidence that the extraction is accurate. \
 Lower if the transcript is garbled, ambiguous, or partially inaudible.
+
+## Scanner reality: do not invent incidents from spelling or noise
+This text is imperfect speech-to-text of noisy radio. Be skeptical of severe words.
+- Officers SPELL names, streets, and places letter-by-letter with the phonetic \
+alphabet (Adam Boy Charles Charlie David Edward Frank George Henry Ida John King \
+Lincoln Mary Nora Ocean Paul Queen Robert Sam Tom Union Victor William X-ray Young \
+Zebra, or Alpha Bravo Charlie Delta through Zulu). A run of these words spells ONE \
+word and is administrative, not an incident.
+- Bare number strings like "1205, 2000" are unit IDs or readbacks, not locations or \
+events.
+- Do NOT assign a severe category to a severe-sounding word that sits INSIDE a \
+phonetic-spelling run or a string of unit numbers. On noisy audio such a word is most \
+likely a mis-transcribed letter or name (for example a name spelled Boy-Ida-Robert-\
+David can be mis-heard as "murder").
+- BUT a genuinely terse dispatch that names a real event IS a real incident: \
+"shots fired", "man with a gun", "man with a knife", "stabbing", "robbery in progress", \
+or a decoded code like 10-32 should get the correct severe category even without a full \
+who/what/where. When a line has a real incident word AND any location material, prefer \
+extracting the incident over rejecting it as noise -- UNLESS the only incident word \
+sits inside a phonetic-spelling run or a string of unit numbers, in which case it is a \
+mis-transcription and the line is "admin_or_noise".
+- Only when the transmission is ONLY phonetic spelling, unit numbers, or \
+acknowledgements with NO incident word, set is_dispatch_relevant to false and \
+severity_category to "admin_or_noise".
+- Set confidence at or below 0.4 when the line is garbled or the only severe word is \
+embedded in spelling or numbers. A clear terse call like "shots fired" can still be \
+moderate or high confidence.
 
 ## Common Radio Codes
 Decode these codes when they appear in transcripts:
@@ -234,6 +267,19 @@ references, unit positions.
 correct severity_category.
 - Do NOT guess coordinates. Geocoding is handled downstream from the location text \
 you extract; never invent lat/lng values.
+
+## Examples
+Transcript: "last name being murdered, boy ida robert david, person in calvin, charlie adam lincoln victor ida nora, 1205 2000 okay"
+Output: {{"is_dispatch_relevant": false, "severity_category": "admin_or_noise", "location_text": null, "context_location_text": null, "location_confidence": "none", "description": "An officer is spelling a suspect name and street with unit numbers and the lone severe word is a mis-transcription, not a real report.", "confidence": 0.2}}
+
+Transcript: "shots fired, fourth and market, male with a handgun running eastbound"
+Output: {{"is_dispatch_relevant": true, "severity_category": "violent_weapon", "location_text": "fourth and market{example_suffix}", "context_location_text": null, "location_confidence": "direct", "description": "A man with a handgun fired shots near Fourth and Market and ran off eastbound.", "confidence": 0.85}}
+
+Transcript: "man with a knife, fifth and chestnut, threatening people"
+Output: {{"is_dispatch_relevant": true, "severity_category": "violent_weapon", "location_text": "fifth and chestnut{example_suffix}", "context_location_text": null, "location_confidence": "direct", "description": "A man with a knife is threatening people near Fifth and Chestnut.", "confidence": 0.8}}
+
+Transcript: "shots fired"
+Output: {{"is_dispatch_relevant": true, "severity_category": "shots_heard", "location_text": null, "context_location_text": null, "location_confidence": "none", "description": "Shots were heard but no location was given.", "confidence": 0.6}}
 """
 
 
