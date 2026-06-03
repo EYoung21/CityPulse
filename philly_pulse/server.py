@@ -1642,6 +1642,53 @@ def _pulse_incident_match_blob(inc: dict) -> str:
     return " ".join(parts).lower()
 
 
+_LEAKED_TOOL_MARKERS = re.compile(
+    r"<\|?\s*DSML|</?\s*(?:invoke|parameter|tool_call|tool_calls|function)\b|<\|\s*tool_calls",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_leaked_tool_call(text: str) -> bool:
+    """True when the model emitted tool-call SYNTAX as plain text instead of a
+    structured ``tool_calls`` field. DeepSeek's OpenAI-compatible endpoint
+    sometimes returns ``<|DSML| |invoke name="search_incidents">...`` as content;
+    the loop below uses this to retry in plain-text mode instead of leaking it."""
+    return bool(text) and bool(_LEAKED_TOOL_MARKERS.search(text))
+
+
+def _strip_leaked_tool_markup(text: str) -> str:
+    """Defensively remove any leaked tool-call markup so raw syntax never reaches
+    the user (final safety net behind the plain-text retry)."""
+    if not text:
+        return ""
+    # Whole DSML tool_calls block, including the parameter values inside it.
+    text = re.sub(
+        r"<\|?\s*DSML[^>]*tool_calls\s*>.*?</\|?\s*DSML[^>]*tool_calls\s*>",
+        "",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    # Generic invoke/parameter/tool_call blocks (Anthropic-style) with content.
+    text = re.sub(
+        r"<\s*(invoke|parameter|tool_call|tool_calls|function)\b[^>]*>.*?</\s*\1\s*>",
+        "",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    # Any remaining stray DSML / pipe / tag tokens.
+    text = re.sub(r"</?\|?\s*DSML\s*\|?[^>]*>", "", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"</?\s*(invoke|parameter|tool_call|tool_calls|function)\b[^>]*>",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"<\|[^>]*\|?>", "", text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def pulse_chat_tool_specs() -> list[dict[str, Any]]:
     return [
         {
@@ -2047,8 +2094,9 @@ async def pulse_chat(
             fs_used = [0]
             messages_loop: list[dict[str, Any]] = [dict(x) for x in messages_out]
             tool_round_idx = 0
+            leaked_retry = False
             while tool_round_idx < PULSE_CHAT_TOOL_ROUNDS_MAX:
-                force_text = tool_round_idx >= PULSE_CHAT_TOOL_ROUNDS_MAX - 1
+                force_text = leaked_retry or tool_round_idx >= PULSE_CHAT_TOOL_ROUNDS_MAX - 1
                 asst = await llm_client.pulse_chat_completion_message(
                     messages_loop,
                     model=chat_model,
@@ -2061,11 +2109,27 @@ async def pulse_chat(
                 tool_round_idx += 1
                 tool_rounds_used = tool_round_idx
                 tcalls = asst.get("tool_calls")
+                content = (asst.get("content") or "").strip()
                 if not tcalls:
-                    reply = (asst.get("content") or "").strip()
+                    # Some providers (notably DeepSeek via the OpenAI-compat API)
+                    # emit tool calls as TEXT in content instead of a structured
+                    # tool_calls field. Don't leak that markup: nudge once to
+                    # answer in plain text (the incident JSON is already in
+                    # context), then fall back to stripping if it persists.
+                    if (not force_text) and _looks_like_leaked_tool_call(content):
+                        leaked_retry = True
+                        messages_loop.append({
+                            "role": "system",
+                            "content": (
+                                "Do not output tool-call syntax or XML. Answer the user "
+                                "directly in plain text using the incident JSON already provided."
+                            ),
+                        })
+                        continue
+                    reply = _strip_leaked_tool_markup(content)
                     break
                 if force_text:
-                    reply = (asst.get("content") or "").strip()
+                    reply = _strip_leaked_tool_markup(content)
                     if not reply:
                         reply = (
                             "I could not fully answer within the tool budget; try narrowing the time range "
@@ -2145,6 +2209,11 @@ async def pulse_chat(
     except Exception as e:
         logger.warning("pulse-chat LLM failed: %s", e)
         raise HTTPException(status_code=502, detail="LLM request failed") from e
+
+    # Final safety net: never return raw tool-call markup to the client.
+    reply = _strip_leaked_tool_markup(reply or "")
+    if not reply:
+        reply = "I couldn't produce a clean answer for that. Try rephrasing or narrowing the time range."
 
     citations = [
         {"id": row["id"], "reported_at": row.get("reported_at"), "category": row.get("category")}
