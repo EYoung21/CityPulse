@@ -90,14 +90,25 @@ export default function AskPulsePanel({
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [loading, setLoading] = useState(false);
+  // Per-thread generation state so chats can generate in parallel.
+  const [loadingThreads, setLoadingThreads] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const abortRefs = useRef<Map<string, AbortController>>(new Map());
   const threadStripRef = useRef<HTMLDivElement | null>(null);
   const listEndRef = useRef<HTMLDivElement | null>(null);
   const inlineEditRef = useRef<HTMLTextAreaElement | null>(null);
   const hydratedRef = useRef(false);
+  const activeIdRef = useRef<string | null>(null);
+
+  // Whether the *currently viewed* thread is generating — drives the local UI
+  // (Thinking indicator, input disabled, stop button). Other threads keep
+  // generating in the background regardless of this.
+  const loading = activeId !== null && loadingThreads.has(activeId);
+
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
 
   useEffect(() => {
     const p = loadPersist();
@@ -151,14 +162,53 @@ export default function AskPulsePanel({
     setThreads((prev) => prev.map((t) => (t.id === id ? fn(t) : t)));
   }, []);
 
+  // A thread is "disposable" when it has no sent messages, no typed draft, and
+  // is not generating — i.e. an abandoned blank chat. We drop these when the
+  // user navigates away so blank chats don't pile up. Anything the user typed or
+  // sent keeps the thread alive.
+  const pruneActiveIfDisposable = useCallback(() => {
+    const cur = activeId;
+    if (!cur || draft.trim() !== "" || loadingThreads.has(cur)) return;
+    setThreads((prev) => {
+      if (prev.length <= 1) return prev; // always keep at least one chat
+      const t = prev.find((x) => x.id === cur);
+      if (!t || t.messages.length > 0) return prev;
+      return prev.filter((x) => x.id !== cur);
+    });
+  }, [activeId, draft, loadingThreads]);
+
   const newThread = useCallback(() => {
     const t: ChatThread = { id: uid(), title: "New chat", updatedAt: Date.now(), messages: [] };
-    setThreads((prev) => [t, ...prev]);
+    const cur = activeId;
+    const dropCur = !!cur && draft.trim() === "" && !loadingThreads.has(cur);
+    setThreads((prev) => {
+      const base = dropCur
+        ? prev.filter((x) => x.id !== cur || x.messages.length > 0)
+        : prev;
+      return [t, ...base];
+    });
     setActiveId(t.id);
     setDraft("");
     setEditingMessageId(null);
     setError(null);
-  }, []);
+  }, [activeId, draft, loadingThreads]);
+
+  const handleClose = useCallback(() => {
+    // Prune an abandoned blank active chat and persist before the panel unmounts
+    // (the save effect won't run after onClose hides us).
+    const cur = activeId;
+    if (cur && draft.trim() === "" && !loadingThreads.has(cur) && threads.length > 1) {
+      const t = threads.find((x) => x.id === cur);
+      if (t && t.messages.length === 0) {
+        const next = threads.filter((x) => x.id !== cur);
+        const nextActive = next[0]?.id ?? null;
+        setThreads(next);
+        setActiveId(nextActive);
+        savePersist({ threads: next, activeId: nextActive });
+      }
+    }
+    onClose();
+  }, [activeId, draft, loadingThreads, threads, onClose]);
 
   useEffect(() => {
     if (!activeId || !threadStripRef.current) return;
@@ -167,10 +217,16 @@ export default function AskPulsePanel({
   }, [activeId, threads.length]);
 
   const stopGeneration = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setLoading(false);
-  }, []);
+    const id = activeId;
+    if (!id) return;
+    abortRefs.current.get(id)?.abort();
+    abortRefs.current.delete(id);
+    setLoadingThreads((prev) => {
+      const n = new Set(prev);
+      n.delete(id);
+      return n;
+    });
+  }, [activeId]);
 
   const send = useCallback(async () => {
     if (!isPro || authLoading || !activeThread) return;
@@ -201,10 +257,10 @@ export default function AskPulsePanel({
     }));
     setDraft("");
     setError(null);
-    setLoading(true);
+    setLoadingThreads((prev) => new Set(prev).add(tid));
 
     const ac = new AbortController();
-    abortRef.current = ac;
+    abortRefs.current.set(tid, ac);
 
     const apiMessages: PulseChatMessage[] = userTail.map((m) => ({
       role: m.role,
@@ -233,14 +289,18 @@ export default function AskPulsePanel({
         updatedAt: Date.now(),
       }));
     } catch (e) {
-      if (ac.signal.aborted) {
-        setError(null);
-      } else {
+      // Only surface the error if the user is still viewing the thread that
+      // failed — a background thread's error shouldn't flash on another chat.
+      if (!ac.signal.aborted && activeIdRef.current === tid) {
         setError(e instanceof Error ? e.message : "Request failed");
       }
     } finally {
-      if (abortRef.current === ac) abortRef.current = null;
-      setLoading(false);
+      if (abortRefs.current.get(tid) === ac) abortRefs.current.delete(tid);
+      setLoadingThreads((prev) => {
+        const n = new Set(prev);
+        n.delete(tid);
+        return n;
+      });
     }
   }, [
     activeThread,
@@ -320,7 +380,7 @@ export default function AskPulsePanel({
         </div>
         <button
           type="button"
-          onClick={onClose}
+          onClick={handleClose}
           className="text-xs font-medium px-2 py-1 rounded-lg shrink-0"
           style={{ color: "var(--panel-text-muted)" }}
         >
@@ -359,6 +419,8 @@ export default function AskPulsePanel({
               aria-selected={active}
               data-thread-id={t.id}
               onClick={() => {
+                if (t.id === activeId) return;
+                pruneActiveIfDisposable();
                 setActiveId(t.id);
                 setEditingMessageId(null);
                 setDraft("");
@@ -380,7 +442,15 @@ export default function AskPulsePanel({
               }
               title={t.title}
             >
-              {t.title}
+              <span className="inline-flex items-center gap-1 min-w-0 max-w-full">
+                {loadingThreads.has(t.id) && (
+                  <span
+                    className="shrink-0 w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"
+                    aria-label="Generating"
+                  />
+                )}
+                <span className="truncate">{t.title}</span>
+              </span>
             </button>
           );
         })}
