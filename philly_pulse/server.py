@@ -1689,6 +1689,94 @@ def _strip_leaked_tool_markup(text: str) -> str:
     return text.strip()
 
 
+_INCIDENT_ID_RE = re.compile(r"\b([0-9a-f]{12})\b")
+
+_CARD_FIELDS = (
+    "id", "reported_at", "severity_category", "s_base", "confidence",
+    "description", "location_text", "lat", "lng", "raw_text", "audio_clip",
+    "audio_url", "word_timings", "mention_count", "last_mention_at",
+    "geocode_status", "location_confidence",
+)
+
+
+def _trim_incident_for_card(inc: dict) -> dict:
+    """Slim an incident row down to the fields the frontend IncidentCard needs."""
+    return {k: inc.get(k) for k in _CARD_FIELDS if k in inc}
+
+
+def _pulse_inline_incident_cards(
+    reply: str, by_id: dict[str, dict]
+) -> tuple[str, list[dict]]:
+    """Rewrite the reply so each cited incident id becomes a standalone block
+    marker ``[[INC:<id>]]`` on its own line — the client renders these as full
+    incident cards inline in the message flow. Markers go AFTER the citing line
+    for prose/bullets and AFTER the whole table block for table rows, so a card
+    never breaks a sentence or a markdown table. Returns (annotated_reply,
+    cited_incidents) with incidents in first-cited order."""
+    if not reply or not by_id:
+        return reply, []
+
+    def _ids_in(line: str) -> list[str]:
+        seen_local: list[str] = []
+        for iid in _INCIDENT_ID_RE.findall(line):
+            if iid in by_id and iid not in seen_local:
+                seen_local.append(iid)
+        return seen_local
+
+    def _strip_ids(line: str, ids: list[str]) -> str:
+        for iid in ids:
+            line = re.sub(r"\(\s*incident\s*`?" + iid + r"`?\s*\)", "", line, flags=re.IGNORECASE)
+            line = re.sub(r"`?\b" + iid + r"\b`?", "", line)
+        return re.sub(r"[ \t]{2,}", " ", line).rstrip()
+
+    def _is_table_row(line: str) -> bool:
+        s = line.strip()
+        return s.startswith("|") and s.count("|") >= 2
+
+    order: list[str] = []
+    seen: set[str] = set()
+    marked: set[str] = set()
+    out: list[str] = []
+    table_buf: list[str] = []
+    in_table = False
+
+    def _emit(iid: str) -> None:
+        if iid not in marked:
+            marked.add(iid)
+            out.append(f"[[INC:{iid}]]")
+
+    def _flush_table() -> None:
+        nonlocal table_buf
+        if table_buf:
+            out.append("")
+            for iid in table_buf:
+                _emit(iid)
+            table_buf = []
+
+    for line in reply.split("\n"):
+        ids = _ids_in(line)
+        for iid in ids:
+            if iid not in seen:
+                seen.add(iid)
+                order.append(iid)
+        is_tbl = _is_table_row(line)
+        if in_table and not is_tbl:
+            _flush_table()
+        out.append(_strip_ids(line, ids))
+        if is_tbl:
+            for iid in ids:
+                if iid not in marked and iid not in table_buf:
+                    table_buf.append(iid)
+        else:
+            for iid in ids:
+                _emit(iid)
+        in_table = is_tbl
+    _flush_table()
+
+    cited = [_trim_incident_for_card(by_id[iid]) for iid in order]
+    return "\n".join(out), cited
+
+
 def pulse_chat_tool_specs() -> list[dict[str, Any]]:
     return [
         {
@@ -2051,6 +2139,8 @@ async def pulse_chat(
         "gun/shots/weapon language (still from the same capped fetch — not a full database or year tally).\n"
         + tool_block
         + "- Prefer citing incident id and reported_at when you mention specifics.\n"
+        "- When you reference a specific incident, put it on its own bullet line (not inside a "
+        "table) and include its id, so the app can render it as a card under that line.\n"
         "- Do not invent incidents, addresses, or outcomes.\n"
         f"- City context: {city_display} ({city_slug}).\n\n"
         f"The following {len(bundle)} incidents (of {len(fetched)} fetched) are in context"
@@ -2215,6 +2305,15 @@ async def pulse_chat(
     if not reply:
         reply = "I couldn't produce a clean answer for that. Try rephrasing or narrowing the time range."
 
+    # Turn cited incident ids into inline card markers + return the full rows so
+    # the client can render each as a card in the message flow.
+    incidents_by_id: dict[str, dict] = {}
+    for inc in fetched:
+        iid = str(inc.get("id") or "")
+        if iid:
+            incidents_by_id[iid] = inc
+    reply, cited_incidents = _pulse_inline_incident_cards(reply, incidents_by_id)
+
     citations = [
         {"id": row["id"], "reported_at": row.get("reported_at"), "category": row.get("category")}
         for row in bundle
@@ -2223,6 +2322,7 @@ async def pulse_chat(
     return {
         "reply": reply.strip(),
         "citations": citations,
+        "cited_incidents": cited_incidents,
         "meta": {
             "city": city_slug,
             "effective_since": effective_since,

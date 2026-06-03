@@ -10,8 +10,8 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { fetchPulseChat, type PulseChatMessage } from "@/lib/api";
-import { MarkdownMessage } from "@/components/MarkdownMessage";
+import { fetchPulseChat, type PulseChatMessage, type Incident } from "@/lib/api";
+import { AskPulseAnswer } from "@/components/AskPulseAnswer";
 
 const STORAGE_KEY = "pulse_ask_pulse_v1";
 
@@ -22,6 +22,8 @@ interface ChatRow {
   role: ChatRole;
   content: string;
   ts: number;
+  /** Incidents the assistant cited, rendered as inline cards. */
+  cited?: Incident[];
 }
 
 interface ChatThread {
@@ -282,6 +284,7 @@ export default function AskPulsePanel({
         role: "assistant",
         content: res.reply,
         ts: Date.now(),
+        cited: res.cited_incidents,
       };
       updateThread(tid, (t) => ({
         ...t,
@@ -547,7 +550,7 @@ export default function AskPulsePanel({
                     </div>
                   </div>
                 ) : m.role === "assistant" ? (
-                  <MarkdownMessage content={m.content} />
+                  <AskPulseAnswer content={m.content} incidents={m.cited} />
                 ) : (
                   m.content
                 )}

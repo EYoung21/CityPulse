@@ -345,6 +345,9 @@ export interface PulseChatCitation {
 export interface PulseChatResponse {
   reply: string;
   citations: PulseChatCitation[];
+  /** Full incident rows for the ids the reply cites (inline-card markers
+   *  `[[INC:<id>]]` in `reply` map to these), in first-cited order. */
+  cited_incidents?: Incident[];
   meta: {
     city: string;
     effective_since?: string | null;

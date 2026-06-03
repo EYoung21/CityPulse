@@ -111,7 +111,7 @@ function haversineMi(lat1: number, lng1: number, lat2: number, lng2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function IncidentCard({
+export function IncidentCard({
   inc,
   isSelected,
   onSelect,
