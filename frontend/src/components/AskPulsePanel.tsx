@@ -2,12 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ChevronLeft,
+  Clock,
   Lock,
   MessageCircle,
   Pencil,
   Plus,
+  Search,
   Send,
   Square,
+  Trash2,
   X,
 } from "lucide-react";
 import { fetchPulseChat, type PulseChatMessage, type Incident } from "@/lib/api";
@@ -36,6 +40,18 @@ interface ChatThread {
 interface PersistShape {
   threads: ChatThread[];
   activeId: string | null;
+  /** Ids of the chats currently shown as open tabs (a subset of `threads`,
+   *  which is the full history). */
+  openTabIds: string[];
+}
+
+function shortWhen(ts: number): string {
+  return new Date(ts).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function uid(): string {
@@ -51,18 +67,30 @@ function defaultTitle(messages: ChatRow[]): string {
 }
 
 function loadPersist(): PersistShape {
-  if (typeof window === "undefined") return { threads: [], activeId: null };
+  const empty: PersistShape = { threads: [], activeId: null, openTabIds: [] };
+  if (typeof window === "undefined") return empty;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { threads: [], activeId: null };
+    if (!raw) return empty;
     const j = JSON.parse(raw) as PersistShape;
-    if (!j || !Array.isArray(j.threads)) return { threads: [], activeId: null };
+    if (!j || !Array.isArray(j.threads)) return empty;
+    const threads = j.threads.filter(
+      (t) => t && typeof t.id === "string" && Array.isArray(t.messages),
+    );
+    const ids = new Set(threads.map((t) => t.id));
+    let openTabIds = Array.isArray(j.openTabIds)
+      ? j.openTabIds.filter((id) => typeof id === "string" && ids.has(id))
+      : [];
+    // Migration / fallback: if no open-tab list yet, open every existing chat
+    // (preserves the prior "all threads are tabs" behavior).
+    if (openTabIds.length === 0) openTabIds = threads.map((t) => t.id);
     return {
-      threads: j.threads.filter((t) => t && typeof t.id === "string" && Array.isArray(t.messages)),
+      threads,
       activeId: typeof j.activeId === "string" ? j.activeId : null,
+      openTabIds,
     };
   } catch {
-    return { threads: [], activeId: null };
+    return empty;
   }
 }
 
@@ -91,6 +119,10 @@ export default function AskPulsePanel({
 }: AskPulsePanelProps) {
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Open tabs (subset of threads). `threads` is the full history.
+  const [openTabIds, setOpenTabIds] = useState<string[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyQuery, setHistoryQuery] = useState("");
   const [draft, setDraft] = useState("");
   // Per-thread generation state so chats can generate in parallel.
   const [loadingThreads, setLoadingThreads] = useState<Set<string>>(() => new Set());
@@ -118,20 +150,24 @@ export default function AskPulsePanel({
       const t0: ChatThread = { id: uid(), title: "New chat", updatedAt: Date.now(), messages: [] };
       setThreads([t0]);
       setActiveId(t0.id);
+      setOpenTabIds([t0.id]);
       hydratedRef.current = true;
-      savePersist({ threads: [t0], activeId: t0.id });
+      savePersist({ threads: [t0], activeId: t0.id, openTabIds: [t0.id] });
       return;
     }
     setThreads(p.threads);
-    const aid = p.activeId && p.threads.some((t) => t.id === p.activeId) ? p.activeId : p.threads[0].id;
+    let open = p.openTabIds.length ? p.openTabIds : p.threads.map((t) => t.id);
+    const aid = p.activeId && open.includes(p.activeId) ? p.activeId : open[0] ?? p.threads[0].id;
+    if (!open.includes(aid)) open = [aid, ...open];
+    setOpenTabIds(open);
     setActiveId(aid);
     hydratedRef.current = true;
   }, []);
 
   useEffect(() => {
     if (!hydratedRef.current || threads.length === 0) return;
-    savePersist({ threads, activeId });
-  }, [threads, activeId]);
+    savePersist({ threads, activeId, openTabIds });
+  }, [threads, activeId, openTabIds]);
 
   const activeThread = useMemo(
     () => threads.find((t) => t.id === activeId) ?? threads[0] ?? null,
@@ -164,53 +200,157 @@ export default function AskPulsePanel({
     setThreads((prev) => prev.map((t) => (t.id === id ? fn(t) : t)));
   }, []);
 
-  // A thread is "disposable" when it has no sent messages, no typed draft, and
-  // is not generating — i.e. an abandoned blank chat. We drop these when the
-  // user navigates away so blank chats don't pile up. Anything the user typed or
-  // sent keeps the thread alive.
+  // A chat is "disposable" when it has no sent messages and isn't generating —
+  // an abandoned blank chat we drop entirely (from tabs AND history) when the
+  // user navigates away, instead of letting blanks pile up. Anything typed or
+  // sent keeps it alive. Never drops the last remaining open tab.
   const pruneActiveIfDisposable = useCallback(() => {
     const cur = activeId;
     if (!cur || draft.trim() !== "" || loadingThreads.has(cur)) return;
-    setThreads((prev) => {
-      if (prev.length <= 1) return prev; // always keep at least one chat
-      const t = prev.find((x) => x.id === cur);
-      if (!t || t.messages.length > 0) return prev;
-      return prev.filter((x) => x.id !== cur);
-    });
-  }, [activeId, draft, loadingThreads]);
+    if (openTabIds.length <= 1) return;
+    const t = threads.find((x) => x.id === cur);
+    if (!t || t.messages.length > 0) return;
+    setThreads((prev) => prev.filter((x) => x.id !== cur));
+    setOpenTabIds((prev) => prev.filter((x) => x !== cur));
+  }, [activeId, draft, loadingThreads, openTabIds, threads]);
+
+  const switchTab = useCallback(
+    (id: string) => {
+      if (id === activeId) return;
+      pruneActiveIfDisposable();
+      setActiveId(id);
+      setEditingMessageId(null);
+      setDraft("");
+      setError(null);
+    },
+    [activeId, pruneActiveIfDisposable],
+  );
 
   const newThread = useCallback(() => {
     const t: ChatThread = { id: uid(), title: "New chat", updatedAt: Date.now(), messages: [] };
     const cur = activeId;
-    const dropCur = !!cur && draft.trim() === "" && !loadingThreads.has(cur);
-    setThreads((prev) => {
-      const base = dropCur
-        ? prev.filter((x) => x.id !== cur || x.messages.length > 0)
-        : prev;
-      return [t, ...base];
-    });
+    const curThread = cur ? threads.find((x) => x.id === cur) : undefined;
+    const dropCur =
+      !!cur && draft.trim() === "" && !loadingThreads.has(cur) && !!curThread && curThread.messages.length === 0;
+    setThreads((prev) => [t, ...(dropCur ? prev.filter((x) => x.id !== cur) : prev)]);
+    setOpenTabIds((prev) => [t.id, ...(dropCur ? prev.filter((x) => x !== cur) : prev)]);
     setActiveId(t.id);
     setDraft("");
     setEditingMessageId(null);
     setError(null);
-  }, [activeId, draft, loadingThreads]);
+    setHistoryOpen(false);
+  }, [activeId, draft, loadingThreads, threads]);
+
+  // Open a chat from history (reopen a closed one or jump to an open one).
+  const openTab = useCallback(
+    (id: string) => {
+      setHistoryOpen(false);
+      if (id === activeId) return;
+      pruneActiveIfDisposable();
+      setOpenTabIds((prev) => (prev.includes(id) ? prev : [id, ...prev]));
+      setActiveId(id);
+      setEditingMessageId(null);
+      setDraft("");
+      setError(null);
+    },
+    [activeId, pruneActiveIfDisposable],
+  );
+
+  // Close a tab. Keeps the chat in history (reopen from the history list) unless
+  // it's an abandoned blank, which is dropped. A still-generating chat keeps
+  // generating in the background; its reply lands in history. Opens a fresh chat
+  // if the last tab is closed.
+  const closeTab = useCallback(
+    (id: string) => {
+      const t = threads.find((x) => x.id === id);
+      const disposable = !!t && t.messages.length === 0 && !loadingThreads.has(id);
+      const remaining = openTabIds.filter((x) => x !== id);
+      if (disposable) setThreads((prev) => prev.filter((x) => x.id !== id));
+      if (remaining.length === 0) {
+        const nt: ChatThread = { id: uid(), title: "New chat", updatedAt: Date.now(), messages: [] };
+        setThreads((prev) => [nt, ...(disposable ? prev.filter((x) => x.id !== id) : prev)]);
+        setOpenTabIds([nt.id]);
+        setActiveId(nt.id);
+        setDraft("");
+        setEditingMessageId(null);
+        setError(null);
+        return;
+      }
+      setOpenTabIds(remaining);
+      if (id === activeId) {
+        const idx = openTabIds.indexOf(id);
+        setActiveId(remaining[Math.min(idx, remaining.length - 1)]);
+        setEditingMessageId(null);
+        setDraft("");
+        setError(null);
+      }
+    },
+    [threads, loadingThreads, openTabIds, activeId],
+  );
+
+  // Permanently delete a chat from history (and close its tab).
+  const deleteThread = useCallback(
+    (id: string) => {
+      abortRefs.current.get(id)?.abort();
+      abortRefs.current.delete(id);
+      setLoadingThreads((prev) => {
+        if (!prev.has(id)) return prev;
+        const n = new Set(prev);
+        n.delete(id);
+        return n;
+      });
+      const restThreads = threads.filter((x) => x.id !== id);
+      const restOpen = openTabIds.filter((x) => x !== id);
+      if (restThreads.length === 0) {
+        const nt: ChatThread = { id: uid(), title: "New chat", updatedAt: Date.now(), messages: [] };
+        setThreads([nt]);
+        setOpenTabIds([nt.id]);
+        setActiveId(nt.id);
+        return;
+      }
+      setThreads(restThreads);
+      setOpenTabIds(restOpen.length ? restOpen : [restThreads[0].id]);
+      if (id === activeId || restOpen.length === 0) {
+        setActiveId(restOpen[0] ?? restThreads[0].id);
+        setEditingMessageId(null);
+        setDraft("");
+        setError(null);
+      }
+    },
+    [threads, openTabIds, activeId],
+  );
+
+  const historyList = useMemo(() => {
+    const q = historyQuery.trim().toLowerCase();
+    const matches = q
+      ? threads.filter(
+          (t) =>
+            t.title.toLowerCase().includes(q) ||
+            t.messages.some((m) => m.content.toLowerCase().includes(q)),
+        )
+      : threads;
+    return [...matches].sort((a, b) => b.updatedAt - a.updatedAt);
+  }, [threads, historyQuery]);
 
   const handleClose = useCallback(() => {
-    // Prune an abandoned blank active chat and persist before the panel unmounts
-    // (the save effect won't run after onClose hides us).
+    setHistoryOpen(false);
+    // Prune an abandoned blank active chat and persist before the panel hides
+    // (the save effect won't run after onClose).
     const cur = activeId;
-    if (cur && draft.trim() === "" && !loadingThreads.has(cur) && threads.length > 1) {
+    if (cur && draft.trim() === "" && !loadingThreads.has(cur) && openTabIds.length > 1) {
       const t = threads.find((x) => x.id === cur);
       if (t && t.messages.length === 0) {
-        const next = threads.filter((x) => x.id !== cur);
-        const nextActive = next[0]?.id ?? null;
-        setThreads(next);
+        const nextThreads = threads.filter((x) => x.id !== cur);
+        const nextOpen = openTabIds.filter((x) => x !== cur);
+        const nextActive = nextOpen[0] ?? nextThreads[0]?.id ?? null;
+        setThreads(nextThreads);
+        setOpenTabIds(nextOpen);
         setActiveId(nextActive);
-        savePersist({ threads: next, activeId: nextActive });
+        savePersist({ threads: nextThreads, activeId: nextActive, openTabIds: nextOpen });
       }
     }
     onClose();
-  }, [activeId, draft, loadingThreads, threads, onClose]);
+  }, [activeId, draft, loadingThreads, openTabIds, threads, onClose]);
 
   useEffect(() => {
     if (!activeId || !threadStripRef.current) return;
@@ -366,7 +506,7 @@ export default function AskPulsePanel({
   }
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="relative flex flex-col h-full min-h-0">
       <header
         className="shrink-0 px-4 py-3 flex items-center gap-3 border-b"
         style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}
@@ -412,24 +552,31 @@ export default function AskPulsePanel({
           <Plus className="w-3 h-3" />
           New
         </button>
-        {threads.map((t) => {
+        <button
+          type="button"
+          onClick={() => setHistoryOpen(true)}
+          className="shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-full border"
+          style={{
+            borderColor: "var(--panel-border)",
+            color: "var(--panel-text-secondary)",
+            background: "transparent",
+          }}
+          title="Chat history"
+          aria-label="Chat history"
+        >
+          <Clock className="w-3.5 h-3.5" />
+        </button>
+        {openTabIds.map((id) => {
+          const t = threads.find((x) => x.id === id);
+          if (!t) return null;
           const active = t.id === activeId;
           return (
-            <button
+            <div
               key={t.id}
-              type="button"
               role="tab"
               aria-selected={active}
               data-thread-id={t.id}
-              onClick={() => {
-                if (t.id === activeId) return;
-                pruneActiveIfDisposable();
-                setActiveId(t.id);
-                setEditingMessageId(null);
-                setDraft("");
-                setError(null);
-              }}
-              className="shrink-0 max-w-[min(42vw,220px)] px-3 py-1.5 rounded-full text-[11px] font-medium truncate transition-colors"
+              className="group shrink-0 inline-flex items-center gap-1 max-w-[min(42vw,220px)] pl-3 pr-1.5 py-1.5 rounded-full text-[11px] font-medium transition-colors"
               style={
                 active
                   ? {
@@ -443,9 +590,13 @@ export default function AskPulsePanel({
                       border: "1px solid var(--panel-border)",
                     }
               }
-              title={t.title}
             >
-              <span className="inline-flex items-center gap-1 min-w-0 max-w-full">
+              <button
+                type="button"
+                onClick={() => switchTab(t.id)}
+                className="inline-flex items-center gap-1 min-w-0 truncate"
+                title={t.title}
+              >
                 {loadingThreads.has(t.id) && (
                   <span
                     className="shrink-0 w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"
@@ -453,8 +604,17 @@ export default function AskPulsePanel({
                   />
                 )}
                 <span className="truncate">{t.title}</span>
-              </span>
-            </button>
+              </button>
+              <button
+                type="button"
+                onClick={() => closeTab(t.id)}
+                className="shrink-0 rounded-full p-0.5 opacity-50 hover:opacity-100 hover:bg-black/10 transition-opacity"
+                aria-label="Close chat"
+                title="Close tab"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
           );
         })}
       </div>
@@ -622,6 +782,125 @@ export default function AskPulsePanel({
           </div>
         )}
       </footer>
+
+      {historyOpen && (
+        <div className="absolute inset-0 z-30 flex flex-col" style={{ background: "var(--panel-bg)" }}>
+          <div
+            className="shrink-0 px-3 py-3 flex items-center gap-2 border-b"
+            style={{ borderColor: "var(--panel-border)" }}
+          >
+            <button
+              type="button"
+              onClick={() => setHistoryOpen(false)}
+              className="p-1 rounded-lg"
+              style={{ color: "var(--panel-text-secondary)" }}
+              aria-label="Back to chat"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <span className="text-sm font-bold" style={{ color: "var(--panel-text)" }}>
+              Chat history
+            </span>
+            <span className="text-[11px]" style={{ color: "var(--panel-text-muted)" }}>
+              {threads.length}
+            </span>
+            <button
+              type="button"
+              onClick={() => setHistoryOpen(false)}
+              className="ml-auto p-1 rounded-lg"
+              style={{ color: "var(--panel-text-muted)" }}
+              aria-label="Close history"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="shrink-0 px-3 py-2 border-b" style={{ borderColor: "var(--panel-border)" }}>
+            <div
+              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5"
+              style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)" }}
+            >
+              <Search className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
+              <input
+                value={historyQuery}
+                onChange={(e) => setHistoryQuery(e.target.value)}
+                placeholder="Search chats"
+                className="flex-1 bg-transparent outline-none text-sm min-w-0"
+                style={{ color: "var(--panel-text)" }}
+                aria-label="Search chats"
+              />
+              {historyQuery && (
+                <button
+                  type="button"
+                  onClick={() => setHistoryQuery("")}
+                  aria-label="Clear search"
+                  style={{ color: "var(--panel-text-muted)" }}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
+            {historyList.length === 0 ? (
+              <p className="text-sm text-center py-10" style={{ color: "var(--panel-text-muted)" }}>
+                {historyQuery ? "No chats match your search." : "No chats yet."}
+              </p>
+            ) : (
+              historyList.map((t) => {
+                const isOpen = openTabIds.includes(t.id);
+                const userMsgs = t.messages.filter((m) => m.role === "user").length;
+                return (
+                  <div
+                    key={t.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openTab(t.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openTab(t.id);
+                      }
+                    }}
+                    className="group flex items-center gap-2 rounded-lg px-3 py-2 cursor-pointer hover:bg-white/5"
+                    style={t.id === activeId ? { background: "rgba(59,130,246,0.12)" } : undefined}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate text-sm" style={{ color: "var(--panel-text)" }}>
+                        {t.title}
+                      </div>
+                      <div className="text-[11px] truncate" style={{ color: "var(--panel-text-muted)" }}>
+                        {shortWhen(t.updatedAt)} · {userMsgs} msg{userMsgs === 1 ? "" : "s"}
+                        {isOpen ? " · open" : ""}
+                      </div>
+                    </div>
+                    {loadingThreads.has(t.id) && (
+                      <span
+                        className="shrink-0 w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"
+                        aria-label="Generating"
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteThread(t.id);
+                      }}
+                      className="shrink-0 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-red-500/15"
+                      style={{ color: "var(--panel-text-muted)" }}
+                      aria-label="Delete chat"
+                      title="Delete chat"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
