@@ -3502,20 +3502,27 @@ function MapHome() {
         </motion.div>
       )}
 
-      {viewTab === "ask" && (
-        <motion.div
-          className="absolute inset-x-0 top-0 bottom-[calc(64px+env(safe-area-inset-bottom,0px))] md:bottom-0 z-20 flex flex-col min-h-0 overflow-hidden"
-          style={{ background: "var(--panel-bg)" }}
-        >
-          <AskPulsePanel
-            citySlug={getCurrentCity().slug}
-            isPro={isPro}
-            authLoading={authLoading}
-            onClose={() => setViewTab("map")}
-            onRequestPro={() => setShowUpgrade("Ask Pulse")}
-          />
-        </motion.div>
-      )}
+      {/* Always mounted (even when another tab is active) so an in-flight Ask
+          Pulse generation isn't lost when the user switches tabs and back. */}
+      <motion.div
+        className="absolute inset-x-0 top-0 bottom-[calc(64px+env(safe-area-inset-bottom,0px))] md:bottom-0 flex flex-col min-h-0 overflow-hidden"
+        style={{
+          background: "var(--panel-bg)",
+          visibility: viewTab === "ask" ? "visible" : "hidden",
+          pointerEvents: viewTab === "ask" ? "auto" : "none",
+          opacity: viewTab === "ask" ? 1 : 0,
+          zIndex: viewTab === "ask" ? 20 : 0,
+        }}
+        aria-hidden={viewTab !== "ask"}
+      >
+        <AskPulsePanel
+          citySlug={getCurrentCity().slug}
+          isPro={isPro}
+          authLoading={authLoading}
+          onClose={() => setViewTab("map")}
+          onRequestPro={() => setShowUpgrade("Ask Pulse")}
+        />
+      </motion.div>
 
       </motion.div>{/* end content area wrapper */}
 

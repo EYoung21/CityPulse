@@ -1725,9 +1725,18 @@ def _pulse_inline_incident_cards(
 
     def _strip_ids(line: str, ids: list[str]) -> str:
         for iid in ids:
-            line = re.sub(r"\(\s*incident\s*`?" + iid + r"`?\s*\)", "", line, flags=re.IGNORECASE)
+            # "(id: ID)" / "(incident ID)" / "[ID]" wrappers, then a bare/`ID`.
+            line = re.sub(
+                r"[\(\[]\s*(?:incident|id)?\s*:?\s*`?" + iid + r"`?\s*[\)\]]",
+                "",
+                line,
+                flags=re.IGNORECASE,
+            )
             line = re.sub(r"`?\b" + iid + r"\b`?", "", line)
-        return re.sub(r"[ \t]{2,}", " ", line).rstrip()
+        # tidy trailing/duplicate punctuation left behind (e.g. "... activity  —  .")
+        line = re.sub(r"[ \t]{2,}", " ", line)
+        line = re.sub(r"\s+([.,;:])", r"\1", line)
+        return line.rstrip().rstrip("—-–").rstrip()
 
     def _is_table_row(line: str) -> bool:
         s = line.strip()
@@ -2138,10 +2147,13 @@ async def pulse_chat(
         "- For firearm- or shooting-related questions, the list may start with extra rows that match "
         "gun/shots/weapon language (still from the same capped fetch — not a full database or year tally).\n"
         + tool_block
-        + "- Prefer citing incident id and reported_at when you mention specifics.\n"
-        "- When you reference a specific incident, put it on its own bullet line (not inside a "
-        "table) and include its id, so the app can render it as a card under that line.\n"
-        "- Do not invent incidents, addresses, or outcomes.\n"
+        + "- CARD UI: the app renders a playable incident card for every incident you tag with "
+        "its id. Whenever you mention a specific incident, write it as its own bullet that ends "
+        "with its id in this EXACT form: `(id: <the 12-character id from the JSON>)`. Example:\n"
+        "  `- 34th and 4th (10:00 UTC) — suspicious activity (id: 3b63a5ba37dd)`\n"
+        "  Tag EVERY specific incident this way, copy the id exactly from the JSON, and do not put "
+        "incidents inside tables.\n"
+        "- Do not invent incidents, addresses, ids, or outcomes.\n"
         f"- City context: {city_display} ({city_slug}).\n\n"
         f"The following {len(bundle)} incidents (of {len(fetched)} fetched) are in context"
         + (" (truncated for size)" if truncated_fetch else "")
