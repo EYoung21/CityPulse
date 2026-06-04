@@ -3521,6 +3521,14 @@ function MapHome() {
           authLoading={authLoading}
           onClose={() => setViewTab("map")}
           onRequestPro={() => setShowUpgrade("Ask Pulse")}
+          onViewOnMap={(inc) => {
+            if (inc.lat == null || inc.lng == null) return;
+            setSelectedId(inc.id);
+            setViewTab("map");
+            requestAnimationFrame(() => {
+              mapRef.current?.flyTo(inc.lat!, inc.lng!, 16);
+            });
+          }}
         />
       </motion.div>
 
