@@ -781,7 +781,10 @@
     top: 0.75rem;
     right: var(--pp-map-filters-right, calc(0.75rem + 3.25rem));
     left: var(--pp-map-filters-left, 28rem);
-    max-width: none;
+    /* Shrink to the filters' content width (was `none`, which stretched the
+       pointer-events-auto rail across the whole top band and swallowed clicks
+       on incidents to the right of the filters). */
+    max-width: fit-content;
   }
 
   #incident-map .leaflet-control-zoom {

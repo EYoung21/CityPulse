@@ -86,6 +86,14 @@ const noop = async () => {};
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  // True while a cross-domain ?__pulse_token= sign-in is being exchanged. Folded
+  // into the exposed `loading` so the auth gate shows a spinner and waits for the
+  // exchange instead of bouncing the arriving user to /landing first.
+  const [crossDomainPending, setCrossDomainPending] = useState<boolean>(
+    () =>
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).has("__pulse_token")
+  );
   const [tier, setTier] = useState<UserTier>("free");
   // proUntil mirrors users/{uid}.proUntil from Firestore. It's set
   // by the Stripe webhook when a finite-duration pass (currently
@@ -121,6 +129,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const newUrl = window.location.pathname + (clean ? `?${clean}` : "") + window.location.hash;
     window.history.replaceState({}, "", newUrl);
 
+    // Safety net so a hung/failed exchange can't leave the gate spinning forever;
+    // on success, onAuthStateChanged sets `user` and the effect below clears it.
+    const safety = window.setTimeout(() => setCrossDomainPending(false), 8000);
     (async () => {
       try {
         const res = await fetch("/api/auth/exchange", {
@@ -128,15 +139,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ idToken }),
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          setCrossDomainPending(false);
+          return;
+        }
         const { customToken } = await res.json();
         const auth = getAuth(getFirebaseApp());
         await fbSignInWithCustomToken(auth, customToken);
       } catch (e) {
         console.warn("Cross-domain auth failed:", e);
+        setCrossDomainPending(false);
       }
     })();
+    return () => window.clearTimeout(safety);
   }, []);
+
+  // Clear the cross-domain wait as soon as the exchanged user is signed in.
+  useEffect(() => {
+    if (user) setCrossDomainPending(false);
+  }, [user]);
 
   useEffect(() => {
     if (!isFirebaseConfigured()) {
@@ -438,7 +459,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       user,
-      loading,
+      loading: loading || crossDomainPending,
       isAdmin,
       tier,
       isPro,
@@ -456,6 +477,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [
       user,
       loading,
+      crossDomainPending,
       isAdmin,
       tier,
       isPro,
