@@ -108,6 +108,7 @@ export interface AskPulsePanelProps {
   authLoading: boolean;
   onClose: () => void;
   onRequestPro: () => void;
+  onViewOnMap?: (inc: Incident) => void;
 }
 
 export default function AskPulsePanel({
@@ -116,6 +117,7 @@ export default function AskPulsePanel({
   authLoading,
   onClose,
   onRequestPro,
+  onViewOnMap,
 }: AskPulsePanelProps) {
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -710,7 +712,7 @@ export default function AskPulsePanel({
                     </div>
                   </div>
                 ) : m.role === "assistant" ? (
-                  <AskPulseAnswer content={m.content} incidents={m.cited} />
+                  <AskPulseAnswer content={m.content} incidents={m.cited} onViewOnMap={onViewOnMap} />
                 ) : (
                   m.content
                 )}

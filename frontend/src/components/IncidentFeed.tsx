@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { Incident } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
 import { incidentHeadline, incidentLocationLabel } from "@/lib/incident-display";
@@ -9,7 +9,7 @@ import IncidentDetail from "./IncidentDetail";
 import FeedIncidentSkeleton from "./FeedIncidentSkeleton";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { haptic } from "@/lib/native";
-import { toggleFeedAudio } from "./FeedAudioMiniPlayer";
+import { toggleFeedAudio, subscribeFeedAudio, getFeedAudioState } from "./FeedAudioMiniPlayer";
 import { Drawer } from "vaul";
 import {
   AlertTriangle,
@@ -135,7 +135,11 @@ export function IncidentCard({
   const sev = getSeverity(inc.severity_category);
   const isHighSev = inc.s_base >= 0.7;
   const confidencePct = Math.round(inc.confidence * 100);
-  const [playing, setPlaying] = useState(false);
+  // Reflect the real shared-audio state so the button distinguishes play vs.
+  // pause (and resets when the clip ends or another incident takes over).
+  const [audioSnap, setAudioSnap] = useState(getFeedAudioState);
+  useEffect(() => subscribeFeedAudio(() => setAudioSnap({ ...getFeedAudioState() })), []);
+  const playing = audioSnap.incidentId === inc.id && audioSnap.playing;
   const immersive = density === "immersive";
   const headline = incidentHeadline(inc);
   const locationLabel = incidentLocationLabel(inc);
@@ -158,7 +162,6 @@ export function IncidentCard({
     e.stopPropagation();
     void haptic("light");
     toggleFeedAudio(inc, headline);
-    setPlaying(true);
   };
 
   const supportingText =
@@ -323,11 +326,13 @@ export function IncidentCard({
           <span className="text-[11px] font-mono" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }}>
             {timeAgo(inc.reported_at)}
           </span>
-          <ChevronDown
-            className={`w-4 h-4 transition-transform ${isSelected ? "rotate-180" : ""}`}
-            style={{ color: isSelected ? "#60a5fa" : "var(--panel-text-muted, rgba(255,255,255,0.35))" }}
-            aria-hidden
-          />
+          {showInlineDetail && (
+            <ChevronDown
+              className={`w-4 h-4 transition-transform ${isSelected ? "rotate-180" : ""}`}
+              style={{ color: isSelected ? "#60a5fa" : "var(--panel-text-muted, rgba(255,255,255,0.35))" }}
+              aria-hidden
+            />
+          )}
           {(inc.mention_count ?? 0) > 1 && inc.last_mention_at && (
             <span
               className="text-[10px] font-mono px-1.5 py-0.5 rounded"

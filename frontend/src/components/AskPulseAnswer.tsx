@@ -17,9 +17,11 @@ type Segment = { kind: "text"; value: string } | { kind: "card"; id: string };
 export function AskPulseAnswer({
   content,
   incidents,
+  onViewOnMap,
 }: {
   content: string;
   incidents?: Incident[];
+  onViewOnMap?: (inc: Incident) => void;
 }) {
   const byId = useMemo(() => {
     const m = new Map<string, Incident>();
@@ -65,9 +67,10 @@ export function AskPulseAnswer({
               inc={inc}
               isSelected={false}
               onSelect={() => {}}
+              onViewOnMap={onViewOnMap ? () => onViewOnMap(inc) : undefined}
               density="compact"
               showInlineDetail={false}
-              showMapThumbnail={false}
+              showMapThumbnail
             />
           </div>
         );
