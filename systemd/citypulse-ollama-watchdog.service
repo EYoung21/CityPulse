@@ -1,0 +1,8 @@
+[Unit]
+Description=CityPulse Ollama wedge watchdog (restarts ollama if inference hangs)
+After=ollama.service
+
+[Service]
+Type=oneshot
+# Runs as root so it can restart ollama.service when wedged.
+ExecStart=/usr/local/bin/citypulse-ollama-watchdog.sh
