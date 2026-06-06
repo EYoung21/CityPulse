@@ -37,7 +37,7 @@ async function maybeIdToken(): Promise<string | null> {
   return p;
 }
 
-function handleClampHeaders(res: Response, feature = "History beyond 1 hour") {
+function handleClampHeaders(res: Response, feature = "History beyond 24 hours") {
   const clamped = res.headers.get("x-pulse-clamped");
   if (clamped === "1") requestUpgrade(feature);
 }

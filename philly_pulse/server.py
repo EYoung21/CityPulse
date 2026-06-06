@@ -33,8 +33,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Free tier read window: unauthenticated callers (and authed free users)
-# can only read incidents within this most-recent time horizon.
-FREE_INCIDENT_WINDOW_SECONDS = 60 * 60
+# can only read incidents within this most-recent time horizon. Defaults to
+# 24h so the standard 24h map/feed view is usable without Pro; override via env.
+FREE_INCIDENT_WINDOW_SECONDS = int(
+    os.environ.get("FREE_INCIDENT_WINDOW_SECONDS", str(24 * 60 * 60))
+)
 
 # When False, ingest only stores raw transcript+audio — no LLM/inhibitor/geocode.
 # Flip to True (or set env PHILLY_PULSE_LLM_AUTO=1) to resume automatic processing.

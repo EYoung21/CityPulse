@@ -148,15 +148,15 @@ export default function ApiDocsSection() {
       </pre>
       <SubNote>
         Without a valid Pro token, the server clamps results to the last{" "}
-        <strong>1 hour</strong> (<code style={INLINE_CODE_STYLE}>FREE_INCIDENT_WINDOW_SECONDS</code>{" "}
-        = 3600). Response headers surface the clamp:
+        <strong>24 hours</strong> (<code style={INLINE_CODE_STYLE}>FREE_INCIDENT_WINDOW_SECONDS</code>{" "}
+        = 86400). Response headers surface the clamp:
       </SubNote>
       <ul style={{ margin: "0 0 12px 18px", padding: 0, fontSize: "0.92rem", color: "rgba(255,255,255,0.75)" }}>
         <li>
           <code style={INLINE_CODE_STYLE}>X-Pulse-Clamped: 1</code> when the caller asked for more history than the free window allows.
         </li>
         <li>
-          <code style={INLINE_CODE_STYLE}>X-Pulse-Free-Window-Sec: 3600</code> on free responses so clients can compute their own effective floor.
+          <code style={INLINE_CODE_STYLE}>X-Pulse-Free-Window-Sec: 86400</code> on free responses so clients can compute their own effective floor.
         </li>
         <li>
           JSON body <code style={INLINE_CODE_STYLE}>meta.tier</code> is{" "}
