@@ -1,0 +1,18 @@
+# Logrotate for the Lambda live-transcriber log.
+# Install: sudo cp systemd/pulse-live.logrotate /etc/logrotate.d/pulse-live
+#
+# pulse-live@<city> services append stdout/stderr to a single shared file via
+# `StandardOutput=append:`. copytruncate rotates in place so the services keep
+# their open append handle (no restart needed). A crash-loop can balloon this
+# log to hundreds of MB, so cap it with maxsize too.
+/var/log/pulse-live.log {
+    su root root
+    daily
+    rotate 5
+    maxsize 200M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
