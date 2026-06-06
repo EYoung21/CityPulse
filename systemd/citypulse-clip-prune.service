@@ -1,0 +1,11 @@
+[Unit]
+Description=CityPulse local audio-clip staging prune (GCS-backed, transient)
+
+[Service]
+Type=oneshot
+User=ubuntu
+# Source lives in the repo at scripts/citypulse-clip-prune.sh; deploy to:
+ExecStart=/usr/local/bin/citypulse-clip-prune.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
