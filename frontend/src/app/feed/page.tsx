@@ -4,7 +4,12 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Crosshair, Download, Code, Zap, Activity, Lock } from "lucide-react";
-import { TIME_FILTERS, sinceIsoForTimeFilterHours } from "@/lib/time-filters";
+import {
+  TIME_FILTERS,
+  DEFAULT_TIME_FILTER_HOURS,
+  LARGEST_FREE_TIME_FILTER_HOURS,
+  sinceIsoForTimeFilterHours,
+} from "@/lib/time-filters";
 import IncidentFeed from "@/components/IncidentFeed";
 import IncidentTypeFilterChips from "@/components/IncidentTypeFilterChips";
 import { incidentMatchesCategoryFilter } from "@/lib/incident-category-groups";
@@ -92,7 +97,7 @@ function FeedMobileTabSwipeHost({ expandedId }: { expandedId: string | null }) {
 
 export default function FeedPage() {
   const [mode, setMode] = useState<FeedMode>("recent");
-  const [timeFilter, setTimeFilter] = useState(1);
+  const [timeFilter, setTimeFilter] = useState(DEFAULT_TIME_FILTER_HOURS);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [activeCats, setActiveCats] = useState<Set<string>>(() => new Set());
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -101,15 +106,15 @@ export default function FeedPage() {
 
   const city = getCurrentCity();
   const { isPro } = useAuth();
-  const freeSinceIso = useMemo(
-    () => new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-    []
-  );
 
   const feedSinceIso = useMemo(() => {
-    if (!isPro) return freeSinceIso;
-    return sinceIsoForTimeFilterHours(timeFilter) ?? undefined;
-  }, [isPro, timeFilter, freeSinceIso]);
+    // Free accounts can look back up to the largest free window (24h); Pro
+    // keeps whatever (deeper) window is selected.
+    const effectiveHours = isPro
+      ? timeFilter
+      : Math.min(timeFilter, LARGEST_FREE_TIME_FILTER_HOURS);
+    return sinceIsoForTimeFilterHours(effectiveHours) ?? undefined;
+  }, [isPro, timeFilter]);
 
   const {
     incidents,

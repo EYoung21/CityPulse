@@ -122,6 +122,8 @@ import {
 } from "@/lib/api";
 import {
   TIME_FILTERS,
+  DEFAULT_TIME_FILTER_HOURS,
+  LARGEST_FREE_TIME_FILTER_HOURS,
   normalizeTimeFilterHours,
   sinceIsoForTimeFilterHours,
   timeFilterNeedsExtendedFetch,
@@ -199,15 +201,17 @@ const STORAGE_TIME_FILTER_HOURS = "pulse_time_filter_hours";
 const STORAGE_ACTIVE_CATS = "pulse_active_cats";
 
 function readStoredTimeFilterHours(): number {
-  if (typeof window === "undefined") return 1;
+  if (typeof window === "undefined") return DEFAULT_TIME_FILTER_HOURS;
   try {
     const raw = sessionStorage.getItem(STORAGE_TIME_FILTER_HOURS);
-    if (raw == null || raw === "") return 1;
+    // Fresh session (nothing stored): open on the 24h view. Non-Pro sessions
+    // are clamped down to the largest free window by the effect below.
+    if (raw == null || raw === "") return DEFAULT_TIME_FILTER_HOURS;
     const n = Number(raw);
-    if (Number.isNaN(n)) return 1;
+    if (Number.isNaN(n)) return DEFAULT_TIME_FILTER_HOURS;
     return normalizeTimeFilterHours(n);
   } catch {
-    return 1;
+    return DEFAULT_TIME_FILTER_HOURS;
   }
 }
 
@@ -378,7 +382,7 @@ function MapHome() {
       setViewTab(v);
     }
   }, [searchParams]);
-  const [timeFilter, setTimeFilter] = useState<number>(1);
+  const [timeFilter, setTimeFilter] = useState<number>(DEFAULT_TIME_FILTER_HOURS);
   const [activeCats, setActiveCats] = useState<Set<string>>(() => new Set());
 
   /** Restore after SSR so we do not clobber sessionStorage in the persist effect before this runs. */
@@ -403,7 +407,7 @@ function MapHome() {
     }
   }, [activeCats]);
 
-  /** If auth says non‑Pro, drop stored lookback to the largest free window (1h). */
+  /** If auth says non‑Pro, drop stored lookback to the largest free window. */
   useEffect(() => {
     if (authLoading) return;
     if (isPro) return;
@@ -413,7 +417,7 @@ function MapHome() {
       TIME_FILTERS.find(
         (t) => Number.isFinite(t.hours) && Math.abs(t.hours - canon) < 1e-4
       );
-    if (row?.pro) setTimeFilter(1);
+    if (row?.pro) setTimeFilter(LARGEST_FREE_TIME_FILTER_HOURS);
   }, [isPro, authLoading, timeFilter]);
 
   const [mapTap, setMapTap] = useState<{ lat: number; lng: number } | null>(null);

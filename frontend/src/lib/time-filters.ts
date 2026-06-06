@@ -11,19 +11,19 @@ export type TimeFilterRow = {
 };
 
 export const TIME_FILTERS: readonly TimeFilterRow[] = [
-  // Free: live windows ≤1h
+  // Free: live windows up to 24h (so the default view is usable without Pro)
   { label: "5m", hours: 5 / 60, pro: false },
   { label: "10m", hours: 10 / 60, pro: false },
   { label: "15m", hours: 15 / 60, pro: false },
   { label: "30m", hours: 0.5, pro: false },
   { label: "45m", hours: 0.75, pro: false },
   { label: "1h", hours: 1, pro: false },
-  // Pro: depth / lookback
-  { label: "2h", hours: 2, pro: true },
-  { label: "3h", hours: 3, pro: true },
-  { label: "6h", hours: 6, pro: true },
-  { label: "12h", hours: 12, pro: true },
-  { label: "24h", hours: 24, pro: true },
+  { label: "2h", hours: 2, pro: false },
+  { label: "3h", hours: 3, pro: false },
+  { label: "6h", hours: 6, pro: false },
+  { label: "12h", hours: 12, pro: false },
+  { label: "24h", hours: 24, pro: false },
+  // Pro: depth / lookback beyond a day
   { label: "2d", hours: 48, pro: true },
   { label: "3d", hours: 72, pro: true },
   { label: "5d", hours: 120, pro: true },
@@ -37,6 +37,16 @@ export const TIME_FILTERS: readonly TimeFilterRow[] = [
   // Infinity → client filter accepts all merged rows; extended paging has no lower bound.
   { label: "All", hours: Number.POSITIVE_INFINITY, pro: true },
 ] as const;
+
+/** Largest lookback window available without CityPulse Pro (currently 1h).
+ *  Derived from the table so it tracks any change to the free tier. */
+export const LARGEST_FREE_TIME_FILTER_HOURS = Math.max(
+  ...TIME_FILTERS.filter((t) => !t.pro && Number.isFinite(t.hours)).map((t) => t.hours)
+);
+
+/** Default map/feed lookback on a fresh session. Pro sessions keep this 24h
+ *  view; non-Pro sessions are dropped to {@link LARGEST_FREE_TIME_FILTER_HOURS}. */
+export const DEFAULT_TIME_FILTER_HOURS = 24;
 
 /** Values accepted by GET /api/stats/count?hours= */
 export const COUNT_API_ALLOWED_HOURS = new Set(
