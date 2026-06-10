@@ -43,10 +43,18 @@ type SearchMode = "places" | "incidents";
 
 const FREE_INCIDENT_SEARCH_HOURS = 1;
 
+interface SubmittedPlaceSearch {
+  query: string;
+  results: GeoResult[];
+  loading: boolean;
+  failed: boolean;
+}
+
 export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 24, onSelectIncident, onPlaceSelected }: Props) {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<SearchMode>("places");
   const [suggestions, setSuggestions] = useState<GeoResult[]>([]);
+  const [submittedPlaceSearch, setSubmittedPlaceSearch] = useState<SubmittedPlaceSearch | null>(null);
   const [incidentResults, setIncidentResults] = useState<Incident[]>([]);
   const [incidentTotal, setIncidentTotal] = useState(0);
   const [recents, setRecents] = useState<RecentSearch[]>([]);
@@ -64,6 +72,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const incidentDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const incidentAbortRef = useRef<AbortController | null>(null);
+  const placeSubmitSeqRef = useRef(0);
   const voiceRef = useRef<{ stop: () => void } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const { isPro } = useAuth();
@@ -113,8 +122,53 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
     }, 200);
   }, []);
 
+  const submitPlaceSearch = useCallback(async (rawQuery: string) => {
+    const q = rawQuery.trim();
+    if (q.length < 2) return;
+
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = undefined;
+    }
+
+    const seq = placeSubmitSeqRef.current + 1;
+    placeSubmitSeqRef.current = seq;
+    setMode("places");
+    setOpen(false);
+    setLoading(false);
+    setSuggestions([]);
+    setSaveTarget(null);
+    setSubmittedPlaceSearch({
+      query: q,
+      results: [],
+      loading: true,
+      failed: false,
+    });
+    inputRef.current?.blur();
+
+    try {
+      const results = await geocodePhilly(q);
+      if (placeSubmitSeqRef.current !== seq) return;
+      setSubmittedPlaceSearch({
+        query: q,
+        results,
+        loading: false,
+        failed: false,
+      });
+      if (results[0]) onFlyTo(results[0].lat, results[0].lng);
+    } catch {
+      if (placeSubmitSeqRef.current !== seq) return;
+      setSubmittedPlaceSearch({
+        query: q,
+        results: [],
+        loading: false,
+        failed: true,
+      });
+    }
+  }, [onFlyTo]);
+
   /** Hits `/api/incidents/search` with the same time-window the user
-   *  has set on the map. We cap the window at 3h for free users so the
+   *  has set on the map. We cap the window at 1h for free users so the
    *  search result set matches what the rest of the app shows them
    *  (the time-filter chip already enforces this for the map). */
   const incidentSearch = useCallback((q: string) => {
@@ -158,6 +212,21 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
     }, 250);
   }, [isPro, timeFilterHours]);
 
+  const submitSearch = useCallback(async () => {
+    const q = query.trim();
+    if (q.length < 2) return;
+
+    if (mode === "incidents") {
+      placeSubmitSeqRef.current += 1;
+      setSubmittedPlaceSearch(null);
+      setOpen(true);
+      incidentSearch(q);
+      return;
+    }
+
+    await submitPlaceSearch(q);
+  }, [incidentSearch, mode, query, submitPlaceSearch]);
+
   // Re-run the active search whenever the mode flips or the user
   // changes the time filter mid-search (so toggling to "Last 24h"
   // immediately broadens an in-flight query without requiring a
@@ -175,6 +244,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
 
   const handleSelect = (s: GeoResult) => {
     const primary = s.display_name.split(",")[0];
+    setSubmittedPlaceSearch(null);
 
     // "Set home" / "Set work" flow: when the user tapped an unset
     // Home/Work chip we redirect the next selection into that slot
@@ -337,6 +407,15 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
   const showIncidentResults = open && mode === "incidents" && query.trim().length >= 2;
   const showTabs = open && query.trim().length >= 2;
   const proCappedNotice = mode === "incidents" && !isPro && timeFilterHours > FREE_INCIDENT_SEARCH_HOURS;
+  const submittedQueryMatches =
+    submittedPlaceSearch !== null &&
+    query.trim().toLowerCase() === submittedPlaceSearch.query.toLowerCase();
+  const showSubmittedPlaceResults =
+    mode === "places" &&
+    submittedQueryMatches &&
+    !showRecents &&
+    !showLocalMatches &&
+    !showSuggestions;
 
   const incidentWindowLabel = (() => {
     const h = isPro ? timeFilterHours : Math.min(timeFilterHours, FREE_INCIDENT_SEARCH_HOURS);
@@ -348,7 +427,11 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
 
   return (
     <div className="p-4 pb-2">
-      <div
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submitSearch();
+        }}
         className="flex items-center gap-3 rounded-full px-4 py-2.5 transition-colors shadow-lg"
         style={{
           background: "var(--panel-input-bg)",
@@ -356,7 +439,14 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
           boxShadow: "0 2px 8px var(--panel-shadow)",
         }}
       >
-        <Search className="w-5 h-5 text-blue-500 shrink-0" />
+        <button
+          type="submit"
+          className="-ml-1 w-7 h-7 rounded-full flex items-center justify-center shrink-0 transition-colors"
+          title="Search"
+          aria-label="Search"
+        >
+          <Search className="w-5 h-5 text-blue-500" />
+        </button>
         <input
           ref={inputRef}
           type="text"
@@ -364,9 +454,18 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
           onChange={(e) => {
             const v = e.target.value;
             setQuery(v);
+            if (submittedPlaceSearch && v.trim().toLowerCase() !== submittedPlaceSearch.query.toLowerCase()) {
+              placeSubmitSeqRef.current += 1;
+              setSubmittedPlaceSearch(null);
+            }
             setOpen(true);
             geocode(v);
             if (mode === "incidents") incidentSearch(v);
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            void submitSearch();
           }}
           onFocus={() => setOpen(true)}
           placeholder={voiceActive ? "Listening…" : mode === "incidents" ? "Search scanner feed" : "Search CityPulse"}
@@ -375,9 +474,11 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
         />
         {query && !voiceActive && (
           <button
+            type="button"
             onClick={() => {
               setQuery("");
               setSuggestions([]);
+              setSubmittedPlaceSearch(null);
               setIncidentResults([]);
               setIncidentTotal(0);
               setOpen(true);
@@ -390,6 +491,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
         )}
         {voiceSupported && (
           <button
+            type="button"
             onClick={startVoice}
             title={voiceActive ? "Stop listening" : "Voice search"}
             aria-label={voiceActive ? "Stop voice search" : "Start voice search"}
@@ -403,7 +505,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
             <Mic className={`w-4 h-4 ${voiceActive ? "voice-mic-pulse" : ""}`} />
           </button>
         )}
-      </div>
+      </form>
 
       {showTabs && (
         <div
@@ -917,6 +1019,139 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
         </div>
       )}
 
+      {showSubmittedPlaceResults && (
+        <div
+          className={isMobile ? "mt-2 -mx-4 overflow-hidden" : "mt-2 rounded-xl overflow-hidden shadow-lg"}
+          style={
+            isMobile
+              ? { borderTop: "1px solid var(--panel-border)", borderBottom: "1px solid var(--panel-border)" }
+              : { background: "var(--panel-bg-secondary)", border: "1px solid var(--panel-border)" }
+          }
+        >
+          <div
+            className="flex items-center justify-between px-4 py-2"
+            style={{ borderBottom: "1px solid var(--panel-border)" }}
+          >
+            <span
+              className="text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1.5"
+              style={{ color: "var(--panel-text-muted)" }}
+            >
+              <MapPin className="w-3 h-3" /> Results
+            </span>
+            {!submittedPlaceSearch.loading && (
+              <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+                {submittedPlaceSearch.results.length} place{submittedPlaceSearch.results.length === 1 ? "" : "s"}
+              </span>
+            )}
+          </div>
+
+          {submittedPlaceSearch.loading && (
+            <div className="px-4 py-3 flex items-center gap-3">
+              <Loader2 className="w-4 h-4 animate-spin" style={{ color: "var(--panel-text-muted)" }} />
+              <span className="text-xs" style={{ color: "var(--panel-text-muted)" }}>
+                Searching places...
+              </span>
+            </div>
+          )}
+
+          {!submittedPlaceSearch.loading && submittedPlaceSearch.failed && (
+            <div className="px-4 py-3 text-xs" style={{ color: "var(--panel-text-muted)" }}>
+              Could not finish that search. Try again in a few seconds.
+            </div>
+          )}
+
+          {!submittedPlaceSearch.loading && !submittedPlaceSearch.failed && submittedPlaceSearch.results.length === 0 && (
+            <div className="px-4 py-3 text-xs" style={{ color: "var(--panel-text-muted)" }}>
+              No places matching “{submittedPlaceSearch.query}”.
+            </div>
+          )}
+
+          {submittedPlaceSearch.results.map((s, i) => {
+            const parts = s.display_name.split(",");
+            const primary = parts[0].trim();
+            const secondary = parts.slice(1, 3).map((p) => p.trim()).join(", ");
+            const key = `submitted-${i}`;
+            const expanded = saveTarget === key;
+            const saved = isAlreadySaved(s.lat, s.lng);
+            return (
+              <div key={`${s.lat},${s.lng},${i}`} style={{ borderBottom: "1px solid var(--panel-border)" }}>
+                <div
+                  onClick={() => handleSelect(s)}
+                  className={`w-full text-left flex items-start gap-3 transition-colors cursor-pointer ${
+                    isMobile ? "px-4 py-3.5" : "px-4 py-3"
+                  }`}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                >
+                  <div
+                    className={`rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+                      isMobile ? "w-9 h-9" : "w-8 h-8"
+                    }`}
+                    style={{ background: i === 0 ? "rgba(59,130,246,0.14)" : "var(--panel-input-bg)" }}
+                  >
+                    <MapPin className="w-4 h-4" style={{ color: i === 0 ? "#3b82f6" : "var(--panel-text-muted)" }} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate" style={{ color: "var(--panel-text)" }}>
+                      {primary}
+                    </p>
+                    {secondary && (
+                      <p className="text-xs truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                        {secondary}
+                      </p>
+                    )}
+                  </div>
+                  {!isMobile && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSaveTarget(expanded ? null : key);
+                        }}
+                        className="shrink-0 mt-1 transition-colors"
+                        style={{ color: saved ? "#a855f7" : "var(--panel-text-muted)" }}
+                        title={saved ? "Already saved" : "Save place"}
+                        aria-label={saved ? `Already saved ${primary}` : `Save ${primary}`}
+                        aria-pressed={expanded}
+                      >
+                        <Bookmark
+                          className="w-4 h-4"
+                          {...(saved ? { fill: "currentColor" } : {})}
+                        />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDirections(primary, s);
+                          remember(s);
+                        }}
+                        className="text-blue-500/50 hover:text-blue-500 shrink-0 mt-1"
+                        title="Get directions"
+                        aria-label={`Get directions to ${primary}`}
+                      >
+                        <Navigation className="w-4 h-4" />
+                      </button>
+                    </>
+                  )}
+                </div>
+                {expanded && (
+                  <div className="px-4 pb-3">
+                    <QuickSavePlace
+                      lat={s.lat}
+                      lng={s.lng}
+                      suggestedName={primary}
+                      autoFocus
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {showIncidentResults && (
         <div
           className={isMobile ? "mt-2 -mx-4 overflow-hidden" : "mt-2 rounded-xl overflow-hidden shadow-lg"}
@@ -949,7 +1184,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
               }}
             >
               <Lock className="w-3 h-3" />
-              Free tier searches the last 3h. Pro searches your full {timeFilterHours}h window.
+              Free tier searches the last 1h. Pro searches your full {timeFilterHours}h window.
             </div>
           )}
           {incidentLoading && incidentResults.length === 0 && (

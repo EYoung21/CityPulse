@@ -261,13 +261,12 @@ const THEME_OPTIONS = [
 ];
 
 /**
- * Mobile-aware home shell: per the build plan (§4) mobile users land
- * on `/feed` by default while desktop users land on the map. The
- * heavy `MapHome` component below isn't even mounted while we're
- * deciding (or while we're redirecting), which avoids:
- *   - briefly painting the full map UI on a phone before bouncing
- *   - eagerly subscribing to Firestore / spinning up Leaflet on a
- *     visit that is about to leave the route anyway
+ * Mobile-aware home shell. Fresh visits are map-first on every
+ * viewport; the redirect path is reserved for explicit feed hints or a
+ * saved feed preference. The heavy `MapHome` component below isn't
+ * mounted while we're deciding (or while we're redirecting), which
+ * avoids eagerly subscribing to Firestore / spinning up Leaflet on a
+ * visit that is about to leave the route anyway.
  */
 function HomeInner() {
   const decision = useMobileHomeRedirect();
