@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
+import { cert, getApps, initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 
 function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -7,11 +9,47 @@ function getStripe() {
   return new Stripe(key, { apiVersion: "2026-03-25.dahlia" });
 }
 
+function ensureAdmin() {
+  if (getApps().length === 0) {
+    const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+    if (process.env.FIREBASE_ADMIN_KEY) {
+      initializeApp({ credential: cert(JSON.parse(process.env.FIREBASE_ADMIN_KEY)) });
+    } else {
+      initializeApp({ projectId });
+    }
+  }
+  return getAuth();
+}
+
 export async function POST(req: NextRequest) {
   try {
     const stripe = getStripe();
 
-    const { plan, uid, email } = await req.json();
+    // Derive the caller's identity from a verified Firebase ID token.
+    // The uid that ends up in Stripe metadata.firebaseUid MUST come from
+    // the token, never the request body — otherwise a client could mint
+    // a Pro grant for any account by passing someone else's uid. Any
+    // `uid` in the body is ignored; only `plan` is still read from it.
+    const authHeader = req.headers.get("authorization") || "";
+    const idToken = authHeader.startsWith("Bearer ")
+      ? authHeader.slice("Bearer ".length).trim()
+      : "";
+    if (!idToken) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    let uid: string;
+    let email: string | undefined;
+    try {
+      const decoded = await ensureAdmin().verifyIdToken(idToken);
+      uid = decoded.uid;
+      email = decoded.email;
+    } catch (err) {
+      console.error("Checkout token verification failed:", err);
+      return NextResponse.json({ error: "Invalid or expired token" }, { status: 401 });
+    }
+
+    const { plan } = await req.json();
 
     // Resolve the Stripe Price ID and Checkout mode for the selected
     // plan. The 3-day pass is the only one-time SKU we sell — it uses
@@ -45,8 +83,8 @@ export async function POST(req: NextRequest) {
     // don't need that mirror because they're handled via the
     // customer.subscription.* event family on the customer object.
     const sessionMetadata: Record<string, string> = isOneTimePass
-      ? { firebaseUid: uid || "", passType: "3day" }
-      : { firebaseUid: uid || "" };
+      ? { firebaseUid: uid, passType: "3day" }
+      : { firebaseUid: uid };
 
     const session = await stripe.checkout.sessions.create({
       mode: isOneTimePass ? "payment" : "subscription",

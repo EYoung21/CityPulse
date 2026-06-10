@@ -124,10 +124,17 @@ def post_transcript(
             payload["audio_data"] = audio_data
 
         body = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        # Authenticate to the ingest endpoint when the shared secret is
+        # configured. Absent the env var we send no auth header, matching the
+        # server's allow-when-unset rollout behaviour.
+        ingest_secret = os.environ.get("PULSE_INGEST_SECRET")
+        if ingest_secret:
+            headers["Authorization"] = f"Bearer {ingest_secret}"
         req = Request(
             bridge_url,
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
         try:

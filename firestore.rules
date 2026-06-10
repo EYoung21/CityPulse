@@ -6,6 +6,7 @@ service cloud.firestore {
     // UI and these rules consult the same canonical list.
     function isAdmin() {
       return request.auth != null
+        && request.auth.token.email_verified == true
         && request.auth.token.email in [
             'eliyoung4now@gmail.com',
             'kethansany@gmail.com',
@@ -23,9 +24,25 @@ service cloud.firestore {
     }
     match /users/{userId} {
       allow read: if request.auth != null && request.auth.uid == userId;
-      allow create, update: if request.auth != null
+      // The client only ever writes profile-sync fields to the user
+      // ROOT doc. Tier/billing fields (tier, proUntil, passGrantedAt,
+      // stripeCustomerId, tierUpdatedAt) are written exclusively by the
+      // backend via the Admin SDK (which bypasses these rules), so the
+      // client must never be able to set them — otherwise a signed-in
+      // user could grant themselves Pro by writing tier:'pro'.
+      allow create: if request.auth != null
         && request.auth.uid == userId
-        && request.auth.token.firebase.sign_in_provider != 'anonymous';
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.resource.data.keys()
+            .hasOnly(['email', 'displayName', 'photoURL', 'updatedAt']);
+      // Use diff().affectedKeys() (not keys().hasOnly) so a merge
+      // update that leaves a server-set field like `tier` untouched is
+      // still allowed — only the CHANGED keys are constrained.
+      allow update: if request.auth != null
+        && request.auth.uid == userId
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['email', 'displayName', 'photoURL', 'updatedAt']);
 
       match /savedDestinations/{destId} {
         allow read, write: if request.auth != null
@@ -79,7 +96,13 @@ service cloud.firestore {
     // Firebase console.
     match /feedback/{id} {
       allow read: if isAdmin();
-      allow create: if request.resource.data.message is string
+      allow create: if request.resource.data.keys().hasOnly([
+            'kind', 'message', 'contactEmail', 'ownerUid', 'ownerEmail',
+            'ownerDisplayName', 'ownerIsAnonymous', 'appVersion',
+            'context', 'createdAt', 'status'
+          ])
+        && request.resource.data.status == 'new'
+        && request.resource.data.message is string
         && request.resource.data.message.size() > 0
         && request.resource.data.message.size() <= 1000
         && request.resource.data.kind in ['bug', 'feature', 'praise', 'other']
@@ -139,6 +162,8 @@ service cloud.firestore {
         && request.resource.data.resolvedCount is number
         && request.resource.data.stillCount >= 0
         && request.resource.data.resolvedCount >= 0
+        && request.resource.data.stillCount <= 1
+        && request.resource.data.resolvedCount <= 1
         && request.resource.data.lastVoterUid == request.auth.uid;
       allow update: if request.auth != null
         && request.auth.token.firebase.sign_in_provider != 'anonymous'
@@ -148,6 +173,10 @@ service cloud.firestore {
         && request.resource.data.resolvedCount is number
         && request.resource.data.stillCount >= 0
         && request.resource.data.resolvedCount >= 0
+        && request.resource.data.stillCount <= resource.data.stillCount + 1
+        && request.resource.data.stillCount >= resource.data.stillCount - 1
+        && request.resource.data.resolvedCount <= resource.data.resolvedCount + 1
+        && request.resource.data.resolvedCount >= resource.data.resolvedCount - 1
         && request.resource.data.lastVoterUid == request.auth.uid;
       allow delete: if isAdmin();
 

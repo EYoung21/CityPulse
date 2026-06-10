@@ -27,6 +27,7 @@ import {
   type FeedInfo,
 } from "@/hooks/useAdminStream";
 import { subscribeExtractions, subscribeAllExtractions } from "@/lib/firestore";
+import { maybeIdToken } from "@/lib/api";
 import type { Extraction, VariantResult } from "@/lib/api";
 import AuthBar from "@/components/AuthBar";
 import { apiUrl } from "@/lib/public-api-base";
@@ -59,9 +60,16 @@ function LiveAudioHeader({ feed }: { feed: FeedInfo }) {
   const [muted, setMuted] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const toggle = () => {
+  const toggle = async () => {
     if (!audioRef.current) {
-      const a = new Audio(apiUrl(`/api/admin/stream/${feed.feed_id}`));
+      const token = await maybeIdToken();
+      const a = new Audio(
+        apiUrl(
+          `/api/admin/stream/${feed.feed_id}${
+            token ? `?token=${encodeURIComponent(token)}` : ""
+          }`
+        )
+      );
       a.addEventListener("ended", () => setPlaying(false));
       a.addEventListener("error", () => setPlaying(false));
       audioRef.current = a;
@@ -481,9 +489,13 @@ function RetranscribeForm({
         norm_percentile: norm === "off" ? null : parseInt(norm),
         beam_size: parseInt(beam) || 5,
       };
+      const idToken = await maybeIdToken();
       const res = await fetch(apiUrl("/api/admin/retranscribe"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
         body: JSON.stringify(body),
       });
       if (!res.ok) {
@@ -888,9 +900,13 @@ function ExtractionCard({
             onClick={async () => {
               setTogglingVis(true);
               try {
+                const idToken = await maybeIdToken();
                 const res = await fetch(apiUrl(`/api/admin/incident/${extraction.incident_id}/visibility`), {
                   method: "POST",
-                  headers: { "Content-Type": "application/json" },
+                  headers: {
+                    "Content-Type": "application/json",
+                    ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+                  },
                   body: JSON.stringify({ hidden: !hiddenOnMap }),
                 });
                 if (res.ok) setHiddenOnMap(!hiddenOnMap);
@@ -913,8 +929,10 @@ function ExtractionCard({
             onClick={async () => {
               if (!confirm("Permanently delete this incident from the map?")) return;
               try {
+                const idToken = await maybeIdToken();
                 const res = await fetch(apiUrl(`/api/admin/incident/${extraction.incident_id}`), {
                   method: "DELETE",
+                  headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
                 });
                 if (res.ok) setIncidentDeleted(true);
               } catch { /* ignore */ }
@@ -966,9 +984,13 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
 
   const handlePredict = async (extractionId: string) => {
     try {
+      const idToken = await maybeIdToken();
       const res = await fetch(apiUrl("/api/admin/predict"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
         body: JSON.stringify({ extraction_id: extractionId }),
       });
       if (!res.ok) {
@@ -1114,9 +1136,13 @@ function AllFeedsContent({ feeds }: { feeds: FeedInfo[] }) {
 
   const handlePredict = async (extractionId: string) => {
     try {
+      const idToken = await maybeIdToken();
       const res = await fetch(apiUrl("/api/admin/predict"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
         body: JSON.stringify({ extraction_id: extractionId }),
       });
       if (!res.ok) {
@@ -1244,7 +1270,7 @@ function AllFeedsSidebarItem({
   const [playing, setPlaying] = useState(false);
   const audiosRef = useRef<HTMLAudioElement[]>([]);
 
-  const togglePlayAll = (e: React.MouseEvent) => {
+  const togglePlayAll = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (playing) {
       audiosRef.current.forEach((a) => a.pause());
@@ -1252,8 +1278,10 @@ function AllFeedsSidebarItem({
       setPlaying(false);
     } else {
       audiosRef.current.forEach((a) => a.pause());
+      const token = await maybeIdToken();
+      const q = token ? `?token=${encodeURIComponent(token)}` : "";
       const elements = feeds.map((f) => {
-        const a = new Audio(apiUrl(`/api/admin/stream/${f.feed_id}`));
+        const a = new Audio(apiUrl(`/api/admin/stream/${f.feed_id}${q}`));
         a.addEventListener("error", () => {});
         a.play().catch(() => {});
         return a;
@@ -1323,10 +1351,17 @@ function SidebarFeedItem({
   const [streamError, setStreamError] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const togglePlay = (e: React.MouseEvent) => {
+  const togglePlay = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!audioRef.current) {
-      const a = new Audio(apiUrl(`/api/admin/stream/${feed.feed_id}`));
+      const token = await maybeIdToken();
+      const a = new Audio(
+        apiUrl(
+          `/api/admin/stream/${feed.feed_id}${
+            token ? `?token=${encodeURIComponent(token)}` : ""
+          }`
+        )
+      );
       a.addEventListener("ended", () => setPlaying(false));
       a.addEventListener("error", () => { setPlaying(false); setStreamError(true); });
       audioRef.current = a;

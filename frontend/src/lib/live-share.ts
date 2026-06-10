@@ -80,11 +80,19 @@ const UPDATE_INTERVAL_MS = 15_000;
 function generateShareId(): string {
   const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
   const bytes = new Uint8Array(12);
-  if (typeof window !== "undefined" && window.crypto) {
-    window.crypto.getRandomValues(bytes);
-  } else {
-    for (let i = 0; i < 12; i++) bytes[i] = Math.floor(Math.random() * 256);
+  // Crypto-only / fail-closed: these IDs are the sole protection on
+  // public-readable live-location docs, so we never fall back to the
+  // insecure Math.random() PRNG. Prefer the browser's crypto, then any
+  // global crypto (e.g. SSR/worker); if neither exists, throw.
+  const cryptoSource =
+    (typeof window !== "undefined" && window.crypto) ||
+    (typeof globalThis !== "undefined" ? globalThis.crypto : undefined);
+  if (!cryptoSource || typeof cryptoSource.getRandomValues !== "function") {
+    throw new Error(
+      "Cannot generate a live-share ID: no secure crypto source (crypto.getRandomValues) is available."
+    );
   }
+  cryptoSource.getRandomValues(bytes);
   let out = "";
   for (let i = 0; i < 12; i++) out += ALPHABET[bytes[i] % 32];
   return out;

@@ -12,6 +12,11 @@ import { NextResponse } from "next/server";
 
 const CACHE_TTL = 20;
 
+// Primary source is BART_API_KEY from the environment. The fallback below is
+// BART's public demo key (documented at https://api.bart.gov/docs/overview/ and
+// shared across all anonymous callers) — it is NOT a secret. Because it is shared
+// it can be rate-limited/throttled, so set BART_API_KEY in production to use a
+// dedicated key and avoid shared throttling.
 const BART_KEY = process.env.BART_API_KEY || "MW9S-E7SL-26DU-VV8V";
 
 interface BartEtdEstimate {

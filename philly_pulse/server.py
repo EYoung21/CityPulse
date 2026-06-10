@@ -5,6 +5,7 @@ Set CITY_CONFIG env var to a city config YAML path to configure for a specific c
 Loads all city configs from the cities/ directory for multi-city LLM/geocode support.
 """
 
+import hmac
 import json
 import logging
 import os
@@ -273,6 +274,8 @@ async def route_directions(body: RouteDirectionsRequest):
     """Proxy to OSRM so the browser gets street geometry (avoids public OSRM CORS blocks)."""
     if len(body.waypoints) < 2:
         raise HTTPException(status_code=400, detail="Need at least two waypoints")
+    if len(body.waypoints) > 25:
+        raise HTTPException(status_code=400, detail="Too many waypoints (max 25)")
     for w in body.waypoints:
         if len(w) != 2:
             raise HTTPException(status_code=400, detail="Each waypoint must be [lat, lng]")
@@ -477,9 +480,21 @@ class AudioUploadRequest(BaseModel):
 
 
 @app.post("/api/audio/upload")
-async def upload_audio(req: AudioUploadRequest):
+async def upload_audio(
+    req: AudioUploadRequest,
+    authorization: Optional[str] = Header(None),
+):
     """Receive and save audio clip WAV files. Used by the transcriber bridge."""
+    _verify_ingest_secret(authorization)
     import base64
+    # Cap per-request fan-out: reject oversized batches outright (413) and skip
+    # any single decoded clip larger than 5 MiB so a malicious caller can't fill
+    # the disk with one POST.
+    _MAX_CLIPS = 50
+    _MAX_CLIP_BYTES = 5 * 1024 * 1024
+    total_clips = len(req.clips) + (len(req.raw_clips) if req.raw_clips else 0)
+    if total_clips > _MAX_CLIPS:
+        raise HTTPException(status_code=413, detail="Too many clips in one upload")
     saved = 0
     for clip_id, b64 in req.clips.items():
         if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
@@ -487,6 +502,8 @@ async def upload_audio(req: AudioUploadRequest):
         try:
             wav_bytes = base64.b64decode(b64)
         except Exception:
+            continue
+        if len(wav_bytes) > _MAX_CLIP_BYTES:
             continue
         dest = _AUDIO_CLIPS_DIR / f"{clip_id}.wav"
         if not dest.exists():
@@ -500,6 +517,8 @@ async def upload_audio(req: AudioUploadRequest):
                 wav_bytes = base64.b64decode(b64)
             except Exception:
                 continue
+            if len(wav_bytes) > _MAX_CLIP_BYTES:
+                continue
             dest = _RAW_CLIPS_DIR / f"{clip_id}.wav"
             if not dest.exists():
                 dest.write_bytes(wav_bytes)
@@ -508,13 +527,17 @@ async def upload_audio(req: AudioUploadRequest):
 
 
 @app.post("/api/ingest")
-async def ingest(req: IngestRequest):
+async def ingest(
+    req: IngestRequest,
+    authorization: Optional[str] = Header(None),
+):
     """Ingest a scanner transcript.
 
     When LLM_AUTO_ENABLED is False (default), only store the raw
     transcript + audio as an extraction — no LLM / inhibitor / geocode.
     When True, run the full pipeline.
     """
+    _verify_ingest_secret(authorization)
 
     feed_id = req.feed_id or "unknown"
     city = req.city or CITY_SLUG
@@ -1350,8 +1373,9 @@ def search_incidents(
 
 
 @app.post("/api/seed")
-async def seed():
+async def seed(authorization: Optional[str] = Header(None)):
     """Load pre-built demo incidents into the database. Idempotent panic button."""
+    _verify_firebase_admin(authorization)
     if not SEED_PATH.exists():
         raise HTTPException(status_code=404, detail="Seed data file not found")
     s_base_map = {cat: weights.get_s_base(cat) for cat in llm.SEVERITY_CATEGORIES}
@@ -1361,11 +1385,16 @@ async def seed():
 
 
 @app.post("/api/simulate")
-async def simulate():
+async def simulate(authorization: Optional[str] = Header(None)):
     """Ingest a random canned transcript through the full pipeline. For demos."""
+    _verify_firebase_admin(authorization)
     transcript = random.choice(CANNED_TRANSCRIPTS)
     req = IngestRequest(text=transcript)
-    return await ingest(req)
+    # Re-use the ingest pipeline. The admin token above already authorized this
+    # call, so pass the machine ingest secret (when configured) so the inner
+    # `_verify_ingest_secret` check accepts the internal hand-off.
+    inner_auth = f"Bearer {_PULSE_INGEST_SECRET}" if _PULSE_INGEST_SECRET else None
+    return await ingest(req, authorization=inner_auth)
 
 
 _SUMMARY_CACHE: dict = {"summary": None, "incident_count": 0, "expires_at": 0.0}
@@ -2421,7 +2450,19 @@ def city_stats(slug: str):
 
 @app.websocket("/ws/admin")
 async def admin_ws(ws: WebSocket):
-    """WebSocket stream of all pipeline events for the admin panel."""
+    """WebSocket stream of all pipeline events for the admin panel.
+
+    Browsers can't set request headers on a WebSocket, so the admin
+    Firebase ID token is passed as the `token` query param. Verify it
+    before accepting the socket — on any failure close with 1008
+    (policy violation) prior to `accept()`.
+    """
+    token = ws.query_params.get("token")
+    try:
+        _verify_firebase_admin(f"Bearer {token}" if token else None)
+    except HTTPException:
+        await ws.close(code=1008)
+        return
     await admin_events.connect(ws)
     try:
         while True:
@@ -2440,7 +2481,13 @@ def admin_feeds(
         description="Pulse city slug (e.g. nyc, philly). Defaults from Host header, then server FEEDS.",
     ),
 ):
-    """List of Broadcastify feeds for the admin panel — scoped per city when known."""
+    """List of Broadcastify feeds — scoped per city when known.
+
+    Intentionally PUBLIC (no auth). It returns only non-sensitive Broadcastify
+    feed IDs + human-readable labels, which the public map page consumes to
+    label incident sources (frontend/src/app/page.tsx). The admin panel also
+    calls this (with a token), which is simply ignored here — unlike the other
+    /api/admin/* routes, this one exposes no sensitive data or mutating action."""
     slug = (city or "").strip().lower()
     if not slug:
         raw_host = (request.headers.get("host") or "").lower()
@@ -2455,12 +2502,13 @@ def admin_feeds(
 
 
 @app.get("/api/admin/prefilter/metrics")
-async def admin_prefilter_metrics():
+async def admin_prefilter_metrics(authorization: Optional[str] = Header(None)):
     """In-process counters for the regex prefilter, per city.
 
     Each city entry has `seen` (total lines), `kept` (passed to LLM),
     and `skipped` (dropped before LLM). Resets when the worker restarts.
     """
+    _verify_firebase_admin(authorization)
     return {"enabled": prefilter.PREFILTER_ENABLED, "metrics": prefilter.get_metrics()}
 
 
@@ -2473,8 +2521,13 @@ class VisibilityRequest(BaseModel):
 
 
 @app.post("/api/admin/incident/{incident_id}/visibility")
-async def admin_toggle_visibility(incident_id: str, req: VisibilityRequest):
+async def admin_toggle_visibility(
+    incident_id: str,
+    req: VisibilityRequest,
+    authorization: Optional[str] = Header(None),
+):
     """Toggle an incident's visibility on the public map."""
+    _verify_firebase_admin(authorization)
     result = store.update_incident(incident_id, {"hidden": req.hidden})
     if result is None:
         raise HTTPException(status_code=404, detail="Incident not found")
@@ -2482,8 +2535,12 @@ async def admin_toggle_visibility(incident_id: str, req: VisibilityRequest):
 
 
 @app.delete("/api/admin/incident/{incident_id}")
-async def admin_delete_incident(incident_id: str):
+async def admin_delete_incident(
+    incident_id: str,
+    authorization: Optional[str] = Header(None),
+):
     """Permanently delete an incident."""
+    _verify_firebase_admin(authorization)
     ok = store.delete_incident(incident_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Incident not found")
@@ -2491,11 +2548,15 @@ async def admin_delete_incident(incident_id: str):
 
 
 @app.post("/api/admin/predict")
-async def admin_predict(req: PredictRequest):
+async def admin_predict(
+    req: PredictRequest,
+    authorization: Optional[str] = Header(None),
+):
     """Run the full LLM + inhibitor + geocode pipeline on a stored extraction.
 
     Used for manual evaluation when LLM_AUTO_ENABLED is off.
     """
+    _verify_firebase_admin(authorization)
     ext = store.get_extraction(req.extraction_id)
     if ext is None:
         raise HTTPException(status_code=404, detail="Extraction not found")
@@ -2615,13 +2676,17 @@ class RetranscribeRequest(BaseModel):
 
 
 @app.post("/api/admin/retranscribe")
-async def admin_retranscribe(req: RetranscribeRequest):
+async def admin_retranscribe(
+    req: RetranscribeRequest,
+    authorization: Optional[str] = Header(None),
+):
     """Re-preprocess + re-transcribe an extraction with custom params.
 
     Reads the raw audio clip from disk, applies the specified preprocessing,
     runs Whisper, saves a new processed clip, and appends the result to the
     extraction's variants array as 'custom_N'.
     """
+    _verify_firebase_admin(authorization)
     from .preprocess import VariantConfig, preprocess_audio
 
     ext = store.get_extraction(req.extraction_id)
@@ -2709,8 +2774,13 @@ async def admin_retranscribe(req: RetranscribeRequest):
 
 
 @app.get("/api/admin/stream/{feed_id}")
-async def admin_stream(feed_id: str):
-    """Proxy a Broadcastify MP3 stream for the admin audio player."""
+async def admin_stream(feed_id: str, token: str = Query("")):
+    """Proxy a Broadcastify MP3 stream for the admin audio player.
+
+    Played via an <audio> element, which can't set request headers, so
+    the admin Firebase ID token arrives as the `token` query param.
+    """
+    _verify_firebase_admin(f"Bearer {token}")
     if not _bf_username or not _bf_password:
         raise HTTPException(status_code=503, detail="Broadcastify credentials not configured")
 
@@ -2926,6 +2996,36 @@ def _verify_firebase_admin(authorization: Optional[str]) -> dict:
         # enforce this.
         raise HTTPException(status_code=403, detail="Verify email to act as admin")
     return decoded
+
+
+# Shared secret for machine ingest endpoints (transcriber pipeline -> server).
+# Read once at module load, like `_COMMUTE_TICK_SECRET`. When set we enforce it;
+# when unset we warn once and allow, so a deploy that hasn't configured the env
+# var yet doesn't kill the live transcriber feed.
+_PULSE_INGEST_SECRET = os.getenv("PULSE_INGEST_SECRET")
+_INGEST_SECRET_WARNED = False
+
+
+def _verify_ingest_secret(authorization: Optional[str]) -> None:
+    """Authenticate a machine ingest request via the `PULSE_INGEST_SECRET`
+    shared secret passed as a Bearer token.
+
+    Enforce-when-set: a missing or mismatched secret raises 401 (constant-time
+    compare). Allow-when-unset: log a single warning and permit the request so
+    the live pipeline keeps working during a non-breaking rollout.
+    """
+    global _INGEST_SECRET_WARNED
+    if not _PULSE_INGEST_SECRET:
+        if not _INGEST_SECRET_WARNED:
+            logger.warning(
+                "PULSE_INGEST_SECRET is not set; ingest endpoints are unauthenticated. "
+                "Set it to require a Bearer secret from the transcriber pipeline."
+            )
+            _INGEST_SECRET_WARNED = True
+        return
+    expected = f"Bearer {_PULSE_INGEST_SECRET}"
+    if not authorization or not hmac.compare_digest(authorization, expected):
+        raise HTTPException(status_code=401, detail="Bad ingest credentials")
 
 
 class PushSubscribeRequest(BaseModel):

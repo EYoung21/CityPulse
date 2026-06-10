@@ -7,7 +7,7 @@ import { requestUpgrade } from "@/lib/upgrade";
 let idTokenInFlight: Promise<string | null> | null = null;
 let idTokenInFlightUid: string | null = null;
 
-async function maybeIdToken(): Promise<string | null> {
+export async function maybeIdToken(): Promise<string | null> {
   if (!isFirebaseConfigured()) return null;
   const auth = getAuth(getFirebaseApp());
   const u = auth.currentUser;
@@ -424,13 +424,21 @@ export async function fetchHealth(): Promise<HealthResponse> {
 }
 
 export async function simulateIncident(): Promise<unknown> {
-  const res = await fetchPublicApi("/api/simulate", { method: "POST" });
+  const idToken = await maybeIdToken();
+  const res = await fetchPublicApi("/api/simulate", {
+    method: "POST",
+    headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
+  });
   if (!res.ok) throw new Error(`Simulate failed: ${res.status}`);
   return res.json();
 }
 
 export async function seedDemoData(): Promise<{ status: string; count: number }> {
-  const res = await fetchPublicApi("/api/seed", { method: "POST" });
+  const idToken = await maybeIdToken();
+  const res = await fetchPublicApi("/api/seed", {
+    method: "POST",
+    headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
+  });
   if (!res.ok) throw new Error(`Seed failed: ${res.status}`);
   return res.json();
 }
