@@ -1,0 +1,44 @@
+name: Verify Ingest Auth (post-secret)
+
+# Read-only diagnostic: confirms the Hetzner-local live transcribers
+# (pulse-live@*) are still posting successfully to the local API now that
+# PULSE_INGEST_SECRET is enforced — i.e. they send the Bearer secret and
+# get 2xx, not 401. Also confirms the deployed bridge.py carries the
+# secret-sending code. Manual trigger only; makes no changes.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Diagnose transcriber -> local ingest auth
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 5m
+          script: |
+            echo "=== deployed bridge.py carries the secret-sending code? ==="
+            grep -nE 'PULSE_INGEST_SECRET' /root/PhillyPulse/philly_pulse/bridge.py 2>/dev/null \
+              | sed -E 's/=.*/= <code present>/' | head || echo "MISSING (old code!)"
+            echo ""
+            echo "=== transcriber bridge URL in use ==="
+            grep -hsE 'PP_BRIDGE_URL|bridge_url' /etc/philly-pulse.env /root/PhillyPulse/cities/*/config.yaml 2>/dev/null | head || echo "(uses code default 127.0.0.1:8765)"
+            echo ""
+            echo "=== recent pulse-live transcriber log lines about posting (last 8 min) ==="
+            for c in dallas frisco seattle; do
+              echo "--- pulse-live@$c ---"
+              journalctl -u "pulse-live@$c.service" --since "8 min ago" --no-pager 2>/dev/null \
+                | grep -iE 'ingest|post|bridge|401|403|200|201|collected|promoted|error|refused|connection' \
+                | tail -6 || echo "(no matching log lines)"
+            done
+            echo ""
+            echo "=== API log: any 401s on /api/ingest from localhost in last 8 min? (should be NONE from transcribers) ==="
+            journalctl -u philly-pulse-api.service --since "8 min ago" --no-pager 2>/dev/null \
+              | grep -iE '/api/ingest|Bad ingest|401' | tail -10 || echo "(no ingest 401s logged)"
+            echo ""
+            echo "=== local API reachability (find real listen port) ==="
+            ss -ltnp 2>/dev/null | grep -iE 'uvicorn|python|:8765|:8000|:80 ' | head || echo "(no obvious tcp listener; likely unix socket behind proxy)"
