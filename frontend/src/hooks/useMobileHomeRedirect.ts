@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 /**
- * Decides whether the home route (`/`) should redirect to `/feed`
- * for mobile users. Implements the plan's "mobile = feed-first home,
- * desktop = map-first home" rule (CityPulse vs Citizen build plan, §4).
+ * Decides whether the home route (`/`) should redirect to `/feed`.
+ * Fresh visits stay map-first on every viewport; only an explicit feed
+ * hint or saved feed preference should open the full-screen feed.
  *
  * Override hierarchy (highest wins):
  *   1. `?view=map`  ........ explicit URL hint; sticks for future visits
@@ -16,8 +16,7 @@ import { useRouter } from "next/navigation";
  *      `?lat=&lng=`  ....... share-link / deep-link; never redirect
  *   5. localStorage
  *      `cp:home-view` ...... user's most recent explicit choice
- *   6. viewport <768px ..... default to /feed (mobile)
- *   7. otherwise ........... stay on / (desktop)
+ *   6. otherwise ........... stay on / (map-first default)
  *
  * The hook is split into "decide synchronously on mount" + "navigate
  * in an effect" so the wrapping component can render nothing while
@@ -76,9 +75,8 @@ function decide(): HomeRedirectDecision {
     if (stickyPref === "map") return "stay";
     if (stickyPref === "feed") return "redirect";
 
-    // No explicit signal: form-factor default.
-    const isMobile = window.matchMedia("(max-width: 767px)").matches;
-    return isMobile ? "redirect" : "stay";
+    // No explicit signal: map-first default.
+    return "stay";
   } catch {
     // Anything weird (eg. storage exception in a sandboxed iframe)
     // → fall through to the safest behavior, which is "stay" so the
@@ -94,9 +92,9 @@ export function useMobileHomeRedirect(): HomeRedirectDecision {
   const [decision, setDecision] = useState<HomeRedirectDecision>(() => decide());
 
   useEffect(() => {
-    if (decision === "loading") {
-      setDecision(decide());
-    }
+    if (decision !== "loading") return;
+    const id = window.setTimeout(() => setDecision(decide()), 0);
+    return () => window.clearTimeout(id);
   }, [decision]);
 
   useEffect(() => {
