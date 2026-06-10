@@ -539,6 +539,13 @@ export async function POST(request: Request) {
     );
   }
 
+  if (waypoints.length > 25) {
+    return NextResponse.json(
+      { error: "Too many waypoints (max 25)" },
+      { status: 400 }
+    );
+  }
+
   for (const w of waypoints) {
     if (
       !Array.isArray(w) ||

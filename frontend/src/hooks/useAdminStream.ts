@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchPublicApi, getPublicApiBase } from "@/lib/public-api-base";
 import { getCurrentCity } from "@/lib/pulse-cities";
+import { maybeIdToken } from "@/lib/api";
 
 const MAX_EVENTS = 300;
 
@@ -31,20 +32,21 @@ export interface PipelineGroup {
   incident_stored?: AdminEvent;
 }
 
-function wsUrl(): string {
+function wsUrl(token: string | null): string {
   if (typeof window === "undefined") return "";
+  const q = token ? `?token=${encodeURIComponent(token)}` : "";
   const base = getPublicApiBase();
   if (base) {
     try {
       const u = new URL(base);
       const wsProto = u.protocol === "https:" ? "wss:" : "ws:";
-      return `${wsProto}//${u.host}/ws/admin`;
+      return `${wsProto}//${u.host}/ws/admin${q}`;
     } catch {
       /* fall through — same-origin */
     }
   }
   const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${wsProto}//${window.location.host}/ws/admin`;
+  return `${wsProto}//${window.location.host}/ws/admin${q}`;
 }
 
 export function useAdminStream() {
@@ -57,7 +59,12 @@ export function useAdminStream() {
   useEffect(() => {
     const slug = getCurrentCity().slug;
     const q = slug ? `?city=${encodeURIComponent(slug)}` : "";
-    fetchPublicApi(`/api/admin/feeds${q}`)
+    maybeIdToken()
+      .then((idToken) =>
+        fetchPublicApi(`/api/admin/feeds${q}`, {
+          headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
+        })
+      )
       .then(async (r) => {
         if (!r.ok) return;
         const d = (await r.json()) as { feeds?: FeedInfo[] };
@@ -66,8 +73,9 @@ export function useAdminStream() {
       .catch(() => {});
   }, []);
 
-  const connect = useCallback(() => {
-    const url = wsUrl();
+  const connect = useCallback(async () => {
+    const token = await maybeIdToken();
+    const url = wsUrl(token);
     if (!url) return;
 
     try {

@@ -15,15 +15,31 @@ interface UpgradePromptProps {
 
 export default function UpgradePrompt({ feature, description, inline, onClose }: UpgradePromptProps) {
   const [loading, setLoading] = useState(false);
-  const { user } = useAuth();
+  const { user, signInWithGoogle } = useAuth();
 
   async function handleUpgrade(plan: "monthly" | "annual" | "3day") {
+    // Checkout now requires a verified Firebase ID token (the server
+    // derives firebaseUid from it and ignores any client-supplied uid).
+    // Anonymous/signed-out users can't get a real token, so route them
+    // through sign-in first; they re-tap upgrade once auth settles.
+    if (!user || user.isAnonymous) {
+      try {
+        await signInWithGoogle();
+      } catch {
+        // Popup cancel is silent; other failures set lastAuthError in context.
+      }
+      return;
+    }
     setLoading(true);
     try {
+      const idToken = await user.getIdToken();
       const res = await fetch(CHECKOUT_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan, uid: user?.uid, email: user?.email }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ plan }),
       });
       const data = await res.json();
       if (data.url) {

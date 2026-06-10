@@ -161,9 +161,15 @@ def post_transcript_payload(
     timeout = float(os.environ.get("BACKFILL_INGEST_TIMEOUT_SEC", "120"))
     last_err = ""
 
+    # Authenticate to the ingest endpoint when the shared secret is configured.
+    # Absent the env var we send no auth header, matching the server's
+    # allow-when-unset rollout behaviour.
+    ingest_secret = os.environ.get("PULSE_INGEST_SECRET")
+    headers = {"Authorization": f"Bearer {ingest_secret}"} if ingest_secret else None
+
     for attempt in range(1, max_attempts + 1):
         try:
-            resp = requests.post(BRIDGE_URL, json=payload, timeout=timeout)
+            resp = requests.post(BRIDGE_URL, json=payload, timeout=timeout, headers=headers)
             sc = resp.status_code
             if sc == 200:
                 return True
