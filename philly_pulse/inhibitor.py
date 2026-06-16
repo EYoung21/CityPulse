@@ -14,11 +14,22 @@ logger = logging.getLogger(__name__)
 
 GUARDRAIL_MODE = os.environ.get("GUARDRAIL_MODE", "local").strip().lower()
 
-# Conservative PII indicators.
-_SSN_RE = re.compile(r"\b\d{3}-?\d{2}-?\d{4}\b")
-_PHONE_RE = re.compile(r"(?:\+?1[\s.-]*)?(?:\(?\d{3}\)?[\s.-]*)\d{3}[\s.-]*\d{4}\b")
+# PII indicators — tuned to avoid police-dispatch false positives.
+_DISPATCH_CODE_RE = re.compile(r"\b911-\d{2}-\d{4}\b")
+_SSN_DASHED_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+_SSN_PLAIN_RE = re.compile(r"\b\d{9}\b")
+_PHONE_RE = re.compile(
+    r"(?:\+1[\s.-])?"
+    r"(?:\(\d{3}\)[\s.-]*\d{3}[\s.-]*\d{4}"
+    r"|\b[2-9]\d{2}[\s.-]\d{3}[\s.-]\d{4}\b)"
+)
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
 _CREDIT_CARD_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
+_RADIO_DIGIT_NOISE_RE = re.compile(r"(?:\d\s*-\s*){8,}\d")
+_CARD_CTX_RE = re.compile(
+    r"\b(?:credit\s+card|debit\s+card|card\s+number|mastercard|visa|amex)\b|\bcard\b",
+    re.I,
+)
 
 # Extra keywords for highly sensitive contexts.
 _SENSITIVE_KEYWORDS = (
@@ -40,6 +51,29 @@ class InhibitorResult:
     raw_response: dict | None = None
 
 
+def _has_ssn(text: str) -> bool:
+    """Detect likely SSNs while exempting 911 dispatch location codes."""
+    for match in _SSN_DASHED_RE.finditer(text):
+        if _DISPATCH_CODE_RE.fullmatch(match.group()):
+            continue
+        return True
+    lowered = text.lower()
+    if any(token in lowered for token in ("social security", "ssn")):
+        return bool(_SSN_PLAIN_RE.search(text))
+    return False
+
+
+def _has_payment_card(text: str) -> bool:
+    """Detect payment-card numbers; skip radio digit noise and 'cardiac' false hits."""
+    if not _CREDIT_CARD_RE.search(text):
+        return False
+    if not _CARD_CTX_RE.search(text):
+        return False
+    if _RADIO_DIGIT_NOISE_RE.search(text):
+        return False
+    return True
+
+
 async def check_incident(
     raw_transcript: str,
     severity_category: str,
@@ -58,17 +92,13 @@ async def check_incident(
     text = raw_transcript or ""
     lowered = text.lower()
 
-    if _SSN_RE.search(text):
+    if _has_ssn(text):
         return InhibitorResult(status="blocked", reason="Possible SSN detected")
     if _EMAIL_RE.search(text):
         return InhibitorResult(status="blocked", reason="Email address detected")
     if _PHONE_RE.search(text):
         return InhibitorResult(status="blocked", reason="Phone number detected")
-
-    # Card regex can over-match; require likely card context.
-    if _CREDIT_CARD_RE.search(text) and any(
-        token in lowered for token in ("card", "credit", "debit", "visa", "mastercard", "amex")
-    ):
+    if _has_payment_card(text):
         return InhibitorResult(status="blocked", reason="Payment card-like data detected")
 
     for token in _SENSITIVE_KEYWORDS:
