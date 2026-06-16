@@ -728,9 +728,14 @@ def load_day_list(path: str) -> list[str]:
 
 
 def generate_days_range(days: int) -> list[str]:
-    """Generate a contiguous list of the last N days (most recent first)."""
+    """Generate a contiguous list of the last N days (OLDEST first).
+
+    Oldest-first so backfill races the 365-day Broadcastify deletion cliff:
+    the deepest days expire first, and realtime capture already covers the
+    recent end (post ~2026-04-13), so there's no value re-pulling it first.
+    """
     today = datetime.date.today()
-    return [(today - datetime.timedelta(days=d)).isoformat() for d in range(1, days + 1)]
+    return [(today - datetime.timedelta(days=d)).isoformat() for d in range(days, 0, -1)]
 
 
 # ── Main ─────────────────────────────────────────────────────────

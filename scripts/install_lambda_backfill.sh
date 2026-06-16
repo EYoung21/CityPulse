@@ -102,7 +102,7 @@ LLM_API_KEY=ollama
 LLM_MODEL=qwen2.5:7b-instruct-q5_K_M
 LLM_PROVIDER_NAME=ollama-local
 WHISPER_MODEL_SIZE=large-v3-turbo
-BACKFILL_DAY_LIMIT=150
+BACKFILL_DAY_LIMIT=365
 BACKFILL_HEARTBEAT=$HEARTBEAT
 # Order is the run order (see lambda_backfill_runner.discover_cities).
 # SF goes first so it gets the freshest Broadcastify daily quota after
