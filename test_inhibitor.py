@@ -61,6 +61,17 @@ class InhibitorDispatchExemptions(unittest.TestCase):
     def test_real_phone_blocked(self):
         self.assertEqual(_check("call witness at 215-555-1234"), "blocked")
 
+    def test_bare_ten_digit_phone_blocked(self):
+        # Regression: separator-less phone used to leak through.
+        self.assertEqual(_check("his number is 2155551234"), "blocked")
+
+    def test_eleven_digit_phone_with_country_code_blocked(self):
+        self.assertEqual(_check("reach him at 12155551234"), "blocked")
+
+    def test_ten_digit_id_starting_with_one_not_phone(self):
+        # NANP area codes never start with 0/1, so long IDs don't false-trip.
+        self.assertEqual(_check("incident reference 1004325019 logged"), "passed")
+
 
 if __name__ == "__main__":
     unittest.main()
