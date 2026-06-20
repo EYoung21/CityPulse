@@ -69,6 +69,9 @@ function WaveformPlayer({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animRef = useRef<number>(0);
+  // Whether the user has asked for playback. Used to resume across a
+  // native source-fallback (candidate 404 → advance to the next URL).
+  const playIntentRef = useRef(false);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -104,79 +107,100 @@ function WaveformPlayer({
   );
 
   useEffect(() => {
-    let objectUrl: string | null = null;
     const audio = new Audio();
+    audio.preload = "auto";
     audioRef.current = audio;
 
-    audio.addEventListener("loadedmetadata", () => setDuration(audio.duration));
-    audio.addEventListener("ended", () => setPlaying(false));
-    audio.addEventListener("error", () => setPlaying(false));
-
-    const candidates = Array.isArray(src) ? src.filter(Boolean) : [src];
+    const candidates = (Array.isArray(src) ? src : [src]).filter(Boolean);
     let cancelled = false;
+    let candidateIdx = 0;
 
-    /** Try each candidate URL in order. Resolves with the first
-     *  successful response; the rejection only fires after every
-     *  candidate has failed. Logs each individual failure so the
-     *  fallback chain is visible in DevTools. */
-    const fetchFirstAvailable = async () => {
-      let lastErr: unknown = null;
+    audio.addEventListener("loadedmetadata", () => setDuration(audio.duration));
+    audio.addEventListener("ended", () => {
+      playIntentRef.current = false;
+      setPlaying(false);
+    });
+    // Native source fallback. The previous implementation downloaded the
+    // whole clip + ran decodeAudioData before ever assigning audio.src,
+    // so playback couldn't start until the full transfer finished. We now
+    // stream the source directly (like the feed mini-player), and if a
+    // candidate 404s/errors we advance to the next URL — only surfacing an
+    // error once every candidate is exhausted. Resume playback across the
+    // switch when the user already pressed play.
+    audio.addEventListener("error", () => {
+      if (cancelled) return;
+      candidateIdx += 1;
+      if (candidateIdx < candidates.length) {
+        audio.src = candidates[candidateIdx];
+        audio.load();
+        if (playIntentRef.current) {
+          audio.play().catch(() => {
+            /* gesture/autoplay rejection surfaces on the next user tap */
+          });
+        }
+        return;
+      }
+      playIntentRef.current = false;
+      setPlaying(false);
+      setLoadError("no audio sources available");
+    });
+
+    // Stream the first candidate immediately so the user can press play
+    // without waiting for the clip to download + decode.
+    if (candidates.length > 0) {
+      audio.src = candidates[0];
+    } else {
+      setLoadError("no audio sources available");
+    }
+
+    // Build the 60-bar waveform in the background. This must NOT gate
+    // playback: a fetch/decode failure here leaves the player fully
+    // usable (just no bars), so it never sets loadError — streaming
+    // errors above own that.
+    const buildWaveform = async () => {
       for (const url of candidates) {
-        if (cancelled) return null;
+        if (cancelled) return;
+        let ctx: AudioContext | null = null;
         try {
           const r = await fetchUrlWithPublicApiFallback(url);
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const buf = await r.arrayBuffer();
-          return { url, buf, mime: r.headers.get("content-type") };
+          if (cancelled) return;
+          ctx = new AudioContext();
+          const decoded = await ctx.decodeAudioData(buf.slice(0));
+          if (cancelled) return;
+          const raw = decoded.getChannelData(0);
+          const bars = 60;
+          const blockSize = Math.max(1, Math.floor(raw.length / bars));
+          const samples: number[] = [];
+          for (let i = 0; i < bars; i++) {
+            let sum = 0;
+            for (let j = 0; j < blockSize; j++) {
+              sum += Math.abs(raw[i * blockSize + j]);
+            }
+            samples.push(sum / blockSize);
+          }
+          const max = Math.max(...samples, 0.01);
+          setWaveformData(samples.map((s) => s / max));
+          return;
         } catch (err) {
-          lastErr = err;
           const msg = err instanceof Error ? err.message : "network error";
-          console.warn("[WaveformPlayer] candidate failed", { url, error: msg });
+          console.warn("[WaveformPlayer] waveform candidate failed", { url, error: msg });
+        } finally {
+          void ctx?.close();
         }
       }
-      throw lastErr ?? new Error("no audio sources available");
-    };
-
-    fetchFirstAvailable()
-      .then(async (res) => {
-        if (cancelled || !res) return;
-        const { buf, mime } = res;
-        const ctx = new AudioContext();
-        const decoded = await ctx.decodeAudioData(buf.slice(0));
-        const raw = decoded.getChannelData(0);
-        const bars = 60;
-        const blockSize = Math.floor(raw.length / bars);
-        const samples: number[] = [];
-        for (let i = 0; i < bars; i++) {
-          let sum = 0;
-          for (let j = 0; j < blockSize; j++) {
-            sum += Math.abs(raw[i * blockSize + j]);
-          }
-          samples.push(sum / blockSize);
-        }
-        const max = Math.max(...samples, 0.01);
-        setWaveformData(samples.map((s) => s / max));
-        setLoadError(null);
-
-        const type = mime && mime.startsWith("audio/") ? mime : "audio/mpeg";
-        objectUrl = URL.createObjectURL(new Blob([buf], { type }));
-        audio.src = objectUrl;
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        const msg = err instanceof Error ? err.message : "network error";
-        console.warn("[WaveformPlayer] all audio sources failed", {
-          tried: candidates,
-          error: msg,
-        });
-        setLoadError(msg);
+      console.warn("[WaveformPlayer] waveform unavailable; playback still streams", {
+        tried: candidates,
       });
+    };
+    void buildWaveform();
 
     return () => {
       cancelled = true;
+      playIntentRef.current = false;
       audio.pause();
       audio.src = "";
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
       if (animRef.current) cancelAnimationFrame(animRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -237,12 +261,15 @@ function WaveformPlayer({
     if (!audioRef.current) return;
     if (loadError || !audioRef.current.src) return;
     if (playing) {
+      playIntentRef.current = false;
       audioRef.current.pause();
       setPlaying(false);
     } else {
+      playIntentRef.current = true;
       audioRef.current.play().catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "playback blocked";
         console.warn("[WaveformPlayer] audio.play() failed", { error: msg });
+        playIntentRef.current = false;
         setLoadError(msg);
         setPlaying(false);
       });

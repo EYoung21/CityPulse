@@ -23,6 +23,10 @@ _PHONE_RE = re.compile(
     r"(?:\(\d{3}\)[\s.-]*\d{3}[\s.-]*\d{4}"
     r"|\b[2-9]\d{2}[\s.-]\d{3}[\s.-]\d{4}\b)"
 )
+# Bare, separator-less 10/11-digit phone (e.g. "2155551234"). Restricted to
+# NANP shape — area code and exchange both start 2-9 — so unit numbers,
+# addresses, and case/ID numbers (which routinely start with 0/1) don't match.
+_PHONE_PLAIN_RE = re.compile(r"\b1?[2-9]\d{2}[2-9]\d{2}\d{4}\b")
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
 _CREDIT_CARD_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
 _RADIO_DIGIT_NOISE_RE = re.compile(r"(?:\d\s*-\s*){8,}\d")
@@ -63,6 +67,11 @@ def _has_ssn(text: str) -> bool:
     return False
 
 
+def _has_phone(text: str) -> bool:
+    """Detect phone numbers in both separated and bare 10/11-digit forms."""
+    return bool(_PHONE_RE.search(text) or _PHONE_PLAIN_RE.search(text))
+
+
 def _has_payment_card(text: str) -> bool:
     """Detect payment-card numbers; skip radio digit noise and 'cardiac' false hits."""
     if not _CREDIT_CARD_RE.search(text):
@@ -96,7 +105,7 @@ async def check_incident(
         return InhibitorResult(status="blocked", reason="Possible SSN detected")
     if _EMAIL_RE.search(text):
         return InhibitorResult(status="blocked", reason="Email address detected")
-    if _PHONE_RE.search(text):
+    if _has_phone(text):
         return InhibitorResult(status="blocked", reason="Phone number detected")
     if _has_payment_card(text):
         return InhibitorResult(status="blocked", reason="Payment card-like data detected")
