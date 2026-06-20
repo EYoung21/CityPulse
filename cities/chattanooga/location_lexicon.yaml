@@ -1,0 +1,45 @@
+# Human-reviewed dispatch / ASR → Nominatim phrase expansions for Chattanooga.
+# Applied in order by `philly_pulse.location_aliases.apply_location_lexicon`
+# (also merged into `expand_location_aliases` variants), each rule to the
+# result of the previous step.
+#
+# Why this file exists: ~70% of CityPulse's unmapped incidents are Chattanooga,
+# and the failures cluster in (1) phonetic/ASR-garbled street names and
+# (2) bare arterial names with no road type. Chattanooga previously had NO
+# lexicon, so none of these were corrected. Entries below are high-confidence
+# only — patterns are anchored with \b and target tokens that are unambiguous
+# road names in Chattanooga, so they cannot corrupt otherwise-good text.
+#
+# Curate with real failures (re-export periodically and merge):
+#   GOOGLE_APPLICATION_CREDENTIALS=... \
+#     python3 scripts/export_geocode_failures.py --city chattanooga --days 30 \
+#     --limit 400 --out /tmp/chatt_geocode_failures.jsonl
+#
+# KNOWN-UNRESOLVED garbles seen in unmapped_incidents that need local knowledge
+# or a street gazetteer to map safely (NOT guessed here — a wrong coordinate is
+# worse than unmapped for emergency data): "GAD Road", "Carstery",
+# "Cypherstery", "Urbath". Add a rule once the true street is confirmed.
+
+entries:
+  # ── Phonetic / ASR garbles (confirmed) ───────────────────────────
+  - note: "ASR runs 'Lee Highway' (US-11/64, a major arterial) into one word"
+    pattern: "(?i)\\bLehighway\\b"
+    replace: "Lee Highway"
+  - pattern: "(?i)\\bLee\\s+Hwy\\b"
+    replace: "Lee Highway"
+
+  # ── Bare arterial names → add canonical road type ────────────────
+  # Dispatch often names just the road ("crash on Amnicola", "fire at
+  # Gunbarrel") with no type, which Nominatim won't resolve. Each token below
+  # is a single unambiguous Chattanooga road; the negative lookahead avoids
+  # double-typing when the type is already present.
+  - pattern: "(?i)\\bAmnicola\\b(?!\\s+(?:Highway|Hwy))"
+    replace: "Amnicola Highway"
+  - pattern: "(?i)\\bBonny\\s*Oaks\\b(?!\\s+(?:Drive|Dr|Road|Rd))"
+    replace: "Bonny Oaks Drive"
+  - pattern: "(?i)\\bGunbarrel\\b(?!\\s+(?:Road|Rd))"
+    replace: "Gunbarrel Road"
+  - pattern: "(?i)\\bShallowford\\b(?!\\s+(?:Road|Rd))"
+    replace: "Shallowford Road"
+  - pattern: "(?i)\\bMcCallie\\b(?!\\s+(?:Avenue|Ave))"
+    replace: "McCallie Avenue"

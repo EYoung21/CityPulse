@@ -159,11 +159,28 @@ _BAD_NOMINATIM_TYPES = {
     "suburb", "neighbourhood", "quarter", "district", "borough",
     "locality", "city_district", "subdistrict",
 }
+# Only area/region classes belong here — they never represent a single
+# incident point. Named-POI classes (amenity/shop/tourism/leisure/office/
+# craft/historic) are intentionally NOT rejected: a *specific* business like
+# "Comfort Inn", "Bassett Furniture", or "A and J's" is a legitimate dispatch
+# location, and these accounted for the bulk of Chattanooga's unmapped
+# incidents (~70% of all unmapped). The generic / bare-brand strings that used
+# to cluster at one pin ("the mall", "alley", bare "Walmart", "Philadelphia,
+# PA") are already dropped *before* we ever query, by _is_too_vague +
+# _VAGUE_LOCATIONS + _VAGUE_REGEXES — so accepting POI hits here cannot
+# reintroduce that failure. The in-bounds check below still confines hits to
+# the city, and validate_location is a further backstop downstream.
 _BAD_NOMINATIM_CLASSES = {
-    "boundary",
-    "amenity", "shop", "tourism", "leisure",
-    "office", "craft", "historic", "landuse", "natural",
+    "boundary", "landuse", "natural",
 }
+
+
+def _is_coarse_hit(osm_class: str | None, osm_type: str | None) -> bool:
+    """True if a Nominatim result is too coarse (city/region/area) to be a
+    usable incident point. Named POIs are NOT coarse — see the note above."""
+    return (osm_type or "").lower() in _BAD_NOMINATIM_TYPES or (
+        osm_class or ""
+    ).lower() in _BAD_NOMINATIM_CLASSES
 
 
 async def _try_nominatim(
@@ -199,7 +216,7 @@ async def _try_nominatim(
     top = results[0]
     osm_type = (top.get("type") or "").lower()
     osm_class = (top.get("class") or "").lower()
-    if osm_type in _BAD_NOMINATIM_TYPES or osm_class in _BAD_NOMINATIM_CLASSES:
+    if _is_coarse_hit(osm_class, osm_type):
         logger.info(
             "Nominatim hit rejected (too coarse) for %r: class=%s type=%s",
             query, osm_class, osm_type,
