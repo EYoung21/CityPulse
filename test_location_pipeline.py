@@ -79,6 +79,44 @@ class LocationPipelineTests(unittest.TestCase):
         c = geocode.transcript_geocode_candidates(raw, city="nyc")
         self.assertTrue(any("Avenue" in x and "Street" in x for x in c))
 
+    def test_named_poi_hits_are_accepted(self):
+        """A specific named business (amenity/shop/tourism/...) is a valid
+        dispatch location — these were ~70% of Chattanooga's unmapped
+        incidents and must no longer be rejected as 'too coarse'."""
+        self.assertFalse(geocode._is_coarse_hit("amenity", "hotel"))   # Comfort Inn
+        self.assertFalse(geocode._is_coarse_hit("shop", "furniture"))  # Bassett Furniture
+        self.assertFalse(geocode._is_coarse_hit("tourism", "motel"))
+        self.assertFalse(geocode._is_coarse_hit("highway", "residential"))  # a street
+
+    def test_coarse_hits_still_rejected(self):
+        """City/region/area hits must still be rejected so unrelated incidents
+        don't stack on a single city-centroid pin (the original cluster bug)."""
+        self.assertTrue(geocode._is_coarse_hit("place", "city"))
+        self.assertTrue(geocode._is_coarse_hit("boundary", "administrative"))
+        self.assertTrue(geocode._is_coarse_hit("place", "neighbourhood"))
+        self.assertTrue(geocode._is_coarse_hit("landuse", "residential"))
+
+    def test_bare_brand_still_dropped_before_query(self):
+        """Accepting POI hits must NOT resurrect bare-brand clustering: a lone
+        'Walmart' is still dropped upstream as too vague before any query."""
+        self.assertTrue(geocode._is_too_vague("Walmart", ", Chattanooga, TN"))
+        self.assertTrue(geocode._is_too_vague("the mall", ", Chattanooga, TN"))
+
+    def test_chattanooga_lexicon_fixes_lehighway(self):
+        out = location_aliases.apply_location_lexicon(
+            "two-car crash on Lehighway near Shallowford", city="chattanooga"
+        )
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertIn("Lee Highway", out)
+        self.assertIn("Shallowford Road", out)
+
+    def test_chattanooga_lexicon_does_not_double_type(self):
+        out = location_aliases.apply_location_lexicon(
+            "fire at 1755 Gunbarrel Road", city="chattanooga"
+        )
+        self.assertEqual(out, "fire at 1755 Gunbarrel Road")
+
 
 if __name__ == "__main__":
     unittest.main()
