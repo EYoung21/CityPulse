@@ -793,57 +793,15 @@ async def ingest(
 
     location_confidence = extraction.get("location_confidence", "none")
 
-    if inh.status == "blocked":
-        incident = store.insert_incident(
-            raw_text=req.text,
-            severity_category=category,
-            s_base=s_base,
-            confidence=confidence,
-            location_text=location_text,
-            inhibitor_status="blocked",
-            inhibitor_reason=inh.reason,
-            feed_id=feed_id,
-            audio_clip=effective_audio_clip,
-            location_confidence=location_confidence,
-            description=description,
-            word_timings=effective_word_timings,
-            city=city,
-            reported_at=req_timestamp,
-            ingested_at=ingested_at,
-        )
-        await admin_events.broadcast({
-            "type": "incident_stored",
-            "correlation": correlation,
-            "feed_id": feed_id,
-            "outcome": "blocked",
-            "incident_id": incident["id"],
-        })
-        store.insert_extraction(
-            feed_id=feed_id,
-            raw_text=req.text,
-            reported_at=req_timestamp,
-            ingested_at=ingested_at,
-            segment_start_utc=req.segment_start_utc,
-            ingest_lag_sec=ingest_lag_sec,
-            audio_clip=effective_audio_clip,
-            raw_audio_clip=req.raw_audio_clip,
-            preprocess_meta=req.preprocess_meta,
-            variants=req.variants,
-            llm_relevant=True,
-            llm_category=category,
-            llm_confidence=confidence,
-            llm_location_text=location_text,
-            location_confidence=location_confidence,
-            inhibitor_status="blocked",
-            inhibitor_reason=inh.reason,
-            incident_id=incident["id"],
-            city=city,
-        )
-        return {
-            "status": "blocked",
-            "reason": inh.reason,
-            "incident_id": incident["id"],
-        }
+    # Redact-and-publish: the guardrail never blocks an incident. It masks PII
+    # *values* (phone, SSN, payment card, email, DOB date) in everything we
+    # store and display, while req.text stays intact for geocoding and LLM
+    # refinement. When a transcript is redacted we also drop word_timings — the
+    # per-word audio-sync array would otherwise re-expose the masked spans — and
+    # the plain redacted transcript renders instead. (Audio still contains the
+    # spoken words; redaction protects the searchable/displayed text.)
+    stored_raw_text, _redactions = inhibitor.redact_pii(req.text)
+    stored_word_timings = None if _redactions else effective_word_timings
 
     # Geocode the location text via Nominatim. We no longer fall back to
     # LLM-predicted coords — the model hallucinates the city center when it
@@ -935,10 +893,14 @@ async def ingest(
 
         # Build the mention payload that represents *this* transmission.
         # Used both as the seed entry on a brand-new incident and as the
-        # appended entry on a dedup merge.
+        # appended entry on a dedup merge. description is finalized by the
+        # refine loop above, so redact it here.
+        stored_description = (
+            inhibitor.redact_pii(description)[0] if description else description
+        )
         mention = {
             "at": req_timestamp,
-            "raw_text": req.text,
+            "raw_text": stored_raw_text,
             "audio_clip": effective_audio_clip,
             "audio_url": audio_url,
             "feed_id": feed_id,
@@ -947,7 +909,7 @@ async def ingest(
             "confidence": confidence,
             "severity_category": category,
             "s_base": s_base,
-            "description": description,
+            "description": stored_description,
         }
 
         # Dedup: if a recent same-category incident exists within ~200m
@@ -977,7 +939,7 @@ async def ingest(
 
         if incident_id is None:
             incident = store.insert_incident(
-                raw_text=req.text,
+                raw_text=stored_raw_text,
                 severity_category=category,
                 s_base=s_base,
                 confidence=confidence,
@@ -992,8 +954,8 @@ async def ingest(
                 ingested_at=ingested_at,
                 audio_clip=effective_audio_clip,
                 feed_id=feed_id,
-                description=description,
-                word_timings=effective_word_timings,
+                description=stored_description,
+                word_timings=stored_word_timings,
                 city=city,
                 mentions=[mention],
             )
@@ -1082,7 +1044,7 @@ async def ingest(
 
     store.insert_extraction(
         feed_id=feed_id,
-        raw_text=req.text,
+        raw_text=stored_raw_text,
         reported_at=req_timestamp,
         ingested_at=ingested_at,
         segment_start_utc=req.segment_start_utc,

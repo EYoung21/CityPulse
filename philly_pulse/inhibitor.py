@@ -1,18 +1,28 @@
 """Local ethical guardrail for PhillyPulse.
 
 This replaces the prior sponsor-specific external Inhibitor integration
-with a built-in, deterministic guardrail that blocks obvious sensitive
-content before map display.
+with a built-in, deterministic guardrail.
+
+Policy: **redact, don't block.** Dispatch radio is full of number
+sequences (addresses, unit IDs, case numbers, callback numbers) and spoken
+terms like "date of birth" that look like PII but are not — and blocking the
+whole incident on a match silently drops real life-safety emergencies (a
+suicidal-veteran call, a 77-year-old unresponsive). Instead we mask PII
+*values* in the stored/displayed transcript and publish the incident anyway,
+so the map pin, description, and location survive. Over-masking a case number
+is a cosmetic cost; losing an emergency is not.
 """
 
 import logging
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
 GUARDRAIL_MODE = os.environ.get("GUARDRAIL_MODE", "local").strip().lower()
+
+REDACTION_PLACEHOLDER = "[redacted]"
 
 # PII indicators — tuned to avoid police-dispatch false positives.
 _DISPATCH_CODE_RE = re.compile(r"\b911-\d{2}-\d{4}\b")
@@ -26,6 +36,8 @@ _PHONE_RE = re.compile(
 # Bare, separator-less 10/11-digit phone (e.g. "2155551234"). Restricted to
 # NANP shape — area code and exchange both start 2-9 — so unit numbers,
 # addresses, and case/ID numbers (which routinely start with 0/1) don't match.
+# Under the redact-and-publish policy, an occasional 10-digit case number that
+# slips through is merely masked, not blocked.
 _PHONE_PLAIN_RE = re.compile(r"\b1?[2-9]\d{2}[2-9]\d{2}\d{4}\b")
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
 _CREDIT_CARD_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
@@ -34,53 +46,85 @@ _CARD_CTX_RE = re.compile(
     r"\b(?:credit\s+card|debit\s+card|card\s+number|mastercard|visa|amex)\b|\bcard\b",
     re.I,
 )
-
-# Extra keywords for highly sensitive contexts.
-_SENSITIVE_KEYWORDS = (
-    "social security",
-    "ssn",
-    "date of birth",
-    "dob",
-    "driver license",
-    "driver's license",
-    "license number",
-    "full legal name",
-)
+# Date-of-birth: redact an actual date *value* that appears near a DOB cue.
+# The cue word alone ("date of birth", "DOB") is not PII and must not trigger
+# anything on its own — that naive substring match was blocking emergencies
+# whenever a dispatcher relayed a suspect's DOB.
+_DOB_CUE_RE = re.compile(r"\b(?:date\s+of\s+birth|d\.?o\.?b\.?|born(?:\s+on)?)\b", re.I)
+_DATE_VALUE_RE = re.compile(r"\b\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}\b")
 
 
 @dataclass
 class InhibitorResult:
-    status: str          # "passed", "blocked", or "bypassed"
-    reason: str | None   # explanation if blocked; None if passed
+    status: str          # "passed", "redacted", or "bypassed"
+    reason: str | None   # comma-joined redaction categories, or None
+    redactions: list[str] = field(default_factory=list)
+    redacted_text: str | None = None  # text with PII masked (None if clean)
     raw_response: dict | None = None
 
 
-def _has_ssn(text: str) -> bool:
-    """Detect likely SSNs while exempting 911 dispatch location codes."""
-    for match in _SSN_DASHED_RE.finditer(text):
-        if _DISPATCH_CODE_RE.fullmatch(match.group()):
-            continue
-        return True
-    lowered = text.lower()
-    if any(token in lowered for token in ("social security", "ssn")):
-        return bool(_SSN_PLAIN_RE.search(text))
-    return False
+def redact_pii(text: str) -> tuple[str, list[str]]:
+    """Mask PII *values* in ``text`` so an incident can be published safely.
 
+    Returns ``(redacted_text, categories)``. ``categories`` is empty when
+    nothing was masked. Police-dispatch artifacts — 911 location codes, radio
+    digit noise, and addresses/case numbers that don't take phone shape — are
+    intentionally preserved.
+    """
+    if not text:
+        return text, []
 
-def _has_phone(text: str) -> bool:
-    """Detect phone numbers in both separated and bare 10/11-digit forms."""
-    return bool(_PHONE_RE.search(text) or _PHONE_PLAIN_RE.search(text))
+    reasons: list[str] = []
+    out = text
 
+    def _note(cat: str) -> None:
+        if cat not in reasons:
+            reasons.append(cat)
 
-def _has_payment_card(text: str) -> bool:
-    """Detect payment-card numbers; skip radio digit noise and 'cardiac' false hits."""
-    if not _CREDIT_CARD_RE.search(text):
-        return False
-    if not _CARD_CTX_RE.search(text):
-        return False
-    if _RADIO_DIGIT_NOISE_RE.search(text):
-        return False
-    return True
+    # Email
+    if _EMAIL_RE.search(out):
+        out = _EMAIL_RE.sub(REDACTION_PLACEHOLDER, out)
+        _note("email")
+
+    # SSN (dashed) — keep 911-XX-XXXX dispatch location codes.
+    def _ssn_sub(m: re.Match) -> str:
+        if _DISPATCH_CODE_RE.fullmatch(m.group()):
+            return m.group()
+        _note("ssn")
+        return REDACTION_PLACEHOLDER
+
+    out = _SSN_DASHED_RE.sub(_ssn_sub, out)
+    # Plain 9-digit SSN only when explicit SSN context is present.
+    if any(tok in out.lower() for tok in ("social security", "ssn")):
+        masked = _SSN_PLAIN_RE.sub(REDACTION_PLACEHOLDER, out)
+        if masked != out:
+            _note("ssn")
+            out = masked
+
+    # Phone — separated and bare NANP forms.
+    def _phone_sub(m: re.Match) -> str:
+        _note("phone")
+        return REDACTION_PLACEHOLDER
+
+    out = _PHONE_RE.sub(_phone_sub, out)
+    out = _PHONE_PLAIN_RE.sub(_phone_sub, out)
+
+    # Payment card — require card context and skip radio digit noise.
+    if _CARD_CTX_RE.search(out) and not _RADIO_DIGIT_NOISE_RE.search(out):
+        masked = _CREDIT_CARD_RE.sub(REDACTION_PLACEHOLDER, out)
+        if masked != out:
+            _note("payment_card")
+            out = masked
+
+    # Date of birth — redact date values only when a DOB cue is present.
+    if _DOB_CUE_RE.search(out):
+        def _dob_sub(m: re.Match) -> str:
+            _note("date_of_birth")
+            return REDACTION_PLACEHOLDER
+
+        out = _DATE_VALUE_RE.sub(_dob_sub, out)
+
+    return out, reasons
 
 
 async def check_incident(
@@ -89,29 +133,22 @@ async def check_incident(
     location_text: str | None,
     confidence: float,
 ) -> InhibitorResult:
-    """Run local ethical guardrail on an extracted incident.
+    """Run the local guardrail on an extracted incident.
 
-    Returns InhibitorResult with status="passed" if safe to display,
-    "blocked" if the content should be suppressed, or "bypassed" if
-    guardrail checks are intentionally disabled.
+    Never blocks: returns status="passed" when the transcript is clean,
+    "redacted" when PII values were masked (the incident still publishes,
+    using ``redacted_text``), or "bypassed" when the guardrail is disabled.
     """
     if GUARDRAIL_MODE in {"off", "disabled", "none"}:
         return InhibitorResult(status="bypassed", reason="Local guardrail disabled")
 
     text = raw_transcript or ""
-    lowered = text.lower()
-
-    if _has_ssn(text):
-        return InhibitorResult(status="blocked", reason="Possible SSN detected")
-    if _EMAIL_RE.search(text):
-        return InhibitorResult(status="blocked", reason="Email address detected")
-    if _has_phone(text):
-        return InhibitorResult(status="blocked", reason="Phone number detected")
-    if _has_payment_card(text):
-        return InhibitorResult(status="blocked", reason="Payment card-like data detected")
-
-    for token in _SENSITIVE_KEYWORDS:
-        if token in lowered:
-            return InhibitorResult(status="blocked", reason=f"Sensitive content: {token}")
-
+    redacted, reasons = redact_pii(text)
+    if reasons:
+        return InhibitorResult(
+            status="redacted",
+            reason=", ".join(reasons),
+            redactions=reasons,
+            redacted_text=redacted,
+        )
     return InhibitorResult(status="passed", reason=None)
