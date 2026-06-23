@@ -198,12 +198,20 @@ async def _recover_one(incident_id: str, ref, data: dict, *, dry_run: bool) -> s
         return "llm_error"
 
     if result is None:
-        if not dry_run:
-            ref.update({
-                "repair_attempted_at": datetime.now(timezone.utc).isoformat(),
-                "repair_outcome": "llm_marked_not_relevant",
-            })
-        return "not_relevant"
+        # Repair fixes coordinates only — it must never re-litigate relevance.
+        # The incident was already classified relevant at ingest; a repair-time
+        # "not relevant" was permanently killing real emergencies (e.g. a
+        # firearm-on-highway report). Fall back to re-geocoding the ORIGINAL
+        # location_text, preserving the original category/description. If coords
+        # still can't be recovered the incident stays hidden as a (retryable)
+        # coordinate failure, not downgraded to irrelevant.
+        result = {
+            "location_text": data.get("location_text"),
+            "location_confidence": data.get("location_confidence", "none"),
+            "severity_category": data.get("severity_category"),
+            "description": data.get("description"),
+            "confidence": data.get("confidence", 0.7),
+        }
 
     new_loc = (result.get("location_text") or "").strip()
     new_conf = result.get("location_confidence", "none")
