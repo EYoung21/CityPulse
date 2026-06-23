@@ -82,7 +82,14 @@ export interface Incident {
   feed_id: string | null;
   description: string | null;
   hidden?: boolean;
+  /** Per-word audio-sync timings. Kept off the map-sync payload (it was ~73%
+   *  of it); present inline only on legacy/unmigrated docs. When absent and
+   *  `has_word_timings` is true, the detail view lazy-loads it from
+   *  `/api/incidents/{id}/timings`. */
   word_timings?: { word: string; start: number; end: number }[] | null;
+  /** True when the incident has word timings available in the sidecar
+   *  collection (so the detail view should lazy-fetch them). */
+  has_word_timings?: boolean;
   /** Append-only log of every scanner transmission that the dedup
    *  pipeline merged into this incident. The first entry is the
    *  original dispatch; subsequent entries are follow-ups (acks,

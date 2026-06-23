@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,13 @@ from typing import Any, Optional
 
 import firebase_admin
 from firebase_admin import credentials, firestore
+
+logger = logging.getLogger(__name__)
+
+# word_timings is large (~73% of the map-sync payload) and only the incident
+# detail view needs it. We keep it OFF the incident doc and store it in this
+# sibling collection so the map query stays slim; the frontend lazy-loads it.
+WORD_TIMINGS_COLLECTION = "incident_word_timings"
 
 _db: Optional[firestore.Client] = None
 
@@ -93,7 +101,9 @@ def insert_incident(
         "audio_clip": audio_clip,
         "feed_id": feed_id,
         "description": description,
-        "word_timings": word_timings,
+        # word_timings lives in the sibling collection (see below), not here —
+        # the map only needs this flag to know whether to lazy-load timings.
+        "has_word_timings": bool(word_timings),
         "city": city,
         "mentions": mentions or [],
         "mention_count": len(mentions or []),
@@ -101,8 +111,35 @@ def insert_incident(
     }
     ref = db.collection("incidents").document(incident_id)
     ref.set(payload)
+    # Sidecar write is best-effort: an incident must never fail to save over
+    # its (optional) word timings. On failure has_word_timings stays True but
+    # the detail view simply renders the transcript without per-word sync.
+    if word_timings:
+        try:
+            db.collection(WORD_TIMINGS_COLLECTION).document(incident_id).set(
+                {"incident_id": incident_id, "word_timings": word_timings}
+            )
+        except Exception as e:  # pragma: no cover — defensive
+            logger.warning("word_timings sidecar write failed for %s: %s", incident_id, e)
     # Avoid an extra ``get()`` — ``set`` already wrote the full payload.
     return _doc_to_row(incident_id, payload)
+
+
+def get_word_timings(incident_id: str) -> Optional[list]:
+    """Fetch an incident's word timings from the sidecar collection.
+
+    Returns None when there are no timings (redacted incident, best-effort
+    write that failed, or a legacy doc not yet migrated)."""
+    db = _ensure_client()
+    try:
+        snap = db.collection(WORD_TIMINGS_COLLECTION).document(incident_id).get()
+    except Exception as e:  # pragma: no cover — defensive
+        logger.warning("word_timings sidecar read failed for %s: %s", incident_id, e)
+        return None
+    if not snap.exists:
+        return None
+    wt = (snap.to_dict() or {}).get("word_timings")
+    return wt if isinstance(wt, list) else None
 
 
 # ── Incident dedup ────────────────────────────────────────────────────
