@@ -32,6 +32,7 @@ if _should_use_firestore():
         get_extraction,
         get_incident,
         get_recent_extractions,
+        get_word_timings,
         incident_count,
         inhibitor_stats,
         insert_extraction,
@@ -63,6 +64,11 @@ else:
         seed_from_json,
         update_extraction,
     )
+
+    def get_word_timings(incident_id):  # type: ignore[misc]
+        # SQLite keeps word_timings inline on the incident row.
+        inc = get_incident(incident_id)
+        return (inc or {}).get("word_timings")
 
     def update_incident(incident_id, updates):  # type: ignore[misc]
         raise NotImplementedError("update_incident not supported in SQLite mode")

@@ -87,7 +87,11 @@ function mapDoc(id: string, data: Record<string, unknown>): Incident {
         ? null
         : String(data.description),
     hidden: data.hidden === true,
+    // word_timings is kept off the map-sync payload (it was ~73% of it). New
+    // docs carry only the flag; legacy/unmigrated docs may still have it inline.
     word_timings: Array.isArray(data.word_timings) ? data.word_timings : null,
+    has_word_timings:
+      data.has_word_timings === true || Array.isArray(data.word_timings),
   };
 }
 

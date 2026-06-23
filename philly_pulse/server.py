@@ -1121,6 +1121,22 @@ def _incident_matches_query(inc: dict, terms: list[str]) -> bool:
     return all(t in blob for t in terms)
 
 
+@app.get("/api/incidents/{incident_id}/timings")
+def get_incident_timings(incident_id: str, response: Response):
+    """Lazy-loaded word timings for the detail-view transcript player.
+
+    word_timings is ~73% of the incident payload and only the detail view
+    needs it, so it lives in a sidecar collection off the map-sync hot path
+    and is fetched on demand here. Immutable once written → cache hard.
+    """
+    response.headers["Cache-Control"] = "public, max-age=86400"
+    try:
+        wt = store.get_word_timings(incident_id)
+    except Exception:
+        wt = None
+    return {"incident_id": incident_id, "word_timings": wt or []}
+
+
 @app.get("/api/incidents/page")
 def page_incidents(
     response: Response,

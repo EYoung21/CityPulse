@@ -22,6 +22,7 @@ import {
   incidentAudioSrc,
   incidentAudioSources,
   fetchUrlWithPublicApiFallback,
+  fetchIncidentWordTimings,
 } from "@/lib/public-api-base";
 import {
   hasScannerTranscriptArtifacts,
@@ -410,6 +411,30 @@ export default function IncidentDetail({ incident, onClose }: Props) {
   const audioSrc = audioSources[0] ?? null;
   const hasAudio = !!audioSrc;
 
+  // word_timings is kept off the map-sync payload (it was ~73% of it). Legacy
+  // docs still carry it inline; otherwise lazy-load it from the sidecar
+  // endpoint when this detail opens. On failure the transcript still renders,
+  // just without per-word highlight.
+  // Cache is scoped to the incident id so a stale fetch from a previously
+  // open incident is never applied to a new one (no synchronous reset needed).
+  const [lazyTimings, setLazyTimings] = useState<{
+    id: string;
+    wt: { word: string; start: number; end: number }[] | null;
+  } | null>(null);
+  useEffect(() => {
+    if (incident.word_timings || !incident.has_word_timings) return;
+    let cancelled = false;
+    void fetchIncidentWordTimings(incident.id).then((wt) => {
+      if (!cancelled) setLazyTimings({ id: incident.id, wt });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [incident.id, incident.word_timings, incident.has_word_timings]);
+  const effectiveTimings =
+    incident.word_timings ??
+    (lazyTimings && lazyTimings.id === incident.id ? lazyTimings.wt : null);
+
   // Mentions are appended chronologically by the dedup pipeline. We
   // render them oldest-first so the "story" reads naturally (initial
   // dispatch at top, follow-ups below). The very first mention is
@@ -516,7 +541,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
             <WaveformPlayer
               src={audioSources}
               transcript={incident.raw_text}
-              wordTimings={incident.word_timings}
+              wordTimings={effectiveTimings}
             />
           ) : (
             <p

@@ -264,3 +264,24 @@ export async function fetchUrlWithPublicApiFallback(
   }
   return await fetch(url, init);
 }
+
+/** Lazy-load an incident's per-word audio-sync timings. They're kept off the
+ *  map-sync payload (≈73% of it) and fetched on demand when a detail view
+ *  opens. Returns null on any failure — the player still renders the
+ *  transcript, just without per-word highlight. */
+export async function fetchIncidentWordTimings(
+  incidentId: string,
+): Promise<{ word: string; start: number; end: number }[] | null> {
+  try {
+    const r = await fetchPublicApi(
+      `/api/incidents/${encodeURIComponent(incidentId)}/timings`,
+    );
+    if (!r.ok) return null;
+    const j = (await r.json()) as { word_timings?: unknown };
+    return Array.isArray(j.word_timings) && j.word_timings.length > 0
+      ? (j.word_timings as { word: string; start: number; end: number }[])
+      : null;
+  } catch {
+    return null;
+  }
+}
