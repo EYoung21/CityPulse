@@ -42,37 +42,55 @@ def _run(args: argparse.Namespace) -> None:
     counts: Counter = Counter()
     started = time.time()
 
-    q = db.collection("incidents")
+    base = db.collection("incidents")
     if args.city:
         from google.cloud.firestore_v1.base_query import FieldFilter
 
-        q = q.where(filter=FieldFilter("city", "==", args.city))
+        base = base.where(filter=FieldFilter("city", "==", args.city))
 
+    # Paginate by document id rather than one long stream — a single 45k-doc
+    # stream trips a google-cloud-firestore retry bug, and id-ordering is stable
+    # even as we mutate docs (the id never changes). Resumable: already-slim rows
+    # are skipped, so a re-run continues where a crash left off.
+    BATCH = 800
     scanned = 0
-    for snap in q.stream():
-        scanned += 1
-        data = snap.to_dict() or {}
-        wt = data.get("word_timings")
-        if not isinstance(wt, list) or not wt:
-            counts["already_slim"] += 1
-            continue
-
-        if not args.dry_run:
-            db.collection(WORD_TIMINGS_COLLECTION).document(snap.id).set(
-                {"incident_id": snap.id, "word_timings": wt}
-            )
-            snap.reference.update(
-                {
-                    "has_word_timings": True,
-                    "word_timings": fb_firestore.DELETE_FIELD,
-                }
-            )
-        counts["migrated"] += 1
-
-        if scanned % 500 == 0:
-            print(f"... scanned {scanned}, migrated {counts['migrated']}", flush=True)
-        if args.limit and counts["migrated"] >= args.limit:
+    last = None
+    stop = False
+    while not stop:
+        q = base.order_by("__name__").limit(BATCH)
+        if last is not None:
+            q = q.start_after(last)
+        docs = list(q.stream())
+        if not docs:
             break
+        last = docs[-1]
+        for snap in docs:
+            scanned += 1
+            data = snap.to_dict() or {}
+            wt = data.get("word_timings")
+            if not isinstance(wt, list) or not wt:
+                counts["already_slim"] += 1
+                continue
+            if not args.dry_run:
+                try:
+                    db.collection(WORD_TIMINGS_COLLECTION).document(snap.id).set(
+                        {"incident_id": snap.id, "word_timings": wt}
+                    )
+                    snap.reference.update(
+                        {
+                            "has_word_timings": True,
+                            "word_timings": fb_firestore.DELETE_FIELD,
+                        }
+                    )
+                except Exception as e:  # don't let one bad doc kill the run
+                    counts["error"] += 1
+                    print(f"  [err] {snap.id}: {e}", flush=True)
+                    continue
+            counts["migrated"] += 1
+            if args.limit and counts["migrated"] >= args.limit:
+                stop = True
+                break
+        print(f"... scanned {scanned}, migrated {counts['migrated']}", flush=True)
 
     print()
     print("=== word_timings sidecar migration ===")
