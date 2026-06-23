@@ -87,14 +87,11 @@ async def _resurrect_one(incident_id: str, ref, data: dict, *, dry_run: bool) ->
     result = await inhibitor.check_incident(
         raw_text, category, location_text or None, confidence
     )
-    if result.status == "blocked":
-        if not dry_run:
-            ref.update({
-                "inhibitor_resurrect_attempted_at": datetime.now(timezone.utc).isoformat(),
-                "inhibitor_resurrect_outcome": "still_blocked",
-                "inhibitor_resurrect_reason": result.reason,
-            })
-        return "still_blocked"
+    # The guardrail no longer blocks — it redacts. Mask PII in the stored
+    # transcript before republishing a previously-blocked row (the original
+    # raw_text was saved unredacted by the old block path).
+    stored_text = result.redacted_text or raw_text
+    was_redacted = bool(result.redactions)
 
     if not location_text:
         if not dry_run:
@@ -122,8 +119,9 @@ async def _resurrect_one(incident_id: str, ref, data: dict, *, dry_run: bool) ->
         return "geocode_failed"
 
     payload = {
-        "inhibitor_status": "passed",
-        "inhibitor_reason": None,
+        "raw_text": stored_text,
+        "inhibitor_status": result.status,  # "redacted" or "passed"
+        "inhibitor_reason": result.reason,
         "lat": location_result.lat,
         "lng": location_result.lng,
         "location_text": location_result.location_text or location_text,
@@ -133,6 +131,13 @@ async def _resurrect_one(incident_id: str, ref, data: dict, *, dry_run: bool) ->
         "inhibitor_resurrect_outcome": "published",
         "inhibitor_resurrect_from_reason": data.get("inhibitor_reason"),
     }
+    # Drop word_timings when redacted — the per-word array would otherwise
+    # re-expose the masked spans the display falls back to.
+    if was_redacted:
+        payload["word_timings"] = None
+    stored_desc = data.get("description")
+    if stored_desc:
+        payload["description"] = inhibitor.redact_pii(stored_desc)[0]
     if not dry_run:
         ref.update(payload)
     print(
