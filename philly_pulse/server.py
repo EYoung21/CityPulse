@@ -1127,13 +1127,18 @@ def get_incident_timings(incident_id: str, response: Response):
 
     word_timings is ~73% of the incident payload and only the detail view
     needs it, so it lives in a sidecar collection off the map-sync hot path
-    and is fetched on demand here. Immutable once written → cache hard.
+    and is fetched on demand here.
     """
-    response.headers["Cache-Control"] = "public, max-age=86400"
     try:
         wt = store.get_word_timings(incident_id)
     except Exception:
         wt = None
+    # Populated timings are immutable → cache hard. An empty result may just be
+    # pre-migration/eventual, so cache it only briefly to avoid a shared cache
+    # pinning "no timings" for a day while the backfill runs.
+    response.headers["Cache-Control"] = (
+        "public, max-age=86400" if wt else "public, max-age=60"
+    )
     return {"incident_id": incident_id, "word_timings": wt or []}
 
 
