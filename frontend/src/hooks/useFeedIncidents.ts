@@ -6,7 +6,12 @@ import { fetchIncidentPageFromFirestore, subscribeIncidents } from "@/lib/firest
 import { loadCachedIncidents } from "@/lib/incident-snapshot-cache";
 import { getCurrentPosition } from "@/lib/native";
 
-export type FeedMode = "recent" | "near";
+export type FeedMode = "recent" | "near" | "newsroom";
+
+// Newsroom ranks a window of incidents, so it pulls a deeper first page than
+// the scrolling feed — enough pool to triage + compute the "unusual for the
+// area" baseline.
+const NEWSROOM_FIRST_PAGE = 200;
 
 const PAGE_SIZE = 20;
 
@@ -139,7 +144,12 @@ export function useFeedIncidents({
 
     try {
       const page = await loadIncidentPage({
-        limit: mode === "near" ? Math.max(pageSize, 40) : pageSize,
+        limit:
+          mode === "newsroom"
+            ? NEWSROOM_FIRST_PAGE
+            : mode === "near"
+              ? Math.max(pageSize, 40)
+              : pageSize,
         city: citySlug,
         nearLat: mode === "near" ? userLoc?.lat ?? null : null,
         nearLng: mode === "near" ? userLoc?.lng ?? null : null,
@@ -167,7 +177,7 @@ export function useFeedIncidents({
   }, [citySlug, markKnown, mode, pageSize, sinceIso, userLoc?.lat, userLoc?.lng]);
 
   const loadMore = useCallback(async () => {
-    if (!cursor || loading || !hasMore || mode !== "recent") return;
+    if (!cursor || loading || !hasMore || mode === "near") return;
     setLoading(true);
     try {
       const page = await loadIncidentPage({
@@ -229,7 +239,7 @@ export function useFeedIncidents({
   }, [loadFirst]);
 
   useEffect(() => {
-    if (!enableLive || mode !== "recent") return;
+    if (!enableLive || mode === "near") return;
     const unsub = subscribeIncidents((liveRows) => {
       const fresh = liveRows.filter((inc) => {
         if (knownIdsRef.current.has(inc.id)) return false;
