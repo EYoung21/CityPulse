@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Crosshair, Download, Code, Zap, Activity, Lock } from "lucide-react";
+import { ArrowLeft, MapPin, Clock, Loader2, RefreshCw, Crosshair, Download, Code, Zap, Activity, Lock, Newspaper } from "lucide-react";
 import {
   TIME_FILTERS,
   DEFAULT_TIME_FILTER_HOURS,
@@ -11,6 +11,7 @@ import {
   sinceIsoForTimeFilterHours,
 } from "@/lib/time-filters";
 import IncidentFeed from "@/components/IncidentFeed";
+import NewsroomDesk from "@/components/NewsroomDesk";
 import IncidentTypeFilterChips from "@/components/IncidentTypeFilterChips";
 import { incidentMatchesCategoryFilter } from "@/lib/incident-category-groups";
 import MobileBottomNav, { MOBILE_NAV_HEIGHT_PX } from "@/components/MobileBottomNav";
@@ -352,6 +353,20 @@ export default function FeedPage() {
             {locating ? <Loader2 className="w-3 h-3 animate-spin" /> : <MapPin className="w-3 h-3" />}
             Near me
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "newsroom"}
+            onClick={() => setMode("newsroom")}
+            className="px-3 py-1 rounded-full font-medium flex items-center gap-1.5"
+            style={{
+              background: mode === "newsroom" ? "var(--panel-input-bg, rgba(148,163,184,0.15))" : "transparent",
+              color: mode === "newsroom" ? "var(--panel-text)" : "var(--panel-text-muted)",
+            }}
+            title="Editor view: ranked, newsworthy incidents only"
+          >
+            <Newspaper className="w-3 h-3" /> Newsroom
+          </button>
         </div>
         {mode === "near" && userLoc && (
           <button
@@ -373,7 +388,7 @@ export default function FeedPage() {
         >
           <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} /> Refresh
         </button>
-        {visibleIncidents.length > 0 && (
+        {visibleIncidents.length > 0 && mode !== "newsroom" && (
           <button
             type="button"
             onClick={downloadCsv}
@@ -386,16 +401,18 @@ export default function FeedPage() {
         )}
       </div>
 
-      <div
-        className="px-4 py-2 flex flex-wrap items-center gap-2"
-        style={{ borderBottom: "1px solid var(--panel-border, rgba(148,163,184,0.15))" }}
-      >
-        <IncidentTypeFilterChips
-          activeCats={activeCats}
-          onActiveCatsChange={setActiveCats}
-          incidentsForCounts={incidents}
-        />
-      </div>
+      {mode !== "newsroom" && (
+        <div
+          className="px-4 py-2 flex flex-wrap items-center gap-2"
+          style={{ borderBottom: "1px solid var(--panel-border, rgba(148,163,184,0.15))" }}
+        >
+          <IncidentTypeFilterChips
+            activeCats={activeCats}
+            onActiveCatsChange={setActiveCats}
+            incidentsForCounts={incidents}
+          />
+        </div>
+      )}
 
       {!isPro && (
         <div className="px-4 py-2 text-[10px] md:text-xs font-medium flex items-center justify-center gap-2 bg-purple-500/10 border-y border-purple-500/20 text-purple-400">
@@ -428,18 +445,27 @@ export default function FeedPage() {
           onScrollContainerReady={setFeedScrollRoot}
         >
           <div ref={scrollTopRef}>
-            <IncidentFeed
-              incidents={visibleIncidents}
-              selectedId={expandedId}
-              onSelect={handleSelect}
-              onViewOnMap={handleViewOnMap}
-              showMapThumbnail
-              density="immersive"
-              loading={loading}
-              sortMode={mode}
-              userLoc={userLoc}
-              newIncidentIds={newIncidentIds}
-            />
+            {mode === "newsroom" ? (
+              <NewsroomDesk
+                incidents={incidents}
+                onViewOnMap={handleViewOnMap}
+                userLoc={userLoc}
+                loading={loading}
+              />
+            ) : (
+              <IncidentFeed
+                incidents={visibleIncidents}
+                selectedId={expandedId}
+                onSelect={handleSelect}
+                onViewOnMap={handleViewOnMap}
+                showMapThumbnail
+                density="immersive"
+                loading={loading}
+                sortMode={mode === "near" ? "near" : "recent"}
+                userLoc={userLoc}
+                newIncidentIds={newIncidentIds}
+              />
+            )}
             <div ref={sentinelRef} className="h-12" />
             {!hasMore && mode === "recent" && visibleIncidents.length > 0 && (
               <div className="px-4 py-6 text-center text-[11px]" style={{ color: "var(--panel-text-muted)" }}>
