@@ -27,6 +27,7 @@ if _should_use_firestore():
         count_city_incidents,
         count_city_incidents_filtered,
         delete_incident,
+        find_latest_city_incidents,
         find_recent_duplicate,
         get_conn,
         get_extraction,
@@ -69,6 +70,25 @@ else:
         # SQLite keeps word_timings inline on the incident row.
         inc = get_incident(incident_id)
         return (inc or {}).get("word_timings")
+
+    def find_latest_city_incidents(  # type: ignore[misc]
+        slug,
+        *,
+        severity_category=None,
+        since_iso=None,
+        before_iso=None,
+        limit=25,
+    ):
+        # Dev SQLite fallback: list_incidents_for_city already filters by
+        # category and orders newest-first; over-fetch then slice.
+        rows = list_incidents_for_city(
+            slug,
+            since=since_iso,
+            category=severity_category,
+            before_iso=before_iso,
+            limit=max(int(limit), 200),
+        )
+        return rows[: int(limit)]
 
     def update_incident(incident_id, updates):  # type: ignore[misc]
         raise NotImplementedError("update_incident not supported in SQLite mode")
