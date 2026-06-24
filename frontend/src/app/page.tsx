@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
+  Newspaper,
   Shield,
   Eye,
   X,
@@ -38,6 +39,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import IncidentFeed from "@/components/IncidentFeed";
+import NewsroomDesk from "@/components/NewsroomDesk";
 import FeedPullRefresh from "@/components/FeedPullRefresh";
 import FeedAudioMiniPlayer from "@/components/FeedAudioMiniPlayer";
 import { getCurrentPosition } from "@/lib/native";
@@ -575,7 +577,7 @@ function MapHome() {
   const [todOverlayEnabled, setTodOverlayEnabled] = useState(false);
   const [todHourFocus, setTodHourFocus] = useState<number | null>(null);
 
-  const [feedSortMode, setFeedSortMode] = useState<"recent" | "near">("recent");
+  const [feedSortMode, setFeedSortMode] = useState<"recent" | "near" | "newsroom">("recent");
   const [feedUserLoc, setFeedUserLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [feedLocating, setFeedLocating] = useState(false);
   const [feedSearchQuery, setFeedSearchQuery] = useState("");
@@ -1637,6 +1639,21 @@ function MapHome() {
     if (activeCats.size > 0 && !activeCats.has(inc.severity_category)) return false;
     return true;
   });
+
+  // Newsroom ranks across ALL categories in the time window (it does its own
+  // editorial filtering), so it bypasses the category-chip filter. Free-tier
+  // gating still applies: non-Pro is clamped to the 24h free window, same as
+  // the rest of the feed.
+  const newsroomIncidents = useMemo(() => {
+    const effectiveHours = isPro
+      ? timeFilter
+      : Math.min(timeFilter, LARGEST_FREE_TIME_FILTER_HOURS);
+    const cutoff = Date.now() - effectiveHours * 60 * 60 * 1000;
+    return allIncidents.filter((inc) => {
+      if (inc.hidden) return false;
+      return new Date(inc.reported_at).getTime() >= cutoff;
+    });
+  }, [allIncidents, timeFilter, isPro]);
 
   const feedIncidents = useMemo(() => {
     if (!feedSearchQuery.trim()) return filteredIncidents;
@@ -3324,6 +3341,20 @@ function MapHome() {
                 <Crosshair className={`w-3 h-3 ${feedLocating ? "animate-spin" : ""}`} /> 
                 {feedLocating ? "Locating..." : "Near me"}
               </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={feedSortMode === "newsroom"}
+                onClick={() => setFeedSortMode("newsroom")}
+                className="px-3 py-1 rounded-full font-medium flex items-center gap-1.5 transition-colors"
+                style={{
+                  background: feedSortMode === "newsroom" ? "var(--pp-accent-bg)" : "transparent",
+                  color: feedSortMode === "newsroom" ? "#3b82f6" : "var(--panel-text-muted)",
+                }}
+                title="Editor view: ranked, newsworthy incidents only"
+              >
+                <Newspaper className="w-3 h-3" /> Newsroom
+              </button>
             </div>
 
             <div className="relative flex-1 w-full max-w-sm shrink-0">
@@ -3399,6 +3430,7 @@ function MapHome() {
               </div>
             </div>
 
+            {feedSortMode !== "newsroom" && (
             <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
               <FilterPresetsBar
                 activeCats={activeCats}
@@ -3458,6 +3490,7 @@ function MapHome() {
                 );
               })}
             </div>
+            )}
           </div>
 
           <FeedAudioMiniPlayer />
@@ -3468,28 +3501,45 @@ function MapHome() {
               setFeedVisibleLimit(40);
             }}
           >
-            <IncidentFeed
-              incidents={visibleFeedIncidents}
-              selectedId={selectedId}
-              onSelect={(id) => {
-                setSelectedId((prev) => (prev === id ? null : id));
-              }}
-              onViewOnMap={(id) => {
-                setSelectedId(id);
-                const inc = filteredIncidents.find((i) => i.id === id);
-                if (inc?.lat != null && inc?.lng != null) {
-                  setViewTab("map");
-                  requestAnimationFrame(() => {
-                    mapRef.current?.flyTo(inc.lat!, inc.lng!, 16);
-                  });
-                }
-              }}
-              showMapThumbnail
-              density="immersive"
-              sortMode={feedSortMode}
-              userLoc={feedUserLoc}
-            />
-            {feedVisibleLimit < feedIncidents.length && (
+            {feedSortMode === "newsroom" ? (
+              <NewsroomDesk
+                incidents={newsroomIncidents}
+                userLoc={feedUserLoc}
+                onViewOnMap={(id) => {
+                  setSelectedId(id);
+                  const inc = newsroomIncidents.find((i) => i.id === id);
+                  if (inc?.lat != null && inc?.lng != null) {
+                    setViewTab("map");
+                    requestAnimationFrame(() => {
+                      mapRef.current?.flyTo(inc.lat!, inc.lng!, 16);
+                    });
+                  }
+                }}
+              />
+            ) : (
+              <IncidentFeed
+                incidents={visibleFeedIncidents}
+                selectedId={selectedId}
+                onSelect={(id) => {
+                  setSelectedId((prev) => (prev === id ? null : id));
+                }}
+                onViewOnMap={(id) => {
+                  setSelectedId(id);
+                  const inc = filteredIncidents.find((i) => i.id === id);
+                  if (inc?.lat != null && inc?.lng != null) {
+                    setViewTab("map");
+                    requestAnimationFrame(() => {
+                      mapRef.current?.flyTo(inc.lat!, inc.lng!, 16);
+                    });
+                  }
+                }}
+                showMapThumbnail
+                density="immersive"
+                sortMode={feedSortMode === "near" ? "near" : "recent"}
+                userLoc={feedUserLoc}
+              />
+            )}
+            {feedSortMode !== "newsroom" && feedVisibleLimit < feedIncidents.length && (
               <div className="px-4 py-3 text-center">
                 <button
                   type="button"
