@@ -643,6 +643,55 @@ def count_city_incidents_filtered(
         return -1
 
 
+def find_latest_city_incidents(
+    slug: str,
+    *,
+    severity_category: Optional[str] = None,
+    since_iso: Optional[str] = None,
+    before_iso: Optional[str] = None,
+    limit: int = 25,
+) -> list[dict]:
+    """Newest-first incidents for a city, filtered server-side by category.
+
+    The Pulse Chat "when was the last <rare event>" path. Unlike
+    :func:`list_incidents_for_city` — which applies the category filter in
+    Python *after* the query limit, so a rare category (e.g. a homicide
+    months back) is silently dropped when it's not among the newest N rows —
+    this pushes ``severity_category`` into the Firestore query itself and
+    orders by reported_at DESC. So "the most recent violent_weapon" is found
+    no matter how far back it is, in a single indexed read.
+
+    Reuses the (city, severity_category, reported_at) composite index already
+    maintained for :func:`count_city_incidents_filtered`, so no new index is
+    required. Returns [] on error so the caller can degrade gracefully.
+    """
+    if not slug:
+        return []
+    db = _ensure_client()
+    rows: list[dict] = []
+    try:
+        query = db.collection("incidents").where("city", "==", slug)
+        if severity_category:
+            query = query.where("severity_category", "==", severity_category)
+        if since_iso:
+            query = query.where("reported_at", ">=", since_iso)
+        if before_iso:
+            query = query.where("reported_at", "<", before_iso)
+        query = query.order_by(
+            "reported_at", direction=firestore.Query.DESCENDING
+        ).limit(int(limit))
+        for doc in query.stream():
+            row = _doc_to_row(doc.id, doc.to_dict() or {})
+            if row.get("inhibitor_status") == "blocked":
+                continue
+            if row.get("hidden") is True:
+                continue
+            rows.append(row)
+    except Exception:
+        pass
+    return rows
+
+
 def inhibitor_stats() -> dict:
     db = _ensure_client()
     stats: dict[str, int] = {}

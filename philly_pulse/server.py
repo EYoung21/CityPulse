@@ -1915,6 +1915,64 @@ def pulse_chat_tool_specs() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "find_latest_incident",
+                "description": (
+                    "Find the most recent incident(s) matching a category and/or keywords across the "
+                    "FULL city history, newest-first (one indexed Firestore query). THIS is the tool for "
+                    "'when / what was the last | most recent X' questions — last homicide, last shooting, "
+                    "last structure fire, last time the homicide unit was called out — whenever the JSON "
+                    "sample and search_incidents don't already contain a match. Do NOT answer 'nothing in "
+                    "the window' for a 'last X' question without calling this first. Unlike count_incidents "
+                    "(returns only a number) it returns the actual incident text + timestamp; unlike "
+                    "fetch_older_incidents (tiny page budget) it jumps straight to the newest match no "
+                    "matter how far back it is. An empty result means no such incident exists in history — "
+                    "report that plainly rather than substituting a loosely related incident."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "severity_category": {
+                            "type": "string",
+                            "enum": list(SEVERITY_CATEGORIES),
+                            "description": (
+                                "Exact severity_category match (same phrase mapping as count_incidents: "
+                                "shooting/shot/gun fired → violent_weapon; stabbing/assault/fight → "
+                                "violent_no_weapon; shots heard → shots_heard; fire/smoke → fire_hazmat; "
+                                "etc.). For 'last murder/homicide' use violent_weapon (and/or "
+                                "violent_no_weapon) — NEVER medical_priority: a medical 'found deceased / "
+                                "unconscious party' call is a death, not a homicide. Omit to search all "
+                                "categories."
+                            ),
+                        },
+                        "keywords": {
+                            "type": "string",
+                            "description": (
+                                "Optional comma/space separated tokens; a match must contain at least one "
+                                "in its transcript, description, or location. Use to narrow within a "
+                                "category — e.g. severity_category=violent_weapon with keywords "
+                                "'fatal, killed, homicide, shot, deceased' to find an actual killing rather "
+                                "than a non-injury shooting — or across all categories (keywords "
+                                "'homicide unit, detective, medical examiner')."
+                            ),
+                        },
+                        "before": {
+                            "type": "string",
+                            "description": (
+                                "Optional ISO-8601 upper bound (exclusive) on reported_at. Pass the oldest "
+                                "match's timestamp to step back to the incident before it."
+                            ),
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max matches to return (default 3, capped at 10).",
+                        },
+                    },
+                },
+            },
+        },
     ]
 
 
@@ -2063,6 +2121,79 @@ def _pulse_tool_exec_count(
     }
 
 
+def _pulse_tool_exec_find_latest(
+    *,
+    city_slug: str,
+    effective_since: str | None,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    """Most-recent incident(s) matching a category/keywords across FULL history.
+
+    Powers the `find_latest_incident` tool — the 'when was the last X' path.
+    Unlike count_incidents (a bare number) and fetch_older_incidents (tiny page
+    budget that can't reach a months-old rare event), this runs a single
+    server-side query ordered newest-first with the category pushed into the
+    query, so a rare incident is found no matter how deep it sits.
+    """
+    cat = (str(args.get("severity_category") or "")).strip() or None
+    before = (str(args.get("before") or "")).strip() or None
+    kw_raw = str(args.get("keywords") or "")
+    keywords = [t for t in kw_raw.lower().replace(",", " ").split() if t]
+    try:
+        limit = int(args.get("limit") or 3)
+    except (TypeError, ValueError):
+        limit = 3
+    limit = max(1, min(10, limit))
+
+    # Free-tier floor (None for the Pro-only chat → full history).
+    since = effective_since
+    # Over-fetch when we still have to keyword-filter in Python, so a rare
+    # match isn't cut off before we can test it.
+    scan = limit if not keywords else max(limit * 12, 60)
+    scan = min(scan, 200)
+
+    try:
+        rows = store.find_latest_city_incidents(
+            city_slug,
+            severity_category=cat,
+            since_iso=since,
+            before_iso=before,
+            limit=scan,
+        )
+    except Exception as e:
+        logger.warning("pulse-chat find_latest_incident failed: %s", e)
+        return {"error": "lookup_unavailable", "detail": str(e)[:120]}
+
+    if keywords:
+        def _matches(inc: dict) -> bool:
+            hay = " ".join(
+                str(inc.get(k) or "")
+                for k in ("raw_text", "description", "headline", "location_text", "severity_category")
+            ).lower()
+            return any(t in hay for t in keywords)
+
+        rows = [r for r in rows if _matches(r)]
+
+    rows = rows[:limit]
+    trimmed = [_trim_incident_for_pulse_bundle(i) for i in rows]
+    return {
+        "match_count": len(trimmed),
+        "city": city_slug,
+        "severity_category": cat,
+        "keywords": keywords or None,
+        "before": before,
+        "scanned": scan,
+        "incidents": trimmed,
+        "hint": (
+            "Newest-first matches from the FULL city history (one indexed query). "
+            "An empty list means NO incident of that category/keyword exists in the "
+            "available history — say so plainly; do NOT substitute a medical "
+            "'found deceased' call for a homicide. Pass `before` = the oldest "
+            "reported_at shown here to step further back."
+        ),
+    }
+
+
 @app.post("/api/pulse-chat")
 async def pulse_chat(
     body: PulseChatRequest,
@@ -2143,6 +2274,12 @@ async def pulse_chat(
             "incidents, NOT the year/month total, so counting it is wrong. See the tool's severity_category enum "
             "for the exact category names and phrase mapping; multi-faceted questions (e.g. 'how many shootings') "
             "often need two calls — one for violent_weapon and one for shots_heard — and then a sum.\n"
+            "- ``find_latest_incident`` returns the most recent ACTUAL incident(s) of a category/keyword across "
+            "the FULL city history (newest-first, one indexed read). Use it for ANY 'when / what was the last | "
+            "most recent X' question (last homicide, last shooting, last fire, last time a unit was called out) "
+            "whenever the JSON sample and search_incidents don't already hold a match — do NOT answer 'nothing in "
+            "the current window' for a 'last X' question without calling this first. An empty result means it "
+            "genuinely isn't in the available history; count_incidents tells you HOW MANY, this tells you WHICH / WHEN.\n"
             "- Ground factual claims in the initial JSON, tool outputs, and user messages. If tools return no "
             "matches or fetch budget is exhausted, say that in one short sentence. Never count occurrences of "
             "a word inside a transcript and report it as 'happened N times'.\n"
@@ -2163,6 +2300,13 @@ async def pulse_chat(
         "extends beyond these rows, say that in one short sentence and answer from what is present.\n"
         "- For firearm- or shooting-related questions, the list may start with extra rows that match "
         "gun/shots/weapon language (still from the same capped fetch — not a full database or year tally).\n"
+        "- 'Murder' / 'homicide' means an intentional killing: look under violent_weapon / violent_no_weapon "
+        "(a shooting or stabbing death), or an incident explicitly described as a homicide. A MEDICAL call "
+        "about a person 'found deceased', 'unconscious', 'not breathing', or a DOA — especially on a fire/EMS "
+        "channel — is a death, NOT a murder; never report one as a homicide. For 'last murder/homicide' use "
+        "find_latest_incident (severity_category=violent_weapon, keywords like 'fatal, killed, homicide, shot, "
+        "deceased'); if it finds none, say there is no homicide in the available history rather than "
+        "substituting a medical death.\n"
         + tool_block
         + "- CARD UI: the app renders a playable incident card for every incident you tag with "
         "its id. Whenever you mention a specific incident, write it as its own bullet that ends "
@@ -2307,6 +2451,18 @@ async def pulse_chat(
                             )
 
                         out = await starlette.concurrency.run_in_threadpool(_count_sync)
+                    elif name == "find_latest_incident":
+                        # Single indexed query (newest-first); cheap like
+                        # count_incidents, so not subject to the fs_used page
+                        # budget. Powers "when was the last <rare event>".
+                        def _latest_sync():
+                            return _pulse_tool_exec_find_latest(
+                                city_slug=city_slug,
+                                effective_since=effective_since,
+                                args=args,
+                            )
+
+                        out = await starlette.concurrency.run_in_threadpool(_latest_sync)
                     else:
                         out = {"error": "unknown_tool", "name": name}
                     messages_loop.append(
