@@ -1,0 +1,58 @@
+name: Set Bedrock Keys (Ask Pulse)
+
+# Writes the AWS Bedrock credentials + PREFER_BEDROCK into the Hetzner backend's
+# /etc/philly-pulse.env and restarts the API. Ask Pulse then routes to Bedrock
+# Claude (Sonnet 4.6) as its primary LLM — see philly_pulse/bedrock_chat.py and
+# the pulse chain in philly_pulse/llm_client.py. Ingest/extraction is unchanged
+# (still the local provider). Manual trigger only.
+#
+# Required repo secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY.
+# Non-secret config (region / model / flag) is written as literals below.
+
+on:
+  workflow_dispatch:
+    inputs:
+      prefer_bedrock:
+        description: "Enable Bedrock for Ask Pulse (true) or disable (false)"
+        required: false
+        default: "true"
+
+jobs:
+  set-bedrock-keys:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write Bedrock config into philly-pulse.env and restart API
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,PREFER_BEDROCK
+          command_timeout: 5m
+          script: |
+            set -e
+            ENV_FILE="/etc/philly-pulse.env"
+            touch "$ENV_FILE"
+            chmod 640 "$ENV_FILE"
+            # Idempotent: drop any prior lines, then append current values.
+            for k in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION PREFER_BEDROCK PULSE_CHAT_BEDROCK_MODEL; do
+              sed -i "/^$k=/d" "$ENV_FILE"
+            done
+            printf 'AWS_ACCESS_KEY_ID=%s\n'        "$AWS_ACCESS_KEY_ID"     >> "$ENV_FILE"
+            printf 'AWS_SECRET_ACCESS_KEY=%s\n'    "$AWS_SECRET_ACCESS_KEY" >> "$ENV_FILE"
+            printf 'AWS_REGION=us-east-1\n'                                 >> "$ENV_FILE"
+            printf 'PREFER_BEDROCK=%s\n'           "$PREFER_BEDROCK"        >> "$ENV_FILE"
+            printf 'PULSE_CHAT_BEDROCK_MODEL=us.anthropic.claude-sonnet-4-6\n' >> "$ENV_FILE"
+            systemctl restart philly-pulse-api
+            sleep 3
+            echo "=== status ==="
+            systemctl is-active philly-pulse-api && echo "API: running" || echo "API: failed"
+            # Confirm presence WITHOUT printing secret values.
+            grep -q '^AWS_ACCESS_KEY_ID=.\+' "$ENV_FILE" && echo "AWS_ACCESS_KEY_ID: <set>" || echo "AWS_ACCESS_KEY_ID: <empty>"
+            grep -q '^AWS_SECRET_ACCESS_KEY=.\+' "$ENV_FILE" && echo "AWS_SECRET_ACCESS_KEY: <set>" || echo "AWS_SECRET_ACCESS_KEY: <empty>"
+            grep '^PREFER_BEDROCK=' "$ENV_FILE"
+            grep '^PULSE_CHAT_BEDROCK_MODEL=' "$ENV_FILE"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          PREFER_BEDROCK: ${{ github.event.inputs.prefer_bedrock }}

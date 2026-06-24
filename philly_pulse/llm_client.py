@@ -35,6 +35,8 @@ from typing import Any, Optional
 
 import httpx
 
+from . import bedrock_chat
+
 logger = logging.getLogger(__name__)
 
 
@@ -280,6 +282,14 @@ def _pulse_chat_provider_chain(
     The local provider stays as a fallback for when DeepSeek is unreachable.
     """
     chain: list[tuple[ProviderConfig, Optional[str]]] = []
+    # Bedrock Claude goes FIRST for Ask Pulse when PREFER_BEDROCK + AWS creds are
+    # set — best quality for the user-facing chat, and it sidesteps the DeepSeek
+    # reasoning-model empty-content bug. Model id is Bedrock-specific, so pass
+    # None and let bedrock_chat use PULSE_CHAT_BEDROCK_MODEL.
+    if bedrock_chat.bedrock_configured():
+        chain.append(
+            (ProviderConfig(name="bedrock", base_url="", api_key="", default_model=bedrock_chat.bedrock_pulse_model()), None)
+        )
     ds_cfg = _deepseek_pulse_fallback_config()
     if ds_cfg is not None:
         ds_model = (os.environ.get("PULSE_CHAT_DEEPSEEK_MODEL") or "").strip() or ds_cfg.default_model
@@ -311,6 +321,16 @@ async def pulse_chat_completion_message(
     for idx, (cfg, mdl) in enumerate(chain):
         is_last = idx == len(chain) - 1
         try:
+            if cfg.name == "bedrock":
+                return await bedrock_chat.bedrock_chat_message(
+                    messages,
+                    model=mdl,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    timeout=timeout,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                )
             return await _post_chat_completion_message(
                 cfg,
                 messages,
@@ -321,6 +341,10 @@ async def pulse_chat_completion_message(
                 tools=tools,
                 tool_choice=tool_choice,
             )
+        except bedrock_chat.BedrockRetryableError as e:
+            if is_last:
+                raise
+            logger.warning("Pulse chat (tools) Bedrock failed; trying next: %s", e)
         except LLMHTTPError as e:
             if is_last or not _pulse_primary_should_fallback_http(e):
                 raise
@@ -407,6 +431,11 @@ async def pulse_chat_completion(
     for idx, (cfg, mdl) in enumerate(chain):
         is_last = idx == len(chain) - 1
         try:
+            if cfg.name == "bedrock":
+                msg = await bedrock_chat.bedrock_chat_message(
+                    messages, model=mdl, temperature=temperature, max_tokens=max_tokens, timeout=timeout
+                )
+                return msg.get("content") or ""
             return await _post_chat_completion(
                 cfg,
                 messages,
@@ -417,6 +446,10 @@ async def pulse_chat_completion(
                 response_format=None,
                 extra_payload=None,
             )
+        except bedrock_chat.BedrockRetryableError as e:
+            if is_last:
+                raise
+            logger.warning("Pulse chat Bedrock failed; trying next: %s", e)
         except LLMHTTPError as e:
             if is_last or not _pulse_primary_should_fallback_http(e):
                 raise
