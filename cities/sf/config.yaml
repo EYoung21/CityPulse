@@ -29,7 +29,7 @@ feeds:
   - { feed_id: "46578", label: "San Mateo County Fire South" }         # SMCFD South Dispatch (Belmont→Menlo Park)
   - { feed_id: "45521", label: "San Mateo County Fire / CalFire CZU" } # SMC fire + CalFire countywide
   - { feed_id: "45860", label: "Menlo Park & Atherton Police Dispatch" }
-  - { feed_id: "34259", label: "Palo Alto Fire" }                      # primary PAFD dispatch talkgroup
+  # 34259 Palo Alto Fire — DEAD on the legacy stream (404 as of 2026-06-24), removed.
   - { feed_id: "17718", label: "Stanford Fire" }                       # Stanford campus fire/EMS
 
 geocode:
