@@ -28,6 +28,11 @@ import {
   hasScannerTranscriptArtifacts,
   sanitizeScannerTranscriptForDisplay,
 } from "@/lib/sanitize-scanner-transcript";
+import {
+  stopFeedAudio,
+  subscribeFeedAudio,
+  getFeedAudioState,
+} from "./FeedAudioMiniPlayer";
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -106,6 +111,24 @@ function WaveformPlayer({
     () => (Array.isArray(src) ? src.filter(Boolean).join("|") : (src ?? "")),
     [src]
   );
+
+  // Single-audio guarantee across the two players. The collapsed-card
+  // "Listen" button drives the global FeedAudioMiniPlayer (the bottom
+  // bar); this WaveformPlayer is the rich in-detail player. Opening a
+  // detail silences the quick-listen bar, and if the bar later starts
+  // (e.g. you tap Listen on another card) this player pauses itself — so
+  // you never get two clips at once, and the "Listening" bar can't
+  // disagree with the waveform shown right below it.
+  useEffect(() => {
+    stopFeedAudio();
+    return subscribeFeedAudio(() => {
+      if (getFeedAudioState().playing) {
+        playIntentRef.current = false;
+        audioRef.current?.pause();
+        setPlaying(false);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     const audio = new Audio();
@@ -266,6 +289,7 @@ function WaveformPlayer({
       audioRef.current.pause();
       setPlaying(false);
     } else {
+      stopFeedAudio();
       playIntentRef.current = true;
       audioRef.current.play().catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "playback blocked";
