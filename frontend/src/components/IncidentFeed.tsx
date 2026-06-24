@@ -15,7 +15,7 @@ import {
   AlertTriangle,
   Flame,
   Car,
-  Heart,
+  HeartPulse,
   ShieldAlert,
   Volume2,
   CircleDot,
@@ -34,8 +34,8 @@ const CATEGORY_ICONS: Record<string, React.ReactNode> = {
   shots_heard: <Volume2 className="w-4 h-4" />,
   robbery: <AlertTriangle className="w-4 h-4" />,
   burglary_in_progress: <AlertTriangle className="w-4 h-4" />,
-  medical_priority: <Heart className="w-4 h-4" />,
-  medical_other: <Heart className="w-4 h-4" />,
+  medical_priority: <HeartPulse className="w-4 h-4" />,
+  medical_other: <HeartPulse className="w-4 h-4" />,
   fire_hazmat: <Flame className="w-4 h-4" />,
   traffic_crash_injury: <Car className="w-4 h-4" />,
   traffic_crash_no_injury: <Car className="w-4 h-4" />,
@@ -252,7 +252,7 @@ export function IncidentCard({
           )}
 
           <div className="mt-1.5 flex items-center gap-2">
-            {(inc.audio_url || inc.audio_clip) && (
+            {(inc.audio_url || inc.audio_clip) && !(isSelected && showInlineDetail) && (
               <button
                 onClick={toggleAudio}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium transition-all ${
