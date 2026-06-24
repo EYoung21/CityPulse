@@ -21,54 +21,51 @@ map:
   default_zoom: 11
 
 # Live audio sources (Broadcastify feed IDs).
+# VERIFIED LIVE 2026-06-24 by probing audio.broadcastify.com/<id>.mp3 with the
+# premium account — only feeds returning HTTP 200 are listed here.
 #
-# NYPD context (2026): the NYPD has been progressively encrypting precinct
-# dispatch on its UHF/T-Band system since mid-2023 (Brooklyn first, then
-# Bronx, Queens, Manhattan). The "NYPD Citywide" channels below still
-# exist but transmit mostly silence to the public; they're kept in case
-# a borough partially reverts or a citywide event is broadcast in clear.
+# NYPD context (2026): precinct dispatch has been progressively ENCRYPTED on
+# the UHF/T-Band system (Brooklyn → Bronx → Queens → Manhattan since 2023).
+# The NYPD Citywide channels still stream but are mostly silent to the public;
+# kept as a fallback for citywide events broadcast in the clear.
 #
-# Most productive NYC sources today are FDNY borough dispatch, which is
-# still on unencrypted UHF (482 MHz family). The previous standalone
-# "FDNY Manhattan Dispatch" feed (Broadcastify #46122) has been offline
-# since ~Jan 2026, so we route Manhattan coverage through the FDNY
-# Citywide feed instead.
+# FDNY context (2026): the standalone FDNY borough fire-dispatch feeds —
+# Bronx 8534, Queens 8585, Brooklyn 8586, Staten Island 8749, the combined
+# 9358, and the old Manhattan 46122/9466/8535 — are ALL OFFLINE on the legacy
+# live stream (every one returns 404). FDNY dispatch migrated to a TRUNKED
+# system now carried on Broadcastify *Calls* / OpenMHz
+# (https://www.openmhz.com/system/fdnyfire), which this pipeline does NOT yet
+# ingest. The one surviving legacy FDNY live feed is Manhattan Dispatch (46554).
+# Restoring full borough fire/EMS coverage requires a Calls/OpenMHz ingestion
+# path — that's a feature build, not a config change.
 feeds:
-  # NYPD — mostly encrypted, kept as a fallback only.
+  # NYPD — mostly encrypted; kept as a fallback only.
   - feed_id: "40184"
     label: "NYPD Citywide 1"
   - feed_id: "40185"
     label: "NYPD Citywide 2"
   - feed_id: "40186"
     label: "NYPD Citywide 3"
+  - feed_id: "1189"
+    label: "NYPD Bronx/Manhattan Transit"
 
-  # FDNY borough dispatch — primary source of NYC incidents.
-  - feed_id: "8534"
-    label: "FDNY Bronx Dispatch"
-    borough: "Bronx"
-  - feed_id: "8585"
-    label: "FDNY Queens Dispatch"
-    borough: "Queens"
-  - feed_id: "8749"
-    label: "FDNY Staten Island Dispatch"
-    borough: "StatenIsland"
-  - feed_id: "9466"
-    label: "FDNY Citywide"
-    jurisdiction_hint: "FDNY citywide; Manhattan and cross-borough box assignments when borough is not explicit."
+  # FDNY — only the Manhattan dispatch feed survives on the legacy live stream.
+  - feed_id: "46554"
+    label: "FDNY Manhattan Dispatch"
+    jurisdiction_hint: "FDNY Manhattan fire dispatch; box assignments in Manhattan unless another borough is explicit."
     borough: "Manhattan"
 
-  # Brooklyn no longer has a standalone FDNY borough feed on Broadcastify.
-  # This combo carries Brooklyn fire alarms plus Hatzolah EMS dispatch
-  # (the largest volunteer EMS in the country, covering most of southern
-  # Brooklyn — Boro Park, Flatbush, Crown Heights, Williamsburg, Midwood).
+  # Brooklyn fire alarms + Hatzolah EMS dispatch (largest volunteer EMS,
+  # covering southern Brooklyn — Boro Park, Flatbush, Crown Heights, etc.).
   - feed_id: "7392"
     label: "Brooklyn Fire & Hatzolah EMS"
 
-  # Manhattan FDNY dispatch (482.10625 MHz) — Broadcastify provider's
-  # standalone feed has been offline since ~Jan 2026. Re-enable when the
-  # provider brings it back: https://www.broadcastify.com/listen/feed/46122
-  # - feed_id: "46122"
-  #   label: "FDNY Manhattan Dispatch"
+  # DEAD on the legacy live stream (404 as of 2026-06-24) — FDNY moved these
+  # to the trunked Calls/OpenMHz system. Do NOT re-add as live feeds; they
+  # return no audio. Recover via a Broadcastify Calls / OpenMHz integration.
+  #   8534 FDNY Bronx · 8585 FDNY Queens · 8586 FDNY Brooklyn
+  #   8749 FDNY Staten Island · 9358 FDNY combined · 8535/9466/46122 Manhattan
+  #   46895 Bronx North EMS · 34682 EMS Manhattan
 
 geocode:
   viewbox: "-74.26,40.49,-73.70,40.92"
