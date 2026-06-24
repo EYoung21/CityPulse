@@ -80,7 +80,7 @@ feeds:
   - { feed_id: "15195", label: "PPD Southwest/West" }
   - { feed_id: "34250", label: "PFD South Fire/Medics" }
   - { feed_id: "15747", label: "PFD North Fire" }
-  - { feed_id: "44308", label: "SEPTA Transit Police" }
+  # 44308 SEPTA Transit Police — DEAD on the legacy stream (404 as of 2026-06-24), removed.
   - { feed_id: "36323", label: "Delaware Co Police Dispatch" }
   - { feed_id: "46438", label: "DelCo Fire/EMS - Countywide Ops" }
 
