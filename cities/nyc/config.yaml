@@ -60,6 +60,13 @@ feeds:
   - feed_id: "7392"
     label: "Brooklyn Fire & Hatzolah EMS"
 
+  # Small Queens community volunteer fire dispatch (Howard Beach area) — the
+  # only live Queens fire feed left on the legacy stream now that FDNY Queens
+  # (8585) is dead. Low volume, but it's some Queens coverage.
+  - feed_id: "39740"
+    label: "West Hamilton Beach Fire Dispatch"
+    borough: "Queens"
+
   # DEAD on the legacy live stream (404 as of 2026-06-24) — FDNY moved these
   # to the trunked Calls/OpenMHz system. Do NOT re-add as live feeds; they
   # return no audio. Recover via a Broadcastify Calls / OpenMHz integration.
