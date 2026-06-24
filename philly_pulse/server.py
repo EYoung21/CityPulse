@@ -26,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import admin_events, city_registry, geocode, ingest_location, inhibitor, llm, llm_client, persistence as store, prefilter, push as push_mod, spelling_guard, weights
+from . import admin_events, bedrock_chat, city_registry, geocode, ingest_location, inhibitor, llm, llm_client, persistence as store, prefilter, push as push_mod, spelling_guard, weights
 from .llm_client import LLMConfigError, LLMHTTPError
 from .llm import SEVERITY_CATEGORIES
 
@@ -264,6 +264,8 @@ async def health():
         "pulse_chat_llm_configured": llm_client.is_configured()
         or llm_client.is_deepseek_pulse_fallback_configured(),
         "pulse_chat_deepseek_fallback": llm_client.is_deepseek_pulse_fallback_configured(),
+        "pulse_chat_bedrock": bedrock_chat.bedrock_configured(),
+        "pulse_chat_bedrock_model": bedrock_chat.bedrock_pulse_model() if bedrock_chat.bedrock_configured() else None,
         "inhibitor_configured": inhibitor.GUARDRAIL_MODE not in {"off", "disabled", "none"},
         "incident_count": count,
     }
