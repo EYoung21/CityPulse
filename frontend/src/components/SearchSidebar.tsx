@@ -925,6 +925,7 @@ export default function SearchSidebar({
                   userPos={userPos}
                   onFlyTo={onFlyTo}
                   onDirections={openDirections}
+                  onPlaceSelected={handlePlaceSelected}
                 />
 
                 <button
