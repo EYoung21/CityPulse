@@ -631,6 +631,15 @@ function MapHome() {
     setPref("pp:saved-places-overlay", savedPlacesOverlay ? "1" : "0");
   }, [savedPlacesOverlay]);
 
+  const [trafficLayerEnabled, setTrafficLayerEnabled] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("pp:traffic-layer") === "1";
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setPref("pp:traffic-layer", trafficLayerEnabled ? "1" : "0");
+  }, [trafficLayerEnabled]);
+
   /** Pinning saved places on the map is Pro-only (wait for auth so we
    *  don't clear the overlay during the initial `isPro === false` tick). */
   useEffect(() => {
@@ -2135,6 +2144,7 @@ function MapHome() {
         timeFilterHours={timeFilter}
         heatmapDemoBoost={false}
         districtsEnabled={districtsEnabled}
+        trafficLayerEnabled={trafficLayerEnabled}
         onDistrictClick={(district, incs) => setSelectedDistrict({ district, incidents: incs })}
         onClusterClick={(ids) => { setSelectedId(null); setClusterIncidentIds(ids); }}
       />
@@ -2942,6 +2952,8 @@ function MapHome() {
           todOverlayEnabled={todOverlayEnabled}
           setTodOverlayEnabled={setTodOverlayEnabled}
           todHourFocus={todHourFocus}
+          trafficLayerEnabled={trafficLayerEnabled}
+          setTrafficLayerEnabled={setTrafficLayerEnabled}
           vectorTilesEnabled={vectorTilesEnabled}
           setVectorTilesEnabled={setVectorTilesEnabled}
           savedPlacesOverlay={savedPlacesOverlay}
