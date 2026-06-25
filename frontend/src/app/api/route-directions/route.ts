@@ -340,7 +340,18 @@ function magnitudeToLevel(m: number): CongestionSpan["level"] | null {
 }
 
 function clean(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  if (typeof value !== "string") return undefined;
+  const text = value
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text || undefined;
 }
 
 function tomTomManeuverCode(instructionType?: string, message?: string): number {
