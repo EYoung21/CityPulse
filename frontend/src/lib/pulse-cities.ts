@@ -90,6 +90,13 @@ export interface PulseCity {
    */
   previewOnly?: boolean;
 
+  /**
+   * True for cities with real public-transit routing (rail/subway), so the
+   * directions UI shows Train/Subway modes. Omitted/false hides those modes
+   * (e.g. Chattanooga has no rail/subway network — showing them is misleading).
+   */
+  transit?: boolean;
+
   /** City-specific brand name (e.g. "PhillyPulse"). */
   brand?: string;
   /** Tagline shown under the hero title. */
@@ -122,6 +129,7 @@ export const PULSE_CITIES: PulseCity[] = [
   {
     slug: "sf",
     name: "San Francisco",
+    transit: true,
     domain: "sfopulse.com",
     emoji: "🌉",
     lat: 37.7749,
@@ -231,6 +239,7 @@ export const PULSE_CITIES: PulseCity[] = [
   {
     slug: "nyc",
     name: "New York City",
+    transit: true,
     domain: "newyorkcitypulse.com",
     emoji: "🗽",
     lat: 40.7128,
@@ -345,6 +354,7 @@ export const PULSE_CITIES: PulseCity[] = [
   {
     slug: "philly",
     name: "Philadelphia",
+    transit: true,
     domain: "phlpulse.com",
     emoji: "🔔",
     lat: 39.9526,
