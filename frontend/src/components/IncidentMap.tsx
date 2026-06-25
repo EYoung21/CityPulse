@@ -364,6 +364,9 @@ interface Props {
   /** When false, defer expensive incident/heatmap relayers while another
    *  surface (feed, analytics) is foregrounded. */
   layersActive?: boolean;
+  /** TomTom traffic overlay toggled from the Layers menu. Tiles are
+   *  proxied through Next so the API key never reaches the browser. */
+  trafficLayerEnabled?: boolean;
   /** Persistent safety-POI overlay (hospitals/police/fire). Rendered as
    *  a separate Leaflet layer-group so toggling it doesn't disturb the
    *  incident-marker cluster. Page-level fetcher hands us a pre-filtered
@@ -1044,6 +1047,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     measurePoints = null,
     perimeterPoints = null,
     layersActive = true,
+    trafficLayerEnabled = false,
     searchedPlace = null,
   },
   ref
@@ -1090,6 +1094,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
    *  keep both in the same ref so the rest of the file can stay
    *  unaware of which renderer is active. */
   const tileLayerRef = useRef<L.Layer | null>(null);
+  const trafficFlowLayerRef = useRef<L.TileLayer | null>(null);
+  const trafficIncidentLayerRef = useRef<L.TileLayer | null>(null);
   const usingVectorTilesRef = useRef<boolean>(false);
   // Lazy-load the active city's stylized district polygons. `version`
   // bumps once the JSON file lands so the overlay effect below re-runs
@@ -1590,6 +1596,46 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     const unsub = subscribeVectorTiles((v) => apply(v));
     return () => { unsub(); };
   }, [isDark, basemapStyle]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const removeTrafficLayers = () => {
+      if (trafficFlowLayerRef.current) {
+        map.removeLayer(trafficFlowLayerRef.current);
+        trafficFlowLayerRef.current = null;
+      }
+      if (trafficIncidentLayerRef.current) {
+        map.removeLayer(trafficIncidentLayerRef.current);
+        trafficIncidentLayerRef.current = null;
+      }
+    };
+
+    if (!trafficLayerEnabled) {
+      removeTrafficLayers();
+      return;
+    }
+
+    trafficFlowLayerRef.current = L.tileLayer("/api/tomtom-traffic/flow/{z}/{x}/{y}.png", {
+      attribution: "Traffic &copy; TomTom",
+      maxZoom: 19,
+      opacity: 0.62,
+      zIndex: 430,
+      updateWhenIdle: true,
+      keepBuffer: isMobileViewport() ? 1 : 2,
+    }).addTo(map);
+    trafficIncidentLayerRef.current = L.tileLayer("/api/tomtom-traffic/incidents/{z}/{x}/{y}.png", {
+      attribution: "Traffic incidents &copy; TomTom",
+      maxZoom: 19,
+      opacity: 0.78,
+      zIndex: 440,
+      updateWhenIdle: true,
+      keepBuffer: isMobileViewport() ? 1 : 2,
+    }).addTo(map);
+
+    return removeTrafficLayers;
+  }, [trafficLayerEnabled]);
 
   const stableOnSelect = useCallback(onSelectIncident, [onSelectIncident]);
 

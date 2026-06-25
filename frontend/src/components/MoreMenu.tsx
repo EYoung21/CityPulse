@@ -28,6 +28,8 @@ interface Props {
   todOverlayEnabled: boolean;
   setTodOverlayEnabled: (v: boolean) => void;
   todHourFocus: number | null;
+  trafficLayerEnabled: boolean;
+  setTrafficLayerEnabled: (v: boolean) => void;
   vectorTilesEnabled: boolean;
   setVectorTilesEnabled: (v: boolean) => void;
   savedPlacesOverlay: boolean;
@@ -51,6 +53,8 @@ export default function MoreMenu({
   todOverlayEnabled,
   setTodOverlayEnabled,
   todHourFocus,
+  trafficLayerEnabled,
+  setTrafficLayerEnabled,
   vectorTilesEnabled,
   setVectorTilesEnabled,
   savedPlacesOverlay,
@@ -159,6 +163,7 @@ export default function MoreMenu({
                     hint: todHourFocus != null ? `Peaks near ${todHourFocus}:00` : undefined 
                   },
                   { label: "Police Districts", active: districtsEnabled, set: setDistrictsEnabled, icon: CircleDot },
+                  { label: "Traffic", active: trafficLayerEnabled, set: setTrafficLayerEnabled, icon: MapIcon },
                   { label: "Saved Places", active: savedPlacesOverlay, set: setSavedPlacesOverlay, icon: MapIcon, pro: true },
                   { label: "Vector Buildings", active: vectorTilesEnabled, set: setVectorTilesEnabled, icon: Database },
                 ].map((layer) => {

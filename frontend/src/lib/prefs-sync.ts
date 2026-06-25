@@ -47,6 +47,7 @@ export const SYNCED_PREF_KEYS = [
   "pp:basemap",
   "pp:units",
   "pp:saved-places-overlay",
+  "pp:traffic-layer",
   "pp:nearby-poi-cats",
   "pp:avoid-prefs-v2",
   "pp:tod-overlay",
