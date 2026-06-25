@@ -51,6 +51,44 @@ export interface SelectedPlace {
   name: string;
   lat: number;
   lng: number;
+  address?: string;
+  category?: string;
+  categories?: string[];
+  phone?: string;
+  website?: string;
+  openingHours?: unknown;
+  provider?: string;
+  entityId?: string;
+}
+
+type RemotePlaceDetails = {
+  name?: string;
+  address?: string;
+  category?: string;
+  categories?: string[];
+  phone?: string;
+  website?: string;
+  openingHours?: unknown;
+};
+
+function normalizeWebsiteUrl(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    return new URL(withProtocol).toString();
+  } catch {
+    return null;
+  }
+}
+
+function tomTomOpeningLabel(openingHours: unknown): string | null {
+  if (!openingHours || typeof openingHours !== "object") return null;
+  const record = openingHours as Record<string, unknown>;
+  const openNow = record.openNow ?? record.isOpen ?? record.open;
+  if (openNow === true) return "Open now";
+  if (openNow === false) return "Closed now";
+  return "Hours available";
 }
 
 interface Props {
@@ -83,6 +121,10 @@ export default function SearchedPlaceCard({
     loading: boolean;
   } | null>(null);
   const [details, setDetails] = useState<{ key: string; data: PlaceAtPoint | null } | null>(null);
+  const [remoteDetails, setRemoteDetails] = useState<{
+    key: string;
+    data: RemotePlaceDetails | null;
+  } | null>(null);
   const [eta, setEta] = useState<{ key: string; minutes: number | null; loading: boolean }>({
     key: "",
     minutes: null,
@@ -134,6 +176,32 @@ export default function SearchedPlaceCard({
       cancelled = true;
     };
   }, [place.lat, place.lng, placeKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!place.entityId) {
+      setRemoteDetails({ key: placeKey, data: null });
+      return () => {
+        cancelled = true;
+      };
+    }
+    const params = new URLSearchParams({ entityId: place.entityId });
+    void fetch(`/api/place-details?${params}`, { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const data = (await res.json()) as { place?: RemotePlaceDetails | null };
+        return data.place ?? null;
+      })
+      .then((data) => {
+        if (!cancelled) setRemoteDetails({ key: placeKey, data });
+      })
+      .catch(() => {
+        if (!cancelled) setRemoteDetails({ key: placeKey, data: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [place.entityId, placeKey]);
 
   // Drive ETA from the user's current position. Mirrors the "🚗 35 min"
   // pill in Google Maps' place card. Skipped (gracefully) when we don't
@@ -221,9 +289,20 @@ export default function SearchedPlaceCard({
     }
   };
 
-  const address = addressResult?.key === placeKey ? addressResult.address : null;
+  const tomtomDetails = remoteDetails?.key === placeKey ? remoteDetails.data : null;
+  const address =
+    place.address ??
+    tomtomDetails?.address ??
+    (addressResult?.key === placeKey ? addressResult.address : null);
   const addressLoading = addressResult?.key !== placeKey || addressResult.loading;
   const placeDetails = details?.key === placeKey ? details.data : null;
+  const categoryLabel =
+    placeDetails?.kind ??
+    place.category ??
+    tomtomDetails?.category ??
+    place.categories?.[0] ??
+    tomtomDetails?.categories?.[0] ??
+    null;
 
   const subtitle = address
     ? address
@@ -236,6 +315,11 @@ export default function SearchedPlaceCard({
     [placeDetails]
   );
   const openingBadge = useMemo(() => formatOpeningBadge(openingStatus), [openingStatus]);
+  const tomtomHoursLabel = useMemo(
+    () => tomTomOpeningLabel(place.openingHours ?? tomtomDetails?.openingHours),
+    [place.openingHours, tomtomDetails?.openingHours]
+  );
+  const openingLabel = openingBadge?.label ?? tomtomHoursLabel;
 
   // Map the opening-hours tone to a color that's legible in both
   // dark and light theme. Stick to Tailwind tone hexes to match the
@@ -249,14 +333,16 @@ export default function SearchedPlaceCard({
           ? "#22c55e"
           : openingBadge?.tone === "closed"
             ? "#ef4444"
-            : "var(--panel-text-secondary)";
+            : tomtomHoursLabel
+              ? "var(--panel-text-secondary)"
+              : "var(--panel-text-secondary)";
 
   // The fourth action button is contextual: prefer Website (rare and
   // valuable enough to expose at the top), else Call (also rare but
   // common enough on US POIs). If neither exists we hide that slot
   // rather than render a dead button.
-  const websiteUrl = placeDetails?.website ?? null;
-  const phoneNumber = placeDetails?.phone ?? null;
+  const websiteUrl = normalizeWebsiteUrl(placeDetails?.website ?? tomtomDetails?.website ?? place.website);
+  const phoneNumber = placeDetails?.phone ?? tomtomDetails?.phone ?? place.phone ?? null;
 
   const etaLabel =
     eta.key === placeKey && eta.minutes != null
@@ -287,7 +373,7 @@ export default function SearchedPlaceCard({
             {/* Category / accessibility / drive-ETA chip line — the
                 Google Maps "Art museum · 35 min" row, assembled from
                 whatever metadata we managed to pull. */}
-            {(placeDetails?.kind || etaLabel || eta.loading || placeDetails?.wheelchair) && (
+            {(categoryLabel || etaLabel || eta.loading || placeDetails?.wheelchair) && (
               <div
                 className="mt-1 flex items-center flex-wrap gap-x-2 gap-y-0.5 text-[12px]"
                 style={{ color: "var(--panel-text-secondary)" }}
@@ -302,10 +388,10 @@ export default function SearchedPlaceCard({
                     {etaLabel ? <span className="sr-only"> driving</span> : null}
                   </span>
                 )}
-                {(etaLabel || eta.loading) && placeDetails?.kind ? (
+                {(etaLabel || eta.loading) && categoryLabel ? (
                   <span aria-hidden style={{ color: "var(--panel-text-muted)" }}>·</span>
                 ) : null}
-                {placeDetails?.kind && <span className="truncate">{placeDetails.kind}</span>}
+                {categoryLabel && <span className="truncate">{categoryLabel}</span>}
                 {placeDetails?.wheelchair === "yes" && (
                   <>
                     <span aria-hidden style={{ color: "var(--panel-text-muted)" }}>·</span>
@@ -320,12 +406,12 @@ export default function SearchedPlaceCard({
                 )}
               </div>
             )}
-            {openingBadge && (
+            {openingLabel && (
               <p
                 className="mt-1 text-[12px] font-medium"
                 style={{ color: openingColor }}
               >
-                {openingBadge.label}
+                {openingLabel}
               </p>
             )}
             <p
