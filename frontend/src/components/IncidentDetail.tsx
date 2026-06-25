@@ -119,8 +119,11 @@ function WaveformPlayer({
   // (e.g. you tap Listen on another card) this player pauses itself — so
   // you never get two clips at once, and the "Listening" bar can't
   // disagree with the waveform shown right below it.
+  // Don't cut off the card's quick-listen when a detail opens — let the bottom
+  // bar keep playing while you read. We still guarantee a single audio stream:
+  // if the bar (re)starts, this waveform pauses itself; and starting the
+  // waveform stops the bar (see `togglePlay`).
   useEffect(() => {
-    stopFeedAudio();
     return subscribeFeedAudio(() => {
       if (getFeedAudioState().playing) {
         playIntentRef.current = false;
@@ -421,10 +424,19 @@ function WaveformPlayer({
 interface Props {
   incident: Incident;
   onClose: () => void;
+  /** Rendered inline under a feed card that already shows the category,
+   *  headline and location. In this mode we drop the redundant header, the
+   *  duplicate SUMMARY, and the nested card chrome — so the card just reveals
+   *  the *new* detail (time/coords, transcript, map) instead of a box-in-a-box. */
+  inFeed?: boolean;
 }
 
-export default function IncidentDetail({ incident, onClose }: Props) {
+export default function IncidentDetail({ incident, onClose, inFeed = false }: Props) {
   const sev = getSeverity(incident.severity_category);
+  // In feed mode the headline above already shows the summary text, so only
+  // surface SUMMARY when the description genuinely adds something.
+  const summaryIsRedundant =
+    inFeed && (incident.description ?? "").trim() === incidentHeadline(incident).trim();
   const confidencePct = Math.round(incident.confidence * 100);
   // Memoize the candidate list so a parent re-render doesn't hand the
   // player a fresh array reference and trigger a re-fetch on every tick.
@@ -476,54 +488,66 @@ export default function IncidentDetail({ incident, onClose }: Props) {
 
   return (
     <div
-      className="rounded-xl overflow-hidden backdrop-blur-xl shadow-2xl"
-      style={{ background: "var(--panel-bg)", border: "1px solid var(--panel-border)" }}
+      className={inFeed ? "overflow-hidden" : "rounded-xl overflow-hidden backdrop-blur-xl shadow-2xl"}
+      style={inFeed ? undefined : { background: "var(--panel-bg)", border: "1px solid var(--panel-border)" }}
     >
-      <div
-        className="h-1"
-        style={{ background: `linear-gradient(90deg, ${sev.markerColor}, transparent)` }}
-      />
+      {!inFeed && (
+        <div
+          className="h-1"
+          style={{ background: `linear-gradient(90deg, ${sev.markerColor}, transparent)` }}
+        />
+      )}
 
-      <div className="p-3 md:p-4 space-y-2.5 md:space-y-3 max-h-[60vh] md:max-h-none overflow-y-auto overscroll-contain">
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1.5 md:mb-2">
-              <span
-                className="text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md"
-                style={{ backgroundColor: withAlpha(sev.markerColor, 13), color: sev.markerColor }}
-              >
-                {sev.label}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <h3
-                className="font-semibold text-sm"
-                style={{ color: "var(--panel-text)" }}
-              >
-                {incidentHeadline(incident)}
-              </h3>
-              {incident.location_confidence === "context" && (
-                <span className="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-500">
-                  Nearby Context
+      <div
+        className={
+          inFeed
+            ? "space-y-2.5 md:space-y-3"
+            : "p-3 md:p-4 space-y-2.5 md:space-y-3 max-h-[60vh] md:max-h-none overflow-y-auto overscroll-contain"
+        }
+      >
+        {/* The feed card above already shows category / headline / location,
+            so skip the whole repeated header in feed mode. */}
+        {!inFeed && (
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1.5 md:mb-2">
+                <span
+                  className="text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md"
+                  style={{ backgroundColor: withAlpha(sev.markerColor, 13), color: sev.markerColor }}
+                >
+                  {sev.label}
                 </span>
-              )}
+              </div>
+              <div className="flex items-center gap-2">
+                <h3
+                  className="font-semibold text-sm"
+                  style={{ color: "var(--panel-text)" }}
+                >
+                  {incidentHeadline(incident)}
+                </h3>
+                {incident.location_confidence === "context" && (
+                  <span className="text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-500">
+                    Nearby Context
+                  </span>
+                )}
+              </div>
+              <p
+                className="mt-1 text-xs flex items-center gap-1.5"
+                style={{ color: "var(--panel-text-secondary)" }}
+              >
+                <MapPin className="w-3.5 h-3.5 shrink-0" />
+                {incidentLocationLabel(incident)}
+              </p>
             </div>
-            <p
-              className="mt-1 text-xs flex items-center gap-1.5"
-              style={{ color: "var(--panel-text-secondary)" }}
+            <button
+              onClick={onClose}
+              className="transition-colors p-1.5 -m-1.5"
+              style={{ color: "var(--panel-text-muted)" }}
             >
-              <MapPin className="w-3.5 h-3.5 shrink-0" />
-              {incidentLocationLabel(incident)}
-            </p>
+              <X className="w-5 h-5" />
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="transition-colors p-1.5 -m-1.5"
-            style={{ color: "var(--panel-text-muted)" }}
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+        )}
 
         <div
           className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] md:text-xs font-mono"
@@ -542,7 +566,7 @@ export default function IncidentDetail({ incident, onClose }: Props) {
 
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 
-        {incident.description && (
+        {incident.description && !summaryIsRedundant && (
           <div className="rounded-lg p-2.5 md:p-3.5" style={{ background: "var(--panel-input-bg)" }}>
             <p className="text-[10px] md:text-[11px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-1.5 md:mb-2">
               SUMMARY

@@ -358,7 +358,7 @@ export function IncidentCard({
               View on map
             </button>
           )}
-          <IncidentDetail incident={inc} onClose={onSelect} />
+          <IncidentDetail incident={inc} onClose={onSelect} inFeed />
         </div>
       )}
     </div>
