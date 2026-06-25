@@ -116,6 +116,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const incidentDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const incidentAbortRef = useRef<AbortController | null>(null);
+  const placeSuggestSeqRef = useRef(0);
   const placeSubmitSeqRef = useRef(0);
   const voiceRef = useRef<{ stop: () => void } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -152,6 +153,8 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
   }, []);
 
   const geocode = useCallback((q: string) => {
+    const seq = placeSuggestSeqRef.current + 1;
+    placeSuggestSeqRef.current = seq;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (q.trim().length < 2) {
       setSuggestions([]);
@@ -160,11 +163,32 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
     }
     setLoading(true);
     debounceRef.current = setTimeout(async () => {
-      const results = await geocodePhilly(q);
-      setSuggestions(results);
-      setLoading(false);
+      try {
+        const results = await geocodePhilly(q);
+        if (placeSuggestSeqRef.current !== seq) return;
+        setSuggestions(results);
+      } catch {
+        if (placeSuggestSeqRef.current !== seq) return;
+        setSuggestions([]);
+      } finally {
+        if (placeSuggestSeqRef.current === seq) setLoading(false);
+      }
     }, 200);
   }, []);
+
+  useEffect(() => {
+    if (!open || mode !== "places") {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = undefined;
+      }
+      placeSuggestSeqRef.current += 1;
+      setLoading(false);
+      return;
+    }
+
+    geocode(query);
+  }, [geocode, mode, open, query]);
 
   const submitPlaceSearch = useCallback(async (rawQuery: string) => {
     const q = rawQuery.trim();
@@ -174,6 +198,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
       clearTimeout(debounceRef.current);
       debounceRef.current = undefined;
     }
+    placeSuggestSeqRef.current += 1;
 
     const seq = placeSubmitSeqRef.current + 1;
     placeSubmitSeqRef.current = seq;
@@ -349,7 +374,6 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
       onResult: (transcript, isFinal) => {
         setQuery(transcript);
         if (isFinal) {
-          geocode(transcript);
           if (mode === "incidents") incidentSearch(transcript);
           setVoiceActive(false);
           voiceRef.current = null;
@@ -365,7 +389,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
       },
     });
     if (!voiceRef.current) setVoiceActive(false);
-  }, [voiceActive, geocode, stopVoice, mode, incidentSearch]);
+  }, [voiceActive, stopVoice, mode, incidentSearch]);
 
   useEffect(() => () => stopVoice(), [stopVoice]);
 
@@ -503,7 +527,6 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
               setSubmittedPlaceSearch(null);
             }
             setOpen(true);
-            geocode(v);
             if (mode === "incidents") incidentSearch(v);
           }}
           onKeyDown={(e) => {
