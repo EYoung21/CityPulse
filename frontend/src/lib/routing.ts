@@ -34,6 +34,11 @@ export function isTransitMode(mode: TransportMode): boolean {
   return mode === "transit-train" || mode === "transit-subway";
 }
 
+export interface LaneGuidance {
+  directions: string[];
+  recommended: boolean;
+}
+
 /** A single turn-by-turn step. ORS returns per-segment steps with:
  *   instruction → human-readable ("Turn left onto Main St")
  *   distance    → meters until the maneuver completes
@@ -50,6 +55,11 @@ export interface ManeuverStep {
   type: number;
   way_points: [number, number];
   name?: string;
+  maneuver?: string;
+  signpostText?: string;
+  exitNumber?: string;
+  roadNumbers?: string[];
+  lanes?: LaneGuidance[];
 }
 
 /** A congested stretch of a driving route (index range into `geometry`). */
@@ -491,6 +501,7 @@ async function getRouteOSRM(
       trafficSource?: "tomtom";
       congestion?: CongestionSpan[];
       avoidedCrashes?: number;
+      steps?: ManeuverStep[];
     };
     if (!data.geometry || !Array.isArray(data.geometry) || data.geometry.length < 2) {
       return null;
@@ -506,6 +517,7 @@ async function getRouteOSRM(
       trafficSource: data.trafficSource,
       congestion: data.congestion,
       avoidedCrashes: data.avoidedCrashes,
+      steps: Array.isArray(data.steps) && data.steps.length > 0 ? data.steps : undefined,
     };
   } catch {
     return null;
@@ -550,6 +562,7 @@ async function getRouteOSRMChained(
   let avoidedCrashes = 0;
   let anyTraffic = false;
   const congestion: CongestionSpan[] = [];
+  const steps: ManeuverStep[] = [];
   for (let i = 0; i < waypoints.length - 1; i++) {
     const leg = await getRouteOSRM(
       mode,
@@ -561,9 +574,18 @@ async function getRouteOSRMChained(
     if (!leg) return null;
     // Offset this leg's congestion indices by the points already merged
     // (minus the seam point mergeRouteLegs drops between legs).
-    const base = geometries.length === 0 ? 0 : mergeRouteLegs(geometries).length;
+    const base = geometries.length === 0 ? 0 : Math.max(0, mergeRouteLegs(geometries).length - 1);
     for (const c of leg.congestion ?? []) {
       congestion.push({ fromIdx: c.fromIdx + base, toIdx: c.toIdx + base, level: c.level });
+    }
+    for (const step of leg.steps ?? []) {
+      steps.push({
+        ...step,
+        way_points: [
+          Math.max(0, step.way_points[0] + base),
+          Math.max(0, step.way_points[1] + base),
+        ],
+      });
     }
     geometries.push(leg.geometry);
     distanceKm += leg.distanceKm;
@@ -589,6 +611,7 @@ async function getRouteOSRMChained(
           ...(avoidedCrashes > 0 ? { avoidedCrashes } : {}),
         }
       : {}),
+    steps: steps.length ? steps : undefined,
   };
 }
 
