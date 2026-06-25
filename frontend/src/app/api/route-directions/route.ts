@@ -109,6 +109,25 @@ type CongestionSpan = {
   level: "moderate" | "heavy" | "severe";
 };
 
+type LaneGuidance = {
+  directions: string[];
+  recommended: boolean;
+};
+
+type RouteGuidanceStep = {
+  instruction: string;
+  distance: number;
+  duration: number;
+  type: number;
+  way_points: [number, number];
+  name?: string;
+  maneuver?: string;
+  signpostText?: string;
+  exitNumber?: string;
+  roadNumbers?: string[];
+  lanes?: LaneGuidance[];
+};
+
 type RoutePayload = {
   geometry: [number, number][];
   distanceKm: number;
@@ -121,6 +140,7 @@ type RoutePayload = {
   congestion?: CongestionSpan[];
   /** Count of fresh CityPulse crashes this route was re-routed around. */
   avoidedCrashes?: number;
+  steps?: RouteGuidanceStep[];
 };
 
 /**
@@ -319,6 +339,177 @@ function magnitudeToLevel(m: number): CongestionSpan["level"] | null {
   return null;
 }
 
+function clean(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function tomTomManeuverCode(instructionType?: string, message?: string): number {
+  const text = `${instructionType ?? ""} ${message ?? ""}`.toLowerCase();
+  if (text.includes("arriv")) return 10;
+  if (text.includes("depart")) return 11;
+  if (text.includes("u-turn") || text.includes("uturn")) return 9;
+  if (text.includes("roundabout")) return 7;
+  if (text.includes("sharp") && text.includes("left")) return 2;
+  if (text.includes("sharp") && text.includes("right")) return 3;
+  if ((text.includes("slight") || text.includes("bear")) && text.includes("left")) return 4;
+  if ((text.includes("slight") || text.includes("bear")) && text.includes("right")) return 5;
+  if (text.includes("keep") && text.includes("left")) return 12;
+  if (text.includes("keep") && text.includes("right")) return 13;
+  if (text.includes("left")) return 0;
+  if (text.includes("right")) return 1;
+  return 6;
+}
+
+function cumulativeMeters(geometry: [number, number][]): number[] {
+  const out = [0];
+  for (let i = 1; i < geometry.length; i++) {
+    out.push(out[i - 1] + haversineMeters(geometry[i - 1][0], geometry[i - 1][1], geometry[i][0], geometry[i][1]));
+  }
+  return out;
+}
+
+function indexForOffset(offsetM: number | undefined, cumulative: number[]): number | null {
+  if (!Number.isFinite(offsetM) || cumulative.length === 0) return null;
+  let best = 0;
+  let bestDelta = Infinity;
+  for (let i = 0; i < cumulative.length; i++) {
+    const delta = Math.abs(cumulative[i] - offsetM!);
+    if (delta < bestDelta) {
+      best = i;
+      bestDelta = delta;
+    }
+  }
+  return best;
+}
+
+function nearestGeometryIndex(
+  point: { latitude?: number; longitude?: number } | undefined,
+  geometry: [number, number][]
+): number | null {
+  if (!point || !Number.isFinite(point.latitude) || !Number.isFinite(point.longitude)) return null;
+  let best = 0;
+  let bestMeters = Infinity;
+  for (let i = 0; i < geometry.length; i++) {
+    const d = haversineMeters(point.latitude!, point.longitude!, geometry[i][0], geometry[i][1]);
+    if (d < bestMeters) {
+      best = i;
+      bestMeters = d;
+    }
+  }
+  return best;
+}
+
+function laneDirections(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((v) => (typeof v === "string" ? v : typeof v === "object" && v ? clean((v as Record<string, unknown>).direction) : undefined))
+      .filter((x): x is string => !!x);
+  }
+  const single = clean(value);
+  return single ? [single] : [];
+}
+
+function normalizeLane(lane: unknown): LaneGuidance | null {
+  if (!lane || typeof lane !== "object") return null;
+  const record = lane as Record<string, unknown>;
+  const directions = [
+    ...laneDirections(record.directions),
+    ...laneDirections(record.indications),
+    ...laneDirections(record.arrows),
+    ...laneDirections(record.direction),
+  ];
+  if (directions.length === 0) return null;
+  return {
+    directions,
+    recommended:
+      record.recommended === true ||
+      record.follow === true ||
+      record.active === true ||
+      record.valid === true,
+  };
+}
+
+function extractLanes(section: NonNullable<TomTomRoute["sections"]>[number]): LaneGuidance[] | null {
+  const record = section as Record<string, unknown>;
+  const candidate =
+    (Array.isArray(record.lanes) && record.lanes) ||
+    (Array.isArray(record.laneDirections) && record.laneDirections) ||
+    (Array.isArray(record.laneInfo) && record.laneInfo) ||
+    (Array.isArray(record.laneGuidance) && record.laneGuidance);
+  if (!candidate) return null;
+  const lanes = candidate
+    .map(normalizeLane)
+    .filter((lane): lane is LaneGuidance => !!lane);
+  return lanes.length > 0 ? lanes : null;
+}
+
+function buildTomTomSteps(route: TomTomRoute, geometry: [number, number][]): RouteGuidanceStep[] | undefined {
+  const instructions = route.guidance?.instructions ?? [];
+  if (instructions.length === 0 || geometry.length < 2) return undefined;
+  const cumulative = cumulativeMeters(geometry);
+  const totalM = cumulative[cumulative.length - 1] ?? 0;
+
+  const drafts = instructions
+    .map((instruction) => {
+      const pointIdx =
+        Number.isFinite(instruction.pointIndex)
+          ? Math.min(geometry.length - 1, Math.max(0, Number(instruction.pointIndex)))
+          : nearestGeometryIndex(instruction.point, geometry) ??
+            indexForOffset(instruction.routeOffsetInMeters, cumulative) ??
+            0;
+      const offsetM = Number.isFinite(instruction.routeOffsetInMeters)
+        ? Number(instruction.routeOffsetInMeters)
+        : cumulative[pointIdx] ?? 0;
+      const timeS = Number.isFinite(instruction.travelTimeInSeconds)
+        ? Number(instruction.travelTimeInSeconds)
+        : 0;
+      return {
+        instruction,
+        pointIdx,
+        offsetM,
+        timeS,
+      };
+    })
+    .sort((a, b) => a.pointIdx - b.pointIdx || a.offsetM - b.offsetM);
+
+  const steps = drafts.map((draft, idx): RouteGuidanceStep => {
+    const next = drafts[idx + 1];
+    const startIdx = draft.pointIdx;
+    const endIdx = Math.max(startIdx, next?.pointIdx ?? geometry.length - 1);
+    const message =
+      clean(draft.instruction.message) ??
+      clean(draft.instruction.instructionType) ??
+      "Continue";
+    const roadNumbers = Array.isArray(draft.instruction.roadNumbers)
+      ? draft.instruction.roadNumbers.map(clean).filter((x): x is string => !!x)
+      : undefined;
+    return {
+      instruction: message,
+      distance: Math.max(0, (next?.offsetM ?? totalM) - draft.offsetM),
+      duration: Math.max(0, (next?.timeS ?? draft.timeS) - draft.timeS),
+      type: tomTomManeuverCode(draft.instruction.instructionType, message),
+      way_points: [startIdx, endIdx],
+      name: clean(draft.instruction.street),
+      maneuver: clean(draft.instruction.instructionType) ?? clean(draft.instruction.maneuver),
+      signpostText: clean(draft.instruction.signpostText),
+      exitNumber: clean(draft.instruction.exitNumber),
+      roadNumbers,
+    };
+  });
+
+  for (const section of route.sections ?? []) {
+    const sectionType = String(section.sectionType ?? "").toUpperCase();
+    if (sectionType !== "LANES") continue;
+    const lanes = extractLanes(section);
+    if (!lanes) continue;
+    const start = section.startPointIndex ?? 0;
+    const target = steps.find((step) => start >= step.way_points[0] && start <= step.way_points[1]) ?? steps.find((step) => step.way_points[1] >= start);
+    if (target) target.lanes = lanes;
+  }
+
+  return steps.length > 0 ? steps : undefined;
+}
+
 type TomTomRoute = {
   summary?: {
     lengthInMeters?: number;
@@ -327,11 +518,30 @@ type TomTomRoute = {
     noTrafficTravelTimeInSeconds?: number;
   };
   legs?: Array<{ points?: Array<{ latitude: number; longitude: number }> }>;
+  guidance?: {
+    instructions?: Array<{
+      routeOffsetInMeters?: number;
+      travelTimeInSeconds?: number;
+      pointIndex?: number;
+      point?: { latitude?: number; longitude?: number };
+      instructionType?: string;
+      maneuver?: string;
+      message?: string;
+      street?: string;
+      signpostText?: string;
+      exitNumber?: string;
+      roadNumbers?: string[];
+    }>;
+  };
   sections?: Array<{
     sectionType?: string;
     startPointIndex?: number;
     endPointIndex?: number;
     magnitudeOfDelay?: number;
+    lanes?: unknown;
+    laneDirections?: unknown;
+    laneGuidance?: unknown;
+    laneInfo?: unknown;
   }>;
 };
 
@@ -393,9 +603,11 @@ async function tryTomTom(
     travelMode: "car",
     routeType: "fastest",
     computeTravelTimeFor: "all",
-    sectionType: "traffic",
+    instructionsType: "tagged",
     routeRepresentation: "polyline",
   });
+  params.append("sectionType", "traffic");
+  params.append("sectionType", "lanes");
   // Alternatives only help when we're choosing the lowest-delay route.
   if (avoidTraffic) params.set("maxAlternatives", "2");
   const url = `${TOMTOM_ROUTING}/${encodeURIComponent(loc)}/json?${params}`;
@@ -432,9 +644,10 @@ async function tryTomTom(
     if (geometry.length < 2) return null;
 
     const s = chosen.summary ?? {};
+    const steps = buildTomTomSteps(chosen, geometry);
     const congestion: CongestionSpan[] = [];
     for (const sec of chosen.sections ?? []) {
-      if (sec.sectionType !== "TRAFFIC") continue;
+      if (String(sec.sectionType ?? "").toUpperCase() !== "TRAFFIC") continue;
       const level = magnitudeToLevel(sec.magnitudeOfDelay ?? 0);
       const fromIdx = sec.startPointIndex ?? 0;
       const toIdx = sec.endPointIndex ?? 0;
@@ -455,6 +668,7 @@ async function tryTomTom(
         trafficDelayMin: (s.trafficDelayInSeconds ?? 0) / 60,
         trafficSource: "tomtom",
         congestion: congestion.length ? congestion : undefined,
+        steps,
       },
     };
   };

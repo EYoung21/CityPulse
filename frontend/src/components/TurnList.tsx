@@ -13,6 +13,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { ManeuverStep } from "@/lib/routing";
+import LaneGuidanceStrip from "@/components/LaneGuidanceStrip";
 
 interface Props {
   steps: ManeuverStep[];
@@ -44,6 +45,14 @@ function fmtMeters(m: number): string {
   if (m < 50) return `${Math.round(m / 5) * 5} m`;
   if (m < 1000) return `${Math.round(m / 10) * 10} m`;
   return `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`;
+}
+
+function stepSupplement(step: ManeuverStep): string {
+  return [
+    step.exitNumber ? `Exit ${step.exitNumber}` : "",
+    step.signpostText,
+    step.roadNumbers?.join(", "),
+  ].filter(Boolean).join(" · ");
 }
 
 /** Full scrollable list of upcoming maneuvers. Dropped over the trip
@@ -129,6 +138,7 @@ export default function TurnList({ steps, geometry, tripProgress, onClose }: Pro
                 const Icon = MANEUVER_ICON[s.type] ?? ArrowUp;
                 const isActive = i === activeStepIdx;
                 const isPast = i < activeStepIdx;
+                const supplement = stepSupplement(s);
                 return (
                   <li
                     key={i}
@@ -165,6 +175,15 @@ export default function TurnList({ steps, geometry, tripProgress, onClose }: Pro
                         {fmtMeters(s.distance)}
                         {s.name ? ` · ${s.name}` : ""}
                       </p>
+                      {supplement && (
+                        <p
+                          className="text-[11px] mt-0.5 truncate"
+                          style={{ color: "var(--panel-text-muted)" }}
+                        >
+                          {supplement}
+                        </p>
+                      )}
+                      <LaneGuidanceStrip lanes={s.lanes} compact variant="panel" />
                     </div>
                   </li>
                 );

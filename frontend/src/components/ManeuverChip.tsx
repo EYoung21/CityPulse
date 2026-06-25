@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { ManeuverStep } from "@/lib/routing";
+import LaneGuidanceStrip from "@/components/LaneGuidanceStrip";
 import { setPref } from "@/lib/prefs-sync";
 import { cancelVoiceNav, speakNav, speakableDistance } from "@/lib/voice-nav";
 
@@ -55,6 +56,14 @@ function fmtMeters(m: number): string {
   if (m < 50) return `${Math.round(m / 5) * 5} m`;
   if (m < 1000) return `${Math.round(m / 10) * 10} m`;
   return `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`;
+}
+
+function stepSupplement(step: ManeuverStep): string {
+  return [
+    step.exitNumber ? `Exit ${step.exitNumber}` : "",
+    step.signpostText,
+    step.roadNumbers?.join(", "),
+  ].filter(Boolean).join(" · ");
 }
 
 /** Floating turn-by-turn pill rendered above the TripHUD / sidebar. Picks the
@@ -134,6 +143,7 @@ export default function ManeuverChip({ steps, geometry, tripProgress, onShowStep
   const Icon = MANEUVER_ICON[step.type] ?? ArrowUp;
   const arriving = step.type === 10 || stepIdx === steps.length - 1;
   const accent = arriving ? "#22c55e" : "#3b82f6";
+  const supplement = stepSupplement(step);
 
   return (
     <div
@@ -159,6 +169,12 @@ export default function ManeuverChip({ steps, geometry, tripProgress, onShowStep
         <p className="truncate text-3xl font-semibold leading-tight md:text-sm md:font-normal md:leading-snug" title={step.instruction}>
           {step.instruction}
         </p>
+        {supplement && (
+          <p className="truncate text-sm md:text-[11px]" style={{ color: "rgba(255,255,255,0.74)" }}>
+            {supplement}
+          </p>
+        )}
+        <LaneGuidanceStrip lanes={step.lanes} compact />
       </div>
       <button
         type="button"
