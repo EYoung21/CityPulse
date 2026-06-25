@@ -213,30 +213,28 @@ async function searchNominatim(url: URL, city: PulseCity): Promise<PlaceSearchRe
 
   const data = (await res.json()) as NominatimResult[];
   const bounds = cityBounds(city);
-  return data
-    .map((r) => {
-      const lat = Number(r.lat);
-      const lng = Number(r.lon);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-      const parts = r.display_name.split(",").map((p) => p.trim()).filter(Boolean);
-      const name = parts[0] || r.display_name;
-      const address = parts.slice(1, 4).join(", ") || undefined;
-      return {
-        provider: "nominatim" as const,
-        source: "nominatim" as const,
-        type: r.type ?? r.class,
-        display_name: r.display_name,
-        name,
-        address,
-        lat,
-        lng,
-      };
-    })
-    .filter((x): x is PlaceSearchResult => {
-      if (!x) return false;
-      const [[minLng, minLat], [maxLng, maxLat]] = bounds;
-      return x.lng >= minLng && x.lng <= maxLng && x.lat >= minLat && x.lat <= maxLat;
+  const [[minLng, minLat], [maxLng, maxLat]] = bounds;
+  const results: PlaceSearchResult[] = [];
+  for (const r of data) {
+    const lat = Number(r.lat);
+    const lng = Number(r.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    if (lng < minLng || lng > maxLng || lat < minLat || lat > maxLat) continue;
+    const parts = r.display_name.split(",").map((p) => p.trim()).filter(Boolean);
+    const name = parts[0] || r.display_name;
+    const address = parts.slice(1, 4).join(", ") || undefined;
+    results.push({
+      provider: "nominatim",
+      source: "nominatim",
+      type: r.type ?? r.class,
+      display_name: r.display_name,
+      name,
+      address,
+      lat,
+      lng,
     });
+  }
+  return results;
 }
 
 export async function GET(request: Request) {
