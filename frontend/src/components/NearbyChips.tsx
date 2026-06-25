@@ -4,10 +4,10 @@
  *
  *  A passive, ambient affordance — same shelf as Google Maps' chip
  *  row under the search bar ("Restaurants · Hotels · Gas"). User
- *  taps a category, we Overpass-query around their current location
+ *  taps a category, we POI-query around their current location
  *  (or, falling back, the active city center), and render the closest
- *  matches inline. Tapping a result flies to it; long-pressing
- *  delegates to the parent's onDirections so the user can route there.
+ *  matches inline. Tapping a result opens the shared place-card flow;
+ *  Route delegates to the parent's onDirections so the user can route there.
  *
  *  Not mounted while the user is typing a search — the parent decides
  *  visibility. */
@@ -34,6 +34,19 @@ interface Props {
    *  granting geolocation. */
   userPos?: { lat: number; lng: number } | null;
   onFlyTo: (lat: number, lng: number) => void;
+  onPlaceSelected?: (place: {
+    name: string;
+    lat: number;
+    lng: number;
+    address?: string;
+    category?: string;
+    categories?: string[];
+    phone?: string;
+    website?: string;
+    openingHours?: unknown;
+    provider?: string;
+    entityId?: string;
+  }) => void;
   /** Optional — when supplied, results show a "→ directions" affordance.
    *  Signature matches SearchSidebar.openDirections: (destName, destCoords). */
   onDirections?: (destName: string, destCoords: { lat: number; lng: number }) => void;
@@ -45,7 +58,7 @@ function formatDistance(m?: number): string {
   return `${(m / 1000).toFixed(1)} km`;
 }
 
-export default function NearbyChips({ userPos, onFlyTo, onDirections }: Props) {
+export default function NearbyChips({ userPos, onFlyTo, onDirections, onPlaceSelected }: Props) {
   const [active, setActive] = useState<string | null>(null);
   const [results, setResults] = useState<PoiResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -93,6 +106,23 @@ export default function NearbyChips({ userPos, onFlyTo, onDirections }: Props) {
     } finally {
       if (!ctrl.signal.aborted) setLoading(false);
     }
+  };
+
+  const handleResultSelected = (r: PoiResult) => {
+    onFlyTo(r.lat, r.lng);
+    onPlaceSelected?.({
+      name: r.name,
+      lat: r.lat,
+      lng: r.lng,
+      address: r.address ?? r.subtitle,
+      category: r.category,
+      categories: r.categories,
+      phone: r.phone,
+      website: r.website,
+      openingHours: r.openingHours,
+      provider: r.provider,
+      entityId: r.entityId,
+    });
   };
 
   return (
@@ -147,7 +177,7 @@ export default function NearbyChips({ userPos, onFlyTo, onDirections }: Props) {
               className="text-[11px] py-1 px-1"
               style={{ color: "#ef4444" }}
             >
-              Couldn&apos;t reach OpenStreetMap. Try again in a few seconds.
+              Couldn&apos;t finish nearby search. Try again in a few seconds.
             </div>
           )}
 
@@ -167,7 +197,7 @@ export default function NearbyChips({ userPos, onFlyTo, onDirections }: Props) {
             >
               <button
                 type="button"
-                onClick={() => onFlyTo(r.lat, r.lng)}
+                onClick={() => handleResultSelected(r)}
                 className="flex-1 flex items-center gap-2 min-w-0 text-left"
               >
                 <MapPin
