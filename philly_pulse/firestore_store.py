@@ -525,11 +525,16 @@ def get_city_pipeline_freshness(slug: str, hours: int = 6) -> dict[str, Any]:
     try:
         rel = 0
         promoted = 0
+        # Promotion rate is a ratio over the last `hours`; a 1500-doc sample is
+        # plenty representative and bounds the read cost for high-volume cities
+        # (this query was up to 5000 docs/call and is hit on every city-stats
+        # request). Limit only — no extra order_by, to reuse the existing
+        # (city, reported_at) index exactly and avoid a new-index requirement.
         ext_recent = (
             db.collection("extractions")
             .where("city", "==", slug)
             .where("reported_at", ">=", floor)
-            .limit(5000)
+            .limit(1500)
         )
         for snap in ext_recent.stream():
             data = snap.to_dict() or {}
