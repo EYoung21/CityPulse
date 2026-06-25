@@ -2470,11 +2470,37 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         lineCap: "round",
         lineJoin: "round",
       }).addTo(routeLayer);
+      // Live-traffic congestion overlay (Google-style): paint amber/orange/red
+      // over the stretches TomTom flagged as delayed, on top of the base route
+      // line. Only present for driving routes resolved via TomTom; absent
+      // otherwise, so non-driving / keyless deploys just show the plain line.
+      const congestionLines: L.Polyline[] = [];
+      const CONGESTION_COLOR: Record<string, string> = {
+        moderate: "#f59e0b", // amber
+        heavy: "#f97316", // orange
+        severe: "#ef4444", // red
+      };
+      const geom = routes.chosen.geometry;
+      for (const span of routes.chosen.congestion ?? []) {
+        const from = Math.max(0, Math.min(span.fromIdx, geom.length - 1));
+        const to = Math.max(from + 1, Math.min(span.toIdx + 1, geom.length));
+        const seg = geom.slice(from, to);
+        if (seg.length < 2) continue;
+        congestionLines.push(
+          L.polyline(seg, {
+            color: CONGESTION_COLOR[span.level] ?? "#f59e0b",
+            weight: 6,
+            opacity: 0.95,
+            lineCap: "round",
+            lineJoin: "round",
+          }).addTo(routeLayer)
+        );
+      }
       // safePolylinesRef is misnamed historically — it actually holds
       // *the highlighted* polylines so the trip animation can hide them
       // when the live animated route takes over. Always populate it
-      // with the chosen pair regardless of safer-ness.
-      safePolylinesRef.current = [glow, line];
+      // with the chosen pair (+ congestion overlay) regardless of safer-ness.
+      safePolylinesRef.current = [glow, line, ...congestionLines];
     } else if (hasNormal && routes.normal && !hasSafe) {
       // No chosen + no safe — fall back to highlighting normal.
       L.polyline(routes.normal.geometry, {
