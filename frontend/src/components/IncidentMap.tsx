@@ -1162,6 +1162,46 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     map.flyTo(shiftedLatLng, targetZoom, { duration: 0.8 });
   }, [markProgrammaticCamera]);
 
+  const panelAwareFitOptions = useCallback((maxZoom: number): L.FitBoundsOptions => {
+    const map = mapRef.current;
+    const size = map?.getSize();
+    const mapW = size?.x ?? 0;
+    const mapH = size?.y ?? 0;
+
+    if (mapW < 768) {
+      let bottomPadding = Math.max(180, Math.round(mapH * 0.42));
+      if (typeof document !== "undefined" && map) {
+        const sheet = document.querySelector<HTMLElement>('[role="dialog"]');
+        const sheetTop = sheet?.getBoundingClientRect().top;
+        const mapTop = map.getContainer().getBoundingClientRect().top;
+        if (Number.isFinite(sheetTop)) {
+          const visibleBottom = Math.max(72, (sheetTop as number) - mapTop - 24);
+          bottomPadding = Math.max(180, Math.min(mapH - 72, Math.round(mapH - visibleBottom)));
+        }
+      }
+      return {
+        paddingTopLeft: [48, 36],
+        paddingBottomRight: [48, bottomPadding],
+        maxZoom,
+      };
+    }
+
+    let sidebarPx = 72;
+    if (typeof document !== "undefined") {
+      const raw = getComputedStyle(document.documentElement)
+        .getPropertyValue("--pp-map-sidebar-width")
+        .trim();
+      const n = Number.parseFloat(raw);
+      if (Number.isFinite(n)) sidebarPx = n;
+    }
+
+    return {
+      paddingTopLeft: [sidebarPx + 96, 96],
+      paddingBottomRight: [96, 96],
+      maxZoom,
+    };
+  }, []);
+
   useImperativeHandle(ref, () => ({
     flyTo: (lat: number, lng: number, zoom = 14) => {
       flyToOffset(lat, lng, zoom);
@@ -2612,10 +2652,10 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       if (contextSig !== lastRouteFitContextSigRef.current && !mapInteractingRef.current) {
         lastRouteFitContextSigRef.current = contextSig;
         markProgrammaticCamera(900);
-        map.fitBounds(bounds, { padding: [100, 100], maxZoom: 15 });
+        map.fitBounds(bounds, panelAwareFitOptions(15));
       }
     }
-  }, [routes, previewOrigin, previewDest, previewWaypoints, markProgrammaticCamera]);
+  }, [routes, previewOrigin, previewDest, previewWaypoints, markProgrammaticCamera, panelAwareFitOptions]);
 
   // Shared-trip overlay (recipient view of a "Share ETA" link).
   // Visually distinct from the user's own active trip — dashed cyan stroke
@@ -2656,8 +2696,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
 
     const bounds = L.latLngBounds(sharedTripGeometry.map((p) => L.latLng(p[0], p[1])));
     markProgrammaticCamera(900);
-    map.fitBounds(bounds, { padding: [100, 100], maxZoom: 15 });
-  }, [sharedTripGeometry, sharedTripDestination, markProgrammaticCamera]);
+    map.fitBounds(bounds, panelAwareFitOptions(15));
+  }, [sharedTripGeometry, sharedTripDestination, markProgrammaticCamera, panelAwareFitOptions]);
 
   // Preview waypoint pins (before GO is pressed)
   useEffect(() => {
@@ -2687,7 +2727,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
           previewFitWaypointsTailRef.current = tailSig;
           const bounds = L.latLngBounds(previewWaypoints.map((wp) => L.latLng(wp.lat, wp.lng)));
           markProgrammaticCamera(900);
-          map.fitBounds(bounds, { padding: [100, 100], maxZoom: 14 });
+          map.fitBounds(bounds, panelAwareFitOptions(14));
         }
       } else {
         previewFitWaypointsTailRef.current = "";
@@ -2722,14 +2762,14 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
               L.latLng(previewDest.lat, previewDest.lng),
             ]);
             markProgrammaticCamera(900);
-            map.fitBounds(bounds, { padding: [100, 100], maxZoom: 14 });
+            map.fitBounds(bounds, panelAwareFitOptions(14));
           }
         }
       } else {
         previewFitDestRef.current = null;
       }
     }
-  }, [previewOrigin, previewDest, previewWaypoints, routes, markProgrammaticCamera]);
+  }, [previewOrigin, previewDest, previewWaypoints, routes, markProgrammaticCamera, panelAwareFitOptions]);
 
   // Searched-place pin. Drops a Google-Maps-style red lollipop at the
   // place coords and flies the map to it at city-block zoom so the
