@@ -6,7 +6,6 @@ import {
   Footprints,
   Bike,
   Car,
-  Accessibility,
   Loader2,
   LocateFixed,
   X,
@@ -40,6 +39,7 @@ import {
   type AvoidancePrefs,
   type RouteOption,
 } from "@/lib/routing";
+import { getCurrentCity } from "@/lib/pulse-cities";
 import type { Incident } from "@/lib/api";
 import { userAvoidZonesForRouting } from "@/lib/avoid-areas";
 import type { RouteData } from "@/components/RoutePanel";
@@ -125,14 +125,10 @@ const MODES: { id: TransportMode; label: string; icon: typeof Footprints }[] = [
   { id: "foot-walking", label: "Walk", icon: Footprints },
   { id: "cycling-regular", label: "Bike", icon: Bike },
   { id: "driving-car", label: "Drive", icon: Car },
+  // Transit modes are filtered out at render time for cities without a
+  // rail/subway network (see `visibleModes`).
   { id: "transit-train", label: "Train", icon: TrainFront },
   { id: "transit-subway", label: "Subway", icon: TramFront },
-  // Wheelchair routing uses Valhalla pedestrian costing tuned for
-  // accessibility (avoids steps/steep grades, slower pace) in the
-  // route proxy — so it returns a genuinely different time/geometry
-  // than plain Walk, not an identical duplicate. Labeled "Wheelchair"
-  // (not the ambiguous "Access").
-  { id: "wheelchair", label: "Wheelchair", icon: Accessibility },
 ];
 
 const STOP_COLORS = ["#f97316", "#a855f7", "#06b6d4", "#ec4899", "#84cc16"];
@@ -145,9 +141,12 @@ interface StopLoc {
 
 function routeCoordKey(loc: { lat: number; lng: number }): string {
   // Route previews should not churn for every tiny GPS jitter on mobile.
-  // Four decimals is roughly 10 m in Philly, which is precise enough
-  // for a preview while keeping network requests stable.
-  return `${loc.lat.toFixed(4)},${loc.lng.toFixed(4)}`;
+  // Even 4 decimals (~11 m) crossed grid boundaries often enough that the
+  // live "Your location" origin kept re-fetching the preview (and redrawing
+  // the route line) while standing still. 3 decimals (~110 m) keeps it stable
+  // unless you've actually moved a block — planning is done stationary, and an
+  // active trip uses frozen geometry, so the lost precision doesn't matter.
+  return `${loc.lat.toFixed(3)},${loc.lng.toFixed(3)}`;
 }
 
 function avoidancePrefsKey(prefs: AvoidancePrefs): string {
@@ -314,7 +313,15 @@ export default function DirectionsPanel({
 
   // Memoize the mode id list so `useModeETAs` doesn't see a fresh array
   // every render (the hook keys its abort/refetch logic on the join).
-  const modeIds = useMemo<TransportMode[]>(() => MODES.map((m) => m.id), []);
+  // Hide Train/Subway in cities with no rail/subway network (e.g.
+  // Chattanooga) — offering transit routing where it doesn't exist is
+  // misleading and also fired pointless transit ETA fetches.
+  const cityHasTransit = useMemo(() => getCurrentCity().transit === true, []);
+  const visibleModes = useMemo(
+    () => MODES.filter((m) => cityHasTransit || !isTransitMode(m.id)),
+    [cityHasTransit]
+  );
+  const modeIds = useMemo<TransportMode[]>(() => visibleModes.map((m) => m.id), [visibleModes]);
   const stopLocs = useMemo(
     () =>
       stops
@@ -687,7 +694,7 @@ export default function DirectionsPanel({
       </div>
 
       <div className="flex" style={{ borderBottom: "1px solid var(--panel-border)" }}>
-        {MODES.map((m) => {
+        {visibleModes.map((m) => {
           const Icon = m.icon;
           const active = activeMode === m.id;
           const eta = modeEtas[m.id];

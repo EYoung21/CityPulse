@@ -16,10 +16,14 @@ export interface ModeETA {
 
 function coordKey(point: { lat: number; lng: number } | null): string {
   if (!point) return "";
-  // Mobile GPS tends to jitter by a few meters, which was enough to
-  // restart all six ETA requests and make the mode strip blink. For
-  // comparison ETAs, ~10 m precision is plenty and dramatically calmer.
-  return `${point.lat.toFixed(4)},${point.lng.toFixed(4)}`;
+  // Mobile GPS jitters by a few meters and the live "Your location" origin
+  // re-emits ~once a second, which at 4 decimals (~11 m) still crossed grid
+  // boundaries often enough to restart every ETA request — making the mode
+  // strip visibly blink "…" → "18 min" over and over while standing still
+  // (more noticeable now that the Drive ETA does a TomTom round-trip). These
+  // are coarse comparison ETAs, so 3 decimals (~110 m) is plenty and keeps
+  // the strip stable unless you've actually moved a block.
+  return `${point.lat.toFixed(3)},${point.lng.toFixed(3)}`;
 }
 
 function keepPreviousOnError(prev: Record<string, ModeETA>, mode: TransportMode): ModeETA {
