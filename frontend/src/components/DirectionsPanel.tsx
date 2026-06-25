@@ -127,10 +127,12 @@ const MODES: { id: TransportMode; label: string; icon: typeof Footprints }[] = [
   { id: "driving-car", label: "Drive", icon: Car },
   { id: "transit-train", label: "Train", icon: TrainFront },
   { id: "transit-subway", label: "Subway", icon: TramFront },
-  // Wheelchair routing leans on ORS's `wheelchair` profile, which
-  // adds curb-ramp and surface-quality preferences. Same response
-  // shape as the others, so no special-casing downstream.
-  { id: "wheelchair", label: "Access", icon: Accessibility },
+  // Wheelchair routing uses Valhalla pedestrian costing tuned for
+  // accessibility (avoids steps/steep grades, slower pace) in the
+  // route proxy — so it returns a genuinely different time/geometry
+  // than plain Walk, not an identical duplicate. Labeled "Wheelchair"
+  // (not the ambiguous "Access").
+  { id: "wheelchair", label: "Wheelchair", icon: Accessibility },
 ];
 
 const STOP_COLORS = ["#f97316", "#a855f7", "#06b6d4", "#ec4899", "#84cc16"];
@@ -238,7 +240,12 @@ export default function DirectionsPanel({
     durationMin: number;
     isSafe: boolean;
     nearbyCount: number;
+    trafficDelayMin?: number;
+    trafficSource?: "tomtom";
   } | null>(null);
+  // Driving-only: prefer the route that spends the least time stuck in
+  // traffic (TomTom alternatives), even if it's a longer drive.
+  const [avoidTraffic, setAvoidTraffic] = useState(false);
   const previewRouteRef = useRef<typeof previewRoute>(null);
   useEffect(() => {
     previewRouteRef.current = previewRoute;
@@ -328,6 +335,7 @@ export default function DirectionsPanel({
       stopLocs.map(routeCoordKey).join(";"),
       routeCoordKey(destLoc),
       avoidPrefsStableKey,
+      avoidTraffic ? "lowtraffic" : "fastest",
     ].join("|");
   }, [
     originLoc,
@@ -336,6 +344,7 @@ export default function DirectionsPanel({
     stopLocs,
     activeMode,
     avoidPrefsStableKey,
+    avoidTraffic,
   ]);
   const routeInputsRef = useRef({
     originLoc,
@@ -489,6 +498,8 @@ export default function DirectionsPanel({
           waypoints,
           avoidPolygons,
           includeRoadFeatureVariants: true,
+          routePref:
+            avoidTraffic && activeMode === "driving-car" ? "avoid_traffic" : undefined,
         });
         if (controller.signal.aborted) return;
 
@@ -532,6 +543,8 @@ export default function DirectionsPanel({
           durationMin: chosen.route.durationMin,
           isSafe: chosen.isSafer,
           nearbyCount: zones.length,
+          trafficDelayMin: chosen.route.trafficDelayMin,
+          trafficSource: chosen.route.trafficSource,
         };
         previewRouteRef.current = nextPreview;
         setPreviewRoute(nextPreview);
@@ -1055,7 +1068,58 @@ export default function DirectionsPanel({
                 Route is clear — no incidents nearby
               </div>
             )}
+            {/* Live-traffic status (driving via TomTom). >=1 min of delay = a
+                visible jam; otherwise traffic is flowing. */}
+            {previewRoute.trafficSource === "tomtom" && (
+              (previewRoute.trafficDelayMin ?? 0) >= 1 ? (
+                <div className="flex items-center gap-2 px-3 py-2 text-xs text-orange-600 dark:text-orange-400/90 bg-orange-500/5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  +{Math.round(previewRoute.trafficDelayMin ?? 0)} min in traffic right now
+                  {avoidTraffic ? " (lowest-traffic route)" : ""}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 px-3 py-2 text-xs text-green-600 dark:text-green-400/80 bg-green-500/5">
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  Traffic is flowing — no delays right now
+                </div>
+              )
+            )}
           </div>
+        )}
+
+        {/* Driving-only "avoid traffic" preference: re-routes to spend the
+            least time stuck in congestion, even if the drive is longer. */}
+        {activeMode === "driving-car" && originLoc && destLoc && (
+          <button
+            type="button"
+            onClick={() => setAvoidTraffic((v) => !v)}
+            className="mt-2 w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg text-xs transition-colors"
+            style={{
+              border: "1px solid var(--panel-border)",
+              background: avoidTraffic ? "rgba(59,130,246,0.1)" : "transparent",
+              color: "var(--panel-text)",
+            }}
+            aria-pressed={avoidTraffic}
+          >
+            <span className="flex items-center gap-2 text-left">
+              <Car className="w-3.5 h-3.5 shrink-0" style={{ color: "#60a5fa" }} />
+              <span>
+                Avoid traffic
+                <span className="block text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+                  Prefer the route that keeps moving, even if it&apos;s longer
+                </span>
+              </span>
+            </span>
+            <span
+              className="relative w-9 h-5 rounded-full shrink-0 transition-colors"
+              style={{ background: avoidTraffic ? "#3b82f6" : "var(--panel-input-bg, rgba(255,255,255,0.12))" }}
+            >
+              <span
+                className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
+                style={{ left: avoidTraffic ? "calc(100% - 1.125rem)" : "0.125rem" }}
+              />
+            </span>
+          </button>
         )}
 
         {previewRoute && originLoc && destLoc && !previewLoading && (() => {
