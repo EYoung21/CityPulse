@@ -149,6 +149,41 @@ function routeCoordKey(loc: { lat: number; lng: number }): string {
   return `${loc.lat.toFixed(3)},${loc.lng.toFixed(3)}`;
 }
 
+// Recent injury-crash points near a trip, fed to the router for proactive
+// avoidance. A scanner hears "MVA with injuries" at dispatch — often minutes
+// before TomTom's flow sensors register the jam — so this puts that head start
+// to work. We only gather *injury* crashes (likely to block a lane) from the
+// last 30 min within the trip's bounding box; the proxy then keeps only the
+// ones that actually fall on the computed route, so off-route crashes never
+// cause a detour.
+const CRASH_FRESH_MS = 30 * 60 * 1000;
+const CRASH_BBOX_PAD_DEG = 0.02; // ~2 km around the trip box
+function freshCrashCandidates(
+  incidents: Incident[],
+  waypoints: [number, number][]
+): [number, number][] {
+  if (waypoints.length < 2) return [];
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  for (const [lat, lng] of waypoints) {
+    minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
+    minLng = Math.min(minLng, lng); maxLng = Math.max(maxLng, lng);
+  }
+  minLat -= CRASH_BBOX_PAD_DEG; maxLat += CRASH_BBOX_PAD_DEG;
+  minLng -= CRASH_BBOX_PAD_DEG; maxLng += CRASH_BBOX_PAD_DEG;
+  const cutoff = Date.now() - CRASH_FRESH_MS;
+  const out: [number, number][] = [];
+  for (const inc of incidents) {
+    if (inc.severity_category !== "traffic_crash_injury") continue;
+    if (inc.lat == null || inc.lng == null) continue;
+    if (inc.lat < minLat || inc.lat > maxLat || inc.lng < minLng || inc.lng > maxLng) continue;
+    const t = inc.reported_at ? new Date(inc.reported_at).getTime() : 0;
+    if (!t || t < cutoff) continue;
+    out.push([inc.lat, inc.lng]);
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
 function avoidancePrefsKey(prefs: AvoidancePrefs): string {
   return [
     prefs.minSeverity,
@@ -241,6 +276,7 @@ export default function DirectionsPanel({
     nearbyCount: number;
     trafficDelayMin?: number;
     trafficSource?: "tomtom";
+    avoidedCrashes?: number;
   } | null>(null);
   // Driving-only: prefer the route that spends the least time stuck in
   // traffic (TomTom alternatives), even if it's a longer drive.
@@ -507,6 +543,8 @@ export default function DirectionsPanel({
           includeRoadFeatureVariants: true,
           routePref:
             avoidTraffic && activeMode === "driving-car" ? "avoid_traffic" : undefined,
+          crashAvoid:
+            activeMode === "driving-car" ? freshCrashCandidates(incSnap, waypoints) : undefined,
         });
         if (controller.signal.aborted) return;
 
@@ -552,6 +590,7 @@ export default function DirectionsPanel({
           nearbyCount: zones.length,
           trafficDelayMin: chosen.route.trafficDelayMin,
           trafficSource: chosen.route.trafficSource,
+          avoidedCrashes: chosen.route.avoidedCrashes,
         };
         previewRouteRef.current = nextPreview;
         setPreviewRoute(nextPreview);
@@ -1073,6 +1112,15 @@ export default function DirectionsPanel({
               <div className="flex items-center gap-2 px-3 py-2 text-xs text-green-600 dark:text-green-400/80 bg-green-500/5">
                 <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                 Route is clear — no incidents nearby
+              </div>
+            )}
+            {/* Proactive crash reroute (CityPulse scanner data, ahead of
+                TomTom's flow). */}
+            {(previewRoute.avoidedCrashes ?? 0) > 0 && (
+              <div className="flex items-center gap-2 px-3 py-2 text-xs text-blue-600 dark:text-blue-300/90 bg-blue-500/5">
+                <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                Rerouted around {previewRoute.avoidedCrashes} reported crash
+                {(previewRoute.avoidedCrashes ?? 0) > 1 ? "es" : ""}
               </div>
             )}
             {/* Live-traffic status (driving via TomTom). >=1 min of delay = a

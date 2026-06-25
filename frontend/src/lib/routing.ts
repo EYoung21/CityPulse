@@ -79,6 +79,8 @@ export interface RouteResult {
   trafficDelayMin?: number;
   trafficSource?: "tomtom";
   congestion?: CongestionSpan[];
+  /** Number of fresh CityPulse crashes this route was re-routed around. */
+  avoidedCrashes?: number;
 }
 
 /** Subset of ORS `avoid_features` we expose in the UI. */
@@ -468,14 +470,15 @@ async function getRouteOSRM(
   mode: TransportMode,
   waypoints: [number, number][],
   isSafe = false,
-  routePref?: "avoid_traffic"
+  routePref?: "avoid_traffic",
+  crashAvoid?: [number, number][]
 ): Promise<RouteResult | null> {
   if (waypoints.length < 2) return null;
   try {
     const res = await fetch(routeDirectionsUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ waypoints, mode, routePref }),
+      body: JSON.stringify({ waypoints, mode, routePref, crashAvoid }),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as {
@@ -487,6 +490,7 @@ async function getRouteOSRM(
       trafficDelayMin?: number;
       trafficSource?: "tomtom";
       congestion?: CongestionSpan[];
+      avoidedCrashes?: number;
     };
     if (!data.geometry || !Array.isArray(data.geometry) || data.geometry.length < 2) {
       return null;
@@ -501,6 +505,7 @@ async function getRouteOSRM(
       trafficDelayMin: data.trafficDelayMin,
       trafficSource: data.trafficSource,
       congestion: data.congestion,
+      avoidedCrashes: data.avoidedCrashes,
     };
   } catch {
     return null;
@@ -533,7 +538,8 @@ async function getRouteOSRMChained(
   mode: TransportMode,
   waypoints: [number, number][],
   isSafe = false,
-  routePref?: "avoid_traffic"
+  routePref?: "avoid_traffic",
+  crashAvoid?: [number, number][]
 ): Promise<RouteResult | null> {
   if (waypoints.length < 2) return null;
   const geometries: [number, number][][] = [];
@@ -541,6 +547,7 @@ async function getRouteOSRMChained(
   let durationMin = 0;
   let durationNoTrafficMin = 0;
   let trafficDelayMin = 0;
+  let avoidedCrashes = 0;
   let anyTraffic = false;
   const congestion: CongestionSpan[] = [];
   for (let i = 0; i < waypoints.length - 1; i++) {
@@ -548,7 +555,8 @@ async function getRouteOSRMChained(
       mode,
       [waypoints[i], waypoints[i + 1]],
       isSafe,
-      routePref
+      routePref,
+      crashAvoid
     );
     if (!leg) return null;
     // Offset this leg's congestion indices by the points already merged
@@ -562,6 +570,7 @@ async function getRouteOSRMChained(
     durationMin += leg.durationMin;
     durationNoTrafficMin += leg.durationNoTrafficMin ?? leg.durationMin;
     trafficDelayMin += leg.trafficDelayMin ?? 0;
+    avoidedCrashes += leg.avoidedCrashes ?? 0;
     if (leg.trafficSource === "tomtom") anyTraffic = true;
   }
   const geometry = mergeRouteLegs(geometries);
@@ -577,6 +586,7 @@ async function getRouteOSRMChained(
           trafficDelayMin,
           trafficSource: "tomtom" as const,
           congestion: congestion.length ? congestion : undefined,
+          ...(avoidedCrashes > 0 ? { avoidedCrashes } : {}),
         }
       : {}),
   };
@@ -604,6 +614,10 @@ export interface RouteRequestOptions {
    *  route that spends the least time stuck in congestion, even if its
    *  total distance is longer ("I'd rather drive farther than sit"). */
   routePref?: "avoid_traffic";
+  /** Driving only: candidate fresh-crash points [lat,lng] from CityPulse
+   *  scanners. The proxy only re-routes around the ones that land on the
+   *  computed route, so off-route crashes never cause a detour. */
+  crashAvoid?: [number, number][];
 }
 
 /**
@@ -762,9 +776,9 @@ export async function getMultiRouteVariants(
   // Browser calls to ORS are blocked by CORS; route through our API proxy instead.
   if (typeof window !== "undefined") {
     const isSafe = !!avoidPolygons;
-    let osrm = await getRouteOSRM(mode, waypoints, isSafe, options?.routePref);
+    let osrm = await getRouteOSRM(mode, waypoints, isSafe, options?.routePref, options?.crashAvoid);
     if (!osrm && waypoints.length > 2) {
-      osrm = await getRouteOSRMChained(mode, waypoints, isSafe, options?.routePref);
+      osrm = await getRouteOSRMChained(mode, waypoints, isSafe, options?.routePref, options?.crashAvoid);
     }
     return osrm ? [osrm] : [];
   }
@@ -883,6 +897,9 @@ interface RouteVariantsRequest {
   /** Driving only: prefer the lowest-time-in-traffic route (see
    *  `RouteRequestOptions.routePref`). Applied to the primary variant. */
   routePref?: "avoid_traffic";
+  /** Driving only: fresh-crash points [lat,lng] to route around if they
+   *  land on the route (see `RouteRequestOptions.crashAvoid`). */
+  crashAvoid?: [number, number][];
 }
 
 /** Fetches every variant we want to surface in the route picker
@@ -892,13 +909,13 @@ interface RouteVariantsRequest {
 export async function getRouteOptions(
   req: RouteVariantsRequest
 ): Promise<RouteOption[]> {
-  const { apiKey, mode, waypoints, avoidPolygons, includeRoadFeatureVariants, routePref } = req;
+  const { apiKey, mode, waypoints, avoidPolygons, includeRoadFeatureVariants, routePref, crashAvoid } = req;
   if (waypoints.length < 2) return [];
 
   const featureVariantsRequested = includeRoadFeatureVariants && mode === "driving-car";
 
   const [direct, safer, noTolls, noHighways] = await Promise.all([
-    getMultiRouteVariants(apiKey, mode, waypoints, null, { alternatives: 2, routePref }),
+    getMultiRouteVariants(apiKey, mode, waypoints, null, { alternatives: 2, routePref, crashAvoid }),
     avoidPolygons ? getMultiRouteVariants(apiKey, mode, waypoints, avoidPolygons) : Promise.resolve([]),
     featureVariantsRequested
       ? getMultiRouteVariants(apiKey, mode, waypoints, null, { avoidFeatures: ["tollways"] })
