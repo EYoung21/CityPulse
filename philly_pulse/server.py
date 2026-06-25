@@ -40,6 +40,33 @@ FREE_INCIDENT_WINDOW_SECONDS = int(
     os.environ.get("FREE_INCIDENT_WINDOW_SECONDS", str(24 * 60 * 60))
 )
 
+# ── Tiny in-process TTL caches ───────────────────────────────────────────────
+# The feed (/api/incidents) is polled ~every 12s per open browser tab and
+# city-stats ~every 30s; both were UNCACHED, so Firestore read volume scaled
+# with (open tabs × poll rate × docs-in-window). These collapse concurrent
+# identical reads to ~one Firestore hit per TTL, making read volume largely
+# independent of how many tabs are open. Per-process (each uvicorn worker has
+# its own), which is fine — a handful of workers × 1 read/TTL is negligible.
+INCIDENTS_CACHE_TTL = float(os.environ.get("PULSE_INCIDENTS_CACHE_TTL", "10"))
+CITY_STATS_CACHE_TTL = float(os.environ.get("PULSE_CITY_STATS_CACHE_TTL", "60"))
+_TTL_CACHES: dict[str, dict[Any, tuple[float, Any]]] = {}
+
+
+def _ttl_get(bucket: str, key: Any) -> Any:
+    ent = _TTL_CACHES.get(bucket, {}).get(key)
+    if ent and ent[0] > time.monotonic():
+        return ent[1]
+    return None
+
+
+def _ttl_put(bucket: str, key: Any, value: Any, ttl: float) -> None:
+    cache = _TTL_CACHES.setdefault(bucket, {})
+    now = time.monotonic()
+    if len(cache) > 128:  # bound growth; drop expired entries first
+        for k in [k for k, v in cache.items() if v[0] <= now]:
+            cache.pop(k, None)
+    cache[key] = (now + ttl, value)
+
 # When False, ingest only stores raw transcript+audio — no LLM/inhibitor/geocode.
 # Flip to True (or set env PHILLY_PULSE_LLM_AUTO=1) to resume automatic processing.
 LLM_AUTO_ENABLED = os.environ.get("PHILLY_PULSE_LLM_AUTO", "0").strip().lower() in ("1", "true", "yes")
@@ -1089,11 +1116,19 @@ def get_incidents(
         response.headers["X-Pulse-Free-Window-Sec"] = str(FREE_INCIDENT_WINDOW_SECONDS)
     elif not is_pro:
         response.headers["X-Pulse-Free-Window-Sec"] = str(FREE_INCIDENT_WINDOW_SECONDS)
-    try:
-        incidents = store.list_incidents(since=effective_since, category=category)
-        incidents = weights.enrich_incidents(incidents)
-    except Exception:
-        incidents = []
+    # Short-TTL cache so the 12s feed poll across many tabs collapses to ~one
+    # Firestore read per window. Keyed on the data-shaping inputs only (window
+    # tier + category + a minute-bucketed since so the moving "now-24h" floor
+    # doesn't churn the key); per-user `meta` is still computed fresh below.
+    cache_key = (category or "", bool(is_pro), (effective_since or "")[:16])
+    incidents = _ttl_get("incidents", cache_key)
+    if incidents is None:
+        try:
+            incidents = store.list_incidents(since=effective_since, category=category)
+            incidents = weights.enrich_incidents(incidents)
+        except Exception:
+            incidents = []
+        _ttl_put("incidents", cache_key, incidents, INCIDENTS_CACHE_TTL)
     meta = {
         "tier": "pro" if is_pro else "free",
         "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
@@ -2556,6 +2591,14 @@ def city_stats(slug: str):
     feeds = cfg.get("feeds", []) or []
     city_name = cfg.get("city", {}).get("name", slug)
 
+    # Cache the whole response: this endpoint is polled every ~30s by
+    # `useCityStats`, and `get_city_pipeline_freshness` streams up to a few
+    # thousand extraction docs per call — easily the second-biggest read
+    # source. A 60s cache caps that to ~one heavy read per minute per city.
+    cached = _ttl_get("city_stats", slug)
+    if cached is not None:
+        return cached
+
     # Last-24h incident count (Firestore supports city filter; SQLite
     # dev returns -1).
     since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
@@ -2574,7 +2617,7 @@ def city_stats(slug: str):
     except Exception:
         freshness = {}
 
-    return {
+    result = {
         "slug": slug,
         "city_name": city_name,
         "scanner_feeds": len(feeds),
@@ -2585,6 +2628,8 @@ def city_stats(slug: str):
         "promotion_rate_6h": freshness.get("promotion_rate_6h"),
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+    _ttl_put("city_stats", slug, result, CITY_STATS_CACHE_TTL)
+    return result
 
 
 # ── Admin endpoints ─────────────────────────────────────────────────
