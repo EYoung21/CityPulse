@@ -91,7 +91,15 @@ const PHILLY_TRANSIT_STATIONS: TransitStation[] = [
   { lat: 39.9061, lng: -75.1714, kind: "subway" },
 ];
 
-type Body = { waypoints?: unknown; mode?: string; routePref?: string };
+type Body = {
+  waypoints?: unknown;
+  mode?: string;
+  routePref?: string;
+  /** Candidate crash points [lat,lng] from CityPulse scanners. The driver
+   *  only re-routes around the ones that actually fall on the fastest route
+   *  (two-pass), so off-route crashes never cause a detour. */
+  crashAvoid?: unknown;
+};
 
 /** A congested stretch of the route, as index range into `geometry`, for the
  *  client to draw Google-style amber/orange/red segments. */
@@ -111,6 +119,8 @@ type RoutePayload = {
   trafficDelayMin?: number;
   trafficSource?: "tomtom";
   congestion?: CongestionSpan[];
+  /** Count of fresh CityPulse crashes this route was re-routed around. */
+  avoidedCrashes?: number;
 };
 
 /**
@@ -336,9 +346,43 @@ type TomTomRoute = {
  * Returns null (→ fall through to Valhalla/OSRM) when the key is missing or
  * TomTom errors, so routing degrades gracefully to free-flow estimates.
  */
+function haversineMeters(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371000;
+  const dLat = ((bLat - aLat) * Math.PI) / 180;
+  const dLng = ((bLng - aLng) * Math.PI) / 180;
+  const la1 = (aLat * Math.PI) / 180;
+  const la2 = (bLat * Math.PI) / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/** Nearest-vertex distance (m) from a point to a polyline. TomTom geometry is
+ *  dense enough that vertex distance ≈ true perpendicular distance at our
+ *  ~60 m on-route threshold. */
+function minDistToPathMeters(pt: [number, number], path: [number, number][]): number {
+  let min = Infinity;
+  for (const [lat, lng] of path) {
+    const d = haversineMeters(pt[0], pt[1], lat, lng);
+    if (d < min) min = d;
+  }
+  return min;
+}
+
+// A fresh crash within this distance of the computed route counts as "on it".
+const CRASH_ON_ROUTE_M = 60;
+// Half-size of the box we tell TomTom to avoid (~110 m) — big enough to make it
+// leave the blocked road, small enough not to wall off parallel streets.
+const CRASH_BOX_DEG = 0.001;
+
+type TomTomRect = {
+  southWestCorner: { latitude: number; longitude: number };
+  northEastCorner: { latitude: number; longitude: number };
+};
+
 async function tryTomTom(
   pts: [number, number][],
   avoidTraffic: boolean,
+  crashAvoid: [number, number][],
   signal: AbortSignal
 ): Promise<RoutePayload | null> {
   if (!TOMTOM_KEY || pts.length < 2) return null;
@@ -354,11 +398,18 @@ async function tryTomTom(
   });
   // Alternatives only help when we're choosing the lowest-delay route.
   if (avoidTraffic) params.set("maxAlternatives", "2");
-  try {
-    const resp = await fetch(`${TOMTOM_ROUTING}/${encodeURIComponent(loc)}/json?${params}`, {
-      cache: "no-store",
-      signal,
-    });
+  const url = `${TOMTOM_ROUTING}/${encodeURIComponent(loc)}/json?${params}`;
+
+  // One fetch + pick-the-chosen-route + parse. `avoidRects` switches it to a
+  // POST so TomTom routes around the given boxes.
+  const run = async (avoidRects?: TomTomRect[]): Promise<{ geometry: [number, number][]; payload: RoutePayload } | null> => {
+    const init: RequestInit = { cache: "no-store", signal };
+    if (avoidRects && avoidRects.length > 0) {
+      init.method = "POST";
+      init.headers = { "Content-Type": "application/json" };
+      init.body = JSON.stringify({ avoidAreas: { rectangles: avoidRects } });
+    }
+    const resp = await fetch(url, init);
     if (!resp.ok) return null;
     const data = (await resp.json()) as { routes?: TomTomRoute[] };
     const routes = data.routes ?? [];
@@ -366,7 +417,6 @@ async function tryTomTom(
 
     let chosen = routes[0];
     if (avoidTraffic && routes.length > 1) {
-      // Minimize seconds spent in congestion, tie-break on total time.
       chosen = [...routes].sort((a, b) => {
         const da = a.summary?.trafficDelayInSeconds ?? 0;
         const db = b.summary?.trafficDelayInSeconds ?? 0;
@@ -395,15 +445,44 @@ async function tryTomTom(
 
     return {
       geometry,
-      distanceKm: (s.lengthInMeters ?? 0) / 1000,
-      durationMin: (s.travelTimeInSeconds ?? 0) / 60,
-      durationNoTrafficMin: s.noTrafficTravelTimeInSeconds != null
-        ? s.noTrafficTravelTimeInSeconds / 60
-        : undefined,
-      trafficDelayMin: (s.trafficDelayInSeconds ?? 0) / 60,
-      trafficSource: "tomtom",
-      congestion: congestion.length ? congestion : undefined,
+      payload: {
+        geometry,
+        distanceKm: (s.lengthInMeters ?? 0) / 1000,
+        durationMin: (s.travelTimeInSeconds ?? 0) / 60,
+        durationNoTrafficMin: s.noTrafficTravelTimeInSeconds != null
+          ? s.noTrafficTravelTimeInSeconds / 60
+          : undefined,
+        trafficDelayMin: (s.trafficDelayInSeconds ?? 0) / 60,
+        trafficSource: "tomtom",
+        congestion: congestion.length ? congestion : undefined,
+      },
     };
+  };
+
+  try {
+    const first = await run();
+    if (!first) return null;
+
+    // Two-pass crash avoidance: only re-route around fresh CityPulse crashes
+    // that actually sit ON the fastest route — off-route crashes are ignored,
+    // so we never invent a detour. This is the scanner's head start over
+    // TomTom's flow sensors put to use.
+    if (crashAvoid.length > 0) {
+      const onRoute = crashAvoid
+        .filter((c) => minDistToPathMeters(c, first.geometry) <= CRASH_ON_ROUTE_M)
+        .slice(0, 10); // TomTom caps avoidAreas at 10 rectangles
+      if (onRoute.length > 0) {
+        const rects: TomTomRect[] = onRoute.map(([lat, lng]) => ({
+          southWestCorner: { latitude: lat - CRASH_BOX_DEG, longitude: lng - CRASH_BOX_DEG },
+          northEastCorner: { latitude: lat + CRASH_BOX_DEG, longitude: lng + CRASH_BOX_DEG },
+        }));
+        const rerouted = await run(rects);
+        if (rerouted) {
+          return { ...rerouted.payload, avoidedCrashes: onRoute.length };
+        }
+      }
+    }
+    return first.payload;
   } catch {
     return null;
   }
@@ -711,10 +790,23 @@ export async function POST(request: Request) {
   // Live-traffic driving via TomTom first (only when a key is configured and
   // the mode is car). Everything else — and any TomTom failure — falls through
   // to the existing free providers untouched.
+  // Validate crash-avoidance candidates: array of [lat,lng], cap to 20.
+  const crashAvoid: [number, number][] = Array.isArray(body.crashAvoid)
+    ? (body.crashAvoid as unknown[])
+        .filter(
+          (c): c is [number, number] =>
+            Array.isArray(c) &&
+            c.length === 2 &&
+            typeof c[0] === "number" &&
+            typeof c[1] === "number"
+        )
+        .slice(0, 20)
+    : [];
+
   const tomtom =
     mode === "driving-car" && TOMTOM_KEY
-      ? await withProviderTimeout(6000, (signal) =>
-          tryTomTom(pts, body.routePref === "avoid_traffic", signal)
+      ? await withProviderTimeout(8000, (signal) =>
+          tryTomTom(pts, body.routePref === "avoid_traffic", crashAvoid, signal)
         )
       : null;
 
