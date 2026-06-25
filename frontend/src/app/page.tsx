@@ -457,6 +457,16 @@ function MapHome() {
   // tracks the driver), and re-enabled by tapping the Re-center pill.
   const [followMe, setFollowMe] = useState(false);
   const [tripGeometry, setTripGeometry] = useState<[number, number][] | null>(null);
+  // Live-traffic congestion for the active trip's line. Sourced from the chosen
+  // route, but only used when it still indexes the geometry currently driving
+  // (length guard) so a mid-trip re-route can't mis-paint stale segments.
+  const tripCongestion = useMemo(() => {
+    if (!tripGeometry) return null;
+    const chosen = routes?.chosen;
+    if (!chosen?.congestion?.length) return null;
+    if (chosen.geometry.length !== tripGeometry.length) return null;
+    return chosen.congestion;
+  }, [tripGeometry, routes]);
   // Auto-pan the map to the user when their GPS updates *and* a trip is
   // active *and* follow-me hasn't been turned off by manual drag. We use
   // a close flyTo at trip start, then cheap panTo updates so the camera
@@ -2074,6 +2084,7 @@ function MapHome() {
           if (tripGeometry && followMe) setFollowMe(false);
         }}
         tripRouteGeometry={tripGeometry}
+        tripRouteCongestion={tripCongestion}
         previewOrigin={previewOrigin}
         previewDest={previewDest}
         previewWaypoints={previewWaypoints}

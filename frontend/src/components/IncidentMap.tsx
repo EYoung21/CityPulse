@@ -27,7 +27,7 @@ import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "@maplibre/maplibre-gl-leaflet";
 import { vectorBasemapStyleUrl, isVectorTilesEnabled, subscribeVectorTiles } from "@/lib/vector-basemap";
-import { SAFEST_ROUTE_ONLY_UI } from "@/lib/routing";
+import { SAFEST_ROUTE_ONLY_UI, type CongestionSpan } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
 import { heatmapWeight } from "@/lib/severity";
 import type { RouteData } from "@/components/RoutePanel";
@@ -299,6 +299,9 @@ interface Props {
   mapTapActive?: boolean;
   userLocation?: { lat: number; lng: number } | null;
   tripRouteGeometry?: [number, number][] | null;
+  /** Congestion spans (index ranges into tripRouteGeometry) for the active
+   *  trip's route, so the live nav line can paint amber/red on the road ahead. */
+  tripRouteCongestion?: CongestionSpan[] | null;
   previewOrigin?: { lat: number; lng: number } | null;
   previewDest?: { lat: number; lng: number } | null;
   previewWaypoints?: WaypointPin[] | null;
@@ -1011,6 +1014,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
     mapTapActive = false,
     userLocation,
     tripRouteGeometry,
+    tripRouteCongestion,
     previewOrigin,
     previewDest,
     previewWaypoints,
@@ -1101,6 +1105,8 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
   const previewFitDestRef = useRef<{ lat: number; lng: number } | null>(null);
   const previewFitWaypointsTailRef = useRef<string>("");
   const tripLiveLayersRef = useRef<TripLiveLayers | null>(null);
+  const tripCongestionRef = useRef(tripRouteCongestion);
+  tripCongestionRef.current = tripRouteCongestion;
   const liveTripDistAlongRef = useRef(0);
   const onTripProgressRef = useRef(onTripProgress);
   onTripProgressRef.current = onTripProgress;
@@ -2843,6 +2849,32 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
           dashArray: tripStyle.guideDashArray,
         }).addTo(trailLayer!)
       : undefined;
+
+    // Live-traffic congestion overlay on the road AHEAD. Painted as static
+    // segments now, BELOW the `traveled` line created next — so as you drive,
+    // the traveled line covers the congestion you've already passed and only
+    // the ahead portion stays colored (Google-style). No per-tick recompute.
+    const tripCongestion = tripCongestionRef.current;
+    if (tripCongestion && tripCongestion.length > 0) {
+      const CONGESTION_COLOR: Record<string, string> = {
+        moderate: "#f59e0b", // amber
+        heavy: "#f97316", // orange
+        severe: "#ef4444", // red
+      };
+      for (const span of tripCongestion) {
+        const from = Math.max(0, Math.min(span.fromIdx, geo.length - 1));
+        const to = Math.max(from + 1, Math.min(span.toIdx + 1, geo.length));
+        const seg = geo.slice(from, to);
+        if (seg.length < 2) continue;
+        L.polyline(seg, {
+          color: CONGESTION_COLOR[span.level] ?? "#f59e0b",
+          weight: tripStyle.remainingWeight,
+          opacity: 0.95,
+          lineCap: "round",
+          lineJoin: "round",
+        }).addTo(trailLayer!);
+      }
+    }
 
     const traveledLine = L.polyline([], {
       color: tripStyle.traveledColor,
