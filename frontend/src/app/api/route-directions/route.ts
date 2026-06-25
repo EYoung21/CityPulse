@@ -21,6 +21,14 @@ const OSRM_BASE = "https://router.project-osrm.org/route/v1";
 const OSM_ROUTING_BASE = "https://routing.openstreetmap.de";
 const OTP_URL = process.env.TRANSIT_OTP_URL || "";
 
+// TomTom is the ONLY provider here with live traffic. When a key is present we
+// use it as the primary *driving* provider so the drive ETA reflects current
+// congestion (Valhalla/OSRM are free-flow only) and the geometry routes around
+// jams. Walk/bike/transit stay on the free providers — traffic is irrelevant
+// there. Keyless deployments fall straight through to Valhalla as before.
+const TOMTOM_KEY = process.env.TOMTOM_API_KEY || "";
+const TOMTOM_ROUTING = "https://api.tomtom.com/routing/1/calculateRoute";
+
 const VALHALLA_COSTING: Record<string, string> = {
   "foot-walking": "pedestrian",
   "cycling-regular": "bicycle",
@@ -83,13 +91,26 @@ const PHILLY_TRANSIT_STATIONS: TransitStation[] = [
   { lat: 39.9061, lng: -75.1714, kind: "subway" },
 ];
 
-type Body = { waypoints?: unknown; mode?: string };
+type Body = { waypoints?: unknown; mode?: string; routePref?: string };
+
+/** A congested stretch of the route, as index range into `geometry`, for the
+ *  client to draw Google-style amber/orange/red segments. */
+type CongestionSpan = {
+  fromIdx: number;
+  toIdx: number;
+  level: "moderate" | "heavy" | "severe";
+};
 
 type RoutePayload = {
   geometry: [number, number][];
   distanceKm: number;
   durationMin: number;
   estimated?: boolean;
+  /** Live-traffic extras (TomTom only; absent on free-flow providers). */
+  durationNoTrafficMin?: number;
+  trafficDelayMin?: number;
+  trafficSource?: "tomtom";
+  congestion?: CongestionSpan[];
 };
 
 /**
@@ -278,12 +299,138 @@ function mergeRouteLegs(legs: [number, number][][]): [number, number][] {
   return geometry;
 }
 
+/** TomTom `magnitudeOfDelay` (0 unknown · 1 minor · 2 moderate · 3 major ·
+ *  4 indefinite/closure) → our 3-level coloring. 0 is dropped (don't paint
+ *  "unknown" as congestion). */
+function magnitudeToLevel(m: number): CongestionSpan["level"] | null {
+  if (m >= 4) return "severe";
+  if (m === 3) return "heavy";
+  if (m >= 1) return "moderate";
+  return null;
+}
+
+type TomTomRoute = {
+  summary?: {
+    lengthInMeters?: number;
+    travelTimeInSeconds?: number;
+    trafficDelayInSeconds?: number;
+    noTrafficTravelTimeInSeconds?: number;
+  };
+  legs?: Array<{ points?: Array<{ latitude: number; longitude: number }> }>;
+  sections?: Array<{
+    sectionType?: string;
+    startPointIndex?: number;
+    endPointIndex?: number;
+    magnitudeOfDelay?: number;
+  }>;
+};
+
+/**
+ * Live-traffic driving routes via TomTom. `traffic=true` returns
+ * congestion-adjusted travel times AND geometry that avoids active jams, so
+ * the default route already "keeps moving" the way Google's does. When
+ * `avoidTraffic` is set we additionally request alternatives and pick the one
+ * that spends the LEAST time stuck in traffic (delay), even if its total trip
+ * is a bit longer — the "I'd rather drive farther than sit" preference.
+ *
+ * Returns null (→ fall through to Valhalla/OSRM) when the key is missing or
+ * TomTom errors, so routing degrades gracefully to free-flow estimates.
+ */
+async function tryTomTom(
+  pts: [number, number][],
+  avoidTraffic: boolean,
+  signal: AbortSignal
+): Promise<RoutePayload | null> {
+  if (!TOMTOM_KEY || pts.length < 2) return null;
+  const loc = pts.map(([lat, lng]) => `${lat},${lng}`).join(":");
+  const params = new URLSearchParams({
+    key: TOMTOM_KEY,
+    traffic: "true",
+    travelMode: "car",
+    routeType: "fastest",
+    computeTravelTimeFor: "all",
+    sectionType: "traffic",
+    routeRepresentation: "polyline",
+  });
+  // Alternatives only help when we're choosing the lowest-delay route.
+  if (avoidTraffic) params.set("maxAlternatives", "2");
+  try {
+    const resp = await fetch(`${TOMTOM_ROUTING}/${encodeURIComponent(loc)}/json?${params}`, {
+      cache: "no-store",
+      signal,
+    });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as { routes?: TomTomRoute[] };
+    const routes = data.routes ?? [];
+    if (routes.length === 0) return null;
+
+    let chosen = routes[0];
+    if (avoidTraffic && routes.length > 1) {
+      // Minimize seconds spent in congestion, tie-break on total time.
+      chosen = [...routes].sort((a, b) => {
+        const da = a.summary?.trafficDelayInSeconds ?? 0;
+        const db = b.summary?.trafficDelayInSeconds ?? 0;
+        if (da !== db) return da - db;
+        return (a.summary?.travelTimeInSeconds ?? 0) - (b.summary?.travelTimeInSeconds ?? 0);
+      })[0];
+    }
+
+    const geometry: [number, number][] = [];
+    for (const leg of chosen.legs ?? []) {
+      for (const p of leg.points ?? []) geometry.push([p.latitude, p.longitude]);
+    }
+    if (geometry.length < 2) return null;
+
+    const s = chosen.summary ?? {};
+    const congestion: CongestionSpan[] = [];
+    for (const sec of chosen.sections ?? []) {
+      if (sec.sectionType !== "TRAFFIC") continue;
+      const level = magnitudeToLevel(sec.magnitudeOfDelay ?? 0);
+      const fromIdx = sec.startPointIndex ?? 0;
+      const toIdx = sec.endPointIndex ?? 0;
+      if (level && toIdx > fromIdx && toIdx < geometry.length) {
+        congestion.push({ fromIdx, toIdx, level });
+      }
+    }
+
+    return {
+      geometry,
+      distanceKm: (s.lengthInMeters ?? 0) / 1000,
+      durationMin: (s.travelTimeInSeconds ?? 0) / 60,
+      durationNoTrafficMin: s.noTrafficTravelTimeInSeconds != null
+        ? s.noTrafficTravelTimeInSeconds / 60
+        : undefined,
+      trafficDelayMin: (s.trafficDelayInSeconds ?? 0) / 60,
+      trafficSource: "tomtom",
+      congestion: congestion.length ? congestion : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function tryValhalla(
   pts: [number, number][],
   mode: string,
   signal: AbortSignal
 ): Promise<RoutePayload | null> {
   const costing = VALHALLA_COSTING[mode] ?? "auto";
+  // Accessibility-tuned pedestrian costing for the Wheelchair mode: a slower
+  // pace, a heavy penalty on steps, flat-route preference, and a sidewalk
+  // bias. This makes Wheelchair return a genuinely different time/geometry
+  // than plain Walk (stock Valhalla has no dedicated wheelchair profile).
+  const costingOptions =
+    mode === "wheelchair"
+      ? {
+          pedestrian: {
+            walking_speed: 3.6,
+            step_penalty: 600,
+            use_hills: 0.1,
+            sidewalk_factor: 1.3,
+            max_hiking_difficulty: 0,
+          },
+        }
+      : undefined;
   try {
     const resp = await fetch(VALHALLA_URL, {
       method: "POST",
@@ -293,6 +440,7 @@ async function tryValhalla(
       body: JSON.stringify({
         locations: pts.map(([lat, lon]) => ({ lat, lon, type: "break" })),
         costing,
+        ...(costingOptions ? { costing_options: costingOptions } : {}),
         units: "kilometers",
         directions_options: { units: "kilometers" },
       }),
@@ -560,9 +708,20 @@ export async function POST(request: Request) {
   const pts = waypoints as [number, number][];
   const isTransit = mode === "transit-train" || mode === "transit-subway";
 
-  const valhalla = isTransit
-    ? null
-    : await withProviderTimeout(4500, (signal) => tryValhalla(pts, mode, signal));
+  // Live-traffic driving via TomTom first (only when a key is configured and
+  // the mode is car). Everything else — and any TomTom failure — falls through
+  // to the existing free providers untouched.
+  const tomtom =
+    mode === "driving-car" && TOMTOM_KEY
+      ? await withProviderTimeout(6000, (signal) =>
+          tryTomTom(pts, body.routePref === "avoid_traffic", signal)
+        )
+      : null;
+
+  const valhalla =
+    isTransit || tomtom
+      ? null
+      : await withProviderTimeout(4500, (signal) => tryValhalla(pts, mode, signal));
   const usableValhalla =
     valhalla && !isImplausibleForMode(valhalla, mode) ? valhalla : null;
   const osmProfileRoute =
@@ -578,6 +737,7 @@ export async function POST(request: Request) {
       (await tryTransitFallback(pts, mode))
     : null;
   const result =
+    tomtom ||
     usableValhalla ||
     osmProfileRoute ||
     drivingFallback ||

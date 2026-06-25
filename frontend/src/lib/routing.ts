@@ -52,6 +52,13 @@ export interface ManeuverStep {
   name?: string;
 }
 
+/** A congested stretch of a driving route (index range into `geometry`). */
+export interface CongestionSpan {
+  fromIdx: number;
+  toIdx: number;
+  level: "moderate" | "heavy" | "severe";
+}
+
 export interface RouteResult {
   geometry: [number, number][];
   distanceKm: number;
@@ -65,6 +72,13 @@ export interface RouteResult {
    *  (e.g. ["tollways", "highways"]). Empty/undefined when the call was
    *  not constrained. */
   avoidedFeatures?: string[];
+  /** Live-traffic fields — present only for driving routes resolved via the
+   *  TomTom provider. `durationMin` already includes traffic; these expose
+   *  the free-flow baseline + how much of the ETA is congestion. */
+  durationNoTrafficMin?: number;
+  trafficDelayMin?: number;
+  trafficSource?: "tomtom";
+  congestion?: CongestionSpan[];
 }
 
 /** Subset of ORS `avoid_features` we expose in the UI. */
@@ -453,14 +467,15 @@ function decodePolyline(encoded: string): [number, number][] {
 async function getRouteOSRM(
   mode: TransportMode,
   waypoints: [number, number][],
-  isSafe = false
+  isSafe = false,
+  routePref?: "avoid_traffic"
 ): Promise<RouteResult | null> {
   if (waypoints.length < 2) return null;
   try {
     const res = await fetch(routeDirectionsUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ waypoints, mode }),
+      body: JSON.stringify({ waypoints, mode, routePref }),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as {
@@ -468,6 +483,10 @@ async function getRouteOSRM(
       distanceKm?: number;
       durationMin?: number;
       estimated?: boolean;
+      durationNoTrafficMin?: number;
+      trafficDelayMin?: number;
+      trafficSource?: "tomtom";
+      congestion?: CongestionSpan[];
     };
     if (!data.geometry || !Array.isArray(data.geometry) || data.geometry.length < 2) {
       return null;
@@ -478,6 +497,10 @@ async function getRouteOSRM(
       durationMin: data.durationMin ?? 0,
       isSafe,
       estimated: data.estimated,
+      durationNoTrafficMin: data.durationNoTrafficMin,
+      trafficDelayMin: data.trafficDelayMin,
+      trafficSource: data.trafficSource,
+      congestion: data.congestion,
     };
   } catch {
     return null;
@@ -509,26 +532,54 @@ function mergeRouteLegs(legs: [number, number][][]): [number, number][] {
 async function getRouteOSRMChained(
   mode: TransportMode,
   waypoints: [number, number][],
-  isSafe = false
+  isSafe = false,
+  routePref?: "avoid_traffic"
 ): Promise<RouteResult | null> {
   if (waypoints.length < 2) return null;
   const geometries: [number, number][][] = [];
   let distanceKm = 0;
   let durationMin = 0;
+  let durationNoTrafficMin = 0;
+  let trafficDelayMin = 0;
+  let anyTraffic = false;
+  const congestion: CongestionSpan[] = [];
   for (let i = 0; i < waypoints.length - 1; i++) {
     const leg = await getRouteOSRM(
       mode,
       [waypoints[i], waypoints[i + 1]],
-      isSafe
+      isSafe,
+      routePref
     );
     if (!leg) return null;
+    // Offset this leg's congestion indices by the points already merged
+    // (minus the seam point mergeRouteLegs drops between legs).
+    const base = geometries.length === 0 ? 0 : mergeRouteLegs(geometries).length;
+    for (const c of leg.congestion ?? []) {
+      congestion.push({ fromIdx: c.fromIdx + base, toIdx: c.toIdx + base, level: c.level });
+    }
     geometries.push(leg.geometry);
     distanceKm += leg.distanceKm;
     durationMin += leg.durationMin;
+    durationNoTrafficMin += leg.durationNoTrafficMin ?? leg.durationMin;
+    trafficDelayMin += leg.trafficDelayMin ?? 0;
+    if (leg.trafficSource === "tomtom") anyTraffic = true;
   }
   const geometry = mergeRouteLegs(geometries);
   if (geometry.length < 2) return null;
-  return { geometry, distanceKm, durationMin, isSafe };
+  return {
+    geometry,
+    distanceKm,
+    durationMin,
+    isSafe,
+    ...(anyTraffic
+      ? {
+          durationNoTrafficMin,
+          trafficDelayMin,
+          trafficSource: "tomtom" as const,
+          congestion: congestion.length ? congestion : undefined,
+        }
+      : {}),
+  };
 }
 
 /** Try ORS first, then fall back to OSRM for street-level routing */
@@ -549,6 +600,10 @@ export interface RouteRequestOptions {
   alternatives?: number;
   /** Road features to avoid (driving mode only). */
   avoidFeatures?: AvoidFeature[];
+  /** Driving only: `"avoid_traffic"` asks the traffic provider for the
+   *  route that spends the least time stuck in congestion, even if its
+   *  total distance is longer ("I'd rather drive farther than sit"). */
+  routePref?: "avoid_traffic";
 }
 
 /**
@@ -707,9 +762,9 @@ export async function getMultiRouteVariants(
   // Browser calls to ORS are blocked by CORS; route through our API proxy instead.
   if (typeof window !== "undefined") {
     const isSafe = !!avoidPolygons;
-    let osrm = await getRouteOSRM(mode, waypoints, isSafe);
+    let osrm = await getRouteOSRM(mode, waypoints, isSafe, options?.routePref);
     if (!osrm && waypoints.length > 2) {
-      osrm = await getRouteOSRMChained(mode, waypoints, isSafe);
+      osrm = await getRouteOSRMChained(mode, waypoints, isSafe, options?.routePref);
     }
     return osrm ? [osrm] : [];
   }
@@ -825,6 +880,9 @@ interface RouteVariantsRequest {
   /** Whether to also request avoid-tollways / avoid-highways variants
    *  (only meaningful for driving mode — caller should pre-filter). */
   includeRoadFeatureVariants?: boolean;
+  /** Driving only: prefer the lowest-time-in-traffic route (see
+   *  `RouteRequestOptions.routePref`). Applied to the primary variant. */
+  routePref?: "avoid_traffic";
 }
 
 /** Fetches every variant we want to surface in the route picker
@@ -834,13 +892,13 @@ interface RouteVariantsRequest {
 export async function getRouteOptions(
   req: RouteVariantsRequest
 ): Promise<RouteOption[]> {
-  const { apiKey, mode, waypoints, avoidPolygons, includeRoadFeatureVariants } = req;
+  const { apiKey, mode, waypoints, avoidPolygons, includeRoadFeatureVariants, routePref } = req;
   if (waypoints.length < 2) return [];
 
   const featureVariantsRequested = includeRoadFeatureVariants && mode === "driving-car";
 
   const [direct, safer, noTolls, noHighways] = await Promise.all([
-    getMultiRouteVariants(apiKey, mode, waypoints, null, { alternatives: 2 }),
+    getMultiRouteVariants(apiKey, mode, waypoints, null, { alternatives: 2, routePref }),
     avoidPolygons ? getMultiRouteVariants(apiKey, mode, waypoints, avoidPolygons) : Promise.resolve([]),
     featureVariantsRequested
       ? getMultiRouteVariants(apiKey, mode, waypoints, null, { avoidFeatures: ["tollways"] })
