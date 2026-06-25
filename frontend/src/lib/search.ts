@@ -8,6 +8,20 @@ export interface GeoResult {
   display_name: string;
   lat: number;
   lng: number;
+  id?: string;
+  entityId?: string;
+  name?: string;
+  address?: string;
+  category?: string;
+  categories?: string[];
+  source?: "tomtom" | "nominatim";
+  provider?: "tomtom" | "nominatim";
+  type?: string;
+  phone?: string;
+  website?: string;
+  openingHours?: unknown;
+  distanceM?: number;
+  score?: number;
 }
 
 /** Reverse geocode lat/lng → human-readable address via Nominatim. Returns
@@ -55,10 +69,38 @@ export interface SafetyResult {
   nearbyIncidents: Incident[];
 }
 
-export async function geocodePhilly(query: string): Promise<GeoResult[]> {
+export async function geocodePhilly(
+  query: string,
+  opts: { lat?: number; lng?: number; limit?: number; category?: string } = {}
+): Promise<GeoResult[]> {
   if (!query.trim()) return [];
 
   const city = getCurrentCity();
+
+  if (typeof window !== "undefined") {
+    const params = new URLSearchParams({
+      q: query,
+      city: city.slug,
+      limit: String(opts.limit ?? 8),
+    });
+    if (opts.category) params.set("category", opts.category);
+    if (Number.isFinite(opts.lat)) params.set("lat", String(opts.lat));
+    if (Number.isFinite(opts.lng)) params.set("lng", String(opts.lng));
+
+    try {
+      const res = await fetch(`/api/place-search?${params}`, {
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { results?: GeoResult[] };
+        if (Array.isArray(data.results)) return data.results;
+      }
+    } catch {
+      // Fall through to the direct Nominatim path below. This keeps
+      // search useful during local Next API hiccups.
+    }
+  }
+
   const nameLower = city.name.toLowerCase();
   const q = query.toLowerCase().includes(nameLower) ? query : `${query}${city.geocodeSuffix}`;
 
@@ -76,11 +118,19 @@ export async function geocodePhilly(query: string): Promise<GeoResult[]> {
   if (!res.ok) return [];
 
   const data = await res.json();
-  return data.map((r: { display_name: string; lat: string; lon: string }) => ({
-    display_name: r.display_name,
-    lat: parseFloat(r.lat),
-    lng: parseFloat(r.lon),
-  }));
+  return data.map((r: { display_name: string; lat: string; lon: string; type?: string }) => {
+    const parts = r.display_name.split(",").map((p) => p.trim()).filter(Boolean);
+    return {
+      display_name: r.display_name,
+      name: parts[0],
+      address: parts.slice(1, 4).join(", ") || undefined,
+      lat: parseFloat(r.lat),
+      lng: parseFloat(r.lon),
+      source: "nominatim" as const,
+      provider: "nominatim" as const,
+      type: r.type,
+    };
+  });
 }
 
 function haversineKm(
