@@ -30,6 +30,7 @@ import {
   buildAvoidZones,
   buildAvoidPolygons,
   isNearRoute,
+  distanceAlongRoute,
   defaultAvoidancePrefs,
   SAFEST_ROUTE_ONLY_UI,
   type TransportMode,
@@ -59,6 +60,7 @@ import { setPref } from "@/lib/prefs-sync";
 import { useAuth } from "@/contexts/AuthContext";
 import { publishRouteState } from "@/lib/route-state";
 import { openAskPulseTab } from "@/lib/open-ask-pulse";
+import { speakNav } from "@/lib/voice-nav";
 
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
@@ -778,6 +780,8 @@ export default function SearchSidebar({
   const activeRouteRef = useRef<[number, number][] | null>(null);
   const knownIncIdsRef = useRef<Set<string>>(new Set());
   const rerouteInFlightRef = useRef(false);
+  const offRouteSinceRef = useRef<number | null>(null);
+  const lastOffRouteRerouteRef = useRef(0);
 
   useEffect(() => {
     const route = activeRouteRef.current;
@@ -855,6 +859,102 @@ export default function SearchSidebar({
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incidents, view]);
+
+  // Auto-reroute when GPS says the driver has left the route. We require
+  // a sustained offset so one noisy mobile location fix does not thrash
+  // the trip line.
+  useEffect(() => {
+    const route = activeRouteRef.current;
+    if (
+      view !== "trip" ||
+      !userPos ||
+      !destLoc ||
+      !route ||
+      route.length < 2 ||
+      rerouteInFlightRef.current
+    ) {
+      offRouteSinceRef.current = null;
+      return;
+    }
+
+    const projection = distanceAlongRoute([userPos.lat, userPos.lng], route);
+    if (!projection || projection.offsetM <= 75) {
+      offRouteSinceRef.current = null;
+      return;
+    }
+
+    const now = Date.now();
+    if (offRouteSinceRef.current == null) {
+      offRouteSinceRef.current = now;
+      return;
+    }
+    if (now - offRouteSinceRef.current < 8_000) return;
+    if (now - lastOffRouteRerouteRef.current < 45_000) return;
+
+    const remainingStops = stops
+      .filter((s) => s.loc)
+      .map((s) => [s.loc!.lat, s.loc!.lng] as [number, number]);
+    const waypoints: [number, number][] = [
+      [userPos.lat, userPos.lng],
+      ...remainingStops,
+      [destLoc.lat, destLoc.lng],
+    ];
+
+    rerouteInFlightRef.current = true;
+    lastOffRouteRerouteRef.current = now;
+    offRouteSinceRef.current = null;
+    setRerouteAlert("Off route. Finding a new route...");
+    speakNav("Off route. Finding a new route.", {
+      priority: "alert",
+      dedupeKey: "off-route-reroute",
+      dedupeMs: 30_000,
+    });
+
+    (async () => {
+      try {
+        const zones = [
+          ...buildAvoidZones(incidents, avoidPrefsRef.current),
+          ...userAvoidZonesForRouting(),
+        ];
+        const directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
+        if (!directRoute) return;
+        const safeRoute = zones.length > 0
+          ? await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints, buildAvoidPolygons(zones))
+          : null;
+        const best = safeRoute || directRoute;
+        const routeData: RouteData = {
+          normal: directRoute,
+          safe: safeRoute,
+          avoidZones: zones,
+          chosen: best,
+          chosenLabel: safeRoute ? "Safer" : SAFEST_ROUTE_ONLY_UI ? "Route" : "Fastest",
+        };
+        handleRoutesChange(routeData);
+        setRouteInfo({
+          isSafe: !!safeRoute,
+          distanceKm: best.distanceKm,
+          durationMin: best.durationMin,
+          nearbyCount: zones.length,
+        });
+        activeRouteRef.current = best.geometry;
+        onTripActive?.(true, best.geometry, activeMode, best.steps, {
+          distanceKm: best.distanceKm,
+          durationMin: best.durationMin,
+          nearbyCount: zones.length,
+          isSafe: !!safeRoute,
+          origin: { display_name: "Your location", lat: userPos.lat, lng: userPos.lng },
+          dest: { display_name: destLoc.display_name, lat: destLoc.lat, lng: destLoc.lng },
+        });
+        setRerouteAlert("Route updated from your current location");
+        window.setTimeout(() => setRerouteAlert(null), 5000);
+      } catch {
+        setRerouteAlert(null);
+      } finally {
+        rerouteInFlightRef.current = false;
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userPos, view]);
 
   // Flush the latest progress into the resume snapshot whenever it
   // moves. Throttled to whole-percent boundaries so we don't write to
