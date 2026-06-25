@@ -1617,7 +1617,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       return;
     }
 
-    trafficFlowLayerRef.current = L.tileLayer("/api/tomtom-traffic/flow/{z}/{x}/{y}.png", {
+    trafficFlowLayerRef.current = L.tileLayer("/api/tomtom-traffic/flow/{z}/{x}/{y}", {
       attribution: "Traffic &copy; TomTom",
       maxZoom: 19,
       opacity: 0.62,
@@ -1625,7 +1625,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       updateWhenIdle: true,
       keepBuffer: isMobileViewport() ? 1 : 2,
     }).addTo(map);
-    trafficIncidentLayerRef.current = L.tileLayer("/api/tomtom-traffic/incidents/{z}/{x}/{y}.png", {
+    trafficIncidentLayerRef.current = L.tileLayer("/api/tomtom-traffic/incidents/{z}/{x}/{y}", {
       attribution: "Traffic incidents &copy; TomTom",
       maxZoom: 19,
       opacity: 0.78,

@@ -73,10 +73,10 @@ const nextConfig: NextConfig = {
     ];
   },
   async rewrites() {
-    // afterFiles: real Next.js routes (e.g. app/api/route-directions) win first;
-    // only unmatched /api/* goes to the Python backend.
+    // fallback: real Next.js routes (including dynamic app/api routes)
+    // win first; only unmatched /api/* goes to the Python backend.
     return {
-      afterFiles: [
+      fallback: [
         {
           // FastAPI WebSocket routes live under `/ws/*`, not `/api/*`.
           // Without this, the admin panel connects to the Next origin and the upgrade never reaches Python.
