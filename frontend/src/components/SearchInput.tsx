@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Search, MapPin, Loader2, X, Navigation, Mic, Clock, Trash2, Home, Briefcase, Star, Radio, Lock, Bookmark, Plus } from "lucide-react";
-import { geocodePhilly } from "@/lib/search";
+import { geocodePhilly, type GeoResult } from "@/lib/search";
 import { isVoiceSearchSupported, startVoiceSearch } from "@/lib/voice";
 import { clearRecent, loadRecent, pushRecent, removeRecent, subscribeRecent, type RecentSearch } from "@/lib/recent-searches";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
@@ -14,12 +14,6 @@ import { searchIncidentsApi, type Incident } from "@/lib/api";
 import { getCurrentCity } from "@/lib/pulse-cities";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsMobile } from "@/hooks/useIsMobile";
-
-interface GeoResult {
-  display_name: string;
-  lat: number;
-  lng: number;
-}
 
 interface Props {
   onFlyTo: (lat: number, lng: number) => void;
@@ -36,12 +30,62 @@ interface Props {
    *  Directions / Save / Share — instead of jumping straight into
    *  routing, which is too eager when the user might only have
    *  wanted to see the place on the map. */
-  onPlaceSelected?: (place: { name: string; lat: number; lng: number }) => void;
+  onPlaceSelected?: (place: {
+    name: string;
+    lat: number;
+    lng: number;
+    address?: string;
+    category?: string;
+    categories?: string[];
+    phone?: string;
+    website?: string;
+    openingHours?: unknown;
+    provider?: string;
+    entityId?: string;
+  }) => void;
 }
 
 type SearchMode = "places" | "incidents";
 
 const FREE_INCIDENT_SEARCH_HOURS = 1;
+
+function resultPrimary(s: { display_name: string; name?: string }): string {
+  return s.name?.trim() || s.display_name.split(",")[0]?.trim() || "Place";
+}
+
+function resultSecondary(s: {
+  display_name: string;
+  address?: string;
+  category?: string;
+  distanceM?: number;
+}): string {
+  const parts = s.display_name.split(",").map((p) => p.trim()).filter(Boolean);
+  const base = s.address?.trim() || parts.slice(1, 3).join(", ");
+  const distance =
+    typeof s.distanceM === "number"
+      ? s.distanceM < 1000
+        ? `${s.distanceM} m`
+        : `${(s.distanceM / 1000).toFixed(1)} km`
+      : "";
+  return [s.category, base, distance].filter(Boolean).join(" · ");
+}
+
+function placeFromResult(s: GeoResult) {
+  const name = resultPrimary(s);
+  return {
+    name,
+    lat: s.lat,
+    lng: s.lng,
+    address: s.address,
+    category: s.category,
+    categories: s.categories,
+    phone: s.phone,
+    website: s.website,
+    openingHours: s.openingHours,
+    provider: s.provider ?? s.source,
+    entityId: s.entityId,
+  };
+}
 
 interface SubmittedPlaceSearch {
   query: string;
@@ -243,7 +287,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
   }, []);
 
   const handleSelect = (s: GeoResult) => {
-    const primary = s.display_name.split(",")[0];
+    const primary = resultPrimary(s);
     setSubmittedPlaceSearch(null);
 
     // "Set home" / "Set work" flow: when the user tapped an unset
@@ -278,7 +322,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
     // above the card. Falls back to direct routing if no card handler
     // is wired up (preserves the prior one-tap-to-directions UX).
     if (onPlaceSelected) {
-      onPlaceSelected({ name: primary, lat: s.lat, lng: s.lng });
+      onPlaceSelected(placeFromResult(s));
     } else {
       onDirections(primary, { lat: s.lat, lng: s.lng });
     }
@@ -931,9 +975,8 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
             </div>
           )}
           {suggestions.map((s, i) => {
-            const parts = s.display_name.split(",");
-            const primary = parts[0].trim();
-            const secondary = parts.slice(1, 3).map((p) => p.trim()).join(", ");
+            const primary = resultPrimary(s);
+            const secondary = resultSecondary(s);
             const key = `suggest-${i}`;
             const expanded = saveTarget === key;
             const saved = isAlreadySaved(s.lat, s.lng);
@@ -1067,9 +1110,8 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
           )}
 
           {submittedPlaceSearch.results.map((s, i) => {
-            const parts = s.display_name.split(",");
-            const primary = parts[0].trim();
-            const secondary = parts.slice(1, 3).map((p) => p.trim()).join(", ");
+            const primary = resultPrimary(s);
+            const secondary = resultSecondary(s);
             const key = `submitted-${i}`;
             const expanded = saveTarget === key;
             const saved = isAlreadySaved(s.lat, s.lng);
