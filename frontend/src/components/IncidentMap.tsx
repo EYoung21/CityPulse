@@ -2196,6 +2196,21 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       // Preserve the viewer's current zoom when selecting an incident.
       // (But if they're zoomed far out, nudge in enough to make the marker meaningful.)
       flyToOffset(inc.lat, inc.lng, Math.max(map.getZoom(), 15));
+      // Snap back to north-up so every street/place label reads horizontally
+      // (Google-style) when you focus an incident — only if the user had
+      // two-finger-rotated the map off north. leaflet-rotate adds these
+      // methods at runtime; they're absent from @types/leaflet.
+      const rotatable = map as L.Map & {
+        getBearing?: () => number;
+        setBearing?: (deg: number) => void;
+      };
+      if (
+        typeof rotatable.getBearing === "function" &&
+        typeof rotatable.setBearing === "function" &&
+        Math.abs(rotatable.getBearing() % 360) > 0.5
+      ) {
+        rotatable.setBearing(0);
+      }
     }
 
     if (highlight) {
