@@ -246,12 +246,20 @@ function createIncidentGlyphIcon(
     ? "filter:saturate(0.65) brightness(0.9) drop-shadow(0 1px 2px rgba(0,0,0,0.35));"
     : "filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5));";
   const svg = monoGlyphSvg(kind, uid);
+  // Honest geolocation: when the scanner only named a nearby landmark/street
+  // (location_confidence "context"), the point is a best-guess — render a soft
+  // dashed "somewhere around here" halo instead of implying an exact spot.
+  // Incidents with a real address keep a precise pin.
+  const approx = inc.location_confidence === "context";
+  const halo = approx ? 38 : box;
+  const haloHalf = halo / 2;
   return L.divIcon({
     className: "pp-incident-marker",
-    iconSize: [box, box],
-    iconAnchor: [half, half],
-    html: `<div class="pp-incident-marker-inner" style="position:relative;width:${box}px;height:${box}px;box-sizing:border-box;">
-      <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:${base}px;height:${base}px;opacity:${opacity};${filt}">${svg}</div>
+    iconSize: [halo, halo],
+    iconAnchor: [haloHalf, haloHalf],
+    html: `<div class="pp-incident-marker-inner" style="position:relative;width:${halo}px;height:${halo}px;box-sizing:border-box;">
+      ${approx ? `<div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:${halo}px;height:${halo}px;border-radius:50%;background:radial-gradient(circle, rgba(148,163,184,0.20), rgba(148,163,184,0.05) 65%, transparent 72%);border:1.5px dashed rgba(148,163,184,0.55);"></div>` : ""}
+      <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:${base}px;height:${base}px;opacity:${approx ? opacity * 0.9 : opacity};${filt}">${svg}</div>
     </div>`,
   });
 }
