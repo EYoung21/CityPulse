@@ -45,7 +45,7 @@ import { userAvoidZonesForRouting } from "@/lib/avoid-areas";
 import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
 import RouteOptionPicker from "@/components/RouteOptionPicker";
-import { scoreRouteOptions, type RouteSafetyScore } from "@/lib/route-safety";
+import { scoreRouteOptions, scoreRouteSafety, type RouteSafetyScore } from "@/lib/route-safety";
 import AvoidancePrefsPicker from "@/components/AvoidancePrefsPicker";
 import RideshareLinks from "@/components/RideshareLinks";
 import OptimizeOrderButton from "@/components/OptimizeOrderButton";
@@ -277,6 +277,7 @@ export default function DirectionsPanel({
     trafficDelayMin?: number;
     trafficSource?: "tomtom";
     avoidedCrashes?: number;
+    tradeoff?: { avoided: number; minDelta: number };
   } | null>(null);
   // Driving-only: prefer the route that spends the least time stuck in
   // traffic (TomTom alternatives), even if it's a longer drive.
@@ -576,6 +577,22 @@ export default function DirectionsPanel({
           rawOpts[0].route;
         const saferRoute = rawOpts.find((o) => o.isSafer)?.route ?? null;
 
+        // Surface the safety tradeoff at the decision moment: how many incidents
+        // does the chosen (safer) route dodge vs the plain fastest route, and at
+        // what time cost? This is the whole pitch — make it visible.
+        let tradeoff: { avoided: number; minDelta: number } | undefined;
+        if (chosen.isSafer && saferRoute && directRoute && directRoute !== saferRoute) {
+          const fastN = scoreRouteSafety(directRoute.geometry, incSnap, 120).count;
+          const safeN = scoreRouteSafety(saferRoute.geometry, incSnap, 120).count;
+          const avoided = fastN - safeN;
+          if (avoided > 0) {
+            tradeoff = {
+              avoided,
+              minDelta: Math.max(0, Math.round(saferRoute.durationMin - directRoute.durationMin)),
+            };
+          }
+        }
+
         onRoutesChange({
           normal: directRoute,
           safe: saferRoute,
@@ -591,6 +608,7 @@ export default function DirectionsPanel({
           trafficDelayMin: chosen.route.trafficDelayMin,
           trafficSource: chosen.route.trafficSource,
           avoidedCrashes: chosen.route.avoidedCrashes,
+          tradeoff,
         };
         previewRouteRef.current = nextPreview;
         setPreviewRoute(nextPreview);
@@ -1091,7 +1109,19 @@ export default function DirectionsPanel({
             className="mt-2 rounded-lg overflow-hidden"
             style={{ border: "1px solid var(--panel-border)" }}
           >
-            {previewRoute.nearbyCount > 0 && previewRoute.isSafe && (
+            {/* The differentiator, spelled out at the decision moment: what this
+                route saves you from vs the plain fastest one. */}
+            {previewRoute.tradeoff && (
+              <div className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-green-600 dark:text-green-400/90 bg-green-500/10">
+                <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                Avoids {previewRoute.tradeoff.avoided} incident
+                {previewRoute.tradeoff.avoided > 1 ? "s" : ""} the fastest route hits
+                {previewRoute.tradeoff.minDelta > 0
+                  ? ` · +${previewRoute.tradeoff.minDelta} min`
+                  : " · no extra time"}
+              </div>
+            )}
+            {!previewRoute.tradeoff && previewRoute.nearbyCount > 0 && previewRoute.isSafe && (
               <div className="flex items-center gap-2 px-3 py-2 text-xs text-green-600 dark:text-green-400/80 bg-green-500/5">
                 <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
                 Safe route avoiding {previewRoute.nearbyCount} incident
