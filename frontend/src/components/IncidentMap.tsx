@@ -1004,7 +1004,7 @@ type TripLiveLayers = {
   guide?: L.Polyline;
 };
 
-type IncidentMarker = L.Marker & { _ppIncidentId?: string };
+type IncidentMarker = L.Marker & { _ppIncidentId?: string; _ppSev?: number };
 type ClusterClickEvent = L.LeafletEvent & { layer: L.MarkerCluster };
 
 const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
@@ -1368,8 +1368,16 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         let cls = "pp-cluster-small";
         if (count >= 50) { size = 44; cls = "pp-cluster-large"; }
         else if (count >= 10) { size = 38; cls = "pp-cluster-medium"; }
+        // Severity-weighted: tint the cluster by its most severe incident so a
+        // shooting in the bunch doesn't visually read like a parking complaint.
+        let maxSev = 0;
+        for (const m of cluster.getAllChildMarkers()) {
+          const sv = (m as IncidentMarker)._ppSev ?? 0;
+          if (sv > maxSev) maxSev = sv;
+        }
+        const sevColor = maxSev >= 0.7 ? "#ef4444" : maxSev >= 0.4 ? "#f59e0b" : "#3b82f6";
         return L.divIcon({
-          html: `<div class="pp-cluster ${cls}"><span>${count}</span></div>`,
+          html: `<div class="pp-cluster ${cls}" style="border-color:${sevColor};box-shadow:0 0 0 1px ${sevColor}66, 0 0 14px ${sevColor}66;"><span>${count}</span></div>`,
           className: "pp-cluster-icon",
           iconSize: L.point(size, size),
         });
@@ -1826,6 +1834,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       );
       const marker = L.marker([inc.lat, inc.lng], { icon }) as IncidentMarker;
       marker._ppIncidentId = inc.id;
+      marker._ppSev = inc.s_base ?? 0;
       if (!greyed) marker.on("click", () => stableOnSelect(inc.id));
       markers.addLayer(marker);
       incidentMarkersRef.current.set(inc.id, { marker, signature });
@@ -2683,7 +2692,13 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
       const bounds = L.latLngBounds(allPts);
       if (contextSig !== lastRouteFitContextSigRef.current && !mapInteractingRef.current) {
         lastRouteFitContextSigRef.current = contextSig;
-        fitBoundsAroundPanels(bounds, 15);
+        // Hybrid camera: the instant A+B preview fit usually already frames the
+        // route, so only re-fit if the computed route actually spills outside
+        // the inner 88% of the current view — avoids a jarring second jump.
+        const inner = map.getBounds().pad(-0.12);
+        if (!inner.contains(bounds)) {
+          fitBoundsAroundPanels(bounds, 15);
+        }
       }
     }
   }, [routes, previewOrigin, previewDest, previewWaypoints, fitBoundsAroundPanels]);

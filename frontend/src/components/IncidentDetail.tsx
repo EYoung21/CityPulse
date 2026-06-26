@@ -564,6 +564,18 @@ export default function IncidentDetail({ incident, onClose, inFeed = false }: Pr
           </span>
         </div>
 
+        {/* Honesty/liability affordance: every incident is AI-extracted from
+            scanner audio and not confirmed. `context` location_confidence means
+            the spot is approximate, not exact. */}
+        <p
+          className="flex items-center gap-1.5 text-[10px] md:text-[11px] leading-snug"
+          style={{ color: "var(--panel-text-muted)" }}
+        >
+          <Radio className="w-3 h-3 shrink-0" />
+          AI-summarized from scanner audio · unverified
+          {incident.location_confidence === "context" && " · approximate location"}
+        </p>
+
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 
         {incident.description && !summaryIsRedundant && (
