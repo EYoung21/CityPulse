@@ -3,6 +3,13 @@ import { getNeighborhoodBySlug, NEIGHBORHOODS } from "@/lib/neighborhoods";
 import NeighborhoodProfile from "@/components/NeighborhoodProfile";
 import Providers from "@/components/Providers";
 
+// Providers reads request headers at runtime (auth/theme), which conflicts with
+// static prerendering of these slugs and 500s under `next start` with
+// "Page changed from static to dynamic at runtime, reason: headers". Render the
+// neighborhood pages dynamically so that never happens. generateStaticParams
+// still scopes which slugs are valid.
+export const dynamic = "force-dynamic";
+
 interface PageProps {
   params: Promise<{ slug: string }>;
 }

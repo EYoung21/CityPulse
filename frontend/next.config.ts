@@ -57,7 +57,7 @@ const nextConfig: NextConfig = {
             value: [
               "default-src 'self'",
               "img-src 'self' data: blob: https:",
-              "style-src 'self' 'unsafe-inline'",
+              "style-src 'self' 'unsafe-inline' https://unpkg.com",
               "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebaseio.com https://*.googleapis.com https://js.stripe.com",
               "connect-src 'self' https: wss:",
               "font-src 'self' data: https:",
