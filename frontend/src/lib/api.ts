@@ -81,6 +81,9 @@ export interface Incident {
   audio_url: string | null;
   feed_id: string | null;
   description: string | null;
+  /** Responder status extracted from the scanner audio (newer incidents only):
+   *  units dispatched / on scene / cleared. Absent/null when not stated. */
+  unit_status?: "dispatched" | "on_scene" | "cleared" | null;
   hidden?: boolean;
   /** Per-word audio-sync timings. Kept off the map-sync payload (it was ~73%
    *  of it); present inline only on legacy/unmigrated docs. When absent and

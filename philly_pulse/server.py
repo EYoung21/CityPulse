@@ -791,6 +791,7 @@ async def ingest(
         )
     confidence = extraction["confidence"]
     description = extraction.get("description")
+    unit_status = extraction.get("unit_status")
     s_base = weights.get_s_base(category)
 
     await admin_events.broadcast({
@@ -884,6 +885,7 @@ async def ingest(
             )
         confidence = extraction["confidence"]
         description = extraction.get("description")
+        unit_status = extraction.get("unit_status")
         s_base = weights.get_s_base(category)
         location_confidence = extraction.get("location_confidence", "none")
 
@@ -984,6 +986,7 @@ async def ingest(
                 audio_clip=effective_audio_clip,
                 feed_id=feed_id,
                 description=stored_description,
+                unit_status=unit_status,
                 word_timings=stored_word_timings,
                 city=city,
                 mentions=[mention],

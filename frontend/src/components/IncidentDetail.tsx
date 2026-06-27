@@ -564,6 +564,28 @@ export default function IncidentDetail({ incident, onClose, inFeed = false }: Pr
           </span>
         </div>
 
+        {/* Responder status (units dispatched / on scene / cleared), extracted
+            from the scanner audio. Only present on newer incidents. */}
+        {incident.unit_status && (() => {
+          const cfg = {
+            dispatched: { label: "Units dispatched", color: "#f59e0b" },
+            on_scene: { label: "On scene", color: "#3b82f6" },
+            cleared: { label: "Cleared", color: "#22c55e" },
+          }[incident.unit_status];
+          if (!cfg) return null;
+          return (
+            <div>
+              <span
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold"
+                style={{ background: `${cfg.color}1f`, color: cfg.color }}
+              >
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: cfg.color }} />
+                {cfg.label}
+              </span>
+            </div>
+          );
+        })()}
+
         {/* Honesty/liability affordance: every incident is AI-extracted from
             scanner audio and not confirmed. `context` location_confidence means
             the spot is approximate, not exact. */}

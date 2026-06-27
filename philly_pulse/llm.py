@@ -208,6 +208,12 @@ context_location_text is available, "none" if no location at all.
 - "description": string. One plain-English sentence summarizing the incident \
 for a civilian reader. No jargon, no police codes. No em dashes and no semicolons. \
 Decode any radio codes into plain language.
+- "unit_status": one of "dispatched", "on_scene", "cleared", or null. The current \
+responder status from the radio: "dispatched" if units are being sent, en route, or \
+responding; "on_scene" if a unit has arrived or is on location / on the scene; \
+"cleared" if units are clearing, back in service, or the call is resolved, unfounded, \
+or disregarded (e.g. 10-8, in service, disregard, nothing showing). null if the \
+transcript gives no responder status.
 - "confidence": float 0.0-1.0. Your confidence that the extraction is accurate. \
 Lower if the transcript is garbled, ambiguous, or partially inaudible.
 
@@ -313,6 +319,23 @@ def _format_prior_context(prior_context: list[str] | None) -> str | None:
         "dispatch when extracting context_location_text and set "
         "location_confidence to 'context'. Do NOT invent a new location."
     )
+
+
+UNIT_STATUSES = ("dispatched", "on_scene", "cleared")
+
+
+def _normalize_unit_status(value: object) -> Optional[str]:
+    """Validate the LLM's unit_status against the allowed set; else None."""
+    if not isinstance(value, str):
+        return None
+    v = value.strip().lower().replace(" ", "_").replace("-", "_")
+    if v in ("on_the_scene", "onscene", "on_location", "arrived"):
+        v = "on_scene"
+    elif v in ("en_route", "enroute", "responding", "dispatch"):
+        v = "dispatched"
+    elif v in ("clear", "in_service", "available", "resolved"):
+        v = "cleared"
+    return v if v in UNIT_STATUSES else None
 
 
 async def extract_incident(
@@ -442,6 +465,7 @@ async def extract_incident(
         "context_location_text": context_location,
         "confidence": float(data.get("confidence", 0.7)),
         "description": data.get("description"),
+        "unit_status": _normalize_unit_status(data.get("unit_status")),
     }
 
 
@@ -533,4 +557,5 @@ async def refine_incident_extraction(
         "context_location_text": context_location,
         "confidence": float(data.get("confidence", 0.7)),
         "description": data.get("description"),
+        "unit_status": _normalize_unit_status(data.get("unit_status")),
     }

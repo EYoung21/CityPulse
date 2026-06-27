@@ -75,6 +75,7 @@ def insert_incident(
     audio_clip: Optional[str] = None,
     feed_id: Optional[str] = None,
     description: Optional[str] = None,
+    unit_status: Optional[str] = None,
     word_timings: Optional[list] = None,
     city: Optional[str] = None,
     mentions: Optional[list[dict]] = None,
@@ -101,6 +102,7 @@ def insert_incident(
         "audio_clip": audio_clip,
         "feed_id": feed_id,
         "description": description,
+        "unit_status": unit_status,
         # word_timings lives in the sibling collection (see below), not here —
         # the map only needs this flag to know whether to lazy-load timings.
         "has_word_timings": bool(word_timings),
