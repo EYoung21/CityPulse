@@ -36,6 +36,7 @@ import {
   Crosshair,
   Activity,
   MessageCircle,
+  ChevronDown,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import IncidentFeed from "@/components/IncidentFeed";
@@ -198,6 +199,8 @@ const CATEGORY_PILLS = INCIDENT_CATEGORY_GROUPS.map((pill, i) => ({
   ...pill,
   icon: CATEGORY_PILL_ICONS[i],
 }));
+
+const PRIMARY_TIME_FILTER_LABELS = new Set(["15m", "1h", "6h", "24h"]);
 
 const STORAGE_TIME_FILTER_HOURS = "pulse_time_filter_hours";
 const STORAGE_ACTIVE_CATS = "pulse_active_cats";
@@ -385,6 +388,8 @@ function MapHome() {
   }, [searchParams]);
   const [timeFilter, setTimeFilter] = useState<number>(DEFAULT_TIME_FILTER_HOURS);
   const [activeCats, setActiveCats] = useState<Set<string>>(() => new Set());
+  const [mapTimeMenuOpen, setMapTimeMenuOpen] = useState(false);
+  const [feedTimeMenuOpen, setFeedTimeMenuOpen] = useState(false);
 
   /** Restore after SSR so we do not clobber sessionStorage in the persist effect before this runs. */
   useLayoutEffect(() => {
@@ -1631,6 +1636,26 @@ function MapHome() {
     setActiveCats((prev) => toggleCategoryGroupSelection(cats, prev));
   }, []);
 
+  const applyTimeFilter = useCallback((tf: (typeof TIME_FILTERS)[number]) => {
+    const locked = tf.pro && !isPro;
+    if (locked) {
+      setShowUpgrade("Extended History");
+      return;
+    }
+    setTimeFilter(tf.hours);
+    setMapTimeMenuOpen(false);
+    setFeedTimeMenuOpen(false);
+  }, [isPro]);
+
+  const primaryTimeFilters = useMemo(() => {
+    const base = TIME_FILTERS.filter((tf) => PRIMARY_TIME_FILTER_LABELS.has(tf.label));
+    const active = TIME_FILTERS.find((tf) => tf.hours === timeFilter);
+    if (active && !base.some((tf) => tf.hours === active.hours)) {
+      return [...base, active];
+    }
+    return base;
+  }, [timeFilter]);
+
   /** Live + extended history merged, deduped by id. Extended is empty
    *  for short time-filter windows so this is identity-cheap on the hot
    *  path. */
@@ -1861,6 +1886,22 @@ function MapHome() {
   ]);
 
   useMobilePrimaryTabSwipe({ enabled: mobilePrimarySwipeEnabled });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let intent: string | null = null;
+    try {
+      intent = sessionStorage.getItem("pp:open-map-help");
+      if (intent) sessionStorage.removeItem("pp:open-map-help");
+    } catch {
+      return;
+    }
+    if (intent === "shortcuts") {
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new CustomEvent("pp:show-keyboard-shortcuts"));
+      });
+    }
+  }, []);
 
   const activeTripStats = tripStatsRef.current;
   const mobileTripRemainingMin =
@@ -2354,19 +2395,16 @@ function MapHome() {
         >
           <div className="flex flex-col items-stretch gap-2.5 md:gap-3 min-w-0 pointer-events-auto">
             <div
-              className="flex items-center rounded-full shadow-lg backdrop-blur-md overflow-x-auto no-scrollbar min-w-0 w-full"
+              className="relative flex items-center rounded-full shadow-lg backdrop-blur-md overflow-visible min-w-0 w-full"
               style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)" }}
             >
               <Clock className="w-4 h-4 ml-3 md:ml-4 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
-              {TIME_FILTERS.map((tf) => {
+              {primaryTimeFilters.map((tf) => {
                 const locked = tf.pro && !isPro;
                 return (
                   <button
                     key={tf.label}
-                    onClick={() => {
-                      if (locked) { setShowUpgrade("Extended History"); return; }
-                      setTimeFilter(tf.hours);
-                    }}
+                    onClick={() => applyTimeFilter(tf)}
                     className={`px-3 md:px-4 py-2 md:py-2.5 text-xs md:text-sm font-medium transition-colors relative shrink-0 ${
                       timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
                     } ${locked ? "opacity-50" : ""}`}
@@ -2378,23 +2416,76 @@ function MapHome() {
                   </button>
                 );
               })}
+              <button
+                type="button"
+                onClick={() => setMapTimeMenuOpen((v) => !v)}
+                className="px-3 md:px-4 py-2 md:py-2.5 text-xs md:text-sm font-medium transition-colors shrink-0 inline-flex items-center gap-1"
+                style={{ color: mapTimeMenuOpen ? "#3b82f6" : "var(--pill-text)" }}
+                aria-expanded={mapTimeMenuOpen}
+              >
+                More
+                <ChevronDown
+                  className="w-3.5 h-3.5 transition-transform"
+                  style={{ transform: mapTimeMenuOpen ? "rotate(180deg)" : "none" }}
+                />
+              </button>
+              {mapTimeMenuOpen && (
+                <div
+                  className="absolute top-full left-0 mt-1.5 w-72 max-w-[calc(100vw-1.5rem)] rounded-xl shadow-2xl backdrop-blur-xl p-2"
+                  style={{
+                    background: "var(--panel-bg)",
+                    border: "1px solid var(--panel-border)",
+                    zIndex: 1200,
+                  }}
+                >
+                  <p className="px-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--panel-text-muted)" }}>
+                    Time windows
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {TIME_FILTERS.map((tf) => {
+                      const locked = tf.pro && !isPro;
+                      const active = timeFilter === tf.hours;
+                      return (
+                        <button
+                          key={tf.label}
+                          type="button"
+                          onClick={() => applyTimeFilter(tf)}
+                          className={`relative rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                            locked ? "opacity-50" : ""
+                          }`}
+                          style={{
+                            background: active ? "rgba(59,130,246,0.15)" : "var(--panel-input-bg)",
+                            border: `1px solid ${active ? "rgba(59,130,246,0.3)" : "var(--panel-border)"}`,
+                            color: active ? "#3b82f6" : "var(--panel-text-secondary)",
+                          }}
+                          title={locked ? "Pro feature · upgrade to unlock" : undefined}
+                        >
+                          {tf.label}
+                          {locked && <Lock className="w-2.5 h-2.5 absolute -top-0.5 -right-0.5 text-purple-400" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="h-px my-2" style={{ background: "var(--panel-border)" }} />
+                  <FilterPresetsBar
+                    activeCats={activeCats}
+                    timeFilterHours={timeFilter}
+                    onApply={(cats, hours) => {
+                      setActiveCats(cats);
+                      const tf = TIME_FILTERS.find((t) => t.hours === hours);
+                      if (tf?.pro && !isPro) {
+                        setShowUpgrade("Extended History");
+                        return;
+                      }
+                      setTimeFilter(hours);
+                      setMapTimeMenuOpen(false);
+                    }}
+                  />
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0 w-full">
-              <FilterPresetsBar
-                activeCats={activeCats}
-                timeFilterHours={timeFilter}
-                onApply={(cats, hours) => {
-                  setActiveCats(cats);
-                  const tf = TIME_FILTERS.find((t) => t.hours === hours);
-                  if (tf?.pro && !isPro) {
-                    setShowUpgrade("Extended History");
-                    return;
-                  }
-                  setTimeFilter(hours);
-                }}
-              />
-
               <button
                 onClick={() => setActiveCats(new Set())}
                 className={`flex items-center gap-1.5 px-3 md:px-4 py-2 md:py-2.5 rounded-full text-xs md:text-sm font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
@@ -3425,20 +3516,17 @@ function MapHome() {
                 )}
               </div>
               <div
-                className="flex items-center rounded-full overflow-x-auto no-scrollbar"
+                className="relative flex items-center rounded-full overflow-visible"
                 style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)" }}
               >
                 <Clock className="w-3.5 h-3.5 ml-2.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
-                {TIME_FILTERS.map((tf) => {
+                {primaryTimeFilters.map((tf) => {
                   const locked = tf.pro && !isPro;
                   return (
                     <button
                       key={tf.label}
                       type="button"
-                      onClick={() => {
-                        if (locked) { setShowUpgrade("Extended History"); return; }
-                        setTimeFilter(tf.hours);
-                      }}
+                      onClick={() => applyTimeFilter(tf)}
                       className={`px-2.5 py-1.5 text-[11px] font-medium transition-colors relative shrink-0 ${
                         timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
                       } ${locked ? "opacity-50" : ""}`}
@@ -3450,6 +3538,58 @@ function MapHome() {
                     </button>
                   );
                 })}
+                <button
+                  type="button"
+                  onClick={() => setFeedTimeMenuOpen((v) => !v)}
+                  className="px-2.5 py-1.5 text-[11px] font-medium transition-colors shrink-0 inline-flex items-center gap-1"
+                  style={{ color: feedTimeMenuOpen ? "#3b82f6" : "var(--panel-text-secondary)" }}
+                  aria-expanded={feedTimeMenuOpen}
+                >
+                  More
+                  <ChevronDown
+                    className="w-3 h-3 transition-transform"
+                    style={{ transform: feedTimeMenuOpen ? "rotate(180deg)" : "none" }}
+                  />
+                </button>
+                {feedTimeMenuOpen && (
+                  <div
+                    className="absolute top-full left-0 mt-1.5 w-72 max-w-[calc(100vw-1.5rem)] rounded-xl shadow-2xl backdrop-blur-xl p-2"
+                    style={{
+                      background: "var(--panel-bg)",
+                      border: "1px solid var(--panel-border)",
+                      zIndex: 1200,
+                    }}
+                  >
+                    <p className="px-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--panel-text-muted)" }}>
+                      Time windows
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {TIME_FILTERS.map((tf) => {
+                        const locked = tf.pro && !isPro;
+                        const active = timeFilter === tf.hours;
+                        return (
+                          <button
+                            key={tf.label}
+                            type="button"
+                            onClick={() => applyTimeFilter(tf)}
+                            className={`relative rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                              locked ? "opacity-50" : ""
+                            }`}
+                            style={{
+                              background: active ? "rgba(59,130,246,0.15)" : "var(--panel-input-bg)",
+                              border: `1px solid ${active ? "rgba(59,130,246,0.3)" : "var(--panel-border)"}`,
+                              color: active ? "#3b82f6" : "var(--panel-text-secondary)",
+                            }}
+                            title={locked ? "Pro feature · upgrade to unlock" : undefined}
+                          >
+                            {tf.label}
+                            {locked && <Lock className="w-2.5 h-2.5 absolute -top-0.5 -right-0.5 text-purple-400" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

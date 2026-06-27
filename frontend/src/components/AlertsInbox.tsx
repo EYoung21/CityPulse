@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type CSSProperties } from "react";
-import { AlertTriangle, Bell, Check, MapPin, Moon, Trash2, X } from "lucide-react";
+import { AlertTriangle, BarChart3, Bell, Check, Code, Keyboard, MapPin, Moon, Trash2, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   clearAlerts,
@@ -282,6 +282,58 @@ export default function AlertsInbox({
               }
               style={{ borderBottom: "1px solid var(--panel-border)", background: "var(--panel-input-bg)" }}
             >
+              <div
+                className="rounded-lg p-2 space-y-1"
+                style={{ background: "var(--panel-bg)", border: "1px solid var(--panel-border)" }}
+              >
+                <p
+                  className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider"
+                  style={{ color: "var(--panel-text-muted)" }}
+                >
+                  Advanced
+                </p>
+                {[
+                  {
+                    label: "Analytics",
+                    icon: BarChart3,
+                    onClick: () => {
+                      window.location.href = "/?view=analytics";
+                    },
+                  },
+                  {
+                    label: "API documentation",
+                    icon: Code,
+                    onClick: () => {
+                      window.location.href = "/use-cases/api";
+                    },
+                  },
+                  {
+                    label: "Keyboard shortcuts",
+                    icon: Keyboard,
+                    onClick: () => {
+                      try {
+                        sessionStorage.setItem("pp:open-map-help", "shortcuts");
+                      } catch {
+                        /* ignore */
+                      }
+                      window.location.href = "/?view=map";
+                    },
+                  },
+                ].map((row) => (
+                  <button
+                    key={row.label}
+                    type="button"
+                    onClick={row.onClick}
+                    className="w-full flex items-center gap-2.5 px-2 py-2 rounded-md text-left transition-colors"
+                    style={{ color: "var(--panel-text-secondary)" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <row.icon className="w-4 h-4 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
+                    <span className="text-xs font-medium">{row.label}</span>
+                  </button>
+                ))}
+              </div>
               <div className="flex items-center justify-between">
                 <div className="min-w-0 pr-2">
                   <p className="text-xs font-semibold" style={{ color: "var(--panel-text)" }}>
