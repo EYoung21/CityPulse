@@ -1,6 +1,7 @@
 "use client";
 
-import { Shield, MapPin, X, AlertTriangle, CheckCircle } from "lucide-react";
+import { useState } from "react";
+import { ChevronDown, Shield, MapPin, X, AlertTriangle, CheckCircle } from "lucide-react";
 import type { Incident } from "@/lib/api";
 import { assessSafety } from "@/lib/search";
 import PlaceActions from "@/components/PlaceActions";
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export default function SafetyScoreCard({ lat, lng, incidents, onClose }: Props) {
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const result = assessSafety(
     { display_name: "", lat, lng },
     incidents,
@@ -93,15 +95,36 @@ export default function SafetyScoreCard({ lat, lng, incidents, onClose }: Props)
           </div>
         )}
 
-        {/* 24-hour pattern. Renders nothing when the radius doesn't
-            contain enough history to draw a meaningful curve, so the
-            card stays tight in low-data spots. */}
-        <HourOfDayCurve
-          lat={lat}
-          lng={lng}
-          incidents={incidents}
-          accentColor={result.riskColor}
-        />
+        <div>
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen((v) => !v)}
+            className="w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors"
+            style={{
+              background: "var(--panel-input-bg)",
+              border: "1px solid var(--panel-border)",
+              color: "var(--panel-text-secondary)",
+            }}
+            aria-expanded={advancedOpen}
+          >
+            <span>Advanced safety pattern</span>
+            <ChevronDown
+              className="w-3.5 h-3.5 transition-transform"
+              style={{ transform: advancedOpen ? "rotate(180deg)" : "none" }}
+            />
+          </button>
+
+          {advancedOpen && (
+            <div className="pt-3">
+              <HourOfDayCurve
+                lat={lat}
+                lng={lng}
+                incidents={incidents}
+                accentColor={result.riskColor}
+              />
+            </div>
+          )}
+        </div>
 
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
 

@@ -22,6 +22,7 @@ import {
   Layers,
   Sparkles,
   Database,
+  ChevronDown,
   type LucideIcon,
 } from "lucide-react";
 import Sparkline from "@/components/charts/Sparkline";
@@ -268,6 +269,7 @@ export default function SearchSidebar({
     durationMin: number;
     nearbyCount: number;
   } | null>(null);
+  const [statsOpen, setStatsOpen] = useState(false);
   // Per-category avoidance + severity floor, persisted across reloads
   // so a user who turned off "shots fired" yesterday isn't surprised
   // when it comes back on. Read once on mount; serialised on every change.
@@ -991,6 +993,7 @@ export default function SearchSidebar({
   }, [resetTrip]);
 
   const highCount = incidents.filter((i) => i.s_base >= 0.7).length;
+  const showStatsDetails = !isMobile || statsOpen;
 
   const innerContent = (
     <>
@@ -1096,8 +1099,28 @@ export default function SearchSidebar({
                 </div>
               )}
 
+              {isMobile && (
+                <button
+                  type="button"
+                  onClick={() => setStatsOpen((v) => !v)}
+                  className="w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors"
+                  style={{
+                    background: "var(--panel-input-bg)",
+                    border: "1px solid var(--panel-border)",
+                    color: "var(--panel-text-secondary)",
+                  }}
+                  aria-expanded={statsOpen}
+                >
+                  <span>More local activity</span>
+                  <ChevronDown
+                    className="w-3.5 h-3.5 transition-transform"
+                    style={{ transform: statsOpen ? "rotate(180deg)" : "none" }}
+                  />
+                </button>
+              )}
+
               {/* Today's hourly sparkline */}
-              {hourlyData.length > 0 && hourlyData.some((v) => v > 0) && (
+              {showStatsDetails && hourlyData.length > 0 && hourlyData.some((v) => v > 0) && (
                 <div>
                   <p className="text-[9px] font-semibold uppercase tracking-wider mb-1" style={{ color: "var(--panel-text-muted)" }}>
                     Today&apos;s Activity
@@ -1114,7 +1137,7 @@ export default function SearchSidebar({
               )}
 
               {/* Category breakdown bar */}
-              {categoryBreakdown.length > 0 && (
+              {showStatsDetails && categoryBreakdown.length > 0 && (
                 <div>
                   <p className="text-[9px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: "var(--panel-text-muted)" }}>
                     By Category
@@ -1151,7 +1174,7 @@ export default function SearchSidebar({
               )}
 
               {/* Hot neighborhoods */}
-              {hotNeighborhoods.length > 0 && (
+              {showStatsDetails && hotNeighborhoods.length > 0 && (
                 <div>
                   <p className="text-[9px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: "var(--panel-text-muted)" }}>
                     Hot Spots

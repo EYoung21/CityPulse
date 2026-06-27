@@ -50,6 +50,8 @@ export default function KeyboardShortcutsHelp() {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
+    const onShow = () => setOpen(true);
+    window.addEventListener("pp:show-keyboard-shortcuts", onShow);
     const onKey = (e: KeyboardEvent) => {
       // Don't intercept when typing — the search box and any input
       // should still receive `?` as a literal character.
@@ -72,7 +74,10 @@ export default function KeyboardShortcutsHelp() {
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pp:show-keyboard-shortcuts", onShow);
+      window.removeEventListener("keydown", onKey);
+    };
   }, [open]);
 
   // Group shortcuts for display — useMemo because SHORTCUTS is module-

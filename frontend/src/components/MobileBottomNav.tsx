@@ -7,12 +7,11 @@
  *   - Map      → `/?view=map`
  *   - Feed     → `/feed`
  *   - Ask      → `/?view=ask`
- *   - Analytics→ `/?view=analytics`
  *   - Inbox    → `/inbox`   (dedicated full-screen mobile page)
  *   - More     → `/more`    (dedicated full-screen settings page)
  *
  * `persistTabIntent` only stores the sticky home-view preference for
- * the four primary surfaces (map/feed/ask/analytics) — Inbox/More are
+ * the primary surfaces (map/feed/ask) — Inbox/More are
  * dedicated routes and shouldn't overwrite which view a bare `/` opens.
  *
  * The bar is only rendered when the viewport is ≤767px — desktop keeps
@@ -24,13 +23,12 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useSyncExternalStore, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { Map as MapIcon, List, Bell, Settings as SettingsIcon, BarChart3, Lock, MessageCircle } from "lucide-react";
+import { Map as MapIcon, List, Bell, Settings as SettingsIcon, Lock, MessageCircle } from "lucide-react";
 import { subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
 import { useAuth } from "@/contexts/AuthContext";
 
-// API Docs (`/use-cases/api`) intentionally not in the bottom nav: it's
-// reachable from the More menu and from the Analytics header. Surfacing it
-// here would crowd the bar past the iOS-style 5-icon comfort zone.
+// Analytics and API Docs intentionally live behind More so the first-level
+// mobile nav stays focused on the map/search/directions loop.
 type TabId = "map" | "feed" | "ask" | "analytics" | "inbox" | "settings";
 
 interface Tab {
@@ -45,7 +43,6 @@ const TABS: Tab[] = [
   { id: "map",       label: "Map",       href: "/?view=map",                Icon: MapIcon },
   { id: "feed",      label: "Feed",      href: "/feed",                     Icon: List },
   { id: "ask",       label: "Ask",       href: "/?view=ask",                Icon: MessageCircle, pro: true },
-  { id: "analytics", label: "Analytics", href: "/?view=analytics",          Icon: BarChart3, pro: true },
   { id: "inbox",     label: "Inbox",     href: "/inbox",                    Icon: Bell },
   { id: "settings",  label: "More",      href: "/more",                     Icon: SettingsIcon },
 ];
@@ -170,11 +167,11 @@ function MobileBottomNavInner() {
   else if (onInbox) activeId = "inbox";
   else if (onFeed) activeId = "feed";
   else if (viewParam === "feed") activeId = "feed";
-  else if (viewParam === "analytics") activeId = "analytics";
+  else if (viewParam === "analytics") activeId = "settings";
   else if (viewParam === "ask") activeId = "ask";
   else if (viewParam === "map") activeId = "map";
   else if (sessionTab === "feed") activeId = "feed";
-  else if (sessionTab === "analytics") activeId = "analytics";
+  else if (sessionTab === "analytics") activeId = "settings";
   else if (sessionTab === "ask") activeId = "ask";
 
   const handleTabActivate = (tab: Tab) => {
