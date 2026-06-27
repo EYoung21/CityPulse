@@ -219,6 +219,22 @@ export function IncidentCard({
               </span>
             )}
             {isHighSev && <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />}
+            {inc.unit_status && (() => {
+              const c = {
+                dispatched: { l: "Dispatched", c: "#f59e0b" },
+                on_scene: { l: "On scene", c: "#3b82f6" },
+                cleared: { l: "Cleared", c: "#22c55e" },
+              }[inc.unit_status];
+              return c ? (
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide"
+                  style={{ background: `${c.c}1f`, color: c.c }}
+                >
+                  <span className="w-1 h-1 rounded-full" style={{ background: c.c }} />
+                  {c.l}
+                </span>
+              ) : null;
+            })()}
           </div>
 
           <p
