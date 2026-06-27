@@ -14,7 +14,7 @@ export interface ModeETA {
   distanceKm?: number;
 }
 
-function coordKey(point: { lat: number; lng: number } | null): string {
+export function coordKey(point: { lat: number; lng: number } | null): string {
   if (!point) return "";
   // Mobile GPS jitters by a few meters and the live "Your location" origin
   // re-emits ~once a second, which at 4 decimals (~11 m) still crossed grid

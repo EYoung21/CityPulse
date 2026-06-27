@@ -11,6 +11,8 @@ def get_stats():
         cred = credentials.Certificate(cred_path)
     elif json_str:
         cred = credentials.Certificate(json.loads(json_str))
+    else:
+        raise RuntimeError("Firebase credentials are required to run test_agg.py directly")
     firebase_admin.initialize_app(cred)
     db = firestore.client()
     
@@ -20,4 +22,5 @@ def get_stats():
         stats[status] = agg[0][0].value
     return stats
 
-print(get_stats())
+if __name__ == "__main__":
+    print(get_stats())
