@@ -46,6 +46,7 @@ import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
 import RouteOptionPicker from "@/components/RouteOptionPicker";
 import { scoreRouteOptions, scoreRouteSafety, type RouteSafetyScore } from "@/lib/route-safety";
+import { getRandomCityPulseTip } from "@/lib/citypulse-tips";
 import AvoidancePrefsPicker from "@/components/AvoidancePrefsPicker";
 import RideshareLinks from "@/components/RideshareLinks";
 import OptimizeOrderButton from "@/components/OptimizeOrderButton";
@@ -410,6 +411,7 @@ export default function DirectionsPanel({
     destLoc ? { lat: destLoc.lat, lng: destLoc.lng } : null,
     stopLocs
   );
+  const routeTip = useMemo(() => getRandomCityPulseTip(), [routeRequestKey]);
 
   const { destinations: savedDests, canSave, addDestination } = useSavedDestinations();
 
@@ -1073,12 +1075,15 @@ export default function DirectionsPanel({
 
         {previewLoading && (
           <div
-            className="mt-3 flex items-center gap-2 px-3 py-2.5 rounded-lg"
+            className="mt-3 flex items-start gap-2 px-3 py-2.5 rounded-lg"
             style={{ background: "var(--panel-input-bg)" }}
           >
-            <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-            <span className="text-xs" style={{ color: "var(--panel-text-secondary)" }}>
+            <Loader2 className="w-4 h-4 animate-spin text-blue-500 mt-0.5 shrink-0" />
+            <span className="text-xs leading-relaxed" style={{ color: "var(--panel-text-secondary)" }}>
               Calculating route...
+              <span className="block text-[11px] mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                {routeTip}
+              </span>
             </span>
           </div>
         )}

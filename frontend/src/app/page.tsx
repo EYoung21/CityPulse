@@ -144,6 +144,7 @@ import { enrichIncidents } from "@/lib/incident-weights";
 import { loadCachedIncidents, saveCachedIncidents } from "@/lib/incident-snapshot-cache";
 import { apiUrl, fetchPublicApi } from "@/lib/public-api-base";
 import { buildLocalSummary } from "@/lib/local-summary";
+import { getRandomCityPulseTip } from "@/lib/citypulse-tips";
 import {
   getNeighborhood,
   getNeighborhoodBySlug,
@@ -252,6 +253,9 @@ const IncidentMap = dynamic(() => import("@/components/IncidentMap"), {
       <div className="flex flex-col items-center gap-3">
         <div className="w-8 h-8 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" />
         <p className="text-xs font-medium" style={{ color: "var(--panel-text-muted)" }}>Loading map...</p>
+        <p className="max-w-xs px-6 text-center text-[11px] leading-relaxed" style={{ color: "var(--panel-text-muted)" }}>
+          {getRandomCityPulseTip()}
+        </p>
       </div>
     </div>
   ),

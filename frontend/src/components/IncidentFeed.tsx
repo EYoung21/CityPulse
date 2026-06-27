@@ -9,6 +9,7 @@ import IncidentDetail from "./IncidentDetail";
 import FeedIncidentSkeleton from "./FeedIncidentSkeleton";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { haptic } from "@/lib/native";
+import { getRandomCityPulseTip } from "@/lib/citypulse-tips";
 import { toggleFeedAudio, subscribeFeedAudio, getFeedAudioState } from "./FeedAudioMiniPlayer";
 import { Drawer } from "vaul";
 import {
@@ -391,6 +392,7 @@ export default function IncidentFeed({
   const isMobile = useIsMobile();
   const immersive = density === "immersive";
   const selected = incidents.find((i) => i.id === selectedId) ?? null;
+  const emptyTip = useMemo(() => getRandomCityPulseTip(), []);
 
   const blocks = useMemo(() => {
     if (sortMode === "near" && userLoc) {
@@ -406,7 +408,14 @@ export default function IncidentFeed({
   }, [incidents, sortMode, userLoc]);
 
   if (loading && incidents.length === 0) {
-    return <FeedIncidentSkeleton immersive={immersive} />;
+    return (
+      <div>
+        <FeedIncidentSkeleton immersive={immersive} />
+        <p className="px-4 pb-4 text-center text-[11px] leading-relaxed" style={{ color: "var(--panel-text-muted)" }}>
+          {emptyTip}
+        </p>
+      </div>
+    );
   }
 
   if (incidents.length === 0) {
@@ -416,6 +425,9 @@ export default function IncidentFeed({
           <RadioIcon className="w-5 h-5" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }} />
         </div>
         <p className="text-sm font-mono" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }}>AWAITING INCIDENTS</p>
+        <p className="max-w-xs px-6 text-center text-[11px] leading-relaxed" style={{ color: "var(--panel-text-muted, rgba(255,255,255,0.3))" }}>
+          {emptyTip}
+        </p>
       </div>
     );
   }

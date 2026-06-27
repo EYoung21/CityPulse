@@ -27,15 +27,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  MousePointerClick,
   Hand,
-  ZoomIn,
-  Compass,
   Search,
   ChevronLeft,
   ChevronRight,
   X as XIcon,
   Sparkles,
+  MapPinned,
+  Navigation,
+  ShieldCheck,
+  SlidersHorizontal,
 } from "lucide-react";
 
 const SEEN_KEY = "pp:gestures-tour-seen-v1";
@@ -52,48 +53,48 @@ interface Step {
 
 const STEPS: Step[] = [
   {
-    icon: MousePointerClick,
-    title: "Tap the map for a safety read",
+    icon: ShieldCheck,
+    title: "CityPulse",
     bodyTouch:
-      "Tap any spot on the map and we'll pop up a Safety Score Card with recent incident counts and a colour-coded risk level for that block.",
+      "Maps that route you around crime, crashes & traffic, using live police/fire scanner data.",
     bodyMouse:
-      "Click any spot on the map and we'll pop up a Safety Score Card with recent incident counts and a colour-coded risk level for that block.",
-    accent: "#22c55e",
-  },
-  {
-    icon: Hand,
-    title: "Long-press for live activity",
-    bodyTouch:
-      "Press and hold anywhere to peek at what's happening right now: a quick read of incidents reported in the last hour within a block or so. Read-only, dismisses with a tap.",
-    bodyMouse:
-      "Right-click (or hold the mouse down for half a second) to peek at what's happening right now: a quick read of incidents reported in the last hour within a block or so. Read-only, dismisses with a click.",
-    accent: "#a855f7",
-  },
-  {
-    icon: ZoomIn,
-    title: "Pinch and double-tap to zoom",
-    bodyTouch:
-      "Pinch in or out with two fingers, or double-tap to zoom in. Hold a finger down and drag up/down to zoom continuously.",
-    bodyMouse:
-      "Scroll the wheel to zoom, or double-click to zoom in. Hold Shift and drag a box to zoom into a region.",
+      "Maps that route you around crime, crashes & traffic, using live police/fire scanner data.",
     accent: "#3b82f6",
   },
   {
-    icon: Compass,
-    title: "Two-finger drag to rotate",
+    icon: Search,
+    title: "Search where you're headed",
     bodyTouch:
-      "Use two fingers to twist the map. Tap the compass in the corner any time to snap back to north-up.",
+      "Search an address, intersection, or place. CityPulse checks recent incidents around the route before you go.",
     bodyMouse:
-      "Hold Alt and drag with the right mouse button to rotate the map. Tap the compass to snap back to north-up.",
+      "Search an address, intersection, or place. CityPulse checks recent incidents around the route before you go.",
+    accent: "#22c55e",
+  },
+  {
+    icon: Navigation,
+    title: "Choose the safer route",
+    bodyTouch:
+      "Tap Get Safe Directions to compare routes. Safer route options steer around reported incidents, crashes, and traffic.",
+    bodyMouse:
+      "Open Directions to compare routes. Safer route options steer around reported incidents, crashes, and traffic.",
+    accent: "#a855f7",
+  },
+  {
+    icon: SlidersHorizontal,
+    title: "Tune what you avoid",
+    bodyTouch:
+      "Use the five simple toggles for violent, fire, medical, traffic, and disorder reports. Advanced controls are still one tap away.",
+    bodyMouse:
+      "Use the five simple toggles for violent, fire, medical, traffic, and disorder reports. Advanced controls are still one tap away.",
     accent: "#f59e0b",
   },
   {
-    icon: Search,
-    title: "Search anything in Philly",
+    icon: MapPinned,
+    title: "Read the map as you move",
     bodyTouch:
-      "Tap the search bar to look up an address, intersection, or business, or hit the mic for hands-free voice search.",
+      "Tap a cluster for details, or long-press the map to see live activity near a block before you walk or drive through it.",
     bodyMouse:
-      "Press / or Cmd/Ctrl+K to jump to the search box. Type an address, intersection, or business, or use the mic for voice search.",
+      "Click a cluster for details, or right-click the map to see live activity near a block before you walk or drive through it.",
     accent: "#ec4899",
   },
 ];
