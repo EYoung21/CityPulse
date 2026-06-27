@@ -130,7 +130,7 @@ export interface AvoidZone {
   radiusM: number;
 }
 
-function circleToPolygon(
+export function circleToPolygon(
   lat: number,
   lng: number,
   radiusM: number,
@@ -525,7 +525,7 @@ async function getRouteOSRM(
 }
 
 /** Join consecutive leg geometries (drop duplicate seam points). */
-function mergeRouteLegs(legs: [number, number][][]): [number, number][] {
+export function mergeRouteLegs(legs: [number, number][][]): [number, number][] {
   const out: [number, number][] = [];
   const close = (a: [number, number], b: [number, number]) =>
     Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-4;
@@ -890,7 +890,7 @@ export async function getMultiRouteVariants(
 /** Cheap geometry similarity: returns true when two routes share ≥ `min`
  *  fraction of points (rounded to ~10m grid). Used to dedupe ORS
  *  alternates that come back nearly identical to the primary route. */
-function geometriesAreSimilar(
+export function geometriesAreSimilar(
   a: [number, number][],
   b: [number, number][],
   min = 0.85

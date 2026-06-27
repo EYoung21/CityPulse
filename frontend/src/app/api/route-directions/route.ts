@@ -332,7 +332,7 @@ function mergeRouteLegs(legs: [number, number][][]): [number, number][] {
 /** TomTom `magnitudeOfDelay` (0 unknown · 1 minor · 2 moderate · 3 major ·
  *  4 indefinite/closure) → our 3-level coloring. 0 is dropped (don't paint
  *  "unknown" as congestion). */
-function magnitudeToLevel(m: number): CongestionSpan["level"] | null {
+export function magnitudeToLevel(m: number): CongestionSpan["level"] | null {
   if (m >= 4) return "severe";
   if (m === 3) return "heavy";
   if (m >= 1) return "moderate";
@@ -567,7 +567,7 @@ type TomTomRoute = {
  * Returns null (→ fall through to Valhalla/OSRM) when the key is missing or
  * TomTom errors, so routing degrades gracefully to free-flow estimates.
  */
-function haversineMeters(aLat: number, aLng: number, bLat: number, bLng: number): number {
+export function haversineMeters(aLat: number, aLng: number, bLat: number, bLng: number): number {
   const R = 6371000;
   const dLat = ((bLat - aLat) * Math.PI) / 180;
   const dLng = ((bLng - aLng) * Math.PI) / 180;
@@ -580,7 +580,7 @@ function haversineMeters(aLat: number, aLng: number, bLat: number, bLng: number)
 /** Nearest-vertex distance (m) from a point to a polyline. TomTom geometry is
  *  dense enough that vertex distance ≈ true perpendicular distance at our
  *  ~60 m on-route threshold. */
-function minDistToPathMeters(pt: [number, number], path: [number, number][]): number {
+export function minDistToPathMeters(pt: [number, number], path: [number, number][]): number {
   let min = Infinity;
   for (const [lat, lng] of path) {
     const d = haversineMeters(pt[0], pt[1], lat, lng);
@@ -590,15 +590,29 @@ function minDistToPathMeters(pt: [number, number], path: [number, number][]): nu
 }
 
 // A fresh crash within this distance of the computed route counts as "on it".
-const CRASH_ON_ROUTE_M = 60;
+export const CRASH_ON_ROUTE_M = 60;
 // Half-size of the box we tell TomTom to avoid (~110 m) — big enough to make it
 // leave the blocked road, small enough not to wall off parallel streets.
-const CRASH_BOX_DEG = 0.001;
+export const CRASH_BOX_DEG = 0.001;
 
-type TomTomRect = {
+export type TomTomRect = {
   southWestCorner: { latitude: number; longitude: number };
   northEastCorner: { latitude: number; longitude: number };
 };
+
+export function selectCrashAvoidanceAreas(
+  crashAvoid: [number, number][],
+  firstRouteGeometry: [number, number][]
+): { onRoute: [number, number][]; rects: TomTomRect[] } {
+  const onRoute = crashAvoid
+    .filter((c) => minDistToPathMeters(c, firstRouteGeometry) <= CRASH_ON_ROUTE_M)
+    .slice(0, 10);
+  const rects: TomTomRect[] = onRoute.map(([lat, lng]) => ({
+    southWestCorner: { latitude: lat - CRASH_BOX_DEG, longitude: lng - CRASH_BOX_DEG },
+    northEastCorner: { latitude: lat + CRASH_BOX_DEG, longitude: lng + CRASH_BOX_DEG },
+  }));
+  return { onRoute, rects };
+}
 
 async function tryTomTom(
   pts: [number, number][],
@@ -693,14 +707,8 @@ async function tryTomTom(
     // so we never invent a detour. This is the scanner's head start over
     // TomTom's flow sensors put to use.
     if (crashAvoid.length > 0) {
-      const onRoute = crashAvoid
-        .filter((c) => minDistToPathMeters(c, first.geometry) <= CRASH_ON_ROUTE_M)
-        .slice(0, 10); // TomTom caps avoidAreas at 10 rectangles
+      const { onRoute, rects } = selectCrashAvoidanceAreas(crashAvoid, first.geometry);
       if (onRoute.length > 0) {
-        const rects: TomTomRect[] = onRoute.map(([lat, lng]) => ({
-          southWestCorner: { latitude: lat - CRASH_BOX_DEG, longitude: lng - CRASH_BOX_DEG },
-          northEastCorner: { latitude: lat + CRASH_BOX_DEG, longitude: lng + CRASH_BOX_DEG },
-        }));
         const rerouted = await run(rects);
         if (rerouted) {
           return { ...rerouted.payload, avoidedCrashes: onRoute.length };
