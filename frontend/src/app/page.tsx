@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import IncidentFeed from "@/components/IncidentFeed";
+import AreaSafetyPill from "@/components/AreaSafetyPill";
 import NewsroomDesk from "@/components/NewsroomDesk";
 import FeedPullRefresh from "@/components/FeedPullRefresh";
 import FeedAudioMiniPlayer from "@/components/FeedAudioMiniPlayer";
@@ -2711,6 +2712,17 @@ function MapHome() {
           userLocation={userLocation}
           onClose={() => setSafetyEscapeOpen(false)}
         />
+      )}
+
+      {/* Always-on "is this area safe right now?" read — map view, not during
+          an active trip (the maneuver chip owns the top slot then). */}
+      {viewTab === "map" && !tripGeometry && (
+        <div
+          className="absolute z-[1001] left-1/2 -translate-x-1/2 pointer-events-none flex justify-center"
+          style={{ top: "calc(env(safe-area-inset-top, 0px) + 4.25rem)" }}
+        >
+          <AreaSafetyPill incidents={visibleIncidents} />
+        </div>
       )}
 
       {/* Maneuver chip — floating turn-by-turn pill (active trip + ORS steps only) */}
