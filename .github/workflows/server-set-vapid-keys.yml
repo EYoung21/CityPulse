@@ -1,0 +1,53 @@
+name: Set VAPID Keys (Web Push)
+
+# Writes the Web Push (VAPID) keypair + subject into the Hetzner backend's
+# /etc/philly-pulse.env and restarts the API. This ACTIVATES web push — the
+# nearby-incident, keyword-watch, and newsroom alert fan-outs in philly_pulse/
+# push.py only send when these are present (push_available() == True).
+#
+# The frontend reads the public key from /api/push/public-key, so no Vercel env
+# is needed. Required repo secrets:
+#   PHILLY_PULSE_VAPID_PUBLIC_KEY  (base64url, 65-byte uncompressed P-256 point)
+#   PHILLY_PULSE_VAPID_PRIVATE_KEY (base64url, 32-byte scalar)
+#   PHILLY_PULSE_VAPID_SUBJECT     (mailto:you@example.com)
+# Manual trigger only. To rotate, regenerate the keypair, update the secrets,
+# and re-run (existing browser subscriptions keep working — the public key the
+# browser subscribed with is unchanged unless you also change the public key).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  set-vapid-keys:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write VAPID config into philly-pulse.env and restart API
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: VAPID_PUBLIC,VAPID_PRIVATE,VAPID_SUBJECT
+          command_timeout: 5m
+          script: |
+            set -e
+            ENV_FILE="/etc/philly-pulse.env"
+            touch "$ENV_FILE"
+            chmod 640 "$ENV_FILE"
+            for k in PHILLY_PULSE_VAPID_PUBLIC_KEY PHILLY_PULSE_VAPID_PRIVATE_KEY PHILLY_PULSE_VAPID_SUBJECT; do
+              sed -i "/^$k=/d" "$ENV_FILE"
+            done
+            printf 'PHILLY_PULSE_VAPID_PUBLIC_KEY=%s\n'  "$VAPID_PUBLIC"  >> "$ENV_FILE"
+            printf 'PHILLY_PULSE_VAPID_PRIVATE_KEY=%s\n' "$VAPID_PRIVATE" >> "$ENV_FILE"
+            printf 'PHILLY_PULSE_VAPID_SUBJECT=%s\n'     "$VAPID_SUBJECT" >> "$ENV_FILE"
+            systemctl restart philly-pulse-api
+            sleep 3
+            echo "=== status ==="
+            systemctl is-active philly-pulse-api && echo "API: running" || echo "API: failed"
+            grep -q '^PHILLY_PULSE_VAPID_PUBLIC_KEY=.\+'  "$ENV_FILE" && echo "VAPID public: <set>"  || echo "VAPID public: <empty>"
+            grep -q '^PHILLY_PULSE_VAPID_PRIVATE_KEY=.\+' "$ENV_FILE" && echo "VAPID private: <set>" || echo "VAPID private: <empty>"
+            grep '^PHILLY_PULSE_VAPID_SUBJECT=' "$ENV_FILE"
+        env:
+          VAPID_PUBLIC: ${{ secrets.PHILLY_PULSE_VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE: ${{ secrets.PHILLY_PULSE_VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.PHILLY_PULSE_VAPID_SUBJECT }}
