@@ -126,6 +126,10 @@ class PushSubscription:
     notify_lat: Optional[float] = None
     notify_lng: Optional[float] = None
     notify_radius_km: float = 3.0
+    # Newsroom alerts: opt-in, city-wide pings for newsworthy incidents
+    # (serious categories above a severity bar). For reporters who want a
+    # heads-up without watching the desk. Independent of the proximity area.
+    notify_newsroom: bool = False
     created_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
     last_used_ms: int = 0
 
@@ -180,6 +184,7 @@ def upsert_subscription(sub: PushSubscription) -> str:
         "notifyLat": notify_lat,
         "notifyLng": notify_lng,
         "notifyRadiusKm": radius,
+        "notifyNewsroom": bool(sub.notify_newsroom),
         "createdAtMs": sub.created_at_ms,
         "lastUsedMs": sub.last_used_ms,
         # Per-subscription cooldown for nearby alerts. Bumped on
@@ -188,6 +193,7 @@ def upsert_subscription(sub: PushSubscription) -> str:
         # (rather than a side cache) so a process restart doesn't
         # reset everyone's cooldown to zero.
         "lastNearbyPushMs": 0,
+        "lastNewsroomPushMs": 0,
     })
     return doc_id
 
@@ -428,6 +434,116 @@ def find_nearby_subscriptions(
         if _haversine_km(nlat, nlng, lat, lng) <= radius:
             out.append(sub)
     return out
+
+
+# ── Newsroom alerts ──────────────────────────────────────────────────
+# City-wide pings for newsworthy incidents (for reporters / the Newsroom).
+# Looser than the proximity trigger (no location area) but gated to genuinely
+# newsworthy categories above a severity bar — a backend stand-in for the
+# frontend newsworthiness score — so reporters get signal, not a firehose.
+_NEWSROOM_COOLDOWN_MS = 3 * 60 * 1000
+_NEWSROOM_S_BASE_FLOOR = 0.5
+_NEWSWORTHY_CATEGORIES = {
+    "violent_weapon",
+    "violent_no_weapon",
+    "shots_heard",
+    "robbery",
+    "burglary_in_progress",
+    "fire_hazmat",
+    "traffic_crash_injury",
+}
+
+
+def find_newsroom_subscriptions(city: str) -> list[dict[str, Any]]:
+    """Subscriptions in the city opted into newsroom alerts."""
+    return [s for s in list_all_subscriptions(city=city) if s.get("notifyNewsroom") is True]
+
+
+def notify_newsroom_incident(
+    *,
+    incident_id: str,
+    city: str,
+    severity_category: str,
+    s_base: float,
+    description: Optional[str] = None,
+    location_text: Optional[str] = None,
+    inhibitor_status: Optional[str] = None,
+) -> dict[str, int]:
+    """Push newsworthy incidents to reporters opted into newsroom alerts.
+
+    Gated to serious categories above a severity bar, with a per-subscription
+    cooldown and the user's snooze/quiet/mute prefs respected. Mirrors
+    notify_nearby_incident but is city-wide rather than area-based."""
+    if not push_available():
+        return {"sent": 0, "skipped_no_push": 1, "matched": 0}
+    if inhibitor_status == "blocked":
+        return {"sent": 0, "blocked": 1, "matched": 0}
+    if s_base < _NEWSROOM_S_BASE_FLOOR or severity_category not in _NEWSWORTHY_CATEGORIES:
+        return {"sent": 0, "not_newsworthy": 1, "matched": 0}
+
+    matches = find_newsroom_subscriptions(city)
+    if not matches:
+        return {"sent": 0, "matched": 0}
+
+    now_ms = int(time.time() * 1000)
+    sent = cooldown = quiet = snoozed = muted = 0
+    label = severity_category.replace("_", " ").title()
+    summary = (description or location_text or "Tap for details.").strip()
+    if len(summary) > 120:
+        summary = summary[:117] + "..."
+    payload = {
+        "kind": "newsroom_incident",
+        "incidentId": incident_id,
+        "title": f"Newsworthy: {label}",
+        "body": summary,
+        "url": f"/?incident={incident_id}",
+        "tag": f"pp:newsroom:{city}",
+        "requireInteraction": False,
+        "severity_category": severity_category,
+    }
+
+    seen_uids: dict[str, dict[str, bool]] = {}
+    for sub in matches:
+        last_ms = int(sub.get("lastNewsroomPushMs") or 0)
+        if now_ms - last_ms < _NEWSROOM_COOLDOWN_MS:
+            cooldown += 1
+            continue
+        uid = str(sub.get("uid") or "")
+        if uid:
+            cached = seen_uids.get(uid)
+            if cached is None:
+                cached = {
+                    "snoozed": _is_snoozed_for_uid(uid),
+                    "quiet": _is_quiet_now_for_uid(uid, None),
+                    "muted": _is_category_muted_for_uid(uid, severity_category),
+                }
+                seen_uids[uid] = cached
+            if cached["snoozed"]:
+                snoozed += 1
+                continue
+            if cached["quiet"]:
+                quiet += 1
+                continue
+            if cached["muted"]:
+                muted += 1
+                continue
+        ok, _status = send_to_subscription(sub, payload, ttl_seconds=30 * 60)
+        if ok:
+            sent += 1
+            try:
+                _db().collection("pushSubscriptions").document(sub["id"]).update(
+                    {"lastNewsroomPushMs": now_ms}
+                )
+            except Exception:
+                pass
+    return {
+        "sent": sent,
+        "matched": len(matches),
+        "cooldown": cooldown,
+        "quiet": quiet,
+        "snoozed": snoozed,
+        "muted": muted,
+    }
 
 
 def notify_nearby_incident(

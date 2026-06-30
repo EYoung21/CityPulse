@@ -248,6 +248,7 @@ async function postSubscriptionToServer(
     body.notifyLng = area.lng;
     body.notifyRadiusKm = area.radiusKm;
   }
+  body.notifyNewsroom = loadNewsroomAlerts();
   try {
     const res = await fetchPublicApi("/api/push/subscribe", {
       method: "POST",
@@ -393,6 +394,31 @@ export async function updateAlertArea(area: AlertArea | null): Promise<boolean> 
   const idToken = await getIdToken();
   if (!idToken) return false;
   return postSubscriptionToServer(sub, idToken, area);
+}
+
+// ── Newsroom alerts (city-wide newsworthy pings, opt-in) ────────────────────
+const NEWSROOM_STORAGE_KEY = "pp:push-newsroom-alerts";
+
+export function loadNewsroomAlerts(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(NEWSROOM_STORAGE_KEY) === "1";
+}
+
+export function saveNewsroomAlerts(on: boolean): void {
+  if (typeof window === "undefined") return;
+  if (on) window.localStorage.setItem(NEWSROOM_STORAGE_KEY, "1");
+  else window.localStorage.removeItem(NEWSROOM_STORAGE_KEY);
+}
+
+/** Toggle newsroom alerts and sync the flag to the current subscription.
+ *  Mirrors updateAlertArea — re-posts the existing subscription, no re-prompt. */
+export async function updateNewsroomAlerts(on: boolean): Promise<boolean> {
+  saveNewsroomAlerts(on);
+  const sub = await getCurrentSubscription();
+  if (!sub) return true; // saved locally; applied on next subscribe
+  const idToken = await getIdToken();
+  if (!idToken) return false;
+  return postSubscriptionToServer(sub, idToken, loadAlertArea());
 }
 
 export async function unsubscribePush(): Promise<PushStatus> {
