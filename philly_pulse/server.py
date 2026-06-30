@@ -1049,6 +1049,30 @@ async def ingest(
                     incident_id, e,
                 )
 
+            # Newsroom fan-out: city-wide pings to reporters opted into
+            # newsworthy alerts (serious categories above a severity bar).
+            # Created-only, same as the nearby fan-out.
+            try:
+                nr_stats = push_mod.notify_newsroom_incident(
+                    incident_id=incident_id,
+                    city=city,
+                    severity_category=category,
+                    s_base=s_base,
+                    description=stored_description,
+                    location_text=location_text,
+                    inhibitor_status=inh.status,
+                )
+                if nr_stats.get("sent"):
+                    logger.info(
+                        "Newsroom Push fan-out for incident %s: %s",
+                        incident_id, nr_stats,
+                    )
+            except Exception as e:  # pragma: no cover — defensive
+                logger.warning(
+                    "Newsroom Push fan-out failed for incident %s: %s",
+                    incident_id, e,
+                )
+
         # Keyword-watch fan-out runs on every transmission (created and
         # merged) because each new transcript can newly match a watch
         # phrase that the original incident didn't trigger. Per-watch
@@ -3234,6 +3258,7 @@ class PushSubscribeRequest(BaseModel):
     notifyLat: float | None = None
     notifyLng: float | None = None
     notifyRadiusKm: float | None = None
+    notifyNewsroom: bool | None = None
 
 
 @app.get("/api/push/public-key")
@@ -3274,6 +3299,7 @@ async def push_subscribe(
             notify_lat=body.notifyLat,
             notify_lng=body.notifyLng,
             notify_radius_km=body.notifyRadiusKm if body.notifyRadiusKm is not None else 3.0,
+            notify_newsroom=bool(body.notifyNewsroom),
         )
         doc_id = push_mod.upsert_subscription(sub)
     except Exception as e:

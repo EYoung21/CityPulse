@@ -29,6 +29,7 @@ import {
   AlertTriangle,
   Crosshair,
   MapPin,
+  Newspaper,
   Trash2,
   Smartphone,
   Monitor,
@@ -42,11 +43,13 @@ import {
   getPushStatus,
   listPushDevices,
   loadAlertArea,
+  loadNewsroomAlerts,
   revokePushDevice,
   sendTestPush,
   subscribePush,
   unsubscribePush,
   updateAlertArea,
+  updateNewsroomAlerts,
   type AlertArea,
   type PushDevice,
   type PushStatus,
@@ -120,6 +123,8 @@ export default function PushSettings() {
   const [info, setInfo] = useState<string | null>(null);
   const [area, setArea] = useState<AlertArea | null>(null);
   const [areaBusy, setAreaBusy] = useState(false);
+  const [newsroom, setNewsroom] = useState(false);
+  const [newsroomBusy, setNewsroomBusy] = useState(false);
   const [devices, setDevices] = useState<PushDevice[] | null>(null);
   const [showDevices, setShowDevices] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
@@ -159,6 +164,7 @@ export default function PushSettings() {
   useEffect(() => {
     void refresh();
     setArea(loadAlertArea());
+    setNewsroom(loadNewsroomAlerts());
     setSnooze(loadPushSnooze());
     // Re-check when the auth state changes — flipping from
     // anonymous → signed in unlocks the subscribe affordance.
@@ -339,6 +345,28 @@ export default function PushSettings() {
     }
   };
 
+  const onToggleNewsroom = async (next: boolean) => {
+    setNewsroomBusy(true);
+    setError(null);
+    setInfo(null);
+    setNewsroom(next);
+    try {
+      const ok = await updateNewsroomAlerts(next);
+      if (ok) {
+        setInfo(
+          next
+            ? "Newsroom alerts on. You'll be pinged on newsworthy incidents in this city."
+            : "Newsroom alerts off."
+        );
+      } else {
+        setNewsroom(!next);
+        setError("Couldn't update newsroom alerts. Try again.");
+      }
+    } finally {
+      setNewsroomBusy(false);
+    }
+  };
+
   const onUnsubscribe = async () => {
     setBusy(true);
     setError(null);
@@ -442,6 +470,37 @@ export default function PushSettings() {
       </div>
       {subscribed && (
         <>
+          {/* Newsroom alerts: city-wide pings on newsworthy incidents (for
+              reporters who don't want to babysit the desk). */}
+          <button
+            type="button"
+            onClick={() => void onToggleNewsroom(!newsroom)}
+            disabled={newsroomBusy}
+            aria-pressed={newsroom}
+            className="mt-2 w-full flex items-center justify-between gap-2 p-2 rounded-md disabled:opacity-50"
+            style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)" }}
+          >
+            <span className="flex items-center gap-2 text-left">
+              <Newspaper className="w-3.5 h-3.5 shrink-0" style={{ color: "#60a5fa" }} />
+              <span>
+                <span className="block text-xs font-medium" style={{ color: "var(--panel-text)" }}>
+                  Newsroom alerts
+                </span>
+                <span className="block text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
+                  Get pinged on newsworthy incidents in this city
+                </span>
+              </span>
+            </span>
+            <span
+              className="relative w-9 h-5 rounded-full shrink-0 transition-colors"
+              style={{ background: newsroom ? "#3b82f6" : "var(--panel-border)" }}
+            >
+              <span
+                className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
+                style={{ left: newsroom ? "calc(100% - 1.125rem)" : "0.125rem" }}
+              />
+            </span>
+          </button>
           {/* Alert-area picker. Optional: a subscription with no
               area still receives test pushes + future direct
               messages, but won't get neighborhood incident pings.
