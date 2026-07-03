@@ -1,12 +1,17 @@
-name: SES setup domain (423pulse.com)
+name: SES setup domains (all city domains)
 
-# Creates the SES domain identity for 423pulse.com with Easy DKIM and prints the
-# DKIM CNAME records to add in GoDaddy. Also submits the production-access
-# (sandbox-exit) request. Uses the existing AWS secrets (algoarena-bedrock user,
-# which now has the citypulse-ses policy). Manual trigger; safe to re-run.
+# Creates SES domain identities with Easy DKIM for every CityPulse city domain
+# and prints the DKIM CNAME records to add in GoDaddy. Also submits the
+# account-level production-access (sandbox-exit) request once. Uses the existing
+# AWS secrets (algoarena-bedrock, which now has the citypulse-ses policy).
+# Manual trigger; safe to re-run (idempotent per domain).
 
 on:
   workflow_dispatch:
+
+env:
+  # All production city domains (all on GoDaddy). Add new cities here.
+  DOMAINS: "423pulse.com sfopulse.com phlpulse.com newyorkcitypulse.com"
 
 jobs:
   ses-setup:
@@ -15,38 +20,36 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: us-east-1
-      DOMAIN: 423pulse.com
     steps:
-      - name: Create domain identity + Easy DKIM
+      - name: Create identities + print DKIM records for every domain
         run: |
-          # Idempotent: create only if it doesn't exist yet.
-          if ! aws sesv2 get-email-identity --email-identity "$DOMAIN" >/dev/null 2>&1; then
-            aws sesv2 create-email-identity --email-identity "$DOMAIN"
-            echo "Created SES identity for $DOMAIN"
-          else
-            echo "SES identity for $DOMAIN already exists"
-          fi
-
-      - name: Print DKIM CNAME records for GoDaddy
-        run: |
-          echo "=== DKIM CNAME RECORDS (add these 3 in GoDaddy DNS) ==="
-          TOKENS=$(aws sesv2 get-email-identity --email-identity "$DOMAIN" \
-                    --query 'DkimAttributes.Tokens' --output text)
-          for t in $TOKENS; do
-            echo "HOST: ${t}._domainkey   TYPE: CNAME   VALUE: ${t}.dkim.amazonses.com"
+          for DOMAIN in $DOMAINS; do
+            if ! aws sesv2 get-email-identity --email-identity "$DOMAIN" >/dev/null 2>&1; then
+              aws sesv2 create-email-identity --email-identity "$DOMAIN" >/dev/null
+              echo ">>> Created SES identity for $DOMAIN"
+            else
+              echo ">>> SES identity for $DOMAIN already exists"
+            fi
+            echo "===== DKIM CNAME RECORDS for $DOMAIN (add these 3 in GoDaddy) ====="
+            TOKENS=$(aws sesv2 get-email-identity --email-identity "$DOMAIN" \
+                      --query 'DkimAttributes.Tokens' --output text)
+            for t in $TOKENS; do
+              echo "[$DOMAIN] HOST: ${t}._domainkey   TYPE: CNAME   VALUE: ${t}.dkim.amazonses.com"
+            done
+            STATUS=$(aws sesv2 get-email-identity --email-identity "$DOMAIN" \
+                      --query '{Verified:VerifiedForSendingStatus,Dkim:DkimAttributes.Status}' --output json)
+            echo "[$DOMAIN] status: $STATUS"
+            echo
           done
-          echo "=== current status ==="
-          aws sesv2 get-email-identity --email-identity "$DOMAIN" \
-            --query '{Verified:VerifiedForSendingStatus,Dkim:DkimAttributes.Status}' --output json
 
-      - name: Request production access (sandbox exit) — best effort
+      - name: Request production access (account-level, sandbox exit) — best effort
         continue-on-error: true
         run: |
           aws sesv2 put-account-details \
             --production-access-enabled \
             --mail-type TRANSACTIONAL \
             --website-url "https://423pulse.com" \
-            --use-case-description "Transactional newsworthy-incident alert emails to opted-in CityPulse Newsroom users (reporters). Recipients explicitly subscribe in-app and can unsubscribe. Low volume." \
+            --use-case-description "Transactional newsworthy-incident alert emails to opted-in CityPulse Newsroom users across our city sites (423pulse, sfopulse, phlpulse, newyorkcitypulse). Recipients explicitly subscribe in-app and can unsubscribe anytime; no purchased lists. We use the SES suppression list + SNS bounce/complaint notifications. Low volume." \
             --additional-contact-email-addresses "eliyoung4now@gmail.com" \
             --contact-language EN \
           && echo "Production access requested (AWS reviews ~24h)" \
