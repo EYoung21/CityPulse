@@ -1,0 +1,33 @@
+name: SES regenerate DKIM (fix FAILED domain)
+
+# Restarts Easy DKIM for a domain whose verification expired/FAILED. Generates a
+# fresh keypair -> NEW tokens, so the 3 CNAMEs for that domain must be replaced.
+# Manual trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: "Domain to regenerate DKIM for"
+        required: true
+        default: "423pulse.com"
+
+jobs:
+  regen:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - name: Regenerate Easy DKIM + print new records
+        run: |
+          D="${{ github.event.inputs.domain }}"
+          aws sesv2 put-email-identity-dkim-signing-attributes \
+            --email-identity "$D" --signing-attributes-origin AWS_SES
+          sleep 3
+          echo "===== NEW DKIM CNAME RECORDS for $D (replace the old 3 in GoDaddy) ====="
+          for t in $(aws sesv2 get-email-identity --email-identity "$D" \
+                      --query 'DkimAttributes.Tokens' --output text); do
+            echo "[$D] HOST: ${t}._domainkey   VALUE: ${t}.dkim.amazonses.com"
+          done
