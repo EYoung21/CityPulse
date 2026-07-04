@@ -1,0 +1,50 @@
+name: Set SES enabled (newsroom email)
+
+# Flips SES_ENABLED on the Hetzner backend so philly_pulse/ses_email.py stops
+# being a no-op and starts sending newsroom alert emails. The AWS creds it uses
+# (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION) are already in
+# /etc/philly-pulse.env from the Bedrock setup, so this only adds SES_ENABLED
+# (+ a friendly From name). Per-city From addresses are chosen in code
+# (from_email_for_city), so no SES_FROM_EMAIL is needed here.
+#
+# Input `enabled` = true|false so this doubles as the kill switch.
+# Manual trigger only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      enabled:
+        description: "SES_ENABLED value (true to turn email on, false to kill)"
+        required: true
+        default: "true"
+
+jobs:
+  set-ses:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write SES_ENABLED into philly-pulse.env and restart API
+        uses: appleboy/ssh-action@v1
+        env:
+          SES_ENABLED: ${{ github.event.inputs.enabled }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: SES_ENABLED
+          command_timeout: 5m
+          script: |
+            set -e
+            ENV_FILE="/etc/philly-pulse.env"
+            touch "$ENV_FILE"
+            chmod 640 "$ENV_FILE"
+            for k in SES_ENABLED SES_FROM_NAME; do
+              sed -i "/^$k=/d" "$ENV_FILE"
+            done
+            printf 'SES_ENABLED=%s\n'                 "$SES_ENABLED" >> "$ENV_FILE"
+            printf 'SES_FROM_NAME=CityPulse Newsroom\n'               >> "$ENV_FILE"
+            systemctl restart philly-pulse-api
+            sleep 3
+            echo "=== status ==="
+            systemctl is-active philly-pulse-api && echo "API: running" || echo "API: failed"
+            grep '^SES_ENABLED=' "$ENV_FILE"
+            grep -q '^AWS_ACCESS_KEY_ID=.\+' "$ENV_FILE" && echo "AWS creds: <present>" || echo "AWS creds: <MISSING — run Set Bedrock Keys>"
