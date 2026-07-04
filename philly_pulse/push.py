@@ -130,6 +130,10 @@ class PushSubscription:
     # (serious categories above a severity bar). For reporters who want a
     # heads-up without watching the desk. Independent of the proximity area.
     notify_newsroom: bool = False
+    # Also deliver newsroom alerts to this email (SES). `email` comes from the
+    # verified Firebase token, not the client body.
+    notify_newsroom_email: bool = False
+    email: str = ""
     created_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
     last_used_ms: int = 0
 
@@ -185,6 +189,8 @@ def upsert_subscription(sub: PushSubscription) -> str:
         "notifyLng": notify_lng,
         "notifyRadiusKm": radius,
         "notifyNewsroom": bool(sub.notify_newsroom),
+        "notifyNewsroomEmail": bool(sub.notify_newsroom_email),
+        "email": (sub.email or "")[:320],
         "createdAtMs": sub.created_at_ms,
         "lastUsedMs": sub.last_used_ms,
         # Per-subscription cooldown for nearby alerts. Bumped on
@@ -486,7 +492,8 @@ def notify_newsroom_incident(
         return {"sent": 0, "matched": 0}
 
     now_ms = int(time.time() * 1000)
-    sent = cooldown = quiet = snoozed = muted = 0
+    sent = cooldown = quiet = snoozed = muted = emailed = 0
+    emailed_addrs: set[str] = set()
     label = severity_category.replace("_", " ").title()
     summary = (description or location_text or "Tap for details.").strip()
     if len(summary) > 120:
@@ -536,6 +543,32 @@ def notify_newsroom_incident(
                 )
             except Exception:
                 pass
+
+        # Email channel (best-effort, deduped per address, sent from the city's
+        # own verified SES domain). Only fires when SES is configured.
+        if sub.get("notifyNewsroomEmail"):
+            addr = str(sub.get("email") or "").strip().lower()
+            if addr and addr not in emailed_addrs:
+                emailed_addrs.add(addr)
+                try:
+                    from . import ses_email
+
+                    domain = ses_email.CITY_SEND_DOMAINS.get(city, "423pulse.com")
+                    text = (
+                        f"{summary}\n\n"
+                        f"View the incident: https://{domain}/?incident={incident_id}\n\n"
+                        f"You're receiving this because you turned on Newsroom email alerts. "
+                        f"Manage or turn these off anytime in the CityPulse app."
+                    )
+                    if ses_email.send_email(
+                        to=addr,
+                        subject=f"Newsworthy: {label}",
+                        text=text,
+                        from_email=ses_email.from_email_for_city(city),
+                    ):
+                        emailed += 1
+                except Exception:  # pragma: no cover — best effort
+                    pass
     return {
         "sent": sent,
         "matched": len(matches),
@@ -543,6 +576,7 @@ def notify_newsroom_incident(
         "quiet": quiet,
         "snoozed": snoozed,
         "muted": muted,
+        "emailed": emailed,
     }
 
 
