@@ -102,17 +102,10 @@ jobs:
 
             echo ""
             echo "######################################################"
-            echo "# 5. Confirm via Hetzner API: most recent incident has audio_clip"
+            echo "# 5. Confirm via Hetzner API: most recent incidents' audio fields"
             echo "######################################################"
-            # Sample the most-recent incident from /api/incidents and
-            # check whether audio_clip is populated.
-            curl -s 'http://127.0.0.1:8765/api/incidents?limit=3' \
-              | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-items = data if isinstance(data, list) else data.get('incidents', [])
-for inc in items[:3]:
-    print('  id=%s audio_clip=%r audio_url=%r reported_at=%s'
-          % (inc.get('id','?'), inc.get('audio_clip'),
-             (inc.get('audio_url') or '')[:60], inc.get('reported_at')))
-" || echo "(curl/json failed; check manually)"
+            # Dump the first 900 chars of /api/incidents so you can eyeball
+            # whether audio_clip / audio_url are populated (kept dependency-free
+            # to stay inside the YAML block scalar — no embedded Python).
+            curl -s 'http://127.0.0.1:8765/api/incidents?limit=3' | head -c 900 || echo "(curl failed; check manually)"
+            echo ""
