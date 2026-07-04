@@ -44,12 +44,14 @@ import {
   listPushDevices,
   loadAlertArea,
   loadNewsroomAlerts,
+  loadNewsroomEmail,
   revokePushDevice,
   sendTestPush,
   subscribePush,
   unsubscribePush,
   updateAlertArea,
   updateNewsroomAlerts,
+  updateNewsroomEmail,
   type AlertArea,
   type PushDevice,
   type PushStatus,
@@ -125,6 +127,7 @@ export default function PushSettings() {
   const [areaBusy, setAreaBusy] = useState(false);
   const [newsroom, setNewsroom] = useState(false);
   const [newsroomBusy, setNewsroomBusy] = useState(false);
+  const [newsroomEmail, setNewsroomEmail] = useState(false);
   const [devices, setDevices] = useState<PushDevice[] | null>(null);
   const [showDevices, setShowDevices] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
@@ -165,6 +168,7 @@ export default function PushSettings() {
     void refresh();
     setArea(loadAlertArea());
     setNewsroom(loadNewsroomAlerts());
+    setNewsroomEmail(loadNewsroomEmail());
     setSnooze(loadPushSnooze());
     // Re-check when the auth state changes — flipping from
     // anonymous → signed in unlocks the subscribe affordance.
@@ -367,6 +371,24 @@ export default function PushSettings() {
     }
   };
 
+  const onToggleNewsroomEmail = async (next: boolean) => {
+    setNewsroomBusy(true);
+    setError(null);
+    setInfo(null);
+    setNewsroomEmail(next);
+    try {
+      const ok = await updateNewsroomEmail(next);
+      if (ok) {
+        setInfo(next ? "You'll also get newsworthy alerts by email." : "Email alerts off.");
+      } else {
+        setNewsroomEmail(!next);
+        setError("Couldn't update email alerts. Try again.");
+      }
+    } finally {
+      setNewsroomBusy(false);
+    }
+  };
+
   const onUnsubscribe = async () => {
     setBusy(true);
     setError(null);
@@ -501,6 +523,31 @@ export default function PushSettings() {
               />
             </span>
           </button>
+          {newsroom && (
+            <div
+              className="mt-1.5 ml-3 flex items-center justify-between gap-2 pl-2 pr-1 py-1.5 text-[11px]"
+              style={{ color: "var(--panel-text-secondary)" }}
+            >
+              <span className="flex items-center gap-1.5">
+                <Send className="w-3 h-3" style={{ color: "#60a5fa" }} />
+                Also email me
+              </span>
+              <button
+                type="button"
+                onClick={() => void onToggleNewsroomEmail(!newsroomEmail)}
+                disabled={newsroomBusy}
+                aria-pressed={newsroomEmail}
+                className="relative w-8 h-4 rounded-full shrink-0 transition-colors disabled:opacity-50"
+                style={{ background: newsroomEmail ? "#3b82f6" : "var(--panel-border)" }}
+              >
+                <span
+                  className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all"
+                  style={{ left: newsroomEmail ? "calc(100% - 0.875rem)" : "0.125rem" }}
+                />
+              </button>
+            </div>
+          )}
+
           {/* Alert-area picker. Optional: a subscription with no
               area still receives test pushes + future direct
               messages, but won't get neighborhood incident pings.

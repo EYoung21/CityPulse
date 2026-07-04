@@ -249,6 +249,7 @@ async function postSubscriptionToServer(
     body.notifyRadiusKm = area.radiusKm;
   }
   body.notifyNewsroom = loadNewsroomAlerts();
+  body.notifyNewsroomEmail = loadNewsroomEmail();
   try {
     const res = await fetchPublicApi("/api/push/subscribe", {
       method: "POST",
@@ -416,6 +417,30 @@ export async function updateNewsroomAlerts(on: boolean): Promise<boolean> {
   saveNewsroomAlerts(on);
   const sub = await getCurrentSubscription();
   if (!sub) return true; // saved locally; applied on next subscribe
+  const idToken = await getIdToken();
+  if (!idToken) return false;
+  return postSubscriptionToServer(sub, idToken, loadAlertArea());
+}
+
+// Also-email-me for newsroom alerts. The recipient address is taken from the
+// verified Firebase token server-side; we only store the on/off intent here.
+const NEWSROOM_EMAIL_STORAGE_KEY = "pp:push-newsroom-email";
+
+export function loadNewsroomEmail(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(NEWSROOM_EMAIL_STORAGE_KEY) === "1";
+}
+
+export function saveNewsroomEmail(on: boolean): void {
+  if (typeof window === "undefined") return;
+  if (on) window.localStorage.setItem(NEWSROOM_EMAIL_STORAGE_KEY, "1");
+  else window.localStorage.removeItem(NEWSROOM_EMAIL_STORAGE_KEY);
+}
+
+export async function updateNewsroomEmail(on: boolean): Promise<boolean> {
+  saveNewsroomEmail(on);
+  const sub = await getCurrentSubscription();
+  if (!sub) return true;
   const idToken = await getIdToken();
   if (!idToken) return false;
   return postSubscriptionToServer(sub, idToken, loadAlertArea());

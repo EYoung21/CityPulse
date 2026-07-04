@@ -3259,6 +3259,7 @@ class PushSubscribeRequest(BaseModel):
     notifyLng: float | None = None
     notifyRadiusKm: float | None = None
     notifyNewsroom: bool | None = None
+    notifyNewsroomEmail: bool | None = None
 
 
 @app.get("/api/push/public-key")
@@ -3300,6 +3301,9 @@ async def push_subscribe(
             notify_lng=body.notifyLng,
             notify_radius_km=body.notifyRadiusKm if body.notifyRadiusKm is not None else 3.0,
             notify_newsroom=bool(body.notifyNewsroom),
+            notify_newsroom_email=bool(body.notifyNewsroomEmail),
+            # Email comes from the verified token, never the client body.
+            email=(decoded.get("email") or "")[:320],
         )
         doc_id = push_mod.upsert_subscription(sub)
     except Exception as e:
