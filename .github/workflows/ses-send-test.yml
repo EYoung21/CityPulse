@@ -1,0 +1,51 @@
+name: SES send test email
+
+# Sends one real email straight through SES (not via the app) to prove the pipe
+# end-to-end: chosen city's verified From domain -> recipient inbox. In sandbox
+# the recipient must be a verified address (see ses-verify-recipient). Manual
+# trigger.
+#
+# from_city picks the From domain via the same map as the app:
+#   chattanooga -> alerts@423pulse.com   (needs 423pulse verified)
+#   sf          -> alerts@sfopulse.com
+#   philly      -> alerts@phlpulse.com
+#   nyc         -> alerts@newyorkcitypulse.com
+
+on:
+  workflow_dispatch:
+    inputs:
+      to:
+        description: "Recipient (must be verified while in sandbox)"
+        required: true
+        default: "eliyoung4now@gmail.com"
+      from_city:
+        description: "Which city's From domain to send from (sf/philly/nyc/chattanooga)"
+        required: true
+        default: "nyc"
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - name: Resolve From domain and send
+        run: |
+          TO="${{ github.event.inputs.to }}"
+          CITY="${{ github.event.inputs.from_city }}"
+          case "$CITY" in
+            chattanooga) DOMAIN="423pulse.com" ;;
+            sf)          DOMAIN="sfopulse.com" ;;
+            philly)      DOMAIN="phlpulse.com" ;;
+            nyc)         DOMAIN="newyorkcitypulse.com" ;;
+            *)           DOMAIN="newyorkcitypulse.com" ;;
+          esac
+          FROM="CityPulse Newsroom <alerts@${DOMAIN}>"
+          echo "Sending from: $FROM  ->  $TO"
+          aws sesv2 send-email \
+            --from-email-address "$FROM" \
+            --destination "ToAddresses=$TO" \
+            --content '{"Simple":{"Subject":{"Data":"CityPulse newsroom test","Charset":"UTF-8"},"Body":{"Text":{"Data":"This is a CityPulse newsroom test email. If you received it, SES sending from '"$DOMAIN"' works end-to-end. Reply-free; you can ignore it.","Charset":"UTF-8"}}}}'
+          echo "Sent. Check the $TO inbox (and spam)."

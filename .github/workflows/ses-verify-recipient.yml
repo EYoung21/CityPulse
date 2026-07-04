@@ -1,0 +1,34 @@
+name: SES verify recipient (sandbox test address)
+
+# While the SES account is in the sandbox it can only email VERIFIED addresses.
+# This creates an email-address identity so SES sends a confirmation link to
+# that inbox; click it and that address can receive newsroom alerts before
+# production access is granted. Harmless once production access lands (verified
+# recipients simply keep working). Manual trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: "Recipient email to verify"
+        required: true
+        default: "eliyoung4now@gmail.com"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - name: Create email-address identity (sends confirmation link)
+        run: |
+          E="${{ github.event.inputs.email }}"
+          aws sesv2 create-email-identity --email-identity "$E" \
+            || echo "(identity may already exist — re-checking status)"
+          echo "===== status for $E ====="
+          aws sesv2 get-email-identity --email-identity "$E" \
+            --query '{Verified:VerifiedForSendingStatus}' --output table
+          echo ""
+          echo ">>> Check the $E inbox for a 'CityPulse'/Amazon SES confirmation email and click the link."
