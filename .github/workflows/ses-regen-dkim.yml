@@ -24,7 +24,9 @@ jobs:
         run: |
           D="${{ github.event.inputs.domain }}"
           aws sesv2 put-email-identity-dkim-signing-attributes \
-            --email-identity "$D" --signing-attributes-origin AWS_SES
+            --email-identity "$D" \
+            --signing-attributes-origin AWS_SES \
+            --signing-attributes NextSigningKeyLength=RSA_2048_BIT
           sleep 3
           echo "===== NEW DKIM CNAME RECORDS for $D (replace the old 3 in GoDaddy) ====="
           for t in $(aws sesv2 get-email-identity --email-identity "$D" \
