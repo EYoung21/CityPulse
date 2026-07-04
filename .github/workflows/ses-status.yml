@@ -1,0 +1,38 @@
+name: SES status (verification + DKIM)
+
+# Read-only. Prints VerifiedForSendingStatus + DKIM status for all four
+# city sending domains so we can see at a glance which are ready to send.
+# Manual trigger; safe to re-run anytime (also used to confirm 423pulse
+# after a DKIM regen).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - name: Per-domain identity status
+        run: |
+          for D in 423pulse.com sfopulse.com phlpulse.com newyorkcitypulse.com; do
+            echo "===================================================="
+            echo "  $D"
+            echo "===================================================="
+            aws sesv2 get-email-identity --email-identity "$D" \
+              --query '{Verified:VerifiedForSendingStatus, DkimStatus:DkimAttributes.Status, DkimEnabled:DkimAttributes.SigningEnabled}' \
+              --output table \
+              || echo "  (identity not found — never created)"
+            echo ""
+          done
+      - name: Account-level send status (sandbox vs production)
+        run: |
+          echo "===================================================="
+          echo "  ACCOUNT (sandbox = can only email verified addrs)"
+          echo "===================================================="
+          aws sesv2 get-account \
+            --query '{ProductionAccess:ProductionAccessEnabled, SendingEnabled:SendingEnabled, Max24Hr:SendQuota.Max24HourSend}' \
+            --output table || echo "  (get-account failed)"
