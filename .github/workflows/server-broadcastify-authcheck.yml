@@ -50,11 +50,13 @@ jobs:
             # Extract creds on the Lambda, curl there, print ONLY the http_code.
             # Creds never leave the box / never hit these logs.
             ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "
-              CFG=\$(ls $REPO/config.yaml $REPO/cities/philly/config.yaml 2>/dev/null | head -1)
-              echo \"config: \$CFG\"
-              U=\$(python3 -c \"import yaml,sys; print(yaml.safe_load(open('\$CFG'))['credentials']['username'])\" 2>/dev/null)
-              P=\$(python3 -c \"import yaml,sys; print(yaml.safe_load(open('\$CFG'))['credentials']['password'])\" 2>/dev/null)
-              if [ -z \"\$U\" ]; then echo 'could not read creds from config'; exit 0; fi
+              CFG=$REPO/config.yaml
+              if [ -f \"\$CFG\" ]; then echo \"root config.yaml: EXISTS\"; else echo \"root config.yaml: MISSING (transcriber falls back to embedded defaults!)\"; fi
+              echo \"WorkingDirectory of pulse-live@philly:\"; systemctl show -p WorkingDirectory pulse-live@philly.service 2>/dev/null || true
+              U=\$(python3 -c \"import yaml; c=yaml.safe_load(open('\$CFG')); print(c['credentials']['username'])\" 2>/dev/null)
+              P=\$(python3 -c \"import yaml; c=yaml.safe_load(open('\$CFG')); print(c['credentials']['password'])\" 2>/dev/null)
+              if [ -z \"\$U\" ]; then echo 'could not read creds from root config.yaml'; exit 0; fi
+              case \"\$U\" in PhillyPulse) echo 'WARNING: username is the PLACEHOLDER value PhillyPulse — real creds not installed';; esac
               echo \"username length: \${#U}  password length: \${#P}  (values hidden)\"
               echo -n 'authed stream HTTP status: '
               curl -sS -m 20 -o /dev/null -w '%{http_code}\n' \
