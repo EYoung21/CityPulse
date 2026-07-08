@@ -1,0 +1,94 @@
+name: Lambda disk triage + revive transcribers
+
+# All cities flatline together + pulse-live@ units "active" but silent (no
+# journal, 0 ingest POSTs) = the classic Lambda-disk-full stall: the
+# transcribers block on writing audio_clips, so they stop transcribing and
+# stop posting while systemd still sees the process alive.
+#
+# This workflow (SSH Hetzner -> Lambda):
+#   1. df -h + du of the clip-staging dirs (confirm the cause).
+#   2. tail the live log (last real activity + any error).
+#   3. prune staged clips older than 10 min (safe — already processed/abandoned).
+#   4. restart every pulse-live@<city> so they pick up the freed disk.
+#   5. re-check df + service state + Hetzner ingest POST count.
+# Idempotent; safe to re-run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lambda_user:
+        description: "SSH user on Lambda"
+        required: false
+        default: "ubuntu"
+      lambda_ip:
+        description: "Lambda IP"
+        required: false
+        default: "150.230.182.19"
+      prune_older_than_min:
+        description: "Delete staged clips older than N minutes"
+        required: false
+        default: "10"
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Triage + revive
+        uses: appleboy/ssh-action@v1
+        env:
+          LAMBDA_USER: ${{ inputs.lambda_user }}
+          LAMBDA_IP: ${{ inputs.lambda_ip }}
+          PRUNE_MIN: ${{ inputs.prune_older_than_min }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 10m
+          envs: LAMBDA_USER,LAMBDA_IP,PRUNE_MIN
+          script: |
+            set -uo pipefail
+            SSH_OPTS="-i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+            REPO=/opt/citypulse-backfill
+            CITIES="nyc sf philly philly2 chattanooga"
+
+            echo "############## 1. DISK BEFORE ##############"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "df -h / ; echo; echo 'clip staging usage:'; du -sh $REPO/audio_clips $REPO/audio_clips_raw 2>/dev/null; echo 'file counts:'; for d in audio_clips audio_clips_raw; do echo -n \"  \$d: \"; ls $REPO/\$d 2>/dev/null | wc -l; done" || true
+
+            echo ""
+            echo "############## 2. LAST LIVE-LOG ACTIVITY ##############"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "tail -n 20 /var/log/pulse-live.log 2>/dev/null || echo '(no /var/log/pulse-live.log)'" || true
+
+            echo ""
+            echo "############## 3. PRUNE STAGED CLIPS (> ${PRUNE_MIN} min old) ##############"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "
+              for d in audio_clips audio_clips_raw; do
+                if [ -d \"$REPO/\$d\" ]; then
+                  before=\$(ls $REPO/\$d 2>/dev/null | wc -l)
+                  find $REPO/\$d -type f -mmin +${PRUNE_MIN} -delete 2>/dev/null || true
+                  after=\$(ls $REPO/\$d 2>/dev/null | wc -l)
+                  echo \"  \$d: \$before -> \$after files\"
+                fi
+              done
+            " || true
+
+            echo ""
+            echo "############## 4. RESTART pulse-live@ (all cities) ##############"
+            for c in $CITIES; do
+              echo "  restart pulse-live@$c"
+              ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "sudo systemctl restart pulse-live@$c.service" || echo "    (restart failed for $c)"
+            done
+
+            echo ""
+            echo "############## 5. WAIT 90s FOR MODEL LOAD + FIRST POSTS ##############"
+            sleep 90
+
+            echo "############## 6. DISK AFTER + SERVICE STATE ##############"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "df -h / | tail -1; for c in $CITIES; do echo -n \"pulse-live@\$c: \"; sudo systemctl is-active pulse-live@\$c.service; done" || true
+
+            echo ""
+            echo "############## 7. RECENT LOG AFTER RESTART ##############"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "tail -n 15 /var/log/pulse-live.log 2>/dev/null || true" || true
+
+            echo ""
+            echo "############## 8. HETZNER INGEST POSTS (last 3 min) ##############"
+            journalctl -u philly-pulse-api --since '3 min ago' --no-pager 2>/dev/null | grep -cE 'POST /api/ingest' | xargs -I{} echo "ingest POSTs (3 min): {}" || echo "ingest POSTs (3 min): (log unavailable)"
