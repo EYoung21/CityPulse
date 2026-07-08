@@ -1,0 +1,45 @@
+name: Stop live feeds (halt failed-auth flood)
+
+# With Broadcastify refusing our credential, the 47 live feeds retry auth every
+# ~18s across all cities = a failed-auth flood that (a) does nothing useful and
+# (b) may keep the account auth-locked. Stop all pulse-live@ and confirm the
+# backfill stays stopped, until Broadcastify accepts the credential again.
+# Manual trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lambda_user:
+        description: "SSH user on Lambda"
+        required: false
+        default: "ubuntu"
+      lambda_ip:
+        description: "Lambda IP"
+        required: false
+        default: "150.230.182.19"
+
+jobs:
+  stop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stop live + backfill
+        uses: appleboy/ssh-action@v1
+        env:
+          LAMBDA_USER: ${{ inputs.lambda_user }}
+          LAMBDA_IP: ${{ inputs.lambda_ip }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 5m
+          envs: LAMBDA_USER,LAMBDA_IP
+          script: |
+            set -uo pipefail
+            SSH_OPTS="-i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+            CITIES="nyc sf philly philly2 chattanooga"
+            for c in $CITIES; do
+              ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "sudo systemctl stop pulse-live@$c.service" && echo "  stopped pulse-live@$c" || true
+            done
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "sudo systemctl disable --now citypulse-backfill 2>/dev/null; sudo pkill -f 'audio.broadcastify.com' 2>/dev/null || true; echo 'backfill + live stopped'"
+            echo "=== confirm nothing is hitting broadcastify ==="
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "echo -n 'broadcastify ffmpeg procs: '; pgrep -af ffmpeg 2>/dev/null | grep -c broadcastify || echo 0"
