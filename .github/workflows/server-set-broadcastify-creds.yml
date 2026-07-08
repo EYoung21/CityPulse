@@ -1,0 +1,94 @@
+name: Set Broadcastify creds + revive feeds
+
+# The Lambda's /opt/citypulse-backfill/config.yaml carries a PLACEHOLDER
+# Broadcastify password, so every feed 401s and all cities go dark. This
+# installs the real Premium creds (from repo secrets, never logged) into that
+# config, restarts every pulse-live@, and verifies the 401 clears + ingest
+# resumes.
+#
+# Set repo secrets first:
+#   BROADCASTIFY_PASSWORD  (required — your real Premium password)
+#   BROADCASTIFY_USERNAME  (optional — defaults to PhillyPulse)
+#
+# The password travels Hetzner->Lambda over the SSH channel via stdin (not in
+# process args) and is written to a 600 temp file that's deleted after use.
+# config.yaml is backed up first and restored if the edit doesn't parse.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lambda_user:
+        description: "SSH user on Lambda"
+        required: false
+        default: "ubuntu"
+      lambda_ip:
+        description: "Lambda IP"
+        required: false
+        default: "150.230.182.19"
+
+jobs:
+  set-creds:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install creds + restart + verify
+        uses: appleboy/ssh-action@v1
+        env:
+          BC_USER: ${{ secrets.BROADCASTIFY_USERNAME }}
+          BC_PASS: ${{ secrets.BROADCASTIFY_PASSWORD }}
+          LAMBDA_USER: ${{ inputs.lambda_user }}
+          LAMBDA_IP: ${{ inputs.lambda_ip }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 10m
+          envs: BC_USER,BC_PASS,LAMBDA_USER,LAMBDA_IP
+          script: |
+            set -uo pipefail
+            SSH_OPTS="-i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+            REPO=/opt/citypulse-backfill
+            CITIES="nyc sf philly philly2 chattanooga"
+
+            [ -z "${BC_USER:-}" ] && BC_USER="PhillyPulse"
+            if [ -z "${BC_PASS:-}" ]; then
+              echo "ERROR: BROADCASTIFY_PASSWORD secret is not set — aborting."; exit 1
+            fi
+            echo "installing creds for username '$BC_USER' (password hidden, length ${#BC_PASS})"
+
+            # Ship creds to Lambda over the SSH channel (stdin), not argv.
+            printf '%s\n%s\n' "$BC_USER" "$BC_PASS" \
+              | ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "cat > /tmp/bc_creds && chmod 600 /tmp/bc_creds"
+
+            echo "=== backup + patch config.yaml (first username/password = credentials block) ==="
+            # Updater is base64 on ONE line (keeps it inside the YAML block scalar,
+            # no nested-quote/$-expansion hazard); decode + run it on the Lambda.
+            BC_PY_B64='aW1wb3J0IHJlLCBzaHV0aWwsIHlhbWwsIG9zCnBhdGggPSAnL29wdC9jaXR5cHVsc2UtYmFja2ZpbGwvY29uZmlnLnlhbWwnCnNodXRpbC5jb3B5KHBhdGgsIHBhdGggKyAnLmJhaycpCnUsIHAgPSBvcGVuKCcvdG1wL2JjX2NyZWRzJykucmVhZCgpLnNwbGl0bGluZXMoKVs6Ml0KcyA9IG9wZW4ocGF0aCkucmVhZCgpCnMgPSByZS5zdWIocicoP20pXihccyp1c2VybmFtZTpccyopLiokJywgbGFtYmRhIG06IG0uZ3JvdXAoMSkgKyAnIicgKyB1ICsgJyInLCBzLCBjb3VudD0xKQpzID0gcmUuc3ViKHInKD9tKV4oXHMqcGFzc3dvcmQ6XHMqKS4qJCcsIGxhbWJkYSBtOiBtLmdyb3VwKDEpICsgJyInICsgcCArICciJywgcywgY291bnQ9MSkKdHJ5OgogICAgeWFtbC5zYWZlX2xvYWQocykKZXhjZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgcHJpbnQoJ1BBUlNFIEZBSUxFRCwga2VlcGluZyBiYWNrdXA6JywgZSk7IHJhaXNlIFN5c3RlbUV4aXQoMSkKb3BlbihwYXRoLCAndycpLndyaXRlKHMpCm9zLnJlbW92ZSgnL3RtcC9iY19jcmVkcycpCnByaW50KCdjb25maWcueWFtbCBwYXRjaGVkICsgcGFyc2VzIE9LJykK'
+            echo "$BC_PY_B64" | ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "base64 -d > /tmp/bc_update.py"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "python3 /tmp/bc_update.py; rc=\$?; rm -f /tmp/bc_update.py; exit \$rc" \
+              || { echo 'patch failed — config.yaml.bak preserved on Lambda'; exit 1; }
+
+            echo ""
+            echo "=== restart pulse-live@ (all cities) ==="
+            for c in $CITIES; do
+              ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "sudo systemctl restart pulse-live@$c.service" && echo "  restarted $c" || echo "  FAILED $c"
+            done
+
+            echo ""
+            echo "=== wait 90s for model load + first connections ==="
+            sleep 90
+
+            echo "=== authed stream status (expect 200 now) ==="
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "
+              U=\$(python3 -c \"import yaml;print(yaml.safe_load(open('$REPO/config.yaml'))['credentials']['username'])\")
+              P=\$(python3 -c \"import yaml;print(yaml.safe_load(open('$REPO/config.yaml'))['credentials']['password'])\")
+              echo -n 'HTTP status: '
+              curl -sS -m 20 -o /dev/null -w '%{http_code}\n' -u \"\$U:\$P\" http://audio.broadcastify.com/4603.mp3
+            " || true
+
+            echo ""
+            echo "=== recent log (want transcriptions, NOT 'EOF, reconnecting') ==="
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "tail -n 20 /var/log/pulse-live.log 2>/dev/null" || true
+
+            echo ""
+            echo "=== Hetzner ingest POSTs (last 2 min) ==="
+            journalctl -u philly-pulse-api --since '2 min ago' --no-pager 2>/dev/null | grep -cE 'POST /api/ingest' | xargs -I{} echo "ingest POSTs: {}" || echo "(log unavailable)"
