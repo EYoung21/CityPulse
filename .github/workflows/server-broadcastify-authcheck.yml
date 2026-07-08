@@ -1,0 +1,65 @@
+name: Broadcastify auth check (feed source)
+
+# All live feeds across all cities EOF-on-connect while Broadcastify itself is
+# up and our Hetzner+Lambda are healthy -> the Broadcastify account/connection
+# is being refused. This tells account-lapse from IP-block by curling ONE feed
+# from the Lambda WITH the configured Premium creds and printing ONLY the HTTP
+# status (never the credentials):
+#   200 -> creds OK, streaming allowed (EOF is a concurrency/ToS limit)
+#   401/403 -> creds rejected -> lapsed Premium subscription (or changed pw)
+#   000/timeout -> network egress problem from Lambda
+# Read-only. Manual trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lambda_user:
+        description: "SSH user on Lambda"
+        required: false
+        default: "ubuntu"
+      lambda_ip:
+        description: "Lambda IP"
+        required: false
+        default: "150.230.182.19"
+      feed_id:
+        description: "Broadcastify feed id to probe"
+        required: false
+        default: "4603"
+
+jobs:
+  authcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe one feed with configured creds (status only)
+        uses: appleboy/ssh-action@v1
+        env:
+          LAMBDA_USER: ${{ inputs.lambda_user }}
+          LAMBDA_IP: ${{ inputs.lambda_ip }}
+          FEED_ID: ${{ inputs.feed_id }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 5m
+          envs: LAMBDA_USER,LAMBDA_IP,FEED_ID
+          script: |
+            set -uo pipefail
+            SSH_OPTS="-i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+            REPO=/opt/citypulse-backfill
+
+            # Extract creds on the Lambda, curl there, print ONLY the http_code.
+            # Creds never leave the box / never hit these logs.
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "
+              CFG=\$(ls $REPO/cities/philly/config.yaml $REPO/config.yaml 2>/dev/null | head -1)
+              echo \"config: \$CFG\"
+              U=\$(python3 -c \"import yaml,sys; print(yaml.safe_load(open('\$CFG'))['credentials']['username'])\" 2>/dev/null)
+              P=\$(python3 -c \"import yaml,sys; print(yaml.safe_load(open('\$CFG'))['credentials']['password'])\" 2>/dev/null)
+              if [ -z \"\$U\" ]; then echo 'could not read creds from config'; exit 0; fi
+              echo \"username length: \${#U}  password length: \${#P}  (values hidden)\"
+              echo -n 'authed stream HTTP status: '
+              curl -sS -m 20 -o /dev/null -w '%{http_code}\n' \
+                -u \"\$U:\$P\" \"http://audio.broadcastify.com/${FEED_ID}.mp3\" || echo '(curl failed)'
+              echo -n 'first-bytes content-type: '
+              curl -sS -m 20 -r 0-64 -o /dev/null -w '%{content_type}\n' \
+                -u \"\$U:\$P\" \"http://audio.broadcastify.com/${FEED_ID}.mp3\" || echo '(range curl failed)'
+            " || true
