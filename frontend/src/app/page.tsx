@@ -2717,10 +2717,7 @@ function MapHome() {
       {/* Always-on "is this area safe right now?" read — map view, not during
           an active trip (the maneuver chip owns the top slot then). */}
       {viewTab === "map" && !tripGeometry && (
-        <div
-          className="absolute z-[1001] left-1/2 -translate-x-1/2 pointer-events-none flex justify-center"
-          style={{ top: "calc(env(safe-area-inset-top, 0px) + 4.25rem)" }}
-        >
+        <div className="pp-safety-pill absolute z-[1001] left-1/2 -translate-x-1/2 pointer-events-none flex justify-center">
           <AreaSafetyPill incidents={visibleIncidents} />
         </div>
       )}
