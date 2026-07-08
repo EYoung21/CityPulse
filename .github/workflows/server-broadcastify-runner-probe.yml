@@ -1,0 +1,30 @@
+name: Broadcastify runner probe (IP-block vs bad-pass)
+
+# Tests the SAME secret creds from the GitHub runner's IP (different from the
+# Lambda). Prints only the HTTP status, never the password.
+#   runner 200 + Lambda 401 -> creds are CORRECT; Lambda IP is blocked/limited
+#   runner 401              -> the secret's password is wrong (or account issue)
+# Read-only. Manual trigger.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      BC_USER: ${{ secrets.BROADCASTIFY_USERNAME }}
+      BC_PASS: ${{ secrets.BROADCASTIFY_PASSWORD }}
+    steps:
+      - name: Curl audio.broadcastify.com from runner IP
+        run: |
+          [ -z "$BC_USER" ] && BC_USER=PhillyPulse
+          if [ -z "$BC_PASS" ]; then echo "BROADCASTIFY_PASSWORD secret not set"; exit 1; fi
+          echo "username: $BC_USER (password hidden, length ${#BC_PASS})"
+          echo "runner public IP: $(curl -s -m 10 https://api.ipify.org || echo unknown)"
+          echo -n "authed stream HTTP status (runner IP): "
+          curl -sS -m 20 -o /dev/null -w '%{http_code}\n' -u "$BC_USER:$BC_PASS" \
+            "http://audio.broadcastify.com/4603.mp3" || echo "(curl failed)"
+          echo -n "second feed (7550) status: "
+          curl -sS -m 20 -o /dev/null -w '%{http_code}\n' -u "$BC_USER:$BC_PASS" \
+            "http://audio.broadcastify.com/7550.mp3" || echo "(curl failed)"
