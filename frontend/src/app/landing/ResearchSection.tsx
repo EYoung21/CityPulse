@@ -90,7 +90,7 @@ export function ResearchSection({ city }: Props) {
           <p className="lp-route-section-sub">
             Every transcript is geocoded, categorized, and timestamped &mdash;
             then served as a searchable, paginated stream. Public reads
-            cover the past hour; <strong>Pro</strong> unlocks extended history
+            cover the last 24 hours; <strong>Pro</strong> unlocks extended history
             and CSV export for longitudinal work.
           </p>
         </header>

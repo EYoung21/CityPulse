@@ -383,6 +383,11 @@
     --pp-below-app-topnav-top: calc(
       env(safe-area-inset-top, 0px) + var(--pp-app-topnav-height) + var(--pp-below-topnav-gap)
     );
+    /* Height of the desktop filter rail (two stacked rows: time window +
+       category chips, at top:0.75rem). Single source of truth so the
+       floating AlertToast + AreaSafetyPill can anchor *below* the rail
+       instead of landing on top of the category chips. */
+    --pp-filter-rail-height: 6.25rem;
     /* Right edge of the floating SearchInput pill + gap — map filters
        must not extend left of this line (see SearchSidebar search slot). */
     --pp-map-filters-left: max(
@@ -775,6 +780,13 @@
   top: var(--pp-below-app-topnav-top);
 }
 
+/* Ambient "This area: …" pill. Mobile base: sit below the search pill.
+   On mobile the filter rail lives at the bottom, so the top-center lane
+   is clear; the desktop @media block below drops it under the filter rail. */
+.pp-safety-pill {
+  top: calc(env(safe-area-inset-top, 0px) + 4.25rem);
+}
+
 /* Desktop map filter rail — stacked rows in the map canvas right of search. */
 @media (min-width: 768px) {
   .pp-map-filter-rail {
@@ -795,12 +807,21 @@
     margin-top: 4.75rem !important;
   }
 
-  /* Desktop AlertToast lives below the app topnav; on mobile it
-     anchors below the search pill via inline style (see
-     AlertToast.tsx). This override wins on desktop because of
-     `!important`, which the inline style does not have. */
+  /* Desktop AlertToast: sit *below* the two-row filter rail so it never
+     covers the category chips. On mobile it anchors below the search pill
+     via inline style (see AlertToast.tsx); the filter rail is at the
+     bottom there, so the top lane is clear. This override wins on desktop
+     because of `!important`, which the inline style does not have. */
   .pp-alert-toast {
-    top: calc(var(--pp-below-app-topnav-top) + 0.5rem) !important;
+    top: calc(var(--pp-below-app-topnav-top) + var(--pp-filter-rail-height) + 0.5rem) !important;
+  }
+
+  /* Desktop AreaSafetyPill: same story — drop it below the filter rail.
+     The pill is `absolute` inside the map canvas (top:0 = below the tab
+     bar), so it uses the rail's own top offset (0.75rem), not the
+     viewport-relative topnav var the fixed toast uses. */
+  .pp-safety-pill {
+    top: calc(0.75rem + var(--pp-filter-rail-height) + 0.5rem);
   }
 }
 
