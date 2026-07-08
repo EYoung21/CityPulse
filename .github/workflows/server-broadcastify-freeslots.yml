@@ -1,0 +1,94 @@
+name: Free Broadcastify slots (stop backfill) + revive live
+
+# Per docs/INGEST-OPS.md: realtime has priority over archive catch-up; the
+# Broadcastify account has a concurrent-connection cap. If citypulse-backfill
+# is running it starves the 47 live feeds -> EOF/401 on every feed, all cities
+# dark. This:
+#   1. stops + disables citypulse-backfill (frees account slots)
+#   2. stops ALL pulse-live@ to fully drain the account's connections
+#   3. waits, then tests ONE feed's auth from the Lambda (expect 200 once freed)
+#   4. restarts pulse-live@ (backfill stays stopped)
+#   5. verifies log (no EOF) + ingest POSTs
+# Read/act; manual trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lambda_user:
+        description: "SSH user on Lambda"
+        required: false
+        default: "ubuntu"
+      lambda_ip:
+        description: "Lambda IP"
+        required: false
+        default: "150.230.182.19"
+
+jobs:
+  freeslots:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stop backfill, drain, test, revive
+        uses: appleboy/ssh-action@v1
+        env:
+          LAMBDA_USER: ${{ inputs.lambda_user }}
+          LAMBDA_IP: ${{ inputs.lambda_ip }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 10m
+          envs: LAMBDA_USER,LAMBDA_IP
+          script: |
+            set -uo pipefail
+            SSH_OPTS="-i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+            REPO=/opt/citypulse-backfill
+            CITIES="nyc sf philly philly2 chattanooga"
+
+            echo "############## 1. what's using the Broadcastify account ##############"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "
+              echo 'backfill-ish units:'; systemctl list-units --type=service --all 2>/dev/null | grep -iE 'backfill|citypulse' || echo '  (none listed)'
+              echo -n 'active ffmpeg (broadcastify) procs: '; pgrep -af ffmpeg 2>/dev/null | grep -c broadcastify || echo 0
+            " || true
+
+            echo ""
+            echo "############## 2. stop + disable backfill ##############"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "
+              for u in citypulse-backfill 'citypulse-backfill@*' citypulse-downloader; do
+                sudo systemctl disable --now \$u 2>/dev/null && echo \"  stopped \$u\" || true
+              done
+              sudo systemctl stop 'citypulse-backfill*' 2>/dev/null || true
+            " || true
+
+            echo ""
+            echo "############## 3. stop ALL pulse-live@ (drain account connections) ##############"
+            for c in $CITIES; do
+              ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "sudo systemctl stop pulse-live@$c.service" && echo "  stopped pulse-live@$c" || true
+            done
+            echo "  killing any lingering broadcastify ffmpeg..."
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "sudo pkill -f 'audio.broadcastify.com' 2>/dev/null || true"
+
+            echo ""
+            echo "############## 4. wait 45s for Broadcastify to drop our sessions ##############"
+            sleep 45
+
+            echo "############## 5. TEST one feed auth with config creds (expect 200 if it was a slot cap) ##############"
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "
+              U=\$(python3 -c \"import yaml;print(yaml.safe_load(open('$REPO/config.yaml'))['credentials']['username'])\")
+              P=\$(python3 -c \"import yaml;print(yaml.safe_load(open('$REPO/config.yaml'))['credentials']['password'])\")
+              for f in 13671 4603 7550; do
+                echo -n \"  feed \$f: \"; curl -sS -m 20 -o /dev/null -w '%{http_code}\n' -u \"\$U:\$P\" http://audio.broadcastify.com/\$f.mp3
+              done
+            " || true
+
+            echo ""
+            echo "############## 6. restart pulse-live@ (backfill stays stopped) ##############"
+            for c in $CITIES; do
+              ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "sudo systemctl start pulse-live@$c.service" && echo "  started pulse-live@$c" || true
+            done
+
+            echo ""
+            echo "############## 7. wait 90s, check log + ingest ##############"
+            sleep 90
+            ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "tail -n 18 /var/log/pulse-live.log 2>/dev/null" || true
+            echo ""
+            journalctl -u philly-pulse-api --since '2 min ago' --no-pager 2>/dev/null | grep -cE 'POST /api/ingest' | xargs -I{} echo "Hetzner ingest POSTs (2 min): {}" || echo "(log unavailable)"
