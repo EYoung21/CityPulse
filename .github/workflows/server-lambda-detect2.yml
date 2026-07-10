@@ -1,0 +1,34 @@
+name: Lambda provider detect (AWS/GCP/Azure)
+
+on:
+  workflow_dispatch:
+    inputs:
+      lambda_user: { description: "SSH user", required: false, default: "ubuntu" }
+      lambda_ip: { description: "Lambda IP", required: false, default: "150.230.182.19" }
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe cloud metadata
+        uses: appleboy/ssh-action@v1
+        env:
+          LAMBDA_USER: ${{ inputs.lambda_user }}
+          LAMBDA_IP: ${{ inputs.lambda_ip }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 5m
+          envs: LAMBDA_USER,LAMBDA_IP
+          script: |
+            set -uo pipefail
+            S="-i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+            echo "=== AWS IMDSv2 ==="
+            ssh $S "$LAMBDA_USER@$LAMBDA_IP" "T=\$(curl -s -m3 -X PUT 'http://169.254.169.254/latest/api/token' -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' 2>/dev/null); curl -s -m3 -H \"X-aws-ec2-metadata-token: \$T\" http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null; echo; curl -s -m3 -H \"X-aws-ec2-metadata-token: \$T\" http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null; echo; curl -s -m3 -H \"X-aws-ec2-metadata-token: \$T\" http://169.254.169.254/latest/dynamic/instance-identity/document 2>/dev/null | head -c 400" || echo "(no AWS)"
+            echo ""; echo "=== GCP ==="
+            ssh $S "$LAMBDA_USER@$LAMBDA_IP" "curl -s -m3 -H 'Metadata-Flavor: Google' http://169.254.169.254/computeMetadata/v1/instance/machine-type 2>/dev/null" || echo "(no GCP)"
+            echo ""; echo "=== Azure ==="
+            ssh $S "$LAMBDA_USER@$LAMBDA_IP" "curl -s -m3 -H 'Metadata: true' 'http://169.254.169.254/metadata/instance?api-version=2021-02-01' 2>/dev/null | head -c 300" || echo "(no Azure)"
+            echo ""; echo "=== host / IP / kernel ==="
+            ssh $S "$LAMBDA_USER@$LAMBDA_IP" "hostname; hostnamectl 2>/dev/null | grep -iE 'chassis|virtual|hardware|operating'; echo 'pubip:'; curl -s -m5 https://api.ipify.org; echo; echo 'nvidia:'; nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo none" || true
