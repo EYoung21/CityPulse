@@ -1,0 +1,73 @@
+name: Lambda power-off (idle GPU)
+
+# Feeds are blocked by Broadcastify, so the A10 transcription host is idle and
+# wasting money. pulse-live@ + backfill are already stopped. This detects the
+# cloud provider and, if it's a stop/start-capable provider (Oracle/AWS/GCP/
+# Azure) where an OS shutdown halts compute billing, powers the instance off.
+# Non-destructive: shutdown preserves the boot volume + all config/data. It
+# does NOT terminate. Restart is from the cloud console (SSH won't reach a
+# powered-off box). If the host is bare-metal (e.g. Lambda Labs) where poweroff
+# doesn't save money, it reports and does NOT act.
+# Manual trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lambda_user:
+        description: "SSH user on Lambda"
+        required: false
+        default: "ubuntu"
+      lambda_ip:
+        description: "Lambda IP"
+        required: false
+        default: "150.230.182.19"
+
+jobs:
+  poweroff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect provider + confirm idle + stop
+        uses: appleboy/ssh-action@v1
+        env:
+          LAMBDA_USER: ${{ inputs.lambda_user }}
+          LAMBDA_IP: ${{ inputs.lambda_ip }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 6m
+          envs: LAMBDA_USER,LAMBDA_IP
+          script: |
+            set -uo pipefail
+            SSH_OPTS="-i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+            CITIES="nyc sf philly philly2 chattanooga"
+
+            echo "############## provider detection ##############"
+            MFR=$(ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "sudo dmidecode -s system-manufacturer 2>/dev/null | head -1" || echo unknown)
+            PROD=$(ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "sudo dmidecode -s system-product-name 2>/dev/null | head -1" || echo unknown)
+            OCI=$(ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "curl -s -m 3 -H 'Authorization: Bearer Oracle' http://169.254.169.254/opc/v2/instance/ 2>/dev/null | tr ',' '\n' | grep -iE 'region|shape|displayName' | head -5" || true)
+            echo "manufacturer: $MFR"
+            echo "product:      $PROD"
+            echo "OCI metadata: ${OCI:-<none>}"
+
+            echo ""
+            echo "############## confirm idle (services + GPU) ##############"
+            for c in $CITIES; do
+              echo -n "pulse-live@$c: "; ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "systemctl is-active pulse-live@$c.service 2>/dev/null" || echo inactive
+            done
+            echo -n "citypulse-backfill: "; ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "systemctl is-active citypulse-backfill 2>/dev/null" || echo inactive
+            echo -n "broadcastify ffmpeg procs: "; ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "pgrep -af ffmpeg 2>/dev/null | grep -c broadcastify" || echo 0
+            echo "GPU:"; ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader 2>/dev/null || echo '(no nvidia-smi)'"
+            echo "uptime:"; ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "uptime"
+
+            echo ""
+            echo "############## decide + act ##############"
+            if echo "$MFR $PROD $OCI" | grep -qiE "oracle|amazon|ec2|google|compute engine|microsoft|hyper-v|virtual machine"; then
+              echo "Provider supports reversible stop — scheduling poweroff in 1 min."
+              echo ">>> To bring it back: start the instance from your cloud console, then ping me to restart services."
+              ssh $SSH_OPTS "$LAMBDA_USER@$LAMBDA_IP" "sudo shutdown -h +1 'CityPulse: idle GPU poweroff (feeds blocked)'" || true
+              echo "POWEROFF SCHEDULED."
+            else
+              echo "Provider unclear / possibly bare-metal ($MFR / $PROD)."
+              echo "NOT powering off — on a bare-metal GPU host an OS poweroff does NOT stop billing (you'd need to TERMINATE via the console, which is destructive). Leaving it running; decide from the console."
+            fi
