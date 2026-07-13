@@ -29,6 +29,14 @@ import re
 import subprocess
 import tempfile
 import time
+
+from broadcastify_pacing import (
+    day_strings_for_backfill,
+    pause_after_list,
+    pause_day_transition,
+    pause_login,
+    pause_session_refresh,
+)
 import uuid
 import wave
 
@@ -261,12 +269,10 @@ def drain_failed_ingest_queue(max_items: int = 200) -> tuple[int, int]:
 # Once hit, every request returns 429 "Download limit exceeded" until
 # the quota resets (likely midnight US-Eastern).
 
-# Defaults are tuned for the Premium account flow on Lambda: Premium has
-# a much higher per-account quota, so we drop the per-segment cooldown
-# from 45s → 8s. All knobs are env-overridable so a free-tier user can
-# still slow it back down.
-DOWNLOAD_DELAY_BASE = float(os.environ.get("BACKFILL_DELAY_BASE", "8"))
-DOWNLOAD_DELAY_JITTER = float(os.environ.get("BACKFILL_DELAY_JITTER", "3"))
+# Defaults tuned for Premium but paced like a human browsing archives.
+# All knobs are env-overridable without redeploying code.
+DOWNLOAD_DELAY_BASE = float(os.environ.get("BACKFILL_DELAY_BASE", "12"))
+DOWNLOAD_DELAY_JITTER = float(os.environ.get("BACKFILL_DELAY_JITTER", "5"))
 BACKOFF_BASE = float(os.environ.get("BACKFILL_BACKOFF_BASE", "60"))
 BACKOFF_MULTIPLIER = float(os.environ.get("BACKFILL_BACKOFF_MULT", "2"))
 BACKOFF_MAX = float(os.environ.get("BACKFILL_BACKOFF_MAX", "1800"))
@@ -313,7 +319,7 @@ def _record_success():
 def _download_delay():
     """Sleep between successful downloads with jitter."""
     delay = DOWNLOAD_DELAY_BASE + random.uniform(-DOWNLOAD_DELAY_JITTER, DOWNLOAD_DELAY_JITTER)
-    time.sleep(max(5, delay))
+    time.sleep(max(8, delay))
 
 # ── Per-city config overlay ──────────────────────────────────────
 
@@ -402,6 +408,7 @@ def get_broadcastify_session() -> requests.Session:
 
     login_url = "https://www.broadcastify.com/login/"
     session.get(login_url)
+    pause_login()
 
     login_data = {
         "username": USERNAME,
@@ -451,6 +458,7 @@ def fetch_archive_links(session: requests.Session, feed_id: str, day: str) -> li
                 return []
             _record_success()
             data = resp.json()
+            pause_after_list()
         except QuotaExhaustedError:
             raise
         except Exception as e:
@@ -728,14 +736,11 @@ def load_day_list(path: str) -> list[str]:
 
 
 def generate_days_range(days: int) -> list[str]:
-    """Generate a contiguous list of the last N days (OLDEST first).
+    """Generate a contiguous list of the last N days.
 
-    Oldest-first so backfill races the 365-day Broadcastify deletion cliff:
-    the deepest days expire first, and realtime capture already covers the
-    recent end (post ~2026-04-13), so there's no value re-pulling it first.
+    Order controlled by BACKFILL_DAY_ORDER (default newest for catch-up).
     """
-    today = datetime.date.today()
-    return [(today - datetime.timedelta(days=d)).isoformat() for d in range(days, 0, -1)]
+    return day_strings_for_backfill(days)
 
 
 # ── Main ─────────────────────────────────────────────────────────
@@ -823,6 +828,7 @@ def main():
         if time.time() - session_age > 1800:
             print("  [SESSION] Refreshing Broadcastify login...")
             try:
+                pause_session_refresh()
                 session = get_broadcastify_session()
                 session_age = time.time()
             except Exception as e:
@@ -925,6 +931,7 @@ def main():
                 progress[day_str] = f"done_{day_transcribed}"
                 save_progress(feed_id, progress)
                 print(f"  --- Day {day_str} [{feed_label}]: {day_transcribed} transcripts ---")
+                pause_day_transition()
 
         if not quota_exhausted:
             print(f"\n=== Feed {feed_label} complete ===")

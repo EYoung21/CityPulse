@@ -102,15 +102,13 @@ LLM_API_KEY=ollama
 LLM_MODEL=qwen2.5:7b-instruct-q5_K_M
 LLM_PROVIDER_NAME=ollama-local
 WHISPER_MODEL_SIZE=large-v3-turbo
-BACKFILL_DAY_LIMIT=365
+BACKFILL_DAY_LIMIT=30
+BACKFILL_DAY_ORDER=newest
 BACKFILL_HEARTBEAT=$HEARTBEAT
 # Order is the run order (see lambda_backfill_runner.discover_cities).
-# SF goes first so it gets the freshest Broadcastify daily quota after
-# each midnight-ET reset — historically it was last and 429'd out of
-# every cycle while the other cities drained the quota.
 BACKFILL_CITY_GLOB="sf chattanooga nyc philly"
-BACKFILL_DELAY_BASE=8
-BACKFILL_DELAY_JITTER=3
+BACKFILL_DELAY_BASE=12
+BACKFILL_DELAY_JITTER=5
 BACKFILL_BACKOFF_BASE=60
 COOLDOWN_AFTER_QUOTA=7200
 CYCLE_SLEEP_S=600
@@ -157,6 +155,9 @@ append_if_missing LLM_MODEL qwen2.5:7b-instruct-q5_K_M
 append_if_missing LLM_PROVIDER_NAME ollama-local
 append_if_missing BACKFILL_INGEST_TIMEOUT_SEC 600
 append_if_missing BRIDGE_POST_TIMEOUT_SEC 540
+append_if_missing BACKFILL_DAY_ORDER newest
+append_if_missing BACKFILL_DELAY_BASE 12
+append_if_missing BACKFILL_DELAY_JITTER 5
 
 echo "==> 5. systemd: local ingest API ($INGEST_API_SERVICE_FILE)"
 sudo tee "$INGEST_API_SERVICE_FILE" >/dev/null <<EOF

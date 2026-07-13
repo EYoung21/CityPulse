@@ -15,16 +15,28 @@ jobs:
     steps:
       - name: Patch env + restart
         uses: appleboy/ssh-action@v1
+        env:
+          BC_USER: ${{ secrets.BROADCASTIFY_USERNAME }}
+          BC_PASS: ${{ secrets.BROADCASTIFY_PASSWORD }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: root
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: BC_USER,BC_PASS
           command_timeout: 1m
           script: |
             set -e
+            [ -z "${BC_USER:-}" ] && BC_USER="bobjim8889"
+            if [ -n "${BC_PASS:-}" ] && [ -f /etc/citypulse-downloader.env ]; then
+              sed -i \
+                -e "s|^BROADCASTIFY_USERNAME=.*|BROADCASTIFY_USERNAME=${BC_USER}|" \
+                -e "s|^BROADCASTIFY_PASSWORD=.*|BROADCASTIFY_PASSWORD=${BC_PASS}|" \
+                /etc/citypulse-downloader.env
+              echo "Broadcastify creds synced"
+            fi
             sed -i \
               -e 's/^DOWNLOADER_DELAY_BASE=.*/DOWNLOADER_DELAY_BASE=10/' \
-              -e 's/^DOWNLOADER_DELAY_JITTER=.*/DOWNLOADER_DELAY_JITTER=3/' \
+              -e 's/^DOWNLOADER_DELAY_JITTER=.*/DOWNLOADER_DELAY_JITTER=4/' \
               -e 's/^DOWNLOADER_BACKOFF_BASE=.*/DOWNLOADER_BACKOFF_BASE=45/' \
               /etc/citypulse-downloader.env
             grep -E '^DOWNLOADER_(DELAY|BACKOFF)' /etc/citypulse-downloader.env

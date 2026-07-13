@@ -120,13 +120,14 @@ LAMBDA_INCOMING_DIR=${LAMBDA_INCOMING_DIR}
 # Same allowlist the old monolithic backfill used — keeps both pipelines
 # in sync on which cities are active.
 BACKFILL_CITY_GLOB="philly chattanooga nyc sf"
-BACKFILL_DAY_LIMIT=150
+BACKFILL_DAY_LIMIT=30
+BACKFILL_DAY_ORDER=newest
 
 # Hetzner IP isn't throttled the way Lambda was, so we can be a bit more
 # aggressive on pacing. If Broadcastify ever starts rate-limiting us
 # anyway, bump these (or extend DOWNLOADER_BACKOFF_*).
-DOWNLOADER_DELAY_BASE=5
-DOWNLOADER_DELAY_JITTER=2
+DOWNLOADER_DELAY_BASE=10
+DOWNLOADER_DELAY_JITTER=4
 DOWNLOADER_BACKOFF_BASE=30
 DOWNLOADER_BACKOFF_MULT=2
 DOWNLOADER_BACKOFF_MAX=900
