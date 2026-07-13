@@ -70,6 +70,15 @@ sudo touch "$HEARTBEAT" "$LOG_FILE"
 sudo chown "$(id -un)" "$HEARTBEAT" "$LOG_FILE"
 
 echo "==> 5. Env file at $ENV_FILE"
+# Reuse the live-ingest secret drop-in when present (same Bearer the
+# pulse-live@ units use). Falls back to an existing transcriber env.
+INGEST_SECRET=""
+if [[ -f /etc/systemd/system/pulse-live@.service.d/ingest-secret.conf ]]; then
+  INGEST_SECRET="$(sudo sed -n 's/^.*PULSE_INGEST_SECRET=//p' /etc/systemd/system/pulse-live@.service.d/ingest-secret.conf | tr -d '\n')"
+fi
+if [[ -z "$INGEST_SECRET" && -f "$ENV_FILE" ]]; then
+  INGEST_SECRET="$(awk -F= '/^PULSE_INGEST_SECRET=/{print $2; exit}' "$ENV_FILE" || true)"
+fi
 if [[ ! -f "$ENV_FILE" ]]; then
   sudo tee "$ENV_FILE" >/dev/null <<EOF
 # /etc/citypulse-archive-transcriber.env — consumed by
@@ -95,11 +104,21 @@ TRANSCRIBER_ORPHAN_AGE_S=3600
 # Sweep cycle.
 TRANSCRIBER_JANITOR_INTERVAL_S=600
 
+PULSE_INGEST_SECRET=${INGEST_SECRET}
+
 PYTHONUNBUFFERED=1
 EOF
   sudo chmod 640 "$ENV_FILE"
 else
   echo "    Keeping existing $ENV_FILE"
+  if [[ -n "$INGEST_SECRET" ]]; then
+    if grep -q '^PULSE_INGEST_SECRET=' "$ENV_FILE" 2>/dev/null; then
+      sudo sed -i "s|^PULSE_INGEST_SECRET=.*|PULSE_INGEST_SECRET=${INGEST_SECRET}|" "$ENV_FILE"
+    else
+      echo "PULSE_INGEST_SECRET=${INGEST_SECRET}" | sudo tee -a "$ENV_FILE" >/dev/null
+    fi
+    echo "    synced PULSE_INGEST_SECRET from pulse-live drop-in"
+  fi
 fi
 
 echo "==> 6. systemd unit at $SERVICE_FILE"
