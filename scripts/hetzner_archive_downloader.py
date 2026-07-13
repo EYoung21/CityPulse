@@ -73,6 +73,15 @@ from pathlib import Path
 import requests
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from broadcastify_pacing import (
+    day_strings_for_backfill,
+    pause_after_list,
+    pause_day_transition,
+    pause_login,
+    pause_session_refresh,
+)
+
 # ── Paths / env ─────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -92,11 +101,9 @@ CITY_GLOB = os.environ.get("BACKFILL_CITY_GLOB", "").split()
 CYCLE_SLEEP_S = int(os.environ.get("DOWNLOADER_CYCLE_SLEEP_S", "600"))
 MAX_QUEUE_DEPTH = int(os.environ.get("DOWNLOADER_MAX_QUEUE_DEPTH", "40"))
 
-# Pacing knobs — Hetzner IP is not throttled the way Lambda is, so we can
-# go 2-3x faster than the old defaults, but still polite enough that we
-# don't trip whatever per-IP heuristic Broadcastify has.
-DOWNLOAD_DELAY_BASE = float(os.environ.get("DOWNLOADER_DELAY_BASE", "5"))
-DOWNLOAD_DELAY_JITTER = float(os.environ.get("DOWNLOADER_DELAY_JITTER", "2"))
+# Pacing knobs — still human-paced even on Hetzner's friendlier IP.
+DOWNLOAD_DELAY_BASE = float(os.environ.get("DOWNLOADER_DELAY_BASE", "10"))
+DOWNLOAD_DELAY_JITTER = float(os.environ.get("DOWNLOADER_DELAY_JITTER", "4"))
 BACKOFF_BASE = float(os.environ.get("DOWNLOADER_BACKOFF_BASE", "30"))
 BACKOFF_MULT = float(os.environ.get("DOWNLOADER_BACKOFF_MULT", "2"))
 BACKOFF_MAX = float(os.environ.get("DOWNLOADER_BACKOFF_MAX", "900"))
@@ -160,7 +167,7 @@ def _record_success() -> None:
 
 def _polite_sleep() -> None:
     delay = DOWNLOAD_DELAY_BASE + random.uniform(-DOWNLOAD_DELAY_JITTER, DOWNLOAD_DELAY_JITTER)
-    time.sleep(max(2.0, delay))
+    time.sleep(max(6.0, delay))
 
 
 # ── Broadcastify ────────────────────────────────────────────────────
@@ -174,6 +181,7 @@ def get_session() -> requests.Session:
     })
     login_url = "https://www.broadcastify.com/login/"
     session.get(login_url, timeout=30)
+    pause_login()
     session.post(
         login_url,
         data={
@@ -208,6 +216,7 @@ def list_archives(session: requests.Session, feed_id: str, day: str) -> list[dic
                 return []
             _record_success()
             data = resp.json()
+            pause_after_list()
             break
         except QuotaExhausted:
             raise
@@ -391,8 +400,7 @@ def discover_cities() -> list[Path]:
 
 
 def days_back(n: int) -> list[str]:
-    today = datetime.date.today()
-    return [(today - datetime.timedelta(days=d)).isoformat() for d in range(1, n + 1)]
+    return day_strings_for_backfill(n)
 
 
 # ── Per-segment ship ────────────────────────────────────────────────
@@ -591,6 +599,7 @@ def run_one_city(cfg: Path, session: requests.Session, state: dict) -> int:
                 progress[day] = f"done_{day_shipped}"
                 save_progress(feed_id, progress)
                 print(f"  --- {day} [{feed_label}]: {day_shipped} shipped ---", flush=True)
+                pause_day_transition()
 
     state["phase"] = "city_done"
     _heartbeat(state)
@@ -647,6 +656,7 @@ def main() -> int:
             if time.time() - session_age > 1800:
                 print("  [session] refreshing Broadcastify login", flush=True)
                 try:
+                    pause_session_refresh()
                     session = get_session()
                     session_age = time.time()
                 except Exception as e:

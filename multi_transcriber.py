@@ -30,6 +30,8 @@ import yaml
 
 from urllib.parse import quote as _urlquote
 
+from broadcastify_pacing import feed_start_stagger
+
 try:
     from philly_pulse.bridge import post_transcript as _pp_post
 except Exception:
@@ -613,7 +615,7 @@ def main():
         )
         t.start()
         feed_threads.append(t)
-        time.sleep(0.5)  # stagger connections to avoid burst
+        feed_start_stagger()  # human-paced stagger — avoids burst connects
 
     print(f"\n{'='*60}")
     print(f"  {CITY_NAME} Pulse Multi-Feed Transcriber")
@@ -646,7 +648,7 @@ def main():
                     daemon=True,
                 )
                 feed_threads[i].start()
-                time.sleep(0.5)
+                feed_start_stagger()
             if alive == 0:
                 print("   [Watchdog] All feed threads dead — exiting for systemd restart")
                 sys.exit(1)

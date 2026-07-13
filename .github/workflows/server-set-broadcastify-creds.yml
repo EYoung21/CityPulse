@@ -8,7 +8,7 @@ name: Set Broadcastify creds + revive feeds
 #
 # Set repo secrets first:
 #   BROADCASTIFY_PASSWORD  (required — your real Premium password)
-#   BROADCASTIFY_USERNAME  (optional — defaults to PhillyPulse)
+#   BROADCASTIFY_USERNAME  (optional — defaults to bobjim8889)
 #
 # The password travels Hetzner->Lambda over the SSH channel via stdin (not in
 # process args) and is written to a 600 temp file that's deleted after use.
@@ -49,7 +49,7 @@ jobs:
             REPO=/opt/citypulse-backfill
             CITIES="nyc sf philly philly2 chattanooga"
 
-            [ -z "${BC_USER:-}" ] && BC_USER="PhillyPulse"
+            [ -z "${BC_USER:-}" ] && BC_USER="bobjim8889"
             if [ -z "${BC_PASS:-}" ]; then
               echo "ERROR: BROADCASTIFY_PASSWORD secret is not set — aborting."; exit 1
             fi
@@ -92,3 +92,18 @@ jobs:
             echo ""
             echo "=== Hetzner ingest POSTs (last 2 min) ==="
             journalctl -u philly-pulse-api --since '2 min ago' --no-pager 2>/dev/null | grep -cE 'POST /api/ingest' | xargs -I{} echo "ingest POSTs: {}" || echo "(log unavailable)"
+
+            echo ""
+            echo "=== sync creds to Hetzner downloader env ==="
+            if [[ -f /etc/citypulse-downloader.env ]]; then
+              sed -i "s|^BROADCASTIFY_USERNAME=.*|BROADCASTIFY_USERNAME=${BC_USER}|" /etc/citypulse-downloader.env
+              sed -i "s|^BROADCASTIFY_PASSWORD=.*|BROADCASTIFY_PASSWORD=${BC_PASS}|" /etc/citypulse-downloader.env
+              echo "  patched /etc/citypulse-downloader.env"
+              if systemctl is-active --quiet citypulse-downloader.service 2>/dev/null; then
+                systemctl restart citypulse-downloader.service && echo "  restarted citypulse-downloader"
+              else
+                echo "  citypulse-downloader not running — creds ready for next start"
+              fi
+            else
+              echo "  no /etc/citypulse-downloader.env on this host — skip"
+            fi

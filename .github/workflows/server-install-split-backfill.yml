@@ -105,8 +105,10 @@ jobs:
 
             for path in \
               backfill_archives.py \
+              broadcastify_pacing.py \
               scripts/install_lambda_transcriber.sh \
-              scripts/lambda_archive_transcriber.py
+              scripts/lambda_archive_transcriber.py \
+              scripts/hetzner_archive_downloader.py
             do
               echo "  rsync $path"
               rsync -az -e "ssh -i /root/.ssh/lambda_tunnel_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
