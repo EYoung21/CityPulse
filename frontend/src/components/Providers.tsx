@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { isFirebaseConfigured } from "@/lib/firebase";
@@ -24,11 +24,17 @@ function isPublicRoute(pathname: string): boolean {
   return PUBLIC_ROUTE_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
-/** Signed-in but still on /login — must leave for the app (guest, Google, email).
- *  Exception: email/password users who have not verified yet stay on the
- *  verification panel inside LoginScreen. */
+/** Signed-in but still on /login — must leave for the app (Google, email).
+ *  Exceptions:
+ *   - Anonymous guests reach /login specifically to UPGRADE to a real
+ *     account, so they must stay on the form. ("Continue as guest" in
+ *     LoginScreen navigates to the app itself.) Before auto-guest this
+ *     returned true, but now that every visitor is a guest, bouncing them
+ *     off /login would leave no way to create a real account.
+ *   - Email/password users who have not verified yet stay on the
+ *     verification panel inside LoginScreen. */
 function shouldLeaveLoginForApp(user: User): boolean {
-  if (user.isAnonymous) return true;
+  if (user.isAnonymous) return false;
   if (!user.email) return true;
   return user.emailVerified;
 }
@@ -41,15 +47,64 @@ function RedirectTo({ to }: { to: string }) {
   return null;
 }
 
+/** Full-screen spinner shown while auth resolves or an auto-guest sign-in
+ *  is in flight. */
+function GateSpinner() {
+  return (
+    <div className="min-h-dvh flex items-center justify-center" style={{ background: "var(--map-bg, #0a0a14)" }}>
+      <div className="w-8 h-8 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" />
+    </div>
+  );
+}
+
 function AuthGate({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { user, loading, isAdmin } = useAuth();
+  const { user, loading, isAdmin, continueAsGuest } = useAuth();
   // Mirror the small allow-list of synced preferences (theme, units,
   // basemap, POI overlays, avoidance prefs, etc.) to/from Firestore so
   // they roam across the user's devices.
   usePrefsSync();
   const [adminMode, setAdminMode] = useState<"launcher" | "dashboard" | "admin" | "moderation" | null>(null);
   const [adminModeInitialized, setAdminModeInitialized] = useState(false);
+
+  // ── Auto-guest ────────────────────────────────────────────────────
+  // Rather than gate the whole app behind a login wall, drop signed-out
+  // visitors straight onto the map as an anonymous guest. The core map
+  // (incidents/extractions) is public-read, and every account-bound
+  // feature (saving places, cross-device sync, alerts, keyword watches,
+  // votes) is already gated on a *non-anonymous* account by the Firestore
+  // rules — so a guest gets the full browse experience and is prompted to
+  // sign in only when they reach for one of those features.
+  //
+  // Safety: only attempt on a GATED route, and only once auth has fully
+  // resolved to "no user". Never on public routes (so /landing, /teams,
+  // /use-cases, and — critically — the /login sign-up funnel stay
+  // genuinely signed-out), and never while `loading` (which folds in the
+  // cross-domain __pulse_token exchange and the session-restore window),
+  // so we can't pre-empt a returning real/admin session or an in-flight
+  // token sign-in. If anonymous auth is unavailable (provider disabled,
+  // offline first load), we fall back to the manual LoginScreen below so
+  // nobody is stranded on a spinner.
+  const needsGuest =
+    !loading && !user && isFirebaseConfigured() && !isPublicRoute(pathname);
+  const [guestFailed, setGuestFailed] = useState(false);
+  const guestingRef = useRef(false);
+  useEffect(() => {
+    if (!needsGuest) {
+      // A user resolved, or we navigated to a public route: reset the
+      // in-flight guard (a ref, not state) so a later sign-out re-enters
+      // the auto-guest path cleanly. `guestFailed` is deliberately left
+      // as-is — it's only read in the `!user` render branch below, so a
+      // stale `true` is never observed once a real/guest user exists.
+      guestingRef.current = false;
+      return;
+    }
+    if (guestingRef.current) return;
+    guestingRef.current = true;
+    // setGuestFailed only ever runs inside this async catch (never
+    // synchronously in the effect body), so it can't cascade renders.
+    continueAsGuest().catch(() => setGuestFailed(true));
+  }, [needsGuest, continueAsGuest]);
 
   useEffect(() => {
     if (!isAdmin) {
@@ -90,18 +145,15 @@ function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (loading) {
-    return (
-      <div className="min-h-dvh flex items-center justify-center" style={{ background: "var(--map-bg, #0a0a14)" }}>
-        <div className="w-8 h-8 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" />
-      </div>
-    );
+    return <GateSpinner />;
   }
 
   if (!user) {
-    if (pathname === "/") {
-      return <RedirectTo to="/landing" />;
-    }
-    return <LoginScreen />;
+    // Auto-guest (effect above) is signing the visitor in anonymously →
+    // hold on the spinner until `user` resolves and the map renders. If
+    // anonymous auth failed (provider disabled / offline), fall back to
+    // the manual login screen so there's always a way in.
+    return guestFailed ? <LoginScreen /> : <GateSpinner />;
   }
 
   if (isAdmin) {

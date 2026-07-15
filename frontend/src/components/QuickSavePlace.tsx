@@ -9,6 +9,7 @@ import {
   type SavedCategory,
 } from "@/hooks/useSavedDestinations";
 import { requestUpgrade } from "@/lib/upgrade";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface Props {
   lat: number;
@@ -39,6 +40,8 @@ export default function QuickSavePlace({
   autoFocus = false,
 }: Props) {
   const { canSave, addDestination, lists, createList, destinations, canAddCustom, customCount, freeLimit } = useSavedDestinations();
+  const { signInWithGoogle } = useAuth();
+  const [signingIn, setSigningIn] = useState(false);
   const [open, setOpen] = useState(autoFocus);
   const [name, setName] = useState("");
   const [category, setCategory] = useState<SavedCategory>("custom");
@@ -77,20 +80,35 @@ export default function QuickSavePlace({
   );
 
   if (!canSave) {
+    // Guests (anonymous / signed-out) can't persist saves — saving is
+    // gated on a real, non-anonymous account by the Firestore rules. So
+    // this button launches sign-in (Google popup, keeping the user on the
+    // map with their dropped pin intact) rather than dead-ending. Once
+    // signed in, `canSave` flips true and the normal save form renders.
     return (
       <button
         type="button"
-        disabled
-        className="w-full inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold opacity-60"
+        disabled={signingIn}
+        onClick={async () => {
+          setSigningIn(true);
+          try {
+            await signInWithGoogle();
+          } catch {
+            /* popup closed / blocked — detailed error surfaces via AuthContext */
+          } finally {
+            setSigningIn(false);
+          }
+        }}
+        className="w-full inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-60"
         style={{
-          background: "var(--panel-input-bg)",
-          color: "var(--panel-text-muted)",
-          border: "1px solid var(--panel-border)",
+          background: "rgba(59,130,246,0.10)",
+          color: "#3b82f6",
+          border: "1px solid rgba(59,130,246,0.35)",
         }}
         title="Sign in to save places across devices"
       >
-        <Bookmark className="w-4 h-4" />
-        Sign in to save places
+        {signingIn ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bookmark className="w-4 h-4" />}
+        {signingIn ? "Signing in…" : "Sign in to save places"}
       </button>
     );
   }
