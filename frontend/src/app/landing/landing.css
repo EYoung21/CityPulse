@@ -535,6 +535,23 @@
   filter: brightness(1.1);
 }
 
+/* Secondary sign-in note under the map-first hero CTA. Keeps the account
+   path available without leading with a sign-up wall. */
+.lp-hero-cta-note {
+  margin-top: 0.9rem;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+.lp-hero-cta-note-link {
+  color: rgba(255, 255, 255, 0.82);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color 0.2s;
+}
+.lp-hero-cta-note-link:hover {
+  color: #fff;
+}
+
 .lp-hero-personas {
   display: flex;
   flex-wrap: wrap;
