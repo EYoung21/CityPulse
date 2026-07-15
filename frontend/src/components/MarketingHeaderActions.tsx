@@ -11,11 +11,14 @@ export default function MarketingHeaderActions() {
   const { user, loading, isPro } = useAuth();
 
   // Server render and first paint show the signed-out CTA so there's no
-  // hydration mismatch; useAuth fills in once Firebase resolves.
+  // hydration mismatch; useAuth fills in once Firebase resolves. The app
+  // is map-first now (browse as a guest, no account required), so the
+  // primary invitation is the live map rather than a sign-up wall —
+  // guests can still sign in from the map or the use-case body CTAs.
   if (loading || !user || user.isAnonymous) {
     return (
-      <Link href="/login" className="lp-header-cta">
-        Create Account / Sign In
+      <Link href="/" className="lp-header-cta">
+        View the live map
       </Link>
     );
   }

@@ -480,9 +480,9 @@ export default function LandingPage() {
         </a>
         <CitySwitcher current={city} />
         <div className="lp-header-actions">
-          <a href="/login" className="lp-header-cta">
-            Create Account / Sign In
-          </a>
+          <Link href="/" className="lp-header-cta">
+            View the live map
+          </Link>
         </div>
       </header>
 
@@ -544,9 +544,14 @@ export default function LandingPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 1, delay: 0.5, ease: [0.22, 1, 0.36, 1] }}
           >
-            <a href="/login" className="lp-hero-cta">
-              Create Account / Sign In
-            </a>
+            <Link href="/" className="lp-hero-cta">
+              View the live map
+            </Link>
+            <p className="lp-hero-cta-note">
+              Free to browse · no account needed ·{" "}
+              <Link href="/login" className="lp-hero-cta-note-link">sign in</Link>{" "}
+              to save places &amp; get alerts
+            </p>
           </motion.div>
           <motion.div
             className="lp-hero-personas"
@@ -729,9 +734,9 @@ export default function LandingPage() {
         <h2 className="lp-cta-title">Listen to {city.name}.</h2>
         <p className="lp-cta-sub">Unverified scanner audio · AI transcription · Open data</p>
         <div className="lp-cta-row">
-          <a href="/login" className="lp-hero-cta" style={{ marginTop: 0 }}>
-            Create Account / Sign In
-          </a>
+          <Link href="/" className="lp-hero-cta" style={{ marginTop: 0 }}>
+            View the live map
+          </Link>
         </div>
         <div className="lp-cta-row" style={{ marginTop: "2rem" }}>
           {PULSE_CITIES.filter((c) => !c.previewOnly).map((c) => {
