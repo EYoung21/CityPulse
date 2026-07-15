@@ -44,8 +44,14 @@ export default function UseCaseCtas({
   // sign-in button briefly is preferable to flashing it back in once the
   // signed-in user finishes loading. The opposite (showing nothing) is
   // worse for first paint on slow connections.
+  //
+  // Anonymous guests count as signed-OUT here: with auto-guest entry
+  // every visitor is a guest, so treating a guest as "signed in" would
+  // strip the "Sign in / Create account" CTA from every marketing page
+  // and kill the sign-up funnel. Only a real account hides the CTA.
+  const signedIn = !!user && !user.isAnonymous;
   const visible =
-    !loading && user
+    !loading && signedIn
       ? ctas.filter((c) => !c.href.startsWith("/login"))
       : ctas;
 

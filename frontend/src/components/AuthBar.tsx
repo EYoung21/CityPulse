@@ -1,10 +1,12 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import {
   LogOut,
+  LogIn,
   UserCircle,
   ChevronDown,
   Download,
@@ -38,6 +40,7 @@ type DeleteStatus =
   | { kind: "error"; message: string };
 
 export default function AuthBar() {
+  const router = useRouter();
   const { user, loading, signOutUser, updateDisplayName, deleteAccount } = useAuth();
   const { destinations, lists, addDestination, createList } = useSavedDestinations();
   const [open, setOpen] = useState(false);
@@ -274,7 +277,25 @@ export default function AuthBar() {
                   {user.email}
                 </p>
               )}
+              {user.isAnonymous && (
+                <p className="text-[10px] leading-snug mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                  Sign in to save places, sync across devices, and get alerts.
+                </p>
+              )}
             </div>
+            {user.isAnonymous && (
+              <button
+                onClick={() => { setOpen(false); router.push("/login"); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-semibold transition-colors bg-blue-500/10 hover:bg-blue-500/20"
+                style={{
+                  color: "#3b82f6",
+                  borderBottom: "1px solid var(--panel-border)",
+                }}
+              >
+                <LogIn className="w-4 h-4" />
+                Sign in / Create account
+              </button>
+            )}
             <button
               onClick={handleExport}
               className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium transition-colors hover:bg-white/5"
@@ -366,13 +387,19 @@ export default function AuthBar() {
                 </button>
               </>
             )}
-            <button
-              onClick={() => { setOpen(false); void signOutUser(); }}
-              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium transition-colors text-red-400 hover:bg-red-500/10"
-            >
-              <LogOut className="w-4 h-4" />
-              Log out
-            </button>
+            {/* A guest signing out would just be re-issued a fresh
+                anonymous session by the auto-guest gate, so "Log out" is
+                only meaningful for a real account. Guests upgrade via the
+                "Sign in / Create account" CTA above instead. */}
+            {!user.isAnonymous && (
+              <button
+                onClick={() => { setOpen(false); void signOutUser(); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium transition-colors text-red-400 hover:bg-red-500/10"
+              >
+                <LogOut className="w-4 h-4" />
+                Log out
+              </button>
+            )}
           </div>
           {/* Hidden file input — triggered programmatically by the
               "Import from file" button. Lives outside the dropdown so

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { Mail, Eye, EyeOff, AlertCircle, CheckCircle2 } from "lucide-react";
 import { getCurrentCity, getLaunchedCities } from "@/lib/pulse-cities";
@@ -22,6 +23,7 @@ export default function LoginScreen() {
     lastAuthError,
   } = useAuth();
 
+  const router = useRouter();
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -176,6 +178,10 @@ export default function LoginScreen() {
             setBusy(true);
             try {
               await continueAsGuest();
+              // Anonymous guests are no longer auto-bounced off /login
+              // (they may be here to upgrade), so send this fresh guest
+              // into the app explicitly.
+              router.push("/");
             } catch (err: unknown) {
               const msg = err instanceof Error ? err.message : "Guest sign-in failed.";
               setError(msg.includes("operation-not-allowed")
