@@ -804,9 +804,19 @@
      covers the category chips. On mobile it anchors below the search pill
      via inline style (see AlertToast.tsx); the filter rail is at the
      bottom there, so the top lane is clear. This override wins on desktop
-     because of `!important`, which the inline style does not have. */
+     because of `!important`, which the inline style does not have.
+
+     `--pp-filter-rail-bottom` is the rail's *measured* bottom edge (in px,
+     set by page.tsx via a ResizeObserver) — the source of truth, so the
+     toast tracks the rail even when it grows a row or wraps. The static
+     calc is only a first-paint fallback until that measurement lands. */
   .pp-alert-toast {
-    top: calc(var(--pp-below-app-topnav-top) + var(--pp-filter-rail-height) + 0.5rem) !important;
+    top: calc(
+      var(
+        --pp-filter-rail-bottom,
+        calc(var(--pp-below-app-topnav-top) + var(--pp-filter-rail-height))
+      ) + 0.5rem
+    ) !important;
   }
 }
 

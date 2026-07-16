@@ -878,6 +878,29 @@ function MapHome() {
   useEffect(() => onUpgradeRequested((feature) => setShowUpgrade(feature)), []);
   const [feedLabels, setFeedLabels] = useState<Record<string, string>>(DEFAULT_FEED_LABELS);
   const mapRef = useRef<MapHandle>(null);
+  // The floating desktop filter rail (time window + category chips). We
+  // measure its real bottom edge so the AlertToast can anchor *below* it
+  // instead of relying on a hardcoded height guess that drifts and lets
+  // the toast cover the category chips.
+  const filterRailRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = filterRailRef.current;
+    if (typeof window === "undefined" || !el) return;
+    const root = document.documentElement;
+    const update = () => {
+      const bottom = el.getBoundingClientRect().bottom;
+      root.style.setProperty("--pp-filter-rail-bottom", `${Math.round(bottom)}px`);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener("resize", update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", update);
+    };
+    // Re-attach when the rail mounts/unmounts (it's gated on !tripGeometry).
+  }, [tripGeometry]);
 
   useEffect(() => {
     function onOpenAsk() {
@@ -2396,6 +2419,7 @@ function MapHome() {
           in the map canvas right of SearchInput (--pp-map-filters-left). */}
       {!tripGeometry && (
         <div
+          ref={filterRailRef}
           className="pp-map-filter-rail pointer-events-none absolute z-[1001] max-md:bottom-[calc(64px+env(safe-area-inset-bottom,0px)+0.75rem)] max-md:inset-x-3 max-md:top-auto max-md:left-3 max-md:right-3"
         >
           <div className="flex flex-col items-stretch gap-2.5 md:gap-3 min-w-0 pointer-events-auto">
