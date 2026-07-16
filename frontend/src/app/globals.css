@@ -4,6 +4,19 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Tailwind v4's Preflight dropped the default `cursor: pointer` on native
+   controls, so buttons showed the arrow cursor instead of the pointer hand
+   on hover. Restore the expected click affordance on interactive elements;
+   disabled controls keep the default cursor. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary,
+  label[for] {
+    cursor: pointer;
+  }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
