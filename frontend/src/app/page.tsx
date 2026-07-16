@@ -202,7 +202,7 @@ const CATEGORY_PILLS = INCIDENT_CATEGORY_GROUPS.map((pill, i) => ({
   icon: CATEGORY_PILL_ICONS[i],
 }));
 
-const PRIMARY_TIME_FILTER_LABELS = new Set(["15m", "1h", "6h", "24h"]);
+const PRIMARY_TIME_FILTER_LABELS = new Set(["15m", "1h", "6h", "24h", "3d"]);
 
 const STORAGE_TIME_FILTER_HOURS = "pulse_time_filter_hours";
 const STORAGE_ACTIVE_CATS = "pulse_active_cats";
