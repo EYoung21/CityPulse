@@ -10,11 +10,11 @@
  *    front cuts the "how do I…" floor.
  *
  *  Behaviour:
- *    - Auto-opens once on first visit (gated by a localStorage flag
- *      written when the tour completes OR the user explicitly skips).
- *    - Re-openable any time via a `pp:show-gestures-tour` window
- *      event (fired from the keyboard-shortcuts cheat sheet) so the
- *      user can refresh their memory.
+ *    - Opt-in only. It does NOT auto-pop on first load — a blocking
+ *      modal over the map is the opposite of "go right to the map".
+ *      The subtle first-run hint chip (MapFirstRunHint) offers a
+ *      "Quick tour" button, and the keyboard cheat sheet offers
+ *      another entry point; both fire `pp:show-gestures-tour`.
  *    - Each step has an icon + headline + a short caption. Steps are
  *      ordered roughly by frequency-of-use (single tap first).
  *    - Auto-detects coarse pointer (touch) vs fine pointer (mouse) so
@@ -27,7 +27,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Hand,
   Search,
   ChevronLeft,
   ChevronRight,
@@ -35,11 +34,8 @@ import {
   Sparkles,
   MapPinned,
   Navigation,
-  ShieldCheck,
   SlidersHorizontal,
 } from "lucide-react";
-
-const SEEN_KEY = "pp:gestures-tour-seen-v1";
 
 interface Step {
   icon: React.ComponentType<{ className?: string }>;
@@ -52,15 +48,6 @@ interface Step {
 }
 
 const STEPS: Step[] = [
-  {
-    icon: ShieldCheck,
-    title: "CityPulse",
-    bodyTouch:
-      "Maps that route you around crime, crashes & traffic, using live police/fire scanner data.",
-    bodyMouse:
-      "Maps that route you around crime, crashes & traffic, using live police/fire scanner data.",
-    accent: "#3b82f6",
-  },
   {
     icon: Search,
     title: "Search where you're headed",
@@ -117,34 +104,17 @@ export default function MapGesturesTour() {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
 
-  // Auto-open on first visit. We deliberately delay by ~1.2s so the
-  // initial map render and any onboarding spinners settle first —
-  // popping a modal *during* the first paint feels jarring.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    let seen = false;
-    try { seen = window.localStorage.getItem(SEEN_KEY) === "1"; } catch { /* private mode — treat as unseen */ }
-    if (seen) return;
-    const id = window.setTimeout(() => setOpen(true), 1200);
-    return () => window.clearTimeout(id);
-  }, []);
-
-  // Allow other surfaces (keyboard help cheat sheet, alerts inbox)
-  // to re-open the tour on demand.
+  // Opt-in only — the tour opens when the user asks for it (the
+  // first-run hint chip's "Quick tour" button, the keyboard cheat
+  // sheet, etc.), all of which fire `pp:show-gestures-tour`. It no
+  // longer auto-pops on first load.
   useEffect(() => {
     const onShow = () => { setStep(0); setOpen(true); };
     window.addEventListener("pp:show-gestures-tour", onShow);
     return () => window.removeEventListener("pp:show-gestures-tour", onShow);
   }, []);
 
-  const markSeen = () => {
-    try { window.localStorage.setItem(SEEN_KEY, "1"); } catch { /* ignore */ }
-  };
-
-  const close = () => {
-    markSeen();
-    setOpen(false);
-  };
+  const close = () => setOpen(false);
 
   const next = () => {
     if (step >= STEPS.length - 1) {

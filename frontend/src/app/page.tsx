@@ -76,6 +76,7 @@ import UndoToastHost from "@/components/UndoToastHost";
 import KeyboardShortcutsHelp from "@/components/KeyboardShortcutsHelp";
 import InstallPrompt from "@/components/InstallPrompt";
 import MapGesturesTour from "@/components/MapGesturesTour";
+import MapFirstRunHint from "@/components/MapFirstRunHint";
 import FeedbackForm from "@/components/FeedbackForm";
 import CommuteNotifier from "@/components/CommuteNotifier";
 import LiveSharePill from "@/components/LiveSharePill";
@@ -2577,10 +2578,14 @@ function MapHome() {
           so it keeps polling regardless of which panel is open. */}
       <CommuteNotifier />
 
-      {/* First-run map gestures tutorial. Auto-opens once on first
-          visit; thereafter only on demand via a `pp:show-gestures-
-          tour` window event (fired from the keyboard help sheet). */}
+      {/* First-run map gestures tutorial. Opt-in only — opened on demand
+          via a `pp:show-gestures-tour` window event (from the hint chip
+          below or the keyboard help sheet). No longer auto-pops. */}
       <MapGesturesTour />
+
+      {/* Subtle, non-blocking first-run hint that points at the two
+          least-obvious gestures and offers the "Quick tour" on demand. */}
+      <MapFirstRunHint />
 
       {/* In-app feedback / bug-report modal. Mounted at root and
           listens for `pp:open-feedback` window events so any surface
