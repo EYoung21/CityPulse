@@ -109,8 +109,8 @@ export default function FeedPage() {
   const { isPro } = useAuth();
 
   const feedSinceIso = useMemo(() => {
-    // Free accounts can look back up to the largest free window (24h); Pro
-    // keeps whatever (deeper) window is selected.
+    // Free accounts can look back up to the largest free window (3 days / 72h);
+    // Pro keeps whatever (deeper) window is selected.
     const effectiveHours = isPro
       ? timeFilter
       : Math.min(timeFilter, LARGEST_FREE_TIME_FILTER_HOURS);
