@@ -28,6 +28,8 @@
  */
 
 export const LIST_TOKEN_VERSION = 1;
+const MAX_LIST_TOKEN_CHARS = 32_000;
+const MAX_LIST_ITEMS = 100;
 
 export interface SharedListSnapshot {
   /** Optional sender display name shown on the recipient page. */
@@ -78,10 +80,19 @@ export function encodeListToken(snap: SharedListSnapshot): string {
   const items = snap.items
     // Drop bogus rows defensively — a malformed item poisoning a token
     // shouldn't make the whole share link fail to parse.
-    .filter((it) => Number.isFinite(it.lat) && Number.isFinite(it.lng) && it.name)
+    .filter(
+      (it) =>
+        Number.isFinite(it.lat) &&
+        it.lat >= -90 &&
+        it.lat <= 90 &&
+        Number.isFinite(it.lng) &&
+        it.lng >= -180 &&
+        it.lng <= 180 &&
+        it.name
+    )
     // Cap to 100 to keep the URL well within size limits even with
     // long names. A 100-item list is already an extreme case.
-    .slice(0, 100)
+    .slice(0, MAX_LIST_ITEMS)
     .map((it): [number, number, string] => [
       Number(it.lat.toFixed(5)),
       Number(it.lng.toFixed(5)),
@@ -107,26 +118,32 @@ interface RawListPayload {
 
 export function decodeListToken(token: string): DecodedListToken | null {
   try {
+    if (!token || token.length > MAX_LIST_TOKEN_CHARS) return null;
     const json = base64UrlDecode(token);
     const obj = JSON.parse(json) as RawListPayload;
     if (obj.v !== LIST_TOKEN_VERSION) return null;
-    if (typeof obj.ln !== "string" || !obj.ln) return null;
+    if (typeof obj.ln !== "string" || !obj.ln || obj.ln.length > 60) return null;
     if (!Array.isArray(obj.i)) return null;
 
     const items: Array<{ name: string; lat: number; lng: number }> = [];
-    for (const raw of obj.i as unknown[]) {
+    for (const raw of (obj.i as unknown[]).slice(0, MAX_LIST_ITEMS)) {
       if (!Array.isArray(raw) || raw.length < 3) continue;
       const lat = Number(raw[0]);
       const lng = Number(raw[1]);
       const name = String(raw[2] ?? "");
-      if (!Number.isFinite(lat) || !Number.isFinite(lng) || !name) continue;
-      items.push({ name, lat, lng });
+      if (
+        !Number.isFinite(lat) || lat < -90 || lat > 90 ||
+        !Number.isFinite(lng) || lng < -180 || lng > 180 ||
+        !name
+      ) continue;
+      items.push({ name: name.slice(0, 80), lat, lng });
     }
+    const normalizedColor = typeof obj.c === "string" ? normColor(obj.c) : undefined;
     return {
       version: obj.v,
-      senderName: typeof obj.n === "string" ? obj.n : undefined,
+      senderName: typeof obj.n === "string" ? obj.n.slice(0, 32) : undefined,
       listName: obj.ln,
-      color: typeof obj.c === "string" ? `#${normColor(obj.c) ?? ""}` || undefined : undefined,
+      color: normalizedColor ? `#${normalizedColor}` : undefined,
       items,
     };
   } catch {

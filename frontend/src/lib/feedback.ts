@@ -85,8 +85,9 @@ export function checkRateLimit(): string | null {
     const raw = window.localStorage.getItem(RATE_LIMIT_KEY);
     if (!raw) return null;
     const last = Number(raw);
-    if (!Number.isFinite(last)) return null;
-    const elapsed = Date.now() - last;
+    const now = Date.now();
+    if (!Number.isFinite(last) || last <= 0 || last > now + 60_000) return null;
+    const elapsed = now - last;
     if (elapsed >= RATE_LIMIT_MS) return null;
     const wait = Math.ceil((RATE_LIMIT_MS - elapsed) / 1000);
     return `Wait ${wait}s before sending more feedback.`;

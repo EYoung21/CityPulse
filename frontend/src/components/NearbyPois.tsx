@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Navigation, MapPin, Clock, Phone, Globe, Accessibility } from "lucide-react";
 import { fetchNearbyPois, POI_CATEGORIES, type Poi, type PoiCategory } from "@/lib/overpass";
 import { evaluateOpeningHours, formatOpeningBadge } from "@/lib/opening-hours";
+import { normalizeHttpUrl } from "@/lib/safe-url";
 
 interface Props {
   lat: number;
@@ -33,11 +34,16 @@ export default function NearbyPois({ lat, lng, onSelect }: Props) {
    *  can't tell if they're open or not, and silently dropping them
    *  would feel like the data is missing. */
   const [openNowOnly, setOpenNowOnly] = useState(false);
+  const requestGeneration = useRef(0);
 
   useEffect(() => {
+    requestGeneration.current += 1;
     setActive(null);
     setResults([]);
     setOpenNowOnly(false);
+    return () => {
+      requestGeneration.current += 1;
+    };
   }, [lat, lng]);
 
   const visibleResults = useMemo(() => {
@@ -50,9 +56,11 @@ export default function NearbyPois({ lat, lng, onSelect }: Props) {
   }, [results, openNowOnly]);
 
   const pick = useCallback(async (cat: PoiCategory) => {
+    const generation = ++requestGeneration.current;
     if (active === cat) {
       setActive(null);
       setResults([]);
+      setLoading(false);
       return;
     }
     setActive(cat);
@@ -60,9 +68,9 @@ export default function NearbyPois({ lat, lng, onSelect }: Props) {
     setResults([]);
     try {
       const pois = await fetchNearbyPois(cat, lat, lng, 1000, 8);
-      setResults(pois);
+      if (requestGeneration.current === generation) setResults(pois);
     } finally {
-      setLoading(false);
+      if (requestGeneration.current === generation) setLoading(false);
     }
   }, [active, lat, lng]);
 
@@ -144,6 +152,8 @@ export default function NearbyPois({ lat, lng, onSelect }: Props) {
             </div>
           ) : (
             visibleResults.map((poi, i) => {
+              const safeWebsite = normalizeHttpUrl(poi.website);
+              const safePhone = poi.phone?.replace(/[^\d+*#,;]/g, "") ?? "";
               const badge = formatOpeningBadge(evaluateOpeningHours(poi.openingHours));
               const badgeColor =
                 badge?.tone === "open" || badge?.tone === "always"
@@ -166,15 +176,19 @@ export default function NearbyPois({ lat, lng, onSelect }: Props) {
               return (
               <div
                 key={poi.id}
-                onClick={() => handleSelect(poi)}
-                className="flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors"
+                className="flex items-center gap-2 px-3 py-2 transition-colors"
                 style={{
                   borderBottom: i < visibleResults.length - 1 ? "1px solid var(--panel-border)" : "none",
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
                 onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
               >
-                <div className="min-w-0 flex-1">
+                <button
+                  type="button"
+                  onClick={() => handleSelect(poi)}
+                  className="min-w-0 flex-1 text-left"
+                  aria-label={`Show ${poi.name} on map`}
+                >
                   <p className="text-xs font-medium truncate flex items-center gap-1.5" style={{ color: "var(--panel-text)" }} title={poi.name}>
                     <span className="truncate">{poi.name}</span>
                     {poi.wheelchair && (
@@ -205,10 +219,10 @@ export default function NearbyPois({ lat, lng, onSelect }: Props) {
                       </>
                     )}
                   </p>
-                </div>
-                {poi.phone && (
+                </button>
+                {safePhone && (
                   <a
-                    href={`tel:${poi.phone}`}
+                    href={`tel:${safePhone}`}
                     onClick={(e) => e.stopPropagation()}
                     className="shrink-0 p-1.5 rounded-md text-emerald-500/70 hover:text-emerald-500"
                     title={`Call ${poi.name}`}
@@ -217,9 +231,9 @@ export default function NearbyPois({ lat, lng, onSelect }: Props) {
                     <Phone className="w-3.5 h-3.5" />
                   </a>
                 )}
-                {poi.website && (
+                {safeWebsite && (
                   <a
-                    href={poi.website}
+                    href={safeWebsite}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}

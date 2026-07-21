@@ -2,6 +2,7 @@
 
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { normalizeHttpUrl } from "@/lib/safe-url";
 
 // Markdown elements styled against the Ask Pulse panel theme tokens
 // (defined in globals.css) so they adapt to light/dark automatically.
@@ -91,16 +92,30 @@ const components: Components = {
     </ol>
   ),
   li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-  a: ({ children, href }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="underline underline-offset-2"
-      style={{ color: "#60a5fa" }}
-    >
-      {children}
-    </a>
+  a: ({ children, href }) => {
+    const safeHref = normalizeHttpUrl(href);
+    if (!safeHref) {
+      return <span className="underline decoration-dotted">{children}</span>;
+    }
+    return (
+      <a
+        href={safeHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="underline underline-offset-2"
+        style={{ color: "#60a5fa" }}
+      >
+        {children}
+      </a>
+    );
+  },
+  // Do not let model-authored Markdown trigger arbitrary third-party image
+  // requests (tracking pixels, IP leakage, or huge downloads). Preserve the
+  // useful alt text without loading the remote resource.
+  img: ({ alt }) => (
+    <span className="italic" style={{ color: "var(--panel-text-muted)" }}>
+      {alt ? `[Image: ${alt}]` : "[Image omitted]"}
+    </span>
   ),
   hr: () => (
     <hr

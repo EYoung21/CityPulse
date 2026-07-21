@@ -104,7 +104,7 @@ export default function SharedListPreview({ snapshot }: Props) {
   }, [state]);
 
   return (
-    <div
+    <main
       style={{
         minHeight: "100vh",
         background: "linear-gradient(180deg, #0a0a14 0%, #0f172a 100%)",
@@ -221,10 +221,10 @@ export default function SharedListPreview({ snapshot }: Props) {
             </>
           )}
           {errMsg && (
-            <p className="text-xs text-rose-400 text-center mt-2">{errMsg}</p>
+            <p role="alert" className="text-xs text-rose-400 text-center mt-2">{errMsg}</p>
           )}
           {lastAuthError && (
-            <p className="text-xs text-rose-400 text-center mt-2">{lastAuthError}</p>
+            <p role="alert" className="text-xs text-rose-400 text-center mt-2">{lastAuthError}</p>
           )}
           {importedListId && state !== "done" && (
             <p className="text-[11px] text-slate-500 text-center">
@@ -238,6 +238,6 @@ export default function SharedListPreview({ snapshot }: Props) {
           to PhillyPulse&apos;s servers. The sender can&apos;t see who opens it.
         </p>
       </div>
-    </div>
+    </main>
   );
 }

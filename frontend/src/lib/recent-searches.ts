@@ -7,6 +7,7 @@
  *  on desktop within a couple of seconds of signing in. */
 
 import { setPref } from "./prefs-sync";
+import { isCoordinatePair } from "@/lib/geo-validation";
 
 export interface RecentSearch {
   display_name: string;
@@ -35,13 +36,24 @@ export function loadRecent(): RecentSearch[] {
     if (!raw) return [];
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return [];
-    return arr.filter(
-      (r): r is RecentSearch =>
-        r &&
-        typeof r.display_name === "string" &&
-        typeof r.lat === "number" &&
-        typeof r.lng === "number"
-    );
+    return arr.slice(0, MAX).flatMap((value): RecentSearch[] => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+      const r = value as Record<string, unknown>;
+      const coordinates = [r.lat, r.lng];
+      if (
+        typeof r.display_name !== "string" ||
+        !isCoordinatePair(coordinates) ||
+        typeof r.at !== "number" ||
+        !Number.isFinite(r.at) ||
+        r.at <= 0
+      ) return [];
+      return [{
+        display_name: r.display_name.slice(0, 1_000),
+        lat: coordinates[0],
+        lng: coordinates[1],
+        at: r.at,
+      }];
+    });
   } catch {
     return [];
   }
@@ -50,7 +62,14 @@ export function loadRecent(): RecentSearch[] {
 /** Prepend `entry`, dedupe by lat/lng (≈11m), cap to MAX. */
 export function pushRecent(entry: Omit<RecentSearch, "at">): RecentSearch[] {
   if (typeof window === "undefined") return [];
-  const next: RecentSearch = { ...entry, at: Date.now() };
+  const coordinates = [entry.lat, entry.lng];
+  if (!isCoordinatePair(coordinates) || typeof entry.display_name !== "string") return loadRecent();
+  const next: RecentSearch = {
+    display_name: entry.display_name.slice(0, 1_000),
+    lat: coordinates[0],
+    lng: coordinates[1],
+    at: Date.now(),
+  };
   const existing = loadRecent().filter(
     (r) =>
       Math.abs(r.lat - next.lat) > 1e-4 || Math.abs(r.lng - next.lng) > 1e-4

@@ -35,6 +35,7 @@ import {
   Car,
   Loader2,
 } from "lucide-react";
+import { normalizeHttpUrl } from "@/lib/safe-url";
 import { reverseGeocode } from "@/lib/search";
 import { share as nativeShare } from "@/lib/native";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
@@ -43,6 +44,7 @@ import { fetchPlaceAtPoint, type PlaceAtPoint } from "@/lib/overpass";
 import { evaluateOpeningHours, formatOpeningBadge } from "@/lib/opening-hours";
 import { getRoute } from "@/lib/routing";
 import { openAskPulseTab } from "@/lib/open-ask-pulse";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
 
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
@@ -71,15 +73,26 @@ type RemotePlaceDetails = {
   openingHours?: unknown;
 };
 
-function normalizeWebsiteUrl(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) return null;
-  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-  try {
-    return new URL(withProtocol).toString();
-  } catch {
-    return null;
-  }
+function normalizeRemotePlaceDetails(value: unknown): RemotePlaceDetails | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const text = (field: unknown, max = 500) =>
+    typeof field === "string" && field.trim() ? field.trim().slice(0, max) : undefined;
+  const categories = Array.isArray(row.categories)
+    ? row.categories.flatMap((category) => {
+        const clean = text(category, 100);
+        return clean ? [clean] : [];
+      }).slice(0, 50)
+    : undefined;
+  return {
+    name: text(row.name),
+    address: text(row.address, 1_000),
+    category: text(row.category, 100),
+    categories,
+    phone: text(row.phone, 100),
+    website: normalizeHttpUrl(row.website) ?? undefined,
+    openingHours: row.openingHours,
+  };
 }
 
 function tomTomOpeningLabel(openingHours: unknown): string | null {
@@ -180,26 +193,37 @@ export default function SearchedPlaceCard({
   useEffect(() => {
     let cancelled = false;
     if (!place.entityId) {
-      setRemoteDetails({ key: placeKey, data: null });
+      void Promise.resolve().then(() => {
+        if (!cancelled) setRemoteDetails({ key: placeKey, data: null });
+      });
       return () => {
         cancelled = true;
       };
     }
     const params = new URLSearchParams({ entityId: place.entityId });
-    void fetch(`/api/place-details?${params}`, { cache: "no-store" })
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 10_000);
+    void fetch(`/api/place-details?${params}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
       .then(async (res) => {
         if (!res.ok) return null;
-        const data = (await res.json()) as { place?: RemotePlaceDetails | null };
-        return data.place ?? null;
+        const raw = await readBoundedJsonResponse(res, 512 * 1024);
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+        return normalizeRemotePlaceDetails((raw as Record<string, unknown>).place);
       })
       .then((data) => {
         if (!cancelled) setRemoteDetails({ key: placeKey, data });
       })
       .catch(() => {
         if (!cancelled) setRemoteDetails({ key: placeKey, data: null });
-      });
+      })
+      .finally(() => window.clearTimeout(timeout));
     return () => {
       cancelled = true;
+      window.clearTimeout(timeout);
+      controller.abort();
     };
   }, [place.entityId, placeKey]);
 
@@ -341,7 +365,7 @@ export default function SearchedPlaceCard({
   // valuable enough to expose at the top), else Call (also rare but
   // common enough on US POIs). If neither exists we hide that slot
   // rather than render a dead button.
-  const websiteUrl = normalizeWebsiteUrl(placeDetails?.website ?? tomtomDetails?.website ?? place.website);
+  const websiteUrl = normalizeHttpUrl(placeDetails?.website ?? tomtomDetails?.website ?? place.website);
   const phoneNumber = placeDetails?.phone ?? tomtomDetails?.phone ?? place.phone ?? null;
 
   const etaLabel =

@@ -181,23 +181,20 @@ export function IncidentCard({
       }`}
       style={{ opacity: baseOpacity }}
     >
-      <div
-        onClick={() => {
-          void haptic("selection");
-          onSelect();
-        }}
-        className={`flex items-start gap-2.5 cursor-pointer ${immersive ? "px-4 py-3.5" : "px-3 py-2.5"}`}
-        role="button"
-        tabIndex={0}
-        aria-expanded={isSelected}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => {
             void haptic("selection");
             onSelect();
-          }
-        }}
-      >
+          }}
+          className="absolute inset-0 z-0 rounded-[inherit] cursor-pointer"
+          aria-expanded={isSelected}
+          aria-label={`Open ${sev.label} incident details: ${headline}. ${locationLabel}`}
+        />
+        <div
+          className={`relative z-10 pointer-events-none flex items-start gap-2.5 ${immersive ? "px-4 py-3.5" : "px-3 py-2.5"}`}
+        >
         <div
           className={`absolute left-0 w-[3px] rounded-full transition-opacity ${
             immersive ? "top-0 bottom-0" : "top-2 bottom-2"
@@ -271,8 +268,9 @@ export function IncidentCard({
           <div className="mt-1.5 flex items-center gap-2">
             {(inc.audio_url || inc.audio_clip) && !(isSelected && showInlineDetail) && (
               <button
+                type="button"
                 onClick={toggleAudio}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium transition-all ${
+                className={`relative z-20 pointer-events-auto flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium transition-all ${
                   playing ? "bg-blue-500 text-white" : "bg-blue-500/15 text-blue-400 hover:bg-blue-500/25"
                 }`}
               >
@@ -286,7 +284,7 @@ export function IncidentCard({
                 type="button"
                 onClick={openOnMap}
                 disabled={!canViewOnMap}
-                className="w-12 h-8 rounded border overflow-hidden shrink-0 disabled:opacity-60"
+                className="relative z-20 pointer-events-auto w-12 h-8 rounded border overflow-hidden shrink-0 disabled:opacity-60"
                 style={{ borderColor: "var(--panel-border, rgba(255,255,255,0.1))" }}
                 title={canViewOnMap ? "View on map" : undefined}
                 aria-label={canViewOnMap ? "View on map" : undefined}
@@ -324,6 +322,7 @@ export function IncidentCard({
                 width={immersive ? 128 : 110}
                 height={immersive ? 84 : 72}
                 svgGlyph={monoGlyphSvg(resolveBlipKind(inc), inc.id)}
+                className="relative z-20 pointer-events-auto"
                 onClick={canViewOnMap ? openOnMap : undefined}
                 title={canViewOnMap ? "View on map" : undefined}
               />
@@ -359,6 +358,7 @@ export function IncidentCard({
               +{(inc.mention_count ?? 1) - 1} upd · {timeAgo(inc.last_mention_at)}
             </span>
           )}
+        </div>
         </div>
       </div>
 
@@ -483,7 +483,7 @@ export default function IncidentFeed({
                   </span>
                 </div>
               ) : (
-                <button
+                <button type="button"
                   onClick={() => setCollapsed((prev) => ({ ...prev, [block.label]: !isCollapsed }))}
                   className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors"
                   style={{ color: "var(--panel-text-secondary, rgba(255,255,255,0.6))" }}
@@ -507,6 +507,7 @@ export default function IncidentFeed({
           <Drawer.Portal>
             <Drawer.Overlay className="fixed inset-0 z-[3000] bg-black/40" />
             <Drawer.Content
+              aria-describedby={undefined}
               className="fixed left-0 right-0 bottom-0 z-[3001] rounded-t-2xl p-4 max-h-[85dvh] overflow-y-auto"
               style={{ background: "var(--panel-bg)", borderTop: "1px solid var(--panel-border)" }}
             >

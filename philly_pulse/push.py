@@ -37,13 +37,21 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import logging
+import math
 import os
 import re
+import secrets
+import socket
+import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib.parse import urlparse
+
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +107,18 @@ def _db():
     return _ensure_client()
 
 
+_DELIVERY_CLAIM_LOCKS = tuple(threading.Lock() for _ in range(128))
+
+
+def _delivery_claim_lock(collection_name: str, document_id: str) -> threading.Lock:
+    digest = hashlib.sha256(
+        f"{collection_name}\0{document_id}".encode("utf-8")
+    ).digest()
+    return _DELIVERY_CLAIM_LOCKS[
+        int.from_bytes(digest[:4], "big") % len(_DELIVERY_CLAIM_LOCKS)
+    ]
+
+
 @dataclass
 class PushSubscription:
     """Mirrors the W3C PushSubscription.toJSON() shape we accept from
@@ -148,6 +168,46 @@ def derive_subscription_hash(endpoint: str) -> str:
     return hashlib.sha256(endpoint.encode("utf-8")).hexdigest()
 
 
+def is_safe_push_endpoint(endpoint: str, *, resolve_dns: bool = True) -> bool:
+    """Accept HTTPS push-service URLs that cannot resolve to local networks.
+
+    Rechecking at send time matters because stored endpoints are long-lived and
+    DNS can change after registration. This keeps Web Push from becoming SSRF.
+    """
+    if not isinstance(endpoint, str) or not endpoint or len(endpoint) > 2048:
+        return False
+    try:
+        parsed = urlparse(endpoint)
+        if (
+            parsed.scheme.lower() != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port not in (None, 443)
+        ):
+            return False
+        hostname = parsed.hostname.rstrip(".").lower()
+        if hostname == "localhost" or hostname.endswith((".localhost", ".local", ".internal")):
+            return False
+
+        try:
+            literal = ipaddress.ip_address(hostname)
+        except ValueError:
+            literal = None
+        if literal is not None:
+            return literal.is_global
+        if not resolve_dns:
+            return True
+
+        addresses = {
+            row[4][0]
+            for row in socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)
+        }
+        return bool(addresses) and all(ipaddress.ip_address(addr).is_global for addr in addresses)
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 # Hard cap on alert radius. A 50 km bubble around a single phone
 # would defeat the "nearby" framing; we clamp anything over this
 # down. Below 0.1 km we treat as "no area" since GPS jitter alone
@@ -157,7 +217,9 @@ _MIN_ALERT_RADIUS_KM = 0.1
 
 
 def upsert_subscription(sub: PushSubscription) -> str:
-    """Idempotent insert. Returns the doc id used."""
+    """Idempotent upsert that preserves server-owned delivery cooldowns."""
+    from firebase_admin import firestore
+
     doc_id = derive_subscription_hash(sub.endpoint)
 
     # Validate + clamp the alert area. We accept the subscription
@@ -175,7 +237,7 @@ def upsert_subscription(sub: PushSubscription) -> str:
         notify_lat = float(sub.notify_lat)
         notify_lng = float(sub.notify_lng)
 
-    _db().collection("pushSubscriptions").document(doc_id).set({
+    payload = {
         "endpoint": sub.endpoint,
         # The two crypto material fields the browser hands back.
         # Stored as the original base64url strings so pywebpush gets
@@ -191,16 +253,32 @@ def upsert_subscription(sub: PushSubscription) -> str:
         "notifyNewsroom": bool(sub.notify_newsroom),
         "notifyNewsroomEmail": bool(sub.notify_newsroom_email),
         "email": (sub.email or "")[:320],
-        "createdAtMs": sub.created_at_ms,
-        "lastUsedMs": sub.last_used_ms,
-        # Per-subscription cooldown for nearby alerts. Bumped on
-        # every nearby push; the trigger refuses to send again
-        # within `_NEARBY_COOLDOWN_MS`. Stored on the doc itself
-        # (rather than a side cache) so a process restart doesn't
-        # reset everyone's cooldown to zero.
-        "lastNearbyPushMs": 0,
-        "lastNewsroomPushMs": 0,
-    })
+    }
+    db = _db()
+    ref = db.collection("pushSubscriptions").document(doc_id)
+    transaction = db.transaction(max_attempts=20)
+
+    @firestore.transactional
+    def upsert_in_transaction(txn):
+        snap = ref.get(transaction=txn)
+        if snap.exists:
+            # Merge client registration fields without resetting cooldowns,
+            # in-flight leases, or the original registration timestamp.
+            txn.set(ref, payload, merge=True)
+        else:
+            txn.set(
+                ref,
+                {
+                    **payload,
+                    "createdAtMs": sub.created_at_ms,
+                    "lastUsedMs": sub.last_used_ms,
+                    "lastNearbyPushMs": 0,
+                    "lastNewsroomPushMs": 0,
+                },
+            )
+
+    with _delivery_claim_lock("pushSubscriptions", doc_id):
+        upsert_in_transaction(transaction)
     return doc_id
 
 
@@ -222,7 +300,12 @@ def delete_subscription(endpoint: str, expected_uid: Optional[str] = None) -> bo
 
 
 def list_subscriptions_for_uid(uid: str) -> list[dict[str, Any]]:
-    docs = _db().collection("pushSubscriptions").where("uid", "==", uid).stream()
+    docs = (
+        _db()
+        .collection("pushSubscriptions")
+        .where(filter=FieldFilter("uid", "==", uid))
+        .stream()
+    )
     return [{"id": d.id, **(d.to_dict() or {})} for d in docs]
 
 
@@ -255,7 +338,7 @@ def list_all_subscriptions(city: Optional[str] = None) -> list[dict[str, Any]]:
     pulse city. Useful for global maintenance pings."""
     q = _db().collection("pushSubscriptions")
     if city:
-        q = q.where("city", "==", city)
+        q = q.where(filter=FieldFilter("city", "==", city))
     return [{"id": d.id, **(d.to_dict() or {})} for d in q.stream()]
 
 
@@ -280,7 +363,6 @@ def push_available() -> bool:
 def _vapid_claims_for(endpoint: str) -> dict[str, Any]:
     # `aud` defaults to the origin of the push service URL when omitted
     # by pywebpush, but we're explicit so the JWT claim always matches.
-    from urllib.parse import urlparse
     u = urlparse(endpoint)
     return {
         "sub": get_vapid_config().subject,
@@ -312,6 +394,9 @@ def send_to_subscription(
     auth = sub_doc.get("auth", "")
     if not (endpoint and p256dh and auth):
         return False, "incomplete_subscription"
+    if not is_safe_push_endpoint(endpoint, resolve_dns=True):
+        logger.warning("Refusing unsafe push endpoint for subscription %s", sub_doc.get("id", ""))
+        return False, "unsafe_endpoint"
     import json as _json
 
     try:
@@ -372,6 +457,134 @@ def send_to_uid(
     return {"sent": sent, "failed": failed, "gone": gone}
 
 
+def _claim_delivery_cooldown(
+    collection_name: str,
+    document_id: str,
+    *,
+    last_field: str,
+    claim_prefix: str,
+    now_ms: int,
+    cooldown_ms: int,
+) -> str | None:
+    """Atomically lease a cooldown slot before an irreversible send."""
+    from firebase_admin import firestore
+
+    db = _db()
+    ref = db.collection(collection_name).document(document_id)
+    token = secrets.token_urlsafe(18)
+    token_field = f"{claim_prefix}ClaimToken"
+    until_field = f"{claim_prefix}ClaimUntilMs"
+    transaction = db.transaction(max_attempts=20)
+
+    @firestore.transactional
+    def claim_in_transaction(txn):
+        snap = ref.get(transaction=txn)
+        if not snap.exists:
+            return None
+        data = snap.to_dict() or {}
+        try:
+            last_ms = int(data.get(last_field) or 0)
+        except (TypeError, ValueError):
+            last_ms = 0
+        if now_ms - last_ms < cooldown_ms:
+            return None
+        try:
+            claim_until = int(data.get(until_field) or 0)
+        except (TypeError, ValueError):
+            claim_until = 0
+        if claim_until > now_ms:
+            return None
+        txn.update(
+            ref,
+            {
+                token_field: token,
+                # If final bookkeeping fails after a successful external send,
+                # keep suppressing retries for the full cooldown window.
+                until_field: now_ms + cooldown_ms,
+            },
+        )
+        return token
+
+    with _delivery_claim_lock(collection_name, document_id):
+        return claim_in_transaction(transaction)
+
+
+def _finish_delivery_cooldown(
+    collection_name: str,
+    document_id: str,
+    *,
+    last_field: str,
+    claim_prefix: str,
+    now_ms: int,
+    claim_token: str,
+    extra_fields: dict[str, Any] | None = None,
+) -> bool:
+    """Finalize a delivery only while this sender still owns its lease."""
+    from firebase_admin import firestore
+
+    db = _db()
+    ref = db.collection(collection_name).document(document_id)
+    token_field = f"{claim_prefix}ClaimToken"
+    until_field = f"{claim_prefix}ClaimUntilMs"
+    transaction = db.transaction(max_attempts=20)
+
+    @firestore.transactional
+    def finish_in_transaction(txn):
+        snap = ref.get(transaction=txn)
+        if not snap.exists:
+            return False
+        data = snap.to_dict() or {}
+        if data.get(token_field) != claim_token:
+            return False
+        updates = {
+            last_field: now_ms,
+            token_field: firestore.DELETE_FIELD,
+            until_field: firestore.DELETE_FIELD,
+        }
+        if extra_fields:
+            updates.update(extra_fields)
+        txn.update(ref, updates)
+        return True
+
+    return bool(finish_in_transaction(transaction))
+
+
+def _release_delivery_claim(
+    collection_name: str,
+    document_id: str,
+    *,
+    claim_prefix: str,
+    claim_token: str,
+) -> bool:
+    """Release a failed send without clearing another worker's lease."""
+    from firebase_admin import firestore
+
+    db = _db()
+    ref = db.collection(collection_name).document(document_id)
+    token_field = f"{claim_prefix}ClaimToken"
+    until_field = f"{claim_prefix}ClaimUntilMs"
+    transaction = db.transaction(max_attempts=20)
+
+    @firestore.transactional
+    def release_in_transaction(txn):
+        snap = ref.get(transaction=txn)
+        if not snap.exists:
+            return False
+        data = snap.to_dict() or {}
+        if data.get(token_field) != claim_token:
+            return False
+        txn.update(
+            ref,
+            {
+                token_field: firestore.DELETE_FIELD,
+                until_field: firestore.DELETE_FIELD,
+            },
+        )
+        return True
+
+    return bool(release_in_transaction(transaction))
+
+
 # ── Helpers exposed for the frontend ────────────────────────────────
 
 # ── Proximity-based fan-out ─────────────────────────────────────────
@@ -422,10 +635,21 @@ def find_nearby_subscriptions(
     geohash indexes here."""
     out: list[dict[str, Any]] = []
     for sub in list_all_subscriptions(city=city):
-        nlat = sub.get("notifyLat")
-        nlng = sub.get("notifyLng")
-        radius = float(sub.get("notifyRadiusKm") or 0.0)
-        if nlat is None or nlng is None or radius <= 0:
+        try:
+            nlat = float(sub.get("notifyLat"))
+            nlng = float(sub.get("notifyLng"))
+            radius = float(sub.get("notifyRadiusKm") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if (
+            not math.isfinite(nlat)
+            or not math.isfinite(nlng)
+            or not math.isfinite(radius)
+            or not (-90 <= nlat <= 90)
+            or not (-180 <= nlng <= 180)
+            or radius <= 0
+            or radius > _MAX_ALERT_RADIUS_KM
+        ):
             continue
         # Cheap bounding-box prefilter so we don't haversine for
         # subscriptions that obviously can't match. Latitude degrees
@@ -480,8 +704,7 @@ def notify_newsroom_incident(
     Gated to serious categories above a severity bar, with a per-subscription
     cooldown and the user's snooze/quiet/mute prefs respected. Mirrors
     notify_nearby_incident but is city-wide rather than area-based."""
-    if not push_available():
-        return {"sent": 0, "skipped_no_push": 1, "matched": 0}
+    push_enabled = push_available()
     if inhibitor_status == "blocked":
         return {"sent": 0, "blocked": 1, "matched": 0}
     if s_base < _NEWSROOM_S_BASE_FLOOR or severity_category not in _NEWSWORTHY_CATEGORIES:
@@ -492,8 +715,8 @@ def notify_newsroom_incident(
         return {"sent": 0, "matched": 0}
 
     now_ms = int(time.time() * 1000)
-    sent = cooldown = quiet = snoozed = muted = emailed = 0
-    emailed_addrs: set[str] = set()
+    sent = failed = cooldown = quiet = snoozed = muted = emailed = email_failed = not_pro = 0
+    skipped_no_push = bookkeeping_failed = 0
     label = severity_category.replace("_", " ").title()
     summary = (description or location_text or "Tap for details.").strip()
     if len(summary) > 120:
@@ -509,13 +732,39 @@ def notify_newsroom_incident(
         "severity_category": severity_category,
     }
 
+    # One deterministic subscription owns each address's email delivery. This
+    # prevents multiple devices on the same account from sending duplicate
+    # emails, and the owner's transactional lease also covers concurrent jobs.
+    email_owner_by_address: dict[str, str] = {}
+    for candidate in sorted(matches, key=lambda item: str(item.get("id") or "")):
+        if not candidate.get("notifyNewsroomEmail"):
+            continue
+        address = str(candidate.get("email") or "").strip().lower()
+        candidate_id = str(candidate.get("id") or "")
+        if address and candidate_id:
+            email_owner_by_address.setdefault(address, candidate_id)
+
     seen_uids: dict[str, dict[str, bool]] = {}
+    tier_by_uid: dict[str, str] = {}
     for sub in matches:
-        last_ms = int(sub.get("lastNewsroomPushMs") or 0)
+        try:
+            last_ms = int(sub.get("lastNewsroomPushMs") or 0)
+        except (TypeError, ValueError):
+            last_ms = 0
         if now_ms - last_ms < _NEWSROOM_COOLDOWN_MS:
             cooldown += 1
             continue
         uid = str(sub.get("uid") or "")
+        if not uid:
+            not_pro += 1
+            continue
+        tier = tier_by_uid.get(uid)
+        if tier is None:
+            tier = _user_tier_for_push(uid)
+            tier_by_uid[uid] = tier
+        if tier not in ("pro", "enterprise"):
+            not_pro += 1
+            continue
         if uid:
             cached = seen_uids.get(uid)
             if cached is None:
@@ -534,49 +783,106 @@ def notify_newsroom_incident(
             if cached["muted"]:
                 muted += 1
                 continue
-        ok, _status = send_to_subscription(sub, payload, ttl_seconds=30 * 60)
-        if ok:
-            sent += 1
+        sub_id = str(sub.get("id") or "")
+        addr = str(sub.get("email") or "").strip().lower()
+        should_email = bool(
+            sub.get("notifyNewsroomEmail")
+            and addr
+            and email_owner_by_address.get(addr) == sub_id
+        )
+        if not push_enabled and not should_email:
+            skipped_no_push += 1
+            continue
+        try:
+            claim_token = _claim_delivery_cooldown(
+                "pushSubscriptions",
+                sub_id,
+                last_field="lastNewsroomPushMs",
+                claim_prefix="newsroom",
+                now_ms=now_ms,
+                cooldown_ms=_NEWSROOM_COOLDOWN_MS,
+            )
+        except Exception as e:
+            logger.warning("newsroom claim failed for %s: %s", sub_id, e)
+            bookkeeping_failed += 1
+            continue
+        if claim_token is None:
+            cooldown += 1
+            continue
+
+        push_ok = False
+        if push_enabled:
+            push_ok, _status = send_to_subscription(
+                sub, payload, ttl_seconds=30 * 60
+            )
+            if push_ok:
+                sent += 1
+            else:
+                failed += 1
+
+        email_ok = False
+        if should_email:
             try:
-                _db().collection("pushSubscriptions").document(sub["id"]).update(
-                    {"lastNewsroomPushMs": now_ms}
+                from . import ses_email
+
+                domain = ses_email.CITY_SEND_DOMAINS.get(city, "423pulse.com")
+                text = (
+                    f"{summary}\n\n"
+                    f"View the incident: https://{domain}/?incident={incident_id}\n\n"
+                    f"You're receiving this because you turned on Newsroom email alerts. "
+                    f"Manage or turn these off anytime in the CityPulse app."
                 )
-            except Exception:
-                pass
-
-        # Email channel (best-effort, deduped per address, sent from the city's
-        # own verified SES domain). Only fires when SES is configured.
-        if sub.get("notifyNewsroomEmail"):
-            addr = str(sub.get("email") or "").strip().lower()
-            if addr and addr not in emailed_addrs:
-                emailed_addrs.add(addr)
-                try:
-                    from . import ses_email
-
-                    domain = ses_email.CITY_SEND_DOMAINS.get(city, "423pulse.com")
-                    text = (
-                        f"{summary}\n\n"
-                        f"View the incident: https://{domain}/?incident={incident_id}\n\n"
-                        f"You're receiving this because you turned on Newsroom email alerts. "
-                        f"Manage or turn these off anytime in the CityPulse app."
-                    )
-                    if ses_email.send_email(
+                email_ok = bool(
+                    ses_email.send_email(
                         to=addr,
                         subject=f"Newsworthy: {label}",
                         text=text,
                         from_email=ses_email.from_email_for_city(city),
-                    ):
-                        emailed += 1
-                except Exception:  # pragma: no cover — best effort
-                    pass
+                    )
+                )
+                if email_ok:
+                    emailed += 1
+                else:
+                    email_failed += 1
+            except Exception as e:  # pragma: no cover — best effort
+                email_failed += 1
+                logger.warning("newsroom email failed for %s: %s", addr, e)
+
+        try:
+            if push_ok or email_ok:
+                finalized = _finish_delivery_cooldown(
+                    "pushSubscriptions",
+                    sub_id,
+                    last_field="lastNewsroomPushMs",
+                    claim_prefix="newsroom",
+                    now_ms=now_ms,
+                    claim_token=claim_token,
+                )
+            else:
+                finalized = _release_delivery_claim(
+                    "pushSubscriptions",
+                    sub_id,
+                    claim_prefix="newsroom",
+                    claim_token=claim_token,
+                )
+            if not finalized:
+                bookkeeping_failed += 1
+        except Exception as e:
+            bookkeeping_failed += 1
+            logger.warning("newsroom claim finalization failed for %s: %s", sub_id, e)
     return {
         "sent": sent,
+        "failed": failed,
         "matched": len(matches),
         "cooldown": cooldown,
         "quiet": quiet,
         "snoozed": snoozed,
         "muted": muted,
         "emailed": emailed,
+        "email_failed": email_failed,
+        "not_pro": not_pro,
+        "skipped_no_push": skipped_no_push,
+        "bookkeeping_failed": bookkeeping_failed,
     }
 
 
@@ -612,7 +918,7 @@ def notify_nearby_incident(
         return {"sent": 0, "matched": 0, "cooldown": 0}
 
     now_ms = int(time.time() * 1000)
-    sent = failed = cooldown = quiet = snoozed = muted = 0
+    sent = failed = cooldown = quiet = snoozed = muted = bookkeeping_failed = 0
     label = severity_category.replace("_", " ").title()
     where = location_text or f"{lat:.4f}, {lng:.4f}"
     payload = {
@@ -634,7 +940,10 @@ def notify_nearby_incident(
     seen_uids: dict[str, dict[str, bool]] = {}
 
     for sub in matches:
-        last_ms = int(sub.get("lastNearbyPushMs") or 0)
+        try:
+            last_ms = int(sub.get("lastNearbyPushMs") or 0)
+        except (TypeError, ValueError):
+            last_ms = 0
         if now_ms - last_ms < _NEARBY_COOLDOWN_MS:
             cooldown += 1
             continue
@@ -662,21 +971,55 @@ def notify_nearby_incident(
                 muted += 1
                 continue
 
+        sub_id = str(sub.get("id") or "")
+        try:
+            claim_token = _claim_delivery_cooldown(
+                "pushSubscriptions",
+                sub_id,
+                last_field="lastNearbyPushMs",
+                claim_prefix="nearby",
+                now_ms=now_ms,
+                cooldown_ms=_NEARBY_COOLDOWN_MS,
+            )
+        except Exception as e:
+            logger.warning("nearby claim failed for %s: %s", sub_id, e)
+            bookkeeping_failed += 1
+            continue
+        if claim_token is None:
+            cooldown += 1
+            continue
+
         ok, _status = send_to_subscription(sub, payload, ttl_seconds=15 * 60)
         if ok:
             sent += 1
             try:
-                _db().collection("pushSubscriptions").document(sub["id"]).update(
-                    {"lastNearbyPushMs": now_ms}
-                )
-            except Exception:
-                # Cooldown bookkeeping failure is non-fatal — the
-                # actual push went out, and a missed cooldown bump
-                # just means the next nearby incident will also
-                # ping. Acceptable.
-                pass
+                if not _finish_delivery_cooldown(
+                    "pushSubscriptions",
+                    sub_id,
+                    last_field="lastNearbyPushMs",
+                    claim_prefix="nearby",
+                    now_ms=now_ms,
+                    claim_token=claim_token,
+                ):
+                    bookkeeping_failed += 1
+            except Exception as e:
+                bookkeeping_failed += 1
+                logger.warning("nearby claim finalization failed for %s: %s", sub_id, e)
         else:
             failed += 1
+            try:
+                if not _release_delivery_claim(
+                    "pushSubscriptions",
+                    sub_id,
+                    claim_prefix="nearby",
+                    claim_token=claim_token,
+                ):
+                    bookkeeping_failed += 1
+            except Exception as e:
+                bookkeeping_failed += 1
+                logger.warning(
+                    "nearby claim release failed for %s: %s", sub_id, e
+                )
     return {
         "sent": sent,
         "failed": failed,
@@ -685,6 +1028,7 @@ def notify_nearby_incident(
         "quiet": quiet,
         "snoozed": snoozed,
         "muted": muted,
+        "bookkeeping_failed": bookkeeping_failed,
     }
 
 
@@ -698,6 +1042,8 @@ def notify_nearby_incident(
 # only need to *interpret* it here, never write it.
 
 _PREFS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_PREFS_CACHE_LOCK = threading.Lock()
+_PREFS_CACHE_MAX = 2048
 # 60s cache so a burst of nearby alerts doesn't hammer Firestore
 # with prefs lookups for the same uid. The cost of being slightly
 # stale (a user toggles snooze on and the next push 30s later
@@ -706,15 +1052,15 @@ _PREFS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _PREFS_CACHE_TTL_S = 60
 
 
-def _load_user_prefs(uid: str) -> dict[str, Any]:
+def _load_user_prefs(uid: str) -> dict[str, Any] | None:
     """Read the synced prefs doc for `uid`, with a tiny TTL cache.
 
-    Returns the raw `values` map (key → JSON-encoded string) or an
-    empty dict on any failure — the gating callers all interpret
-    "no prefs known" as "no opt-out", which matches the default
-    state for a user who hasn't customized anything."""
+    Returns the raw `values` map (key → JSON-encoded string), or None when
+    Firestore is unavailable. Notification gating fails closed on None so a
+    datastore outage can never violate a user's quiet-hours/snooze choices."""
     now = time.time()
-    cached = _PREFS_CACHE.get(uid)
+    with _PREFS_CACHE_LOCK:
+        cached = _PREFS_CACHE.get(uid)
     if cached and now - cached[0] < _PREFS_CACHE_TTL_S:
         return cached[1]
     values: dict[str, Any] = {}
@@ -733,8 +1079,19 @@ def _load_user_prefs(uid: str) -> dict[str, Any]:
             if isinstance(v, dict):
                 values = v
     except Exception as e:
-        logger.debug("prefs lookup failed for %s: %s", uid, e)
-    _PREFS_CACHE[uid] = (now, values)
+        logger.warning("prefs lookup failed for %s: %s", uid, e)
+        return None
+    with _PREFS_CACHE_LOCK:
+        for stale_uid in [
+            key
+            for key, value in _PREFS_CACHE.items()
+            if now - value[0] >= _PREFS_CACHE_TTL_S
+        ]:
+            _PREFS_CACHE.pop(stale_uid, None)
+        if uid not in _PREFS_CACHE and len(_PREFS_CACHE) >= _PREFS_CACHE_MAX:
+            oldest_uid = min(_PREFS_CACHE, key=lambda key: _PREFS_CACHE[key][0])
+            _PREFS_CACHE.pop(oldest_uid, None)
+        _PREFS_CACHE[uid] = (now, values)
     return values
 
 
@@ -755,7 +1112,14 @@ def _is_quiet_now_for_uid(uid: str, tz_name: Optional[str]) -> bool:
     """Mirror of frontend `isQuietNow`. Wraps midnight cleanly so a
     22:00→07:00 window catches both 23:30 and 02:30."""
     prefs = _load_user_prefs(uid)
-    cfg = _parse_json_pref(prefs.get("pp:quiet-hours"))
+    if prefs is None:
+        return True
+    raw = prefs.get("pp:quiet-hours")
+    if raw is None:
+        return False
+    cfg = _parse_json_pref(raw)
+    if cfg is None:
+        return True
     if not isinstance(cfg, dict) or not cfg.get("enabled"):
         return False
     try:
@@ -767,10 +1131,15 @@ def _is_quiet_now_for_uid(uid: str, tz_name: Optional[str]) -> bool:
     except Exception:
         now = datetime.now()
     cur = now.hour * 60 + now.minute
-    sh = int(cfg.get("startHour") or 0)
-    sm = int(cfg.get("startMinute") or 0)
-    eh = int(cfg.get("endHour") or 0)
-    em = int(cfg.get("endMinute") or 0)
+    try:
+        sh = int(cfg.get("startHour") or 0)
+        sm = int(cfg.get("startMinute") or 0)
+        eh = int(cfg.get("endHour") or 0)
+        em = int(cfg.get("endMinute") or 0)
+    except (TypeError, ValueError):
+        return True
+    if not (0 <= sh <= 23 and 0 <= eh <= 23 and 0 <= sm <= 59 and 0 <= em <= 59):
+        return True
     start = sh * 60 + sm
     end = eh * 60 + em
     if start == end:
@@ -786,13 +1155,17 @@ def _is_snoozed_for_uid(uid: str) -> bool:
     pref itself is owned by the user (set/cleared from PushSettings)
     and rides through prefs-sync just like quiet hours."""
     prefs = _load_user_prefs(uid)
+    if prefs is None:
+        return True
     raw = prefs.get("pp:push-snooze-until")
-    if not isinstance(raw, str) or not raw:
+    if raw is None:
         return False
+    if not isinstance(raw, str) or not raw:
+        return True
     try:
         until_ms = int(raw)
     except Exception:
-        return False
+        return True
     return until_ms > int(time.time() * 1000)
 
 
@@ -804,9 +1177,16 @@ def _is_category_muted_for_uid(uid: str, category: str) -> bool:
     if not category:
         return False
     prefs = _load_user_prefs(uid)
-    raw = _parse_json_pref(prefs.get("pp:muted-categories"))
-    if not isinstance(raw, list):
+    if prefs is None:
+        return True
+    encoded = prefs.get("pp:muted-categories")
+    if encoded is None:
         return False
+    raw = _parse_json_pref(encoded)
+    if raw is None:
+        return True
+    if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+        return True
     return category in raw
 
 
@@ -814,7 +1194,8 @@ def invalidate_prefs_cache(uid: str) -> None:
     """Drop the cached prefs entry for a uid. Call after any server-
     side write that should be visible to the next push fan-out
     (currently unused — kept available for future prefs APIs)."""
-    _PREFS_CACHE.pop(uid, None)
+    with _PREFS_CACHE_LOCK:
+        _PREFS_CACHE.pop(uid, None)
 
 
 # ── Keyword scanner watches ─────────────────────────────────────────
@@ -849,7 +1230,7 @@ def list_keyword_watches_for_uid(uid: str) -> list[dict[str, Any]]:
     docs = (
         _db()
         .collection("keywordWatches")
-        .where("uid", "==", uid)
+        .where(filter=FieldFilter("uid", "==", uid))
         .stream()
     )
     return [{"id": d.id, **(d.to_dict() or {})} for d in docs]
@@ -866,21 +1247,22 @@ def list_active_keyword_watches(city: str) -> list[dict[str, Any]]:
         for d in (
             _db()
             .collection("keywordWatches")
-            .where("active", "==", True)
-            .where("city", "==", city)
+            .where(filter=FieldFilter("active", "==", True))
+            .where(filter=FieldFilter("city", "==", city))
             .stream()
         ):
             out[d.id] = {"id": d.id, **(d.to_dict() or {})}
         for d in (
             _db()
             .collection("keywordWatches")
-            .where("active", "==", True)
-            .where("city", "==", "")
+            .where(filter=FieldFilter("active", "==", True))
+            .where(filter=FieldFilter("city", "==", ""))
             .stream()
         ):
             out[d.id] = {"id": d.id, **(d.to_dict() or {})}
     except Exception as e:
         logger.warning("list_active_keyword_watches failed: %s", e)
+        raise
     return list(out.values())
 
 
@@ -912,8 +1294,10 @@ def notify_keyword_watches(
         return {"sent": 0, "matched": 0, "cooldown": 0}
 
     now_ms = int(time.time() * 1000)
-    sent = failed = cooldown = below_floor = quiet = snoozed = 0
+    sent = failed = cooldown = below_floor = quiet = snoozed = not_pro = 0
+    bookkeeping_failed = 0
     matched = 0
+    tier_by_uid: dict[str, str] = {}
 
     for w in watches:
         kw = _normalize_keyword(str(w.get("keyword") or ""))
@@ -924,18 +1308,35 @@ def notify_keyword_watches(
         # Optional severity floor on the watch — useful for very
         # broad keywords (e.g. "north philly") that the user only
         # wants to hear about for serious incidents.
-        floor = float(w.get("severityFloor") or 0.0)
+        try:
+            floor = float(w.get("severityFloor") or 0.0)
+        except (TypeError, ValueError):
+            below_floor += 1
+            continue
+        if not math.isfinite(floor) or floor < 0 or floor > 1:
+            below_floor += 1
+            continue
         if s_base < floor:
             below_floor += 1
             continue
 
-        last_ms = int(w.get("lastFiredMs") or 0)
+        try:
+            last_ms = int(w.get("lastFiredMs") or 0)
+        except (TypeError, ValueError):
+            last_ms = 0
         if now_ms - last_ms < _KEYWORD_COOLDOWN_MS:
             cooldown += 1
             continue
 
         uid = str(w.get("uid") or "")
         if not uid:
+            continue
+        tier = tier_by_uid.get(uid)
+        if tier is None:
+            tier = _user_tier_for_push(uid)
+            tier_by_uid[uid] = tier
+        if tier not in ("pro", "enterprise"):
+            not_pro += 1
             continue
         if _is_snoozed_for_uid(uid):
             snoozed += 1
@@ -964,17 +1365,60 @@ def notify_keyword_watches(
             "requireInteraction": False,
             "severity_category": severity_category,
         }
+        watch_id = str(w.get("id") or "")
+        try:
+            claim_token = _claim_delivery_cooldown(
+                "keywordWatches",
+                watch_id,
+                last_field="lastFiredMs",
+                claim_prefix="keyword",
+                now_ms=now_ms,
+                cooldown_ms=_KEYWORD_COOLDOWN_MS,
+            )
+        except Exception as e:
+            logger.warning("keyword watch claim failed for %s: %s", watch_id, e)
+            bookkeeping_failed += 1
+            continue
+        if claim_token is None:
+            cooldown += 1
+            continue
+
         result = send_to_uid(uid, payload, ttl_seconds=15 * 60)
         if result.get("sent", 0) > 0:
             sent += result["sent"]
             try:
-                _db().collection("keywordWatches").document(w["id"]).update(
-                    {"lastFiredMs": now_ms, "lastIncidentId": incident_id}
+                if not _finish_delivery_cooldown(
+                    "keywordWatches",
+                    watch_id,
+                    last_field="lastFiredMs",
+                    claim_prefix="keyword",
+                    now_ms=now_ms,
+                    claim_token=claim_token,
+                    extra_fields={"lastIncidentId": incident_id},
+                ):
+                    bookkeeping_failed += 1
+            except Exception as e:
+                bookkeeping_failed += 1
+                logger.warning(
+                    "keyword watch claim finalization failed for %s: %s",
+                    watch_id,
+                    e,
                 )
-            except Exception:
-                pass
         else:
             failed += 1
+            try:
+                if not _release_delivery_claim(
+                    "keywordWatches",
+                    watch_id,
+                    claim_prefix="keyword",
+                    claim_token=claim_token,
+                ):
+                    bookkeeping_failed += 1
+            except Exception as e:
+                bookkeeping_failed += 1
+                logger.warning(
+                    "keyword watch claim release failed for %s: %s", watch_id, e
+                )
 
     return {
         "sent": sent,
@@ -984,6 +1428,8 @@ def notify_keyword_watches(
         "below_floor": below_floor,
         "quiet": quiet,
         "snoozed": snoozed,
+        "not_pro": not_pro,
+        "bookkeeping_failed": bookkeeping_failed,
     }
 
 
@@ -998,6 +1444,8 @@ _COMMUTE_LEAD_MIN = 10
 _COMMUTE_FIRE_WINDOW_MIN = 12
 _COMMUTE_MIN_CONFIDENCE = 0.5
 _COMMUTE_MAX_AGE_DAYS = 60  # garbage-collect stale schedules
+_COMMUTE_CLAIM_TTL_MS = 20 * 60 * 1000
+_COMMUTE_STALE_CLEANUP_BATCH = 100
 
 
 def _today_ymd_local(tz_name: Optional[str]) -> str:
@@ -1044,24 +1492,205 @@ def _commute_in_fire_window(typical_min: int, now_min: int) -> bool:
     )
 
 
-def _user_tier_for_commute(uid: str) -> str:
-    """Read `users/{uid}.tier` for the commute Pro gate.
+_USER_TIER_CACHE: dict[str, tuple[float, str]] = {}
+_USER_TIER_CACHE_LOCK = threading.Lock()
+_USER_TIER_CACHE_MAX = 2048
+_USER_TIER_CACHE_TTL_S = 60
+
+
+def _entitlement_epoch(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    to_datetime = getattr(value, "to_datetime", None)
+    if callable(to_datetime):
+        try:
+            return _entitlement_epoch(to_datetime())
+        except Exception:
+            return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        raw = float(value)
+        if not math.isfinite(raw):
+            return None
+        return raw / 1000 if raw > 10_000_000_000 else raw
+    return None
+
+
+def _user_tier_for_push(uid: str) -> str:
+    """Resolve permanent tier plus an active finite `proUntil` pass.
 
     Mirrors `server._user_tier`, kept local to avoid an import cycle
-    (server.py imports from push.py during route registration). Falls
-    back to "free" on any read failure so an outage of the users
-    collection silently downgrades all users — the safe default for a
-    Pro perk: never accidentally promote anyone."""
+    (server.py imports from push.py during route registration). The short,
+    bounded cache prevents one fan-out from rereading the same user document
+    for every device/watch while never extending beyond a pass expiry."""
+    now = time.time()
+    with _USER_TIER_CACHE_LOCK:
+        cached = _USER_TIER_CACHE.get(uid)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    tier = "free"
+    expires_at = now + _USER_TIER_CACHE_TTL_S
     try:
         from .firestore_store import _ensure_client
         snap = _ensure_client().collection("users").document(uid).get()
         if snap.exists:
-            t = ((snap.to_dict() or {}).get("tier") or "free")
+            data = snap.to_dict() or {}
+            t = data.get("tier") or "free"
             if t in ("free", "pro", "enterprise"):
-                return t
+                tier = t
+            pro_until = _entitlement_epoch(data.get("proUntil"))
+            if pro_until is not None and pro_until > now:
+                tier = "pro"
+                expires_at = min(expires_at, pro_until)
     except Exception:
-        pass
-    return "free"
+        tier = "free"
+
+    with _USER_TIER_CACHE_LOCK:
+        for stale_uid in [
+            key for key, value in _USER_TIER_CACHE.items() if value[0] <= now
+        ]:
+            _USER_TIER_CACHE.pop(stale_uid, None)
+        if uid not in _USER_TIER_CACHE and len(_USER_TIER_CACHE) >= _USER_TIER_CACHE_MAX:
+            oldest_uid = min(_USER_TIER_CACHE, key=lambda key: _USER_TIER_CACHE[key][0])
+            _USER_TIER_CACHE.pop(oldest_uid, None)
+        _USER_TIER_CACHE[uid] = (expires_at, tier)
+    return tier
+
+
+def _user_tier_for_commute(uid: str) -> str:
+    """Backward-compatible alias used by commute fan-out."""
+    return _user_tier_for_push(uid)
+
+
+def _claim_commute_fire(schedule_id: str, today: str, now_ms: int) -> str | None:
+    """Lease one schedule's current fire window across workers/cron ticks."""
+    from firebase_admin import firestore
+
+    db = _db()
+    ref = db.collection("commuteSchedules").document(schedule_id)
+    token = secrets.token_urlsafe(18)
+    transaction = db.transaction(max_attempts=20)
+
+    @firestore.transactional
+    def claim_in_transaction(txn):
+        snap = ref.get(transaction=txn)
+        if not snap.exists:
+            return None
+        data = snap.to_dict() or {}
+        if data.get("lastFiredYmd") == today:
+            return None
+        try:
+            claim_until = int(data.get("fireClaimUntilMs") or 0)
+        except (TypeError, ValueError):
+            claim_until = 0
+        if data.get("fireClaimYmd") == today and claim_until > now_ms:
+            return None
+        txn.update(
+            ref,
+            {
+                "fireClaimYmd": today,
+                "fireClaimUntilMs": now_ms + _COMMUTE_CLAIM_TTL_MS,
+                "fireClaimToken": token,
+            },
+        )
+        return token
+
+    with _delivery_claim_lock("commuteSchedules", schedule_id):
+        return claim_in_transaction(transaction)
+
+
+def _finish_commute_fire(
+    schedule_id: str,
+    today: str,
+    now_ms: int,
+    claim_token: str,
+) -> bool:
+    """Commit delivery only if this worker still owns the lease."""
+    from firebase_admin import firestore
+
+    db = _db()
+    ref = db.collection("commuteSchedules").document(schedule_id)
+    transaction = db.transaction(max_attempts=20)
+
+    @firestore.transactional
+    def finish_in_transaction(txn):
+        snap = ref.get(transaction=txn)
+        if not snap.exists:
+            return False
+        data = snap.to_dict() or {}
+        if data.get("fireClaimToken") != claim_token:
+            return False
+        txn.update(
+            ref,
+            {
+                "lastFiredYmd": today,
+                "lastFiredAtMs": now_ms,
+                "fireClaimYmd": firestore.DELETE_FIELD,
+                "fireClaimUntilMs": firestore.DELETE_FIELD,
+                "fireClaimToken": firestore.DELETE_FIELD,
+            },
+        )
+        return True
+
+    return bool(finish_in_transaction(transaction))
+
+
+def _release_commute_claim(schedule_id: str, claim_token: str) -> bool:
+    """Release a failed delivery without clearing a newer worker's lease."""
+    from firebase_admin import firestore
+
+    db = _db()
+    ref = db.collection("commuteSchedules").document(schedule_id)
+    transaction = db.transaction(max_attempts=20)
+
+    @firestore.transactional
+    def release_in_transaction(txn):
+        snap = ref.get(transaction=txn)
+        if not snap.exists:
+            return False
+        data = snap.to_dict() or {}
+        if data.get("fireClaimToken") != claim_token:
+            return False
+        txn.update(
+            ref,
+            {
+                "fireClaimYmd": firestore.DELETE_FIELD,
+                "fireClaimUntilMs": firestore.DELETE_FIELD,
+                "fireClaimToken": firestore.DELETE_FIELD,
+            },
+        )
+        return True
+
+    return bool(release_in_transaction(transaction))
+
+
+def _delete_stale_commute_schedule(schedule_id: str, cutoff_ms: int) -> bool:
+    """Delete only if the schedule is still stale at transaction time."""
+    from firebase_admin import firestore
+
+    db = _db()
+    ref = db.collection("commuteSchedules").document(schedule_id)
+    transaction = db.transaction(max_attempts=20)
+
+    @firestore.transactional
+    def delete_in_transaction(txn):
+        snap = ref.get(transaction=txn)
+        if not snap.exists:
+            return False
+        data = snap.to_dict() or {}
+        try:
+            updated_at = int(data.get("updatedAt") or 0)
+        except (TypeError, ValueError):
+            updated_at = 0
+        if updated_at >= cutoff_ms:
+            return False
+        txn.delete(ref)
+        return True
+
+    return bool(delete_in_transaction(transaction))
 
 
 def notify_due_commutes() -> dict[str, int]:
@@ -1075,32 +1704,42 @@ def notify_due_commutes() -> dict[str, int]:
     if not push_available():
         return {"scanned": 0, "fired": 0, "skipped": 0, "errors": 0}
 
+    now_ms = int(time.time() * 1000)
+    cutoff_ms = now_ms - _COMMUTE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000
     try:
-        snap = _db().collection("commuteSchedules").stream()
+        collection = _db().collection("commuteSchedules")
+        # Do not reread an ever-growing archive on every minute-level tick.
+        # Stale rows are cleaned in a separate bounded batch below.
+        snap = collection.where(
+            filter=FieldFilter("updatedAt", ">=", cutoff_ms)
+        ).stream()
         schedules = [{"id": d.id, **(d.to_dict() or {})} for d in snap]
     except Exception as e:
         logger.warning("notify_due_commutes: scan failed: %s", e)
         return {"scanned": 0, "fired": 0, "skipped": 0, "errors": 1}
 
     fired = skipped = errors = 0
-    now_ms = int(time.time() * 1000)
-    cutoff_ms = now_ms - _COMMUTE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000
+
+    try:
+        stale = (
+            collection.where(filter=FieldFilter("updatedAt", "<", cutoff_ms))
+            .limit(_COMMUTE_STALE_CLEANUP_BATCH)
+            .stream()
+        )
+        for stale_doc in stale:
+            try:
+                _delete_stale_commute_schedule(stale_doc.id, cutoff_ms)
+            except Exception as e:
+                logger.warning("stale commute cleanup %s failed: %s", stale_doc.id, e)
+                errors += 1
+    except Exception as e:
+        logger.warning("stale commute scan failed: %s", e)
+        errors += 1
 
     for sch in schedules:
         try:
-            if int(sch.get("updatedAt") or 0) < cutoff_ms:
-                # Stale schedule — user probably stopped commuting
-                # along this pattern weeks ago. Garbage-collect so the
-                # collection doesn't grow unbounded.
-                try:
-                    _db().collection("commuteSchedules").document(sch["id"]).delete()
-                except Exception:
-                    pass
-                skipped += 1
-                continue
-
             confidence = float(sch.get("confidence") or 0)
-            if confidence < _COMMUTE_MIN_CONFIDENCE:
+            if not math.isfinite(confidence) or confidence < _COMMUTE_MIN_CONFIDENCE:
                 skipped += 1
                 continue
 
@@ -1176,22 +1815,35 @@ def notify_due_commutes() -> dict[str, int]:
                 "requireInteraction": False,
             }
 
+            claim_token = _claim_commute_fire(sch["id"], today, now_ms)
+            if claim_token is None:
+                skipped += 1
+                continue
             result = send_to_uid(uid, payload, ttl_seconds=15 * 60)
             if result.get("sent", 0) > 0:
                 fired += 1
                 # Mark fired *only* if at least one device actually
                 # received it; otherwise the next tick can retry.
-                try:
-                    _db().collection("commuteSchedules").document(sch["id"]).update(
-                        {"lastFiredYmd": today, "lastFiredAtMs": now_ms}
+                if not _finish_commute_fire(
+                    sch["id"], today, now_ms, claim_token
+                ):
+                    # The lease outlives the 12-minute fire window, so even a
+                    # bookkeeping failure cannot trigger an immediate duplicate.
+                    logger.warning(
+                        "commute schedule %s delivery could not be finalized",
+                        sch["id"],
                     )
-                except Exception:
-                    pass
+                    errors += 1
             else:
                 # No subscribed devices for this uid (or all 410'd).
                 # Don't burn the daily slot — a device that signs in
                 # later in the same window should still get pinged.
                 skipped += 1
+                if not _release_commute_claim(sch["id"], claim_token):
+                    logger.warning(
+                        "commute schedule %s failed claim release", sch["id"]
+                    )
+                    errors += 1
         except Exception as e:
             logger.warning("commute schedule %s failed: %s", sch.get("id"), e)
             errors += 1

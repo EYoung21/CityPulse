@@ -15,6 +15,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { apiUrl } from "@/lib/public-api-base";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
 
 export interface CityStats {
   slug: string;
@@ -48,6 +49,35 @@ function mapPayload(p: ApiPayload): CityStats {
   };
 }
 
+export function normalizeCityStatsPayload(value: unknown): ApiPayload | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const clean = (field: unknown, max: number) =>
+    typeof field === "string" && field.trim() ? field.trim().slice(0, max) : null;
+  const slug = clean(row.slug, 100);
+  const cityName = clean(row.city_name, 200);
+  const generatedAt = clean(row.generated_at, 100);
+  const count = (field: unknown, min: number) =>
+    typeof field === "number" && Number.isSafeInteger(field) && field >= min ? field : null;
+  const scannerFeeds = count(row.scanner_feeds, 0);
+  const incidents24h = count(row.incidents_24h, -1);
+  const incidentsTotal = count(row.incidents_total, -1);
+  if (
+    !slug || !cityName || !generatedAt || !Number.isFinite(Date.parse(generatedAt)) ||
+    scannerFeeds === null || incidents24h === null || incidentsTotal === null
+  ) {
+    return null;
+  }
+  return {
+    slug,
+    city_name: cityName,
+    scanner_feeds: scannerFeeds,
+    incidents_24h: incidents24h,
+    incidents_total: incidentsTotal,
+    generated_at: generatedAt,
+  };
+}
+
 export interface UseCityStatsOptions {
   /** Poll cadence in ms. Default 30_000 (30s). Set to 0 to disable polling. */
   refreshMs?: number;
@@ -61,7 +91,10 @@ export function useCityStats(
   loading: boolean;
   error: string | null;
 } {
-  const { refreshMs = 30_000 } = opts;
+  const requestedRefreshMs = opts.refreshMs ?? 30_000;
+  const refreshMs = Number.isFinite(requestedRefreshMs) && requestedRefreshMs > 0
+    ? Math.max(1_000, Math.min(24 * 60 * 60_000, requestedRefreshMs))
+    : 0;
   const [stats, setStats] = useState<CityStats | null>(null);
   const [loading, setLoading] = useState(!!slug);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +114,11 @@ export function useCityStats(
       abortRef.current?.abort();
       const ctrl = new AbortController();
       abortRef.current = ctrl;
+      let timedOut = false;
+      const timeout = window.setTimeout(() => {
+        timedOut = true;
+        ctrl.abort();
+      }, 10_000);
       try {
         const r = await fetch(
           apiUrl(`/api/city-stats/${encodeURIComponent(slug!)}`),
@@ -91,13 +129,16 @@ export function useCityStats(
           // (e.g. backend not wired up on this domain). Fall back to
           // the static numbers in pulse-cities.ts without console spam.
           if (r.status === 404) {
-            setStats(null);
-            setError(null);
+            if (!cancelled) {
+              setStats(null);
+              setError(null);
+            }
             return;
           }
           throw new Error(`HTTP ${r.status}`);
         }
-        const payload = (await r.json()) as ApiPayload;
+        const payload = normalizeCityStatsPayload(await readBoundedJsonResponse(r, 256 * 1024));
+        if (!payload) throw new Error("Malformed city stats response");
         if (cancelled) return;
         setStats(mapPayload(payload));
         setError(null);
@@ -105,9 +146,14 @@ export function useCityStats(
         if (cancelled) return;
         // AbortError from visibility/unmount is expected; don't surface it.
         const name = (e as { name?: string } | null)?.name;
-        if (name === "AbortError") return;
+        if (name === "AbortError" && !timedOut) return;
+        if (timedOut) {
+          setError("Request timed out");
+          return;
+        }
         setError(e instanceof Error ? e.message : String(e));
       } finally {
+        window.clearTimeout(timeout);
         if (!cancelled) setLoading(false);
       }
     }

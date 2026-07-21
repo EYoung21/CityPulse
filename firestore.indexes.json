@@ -70,6 +70,14 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "city", "order": "ASCENDING" },
+        { "fieldPath": "inhibitor_status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "incidents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "city", "order": "ASCENDING" },
         { "fieldPath": "severity_category", "order": "ASCENDING" },
         { "fieldPath": "reported_at", "order": "DESCENDING" }
       ]

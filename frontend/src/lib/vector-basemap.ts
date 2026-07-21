@@ -95,14 +95,14 @@ export function subscribeVectorTiles(fn: (v: boolean) => void): () => void {
  *  hook file) because consumers always want the boolean *and* the
  *  setter together — colocating the storage and the binding keeps
  *  the API surface small. */
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 export function useVectorTiles(): [boolean, (v: boolean) => void] {
-  const [enabled, setEnabled] = useState(_enabled);
-  useEffect(() => {
-    setEnabled(_enabled);
-    return subscribeVectorTiles(setEnabled);
-  }, []);
+  const enabled = useSyncExternalStore(
+    subscribeVectorTiles,
+    isVectorTilesEnabled,
+    () => false
+  );
   const set = useCallback((v: boolean) => setVectorTilesEnabled(v), []);
   return [enabled, set];
 }

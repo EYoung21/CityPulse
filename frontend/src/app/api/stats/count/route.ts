@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { COUNT_API_ALLOWED_HOURS } from "@/lib/time-filters";
+import { classifyCountFailure } from "@/lib/count-failure";
+
+const TRANSIENT_WARNING_INTERVAL_MS = 60_000;
+let lastTransientWarningAt = 0;
 
 /**
  * Public read-only count endpoint.
@@ -80,19 +84,27 @@ export async function GET(req: NextRequest) {
     // permissioning, etc. — isn't hidden behind the 500. The detail is
     // also returned in the body so curl-from-the-frontend debugging
     // surfaces it without needing host log access.
-    console.error("[/api/stats/count] failed:", { city, hoursParam, error: msg });
-    const building = /currently building|cannot be used yet/i.test(msg);
-    const status = building ? 503 : 500;
+    const failure = classifyCountFailure(msg);
+    const context = { city, hoursParam, error: msg };
+    if (failure.status === 503) {
+      const now = Date.now();
+      if (now - lastTransientWarningAt >= TRANSIENT_WARNING_INTERVAL_MS) {
+        lastTransientWarningAt = now;
+        console.warn("[/api/stats/count] temporarily unavailable:", context);
+      }
+    } else {
+      console.error("[/api/stats/count] failed:", context);
+    }
     const headers: Record<string, string> = {};
-    if (building) {
+    if (failure.status === 503) {
       headers["Retry-After"] = "45";
     }
     return NextResponse.json(
       {
-        error: building ? "count temporarily unavailable (index building)" : "count failed",
-        detail: msg,
+        error: failure.publicMessage,
+        ...(process.env.NODE_ENV !== "production" ? { detail: msg } : {}),
       },
-      { status, headers },
+      { status: failure.status, headers },
     );
   }
 }

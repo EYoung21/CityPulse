@@ -13,12 +13,18 @@
  *      (the sender may be in a tunnel, or stopped sharing)
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { doc, getFirestore, onSnapshot, type FirestoreError } from "firebase/firestore";
 import { Radio, Flag, Loader2 } from "lucide-react";
 import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
 import type { LiveTripDoc } from "@/lib/live-share";
+import {
+  isLiveShareId,
+  liveShareExpiryMillis,
+  parseLiveTripDoc,
+} from "@/lib/live-share-validation";
 
 // Leaflet is browser-only.
 const SimpleLiveMap = dynamic(() => import("./SimpleLiveMap"), { ssr: false });
@@ -32,9 +38,9 @@ type FetchState =
   | { kind: "error"; message: string }
   | { kind: "ok"; doc: LiveTripDoc; updatedAt: number };
 
-function formatEta(etaAt: number | null): { line1: string; line2: string } {
+function formatEta(etaAt: number | null, now: number): { line1: string; line2: string } {
   if (!etaAt) return { line1: "ETA unknown", line2: "Waiting for movement…" };
-  const remainingMs = etaAt - Date.now();
+  const remainingMs = etaAt - now;
   if (remainingMs <= 0) return { line1: "Arriving now", line2: "" };
   const mins = Math.round(remainingMs / 60_000);
   const arriveTime = new Date(etaAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -47,14 +53,19 @@ function formatEta(etaAt: number | null): { line1: string; line2: string } {
 }
 
 export default function LiveTripView({ shareId }: Props) {
-  const [state, setState] = useState<FetchState>({ kind: "loading" });
-  const [, forceTick] = useState(0);
-  const lastWriteRef = useRef<number>(Date.now());
+  const [state, setState] = useState<FetchState>(() =>
+    !isLiveShareId(shareId)
+      ? { kind: "error", message: "This share link is invalid or has expired." }
+      : isFirebaseConfigured()
+        ? { kind: "loading" }
+        : { kind: "error", message: "Live share isn't available in this environment." }
+  );
+  const [now, setNow] = useState(Date.now);
+  const [lastWriteAt, setLastWriteAt] = useState(now);
 
   // Subscribe to the live doc.
   useEffect(() => {
-    if (!isFirebaseConfigured()) {
-      setState({ kind: "error", message: "Live share isn't available in this environment." });
+    if (!isLiveShareId(shareId) || !isFirebaseConfigured()) {
       return;
     }
     const db = getFirestore(getFirebaseApp());
@@ -66,19 +77,21 @@ export default function LiveTripView({ shareId }: Props) {
           setState({ kind: "error", message: "This share link is invalid or has expired." });
           return;
         }
-        const data = snap.data() as LiveTripDoc;
+        const data = parseLiveTripDoc(snap.data());
+        if (!data) {
+          setState({ kind: "error", message: "This live share contains invalid data." });
+          return;
+        }
         // Guard against expired shares — the TTL policy may not have
         // run yet, but we should still hide stale data.
-        const expiresAt = data.expiresAt as unknown as { toMillis?: () => number } | Date;
-        let expiresMs = 0;
-        if (expiresAt instanceof Date) expiresMs = expiresAt.getTime();
-        else if (expiresAt && typeof expiresAt.toMillis === "function") expiresMs = expiresAt.toMillis();
-        if (expiresMs && Date.now() > expiresMs) {
+        const expiresMs = liveShareExpiryMillis(data.expiresAt);
+        if (expiresMs === null || Date.now() > expiresMs) {
           setState({ kind: "error", message: "This share link has expired." });
           return;
         }
-        lastWriteRef.current = Date.now();
-        setState({ kind: "ok", doc: data, updatedAt: Date.now() });
+        const updatedAt = Date.now();
+        setLastWriteAt(updatedAt);
+        setState({ kind: "ok", doc: data, updatedAt });
       },
       (err: FirestoreError) => {
         setState({ kind: "error", message: err.message || "Couldn't load this share." });
@@ -90,42 +103,46 @@ export default function LiveTripView({ shareId }: Props) {
   // Tick once per second so the ETA countdown stays fresh and the
   // "no update for 2 min" banner can light up without a new doc write.
   useEffect(() => {
-    const id = window.setInterval(() => forceTick((n) => n + 1), 1000);
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
 
   if (state.kind === "loading") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-100">
-        <Loader2 className="w-6 h-6 animate-spin text-blue-400" />
-      </div>
+      <main
+        className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-100"
+        aria-busy="true"
+      >
+        <h1 className="sr-only">Loading live share</h1>
+        <Loader2 className="w-6 h-6 animate-spin text-blue-400" aria-hidden="true" />
+      </main>
     );
   }
 
   if (state.kind === "error") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-100 p-6">
+      <main className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-100 p-6">
         <div className="max-w-md text-center">
           <p className="text-xs uppercase tracking-widest text-slate-500">PhillyPulse</p>
           <h1 className="text-2xl font-bold mt-2">{state.message}</h1>
           <p className="text-sm text-slate-400 mt-3">
             Live shares auto-expire after 4 hours. Ask the sender for a fresh link.
           </p>
-          <a href="/" className="inline-block mt-6 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold">
+          <Link href="/" className="inline-block mt-6 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold">
             Open PhillyPulse
-          </a>
+          </Link>
         </div>
-      </div>
+      </main>
     );
   }
 
   const d = state.doc;
-  const eta = formatEta(d.etaAt);
-  const ageMs = Date.now() - lastWriteRef.current;
+  const eta = formatEta(d.etaAt, now);
+  const ageMs = now - lastWriteAt;
   const stale = ageMs > 2 * 60_000 && !d.ended;
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+    <main className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
       <SimpleLiveMap
         position={d.position}
         dest={d.dest}
@@ -151,9 +168,9 @@ export default function LiveTripView({ shareId }: Props) {
               <p className="text-[10px] uppercase tracking-wider text-slate-400">
                 {d.ownerName ? `${d.ownerName}'s ETA` : "Live ETA"}
               </p>
-              <p className="text-2xl font-bold mt-0.5 leading-none">
+              <h1 className="text-2xl font-bold mt-0.5 leading-none">
                 {d.ended ? "Arrived" : eta.line1}
-              </p>
+              </h1>
               {!d.ended && eta.line2 && (
                 <p className="text-xs text-slate-400 mt-1">{eta.line2}</p>
               )}
@@ -173,7 +190,7 @@ export default function LiveTripView({ shareId }: Props) {
       </div>
       <div className="absolute inset-x-0 bottom-0 z-[1100] p-3 pointer-events-none">
         <div className="max-w-md mx-auto text-center">
-          <a
+          <Link
             href="/"
             className="pointer-events-auto inline-block px-4 py-2 rounded-full text-xs font-medium backdrop-blur-md"
             style={{
@@ -183,9 +200,9 @@ export default function LiveTripView({ shareId }: Props) {
             }}
           >
             Open PhillyPulse
-          </a>
+          </Link>
         </div>
       </div>
-    </div>
+    </main>
   );
 }

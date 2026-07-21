@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { isCoordinatePair } from "@/lib/geo-validation";
+import { normalizeHttpUrl } from "@/lib/safe-url";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
 
 export const dynamic = "force-dynamic";
 
@@ -33,12 +36,16 @@ type TomTomPlace = {
   address?: { freeformAddress?: string };
 };
 
-type TomTomPlaceResponse = {
-  results?: TomTomPlace[];
-};
+function clean(value: unknown, maxLength = 500): string | undefined {
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, maxLength)
+    : undefined;
+}
 
-function clean(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function category(place: TomTomPlace): string | undefined {
@@ -51,7 +58,13 @@ function category(place: TomTomPlace): string | undefined {
   );
 }
 
-function normalize(place: TomTomPlace): PlaceDetails {
+function normalize(value: unknown): PlaceDetails | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const place = record as TomTomPlace;
+  const position = isCoordinatePair([place.position?.lat, place.position?.lon])
+    ? place.position
+    : undefined;
   return {
     entityId: clean(place.id),
     provider: "tomtom",
@@ -59,10 +72,10 @@ function normalize(place: TomTomPlace): PlaceDetails {
     address: clean(place.address?.freeformAddress),
     category: category(place),
     categories: place.poi?.categories?.map(clean).filter((x): x is string => !!x),
-    lat: place.position?.lat,
-    lng: place.position?.lon,
+    lat: position?.lat,
+    lng: position?.lon,
     phone: clean(place.poi?.phone),
-    website: clean(place.poi?.url),
+    website: normalizeHttpUrl(place.poi?.url) ?? undefined,
     openingHours: place.poi?.openingHours,
   };
 }
@@ -72,6 +85,12 @@ export async function GET(request: Request) {
   const entityId = clean(url.searchParams.get("entityId"));
   if (!entityId) {
     return NextResponse.json({ place: null, meta: { source: "none" } });
+  }
+  if (entityId.length > 256) {
+    return NextResponse.json(
+      { place: null, error: "entityId too long", meta: { source: "none" } },
+      { status: 400 }
+    );
   }
   if (!TOMTOM_KEY) {
     return NextResponse.json({ place: null, meta: { source: "missing-key" } });
@@ -89,6 +108,7 @@ export async function GET(request: Request) {
     const res = await fetch(`${TOMTOM_PLACE_BY_ID}?${params}`, {
       cache: "no-store",
       headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(8_000),
     });
     if (!res.ok) {
       return NextResponse.json(
@@ -96,8 +116,9 @@ export async function GET(request: Request) {
         { status: 502 }
       );
     }
-    const data = (await res.json()) as TomTomPlaceResponse;
-    const place = data.results?.[0] ? normalize(data.results[0]) : null;
+    const data = asRecord(await readBoundedJsonResponse(res, 2 * 1024 * 1024));
+    const results = data?.results;
+    const place = Array.isArray(results) && results.length > 0 ? normalize(results[0]) : null;
     return NextResponse.json({ place, meta: { source: "tomtom" } });
   } catch {
     return NextResponse.json(

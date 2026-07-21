@@ -1,5 +1,7 @@
 import type { Incident } from "./api";
 import { getCurrentCity } from "./pulse-cities";
+import { normalizeMapRegions } from "@/lib/map-region-validation";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
 
 export type LngLatRing = [number, number][];
 export type LngLatPolygon = LngLatRing[];
@@ -59,13 +61,17 @@ export function loadCityDistricts(slug: string): Promise<District[]> {
   const existing = _loadPromises[slug];
   if (existing) return existing;
 
-  const p = fetch(`/districts/${slug}.json`, { cache: "no-cache" })
+  const p = fetch(`/districts/${slug}.json`, {
+    cache: "no-cache",
+    signal: AbortSignal.timeout(10_000),
+  })
     .then((res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status} loading ${slug}.json`);
-      return res.json();
+      return readBoundedJsonResponse(res, 2 * 1024 * 1024);
     })
-    .then((data: District[]) => {
-      if (!Array.isArray(data)) throw new Error("expected array");
+    .then((raw) => {
+      const data = normalizeMapRegions(raw) as District[] | null;
+      if (!data) throw new Error("invalid district data");
       CITY_DISTRICTS[slug] = data;
       _emitLoaded(slug);
       return data;
@@ -73,7 +79,6 @@ export function loadCityDistricts(slug: string): Promise<District[]> {
     .catch((err) => {
       delete _loadPromises[slug];
       if (typeof console !== "undefined") {
-        // eslint-disable-next-line no-console
         console.warn(`[districts] failed to load ${slug}:`, err);
       }
       return CITY_DISTRICTS[slug] || [];

@@ -1,5 +1,7 @@
 import type { Incident } from "./api";
 import { getCurrentCity } from "./pulse-cities";
+import { normalizeMapRegions } from "@/lib/map-region-validation";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
 
 /**
  * Per-city neighborhood registry.
@@ -136,13 +138,15 @@ export function loadCityNeighborhoods(slug: string): Promise<Neighborhood[]> {
     // The file is static and content-hashed implicitly by name; let
     // the SW asset cache do its thing.
     cache: "force-cache",
+    signal: AbortSignal.timeout(10_000),
   })
     .then((res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status} loading ${slug}.json`);
-      return res.json();
+      return readBoundedJsonResponse(res, 2 * 1024 * 1024);
     })
-    .then((data: Neighborhood[]) => {
-      if (!Array.isArray(data)) throw new Error("expected array");
+    .then((raw) => {
+      const data = normalizeMapRegions(raw) as Neighborhood[] | null;
+      if (!data) throw new Error("invalid neighborhood data");
       CITY_NEIGHBORHOODS[slug] = data;
       _emitLoaded(slug);
       return data;
@@ -152,7 +156,6 @@ export function loadCityNeighborhoods(slug: string): Promise<Neighborhood[]> {
       // the error in dev so it's debuggable, but don't crash the app.
       delete _loadPromises[slug];
       if (typeof console !== "undefined") {
-        // eslint-disable-next-line no-console
         console.warn(`[neighborhoods] failed to load ${slug}:`, err);
       }
       return CITY_NEIGHBORHOODS[slug] || [];

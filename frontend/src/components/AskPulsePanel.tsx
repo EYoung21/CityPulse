@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { fetchPulseChat, type PulseChatMessage, type Incident } from "@/lib/api";
 import { AskPulseAnswer } from "@/components/AskPulseAnswer";
+import { normalizeIncidentList } from "@/lib/firestore-values";
 
 const STORAGE_KEY = "pulse_ask_pulse_v1";
 
@@ -66,27 +67,72 @@ function defaultTitle(messages: ChatRow[]): string {
   return t.length <= 48 ? t : `${t.slice(0, 45)}…`;
 }
 
-function loadPersist(): PersistShape {
+export function buildPulseChatMessages(
+  messages: ReadonlyArray<Pick<ChatRow, "role" | "content">>,
+): PulseChatMessage[] {
+  return messages.slice(-40).map((message) => ({
+    role: message.role,
+    content: message.content,
+  }));
+}
+
+export function loadAskPulsePersist(): PersistShape {
   const empty: PersistShape = { threads: [], activeId: null, openTabIds: [] };
   if (typeof window === "undefined") return empty;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return empty;
-    const j = JSON.parse(raw) as PersistShape;
-    if (!j || !Array.isArray(j.threads)) return empty;
-    const threads = j.threads.filter(
-      (t) => t && typeof t.id === "string" && Array.isArray(t.messages),
-    );
+    const j = JSON.parse(raw) as unknown;
+    if (!j || typeof j !== "object" || Array.isArray(j)) return empty;
+    const shape = j as Record<string, unknown>;
+    if (!Array.isArray(shape.threads)) return empty;
+    const threads = shape.threads.slice(0, 100).flatMap((value): ChatThread[] => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+      const thread = value as Record<string, unknown>;
+      if (
+        typeof thread.id !== "string" ||
+        !thread.id ||
+        typeof thread.title !== "string" ||
+        typeof thread.updatedAt !== "number" ||
+        !Number.isFinite(thread.updatedAt) ||
+        !Array.isArray(thread.messages)
+      ) return [];
+      const messages = thread.messages.slice(0, 500).flatMap((item): ChatRow[] => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+        const message = item as Record<string, unknown>;
+        if (
+          typeof message.id !== "string" ||
+          !message.id ||
+          (message.role !== "user" && message.role !== "assistant") ||
+          typeof message.content !== "string" ||
+          typeof message.ts !== "number" ||
+          !Number.isFinite(message.ts)
+        ) return [];
+        return [{
+          id: message.id.slice(0, 500),
+          role: message.role,
+          content: message.content.slice(0, 100_000),
+          ts: message.ts,
+          cited: normalizeIncidentList(message.cited, 100),
+        }];
+      });
+      return [{
+        id: thread.id.slice(0, 500),
+        title: thread.title.slice(0, 500),
+        updatedAt: thread.updatedAt,
+        messages,
+      }];
+    });
     const ids = new Set(threads.map((t) => t.id));
-    let openTabIds = Array.isArray(j.openTabIds)
-      ? j.openTabIds.filter((id) => typeof id === "string" && ids.has(id))
+    let openTabIds = Array.isArray(shape.openTabIds)
+      ? [...new Set(shape.openTabIds.filter((id): id is string => typeof id === "string" && ids.has(id)))].slice(0, 20)
       : [];
     // Migration / fallback: if no open-tab list yet, open every existing chat
     // (preserves the prior "all threads are tabs" behavior).
     if (openTabIds.length === 0) openTabIds = threads.map((t) => t.id);
     return {
       threads,
-      activeId: typeof j.activeId === "string" ? j.activeId : null,
+      activeId: typeof shape.activeId === "string" && ids.has(shape.activeId) ? shape.activeId : null,
       openTabIds,
     };
   } catch {
@@ -96,7 +142,19 @@ function loadPersist(): PersistShape {
 
 function savePersist(data: PersistShape) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      threads: data.threads.slice(0, 100).map((thread) => ({
+        ...thread,
+        title: thread.title.slice(0, 500),
+        messages: thread.messages.slice(-500).map((message) => ({
+          ...message,
+          content: message.content.slice(0, 100_000),
+          cited: message.cited?.slice(0, 100),
+        })),
+      })),
+      activeId: data.activeId,
+      openTabIds: data.openTabIds.slice(0, 20),
+    }));
   } catch {
     /* quota */
   }
@@ -147,7 +205,7 @@ export default function AskPulsePanel({
   }, [activeId]);
 
   useEffect(() => {
-    const p = loadPersist();
+    const p = loadAskPulsePersist();
     if (p.threads.length === 0) {
       const t0: ChatThread = { id: uid(), title: "New chat", updatedAt: Date.now(), messages: [] };
       setThreads([t0]);
@@ -406,10 +464,7 @@ export default function AskPulsePanel({
     const ac = new AbortController();
     abortRefs.current.set(tid, ac);
 
-    const apiMessages: PulseChatMessage[] = userTail.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
+    const apiMessages = buildPulseChatMessages(userTail);
 
     try {
       const res = await fetchPulseChat({
@@ -537,7 +592,7 @@ export default function AskPulsePanel({
         ref={threadStripRef}
         className="shrink-0 flex items-center gap-2 px-3 py-2 overflow-x-auto no-scrollbar border-b"
         style={{ borderColor: "var(--panel-border)", background: "var(--panel-bg)" }}
-        role="tablist"
+        role="group"
         aria-label="Chat threads"
       >
         <button
@@ -575,8 +630,6 @@ export default function AskPulsePanel({
           return (
             <div
               key={t.id}
-              role="tab"
-              aria-selected={active}
               data-thread-id={t.id}
               className="group shrink-0 inline-flex items-center gap-1 max-w-[min(42vw,220px)] pl-3 pr-1.5 py-1.5 rounded-full text-[11px] font-medium transition-colors"
               style={
@@ -596,6 +649,7 @@ export default function AskPulsePanel({
               <button
                 type="button"
                 onClick={() => switchTab(t.id)}
+                aria-pressed={active}
                 className="inline-flex items-center gap-1 min-w-0 truncate"
                 title={t.title}
               >
@@ -678,6 +732,7 @@ export default function AskPulsePanel({
                         }
                       }}
                       rows={4}
+                      maxLength={12_000}
                       className="w-full resize-y min-h-[5.5rem] rounded-lg px-2.5 py-2 text-sm outline-none border"
                       style={{
                         background: "rgba(15,23,42,0.35)",
@@ -750,6 +805,7 @@ export default function AskPulsePanel({
                 }
               }}
               rows={2}
+              maxLength={12_000}
               placeholder="Ask Pulse…"
               disabled={loading}
               className="flex-1 resize-none rounded-xl px-3 py-2 text-sm outline-none border"
@@ -856,33 +912,31 @@ export default function AskPulsePanel({
                 return (
                   <div
                     key={t.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => openTab(t.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        openTab(t.id);
-                      }
-                    }}
                     className="group flex items-center gap-2 rounded-lg px-3 py-2 cursor-pointer hover:bg-white/5"
                     style={t.id === activeId ? { background: "rgba(59,130,246,0.12)" } : undefined}
                   >
-                    <div className="flex-1 min-w-0">
-                      <div className="truncate text-sm" style={{ color: "var(--panel-text)" }}>
-                        {t.title}
+                    <button
+                      type="button"
+                      onClick={() => openTab(t.id)}
+                      className="flex flex-1 min-w-0 items-center gap-2 text-left"
+                      aria-current={t.id === activeId ? "page" : undefined}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="truncate text-sm" style={{ color: "var(--panel-text)" }}>
+                          {t.title}
+                        </div>
+                        <div className="text-[11px] truncate" style={{ color: "var(--panel-text-muted)" }}>
+                          {shortWhen(t.updatedAt)} · {userMsgs} msg{userMsgs === 1 ? "" : "s"}
+                          {isOpen ? " · open" : ""}
+                        </div>
                       </div>
-                      <div className="text-[11px] truncate" style={{ color: "var(--panel-text-muted)" }}>
-                        {shortWhen(t.updatedAt)} · {userMsgs} msg{userMsgs === 1 ? "" : "s"}
-                        {isOpen ? " · open" : ""}
-                      </div>
-                    </div>
-                    {loadingThreads.has(t.id) && (
-                      <span
-                        className="shrink-0 w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"
-                        aria-label="Generating"
-                      />
-                    )}
+                      {loadingThreads.has(t.id) && (
+                        <span
+                          className="shrink-0 w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"
+                          aria-label="Generating"
+                        />
+                      )}
+                    </button>
                     <button
                       type="button"
                       onClick={(e) => {

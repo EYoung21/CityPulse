@@ -36,14 +36,6 @@ const INLINE_CODE_STYLE: React.CSSProperties = {
   color: "rgba(235,235,250,0.92)",
 };
 
-const H2_STYLE: React.CSSProperties = {
-  margin: "0 0 10px",
-  fontSize: "1.05rem",
-  fontWeight: 600,
-  letterSpacing: "0.02em",
-  color: "rgba(255,255,255,0.92)",
-};
-
 const H3_STYLE: React.CSSProperties = {
   margin: "16px 0 6px",
   fontSize: "0.95rem",
@@ -144,19 +136,19 @@ export default function ApiDocsSection() {
       </SubNote>
       <pre style={CODE_BLOCK_STYLE}>
 {`curl -H "Authorization: Bearer $FIREBASE_ID_TOKEN" \\
-  https://api.phlpulse.com/api/incidents`}
+  "https://api.phlpulse.com/api/incidents?city=philly"`}
       </pre>
       <SubNote>
         Without a valid Pro token, the server clamps results to the last{" "}
-        <strong>24 hours</strong> (<code style={INLINE_CODE_STYLE}>FREE_INCIDENT_WINDOW_SECONDS</code>{" "}
-        = 86400). Response headers surface the clamp:
+        <strong>3 days</strong> (<code style={INLINE_CODE_STYLE}>FREE_INCIDENT_WINDOW_SECONDS</code>{" "}
+        = 259200). Response headers surface the clamp:
       </SubNote>
       <ul style={{ margin: "0 0 12px 18px", padding: 0, fontSize: "0.92rem", color: "rgba(255,255,255,0.75)" }}>
         <li>
           <code style={INLINE_CODE_STYLE}>X-Pulse-Clamped: 1</code> when the caller asked for more history than the free window allows.
         </li>
         <li>
-          <code style={INLINE_CODE_STYLE}>X-Pulse-Free-Window-Sec: 86400</code> on free responses so clients can compute their own effective floor.
+          <code style={INLINE_CODE_STYLE}>X-Pulse-Free-Window-Sec: 259200</code> on free responses so clients can compute their own effective floor.
         </li>
         <li>
           JSON body <code style={INLINE_CODE_STYLE}>meta.tier</code> is{" "}
@@ -189,10 +181,11 @@ export default function ApiDocsSection() {
         <ul style={{ margin: "0 0 10px 18px", padding: 0, fontSize: "0.92rem", color: "rgba(255,255,255,0.75)" }}>
           <li><code style={INLINE_CODE_STYLE}>since</code> — ISO-8601 lower bound.</li>
           <li><code style={INLINE_CODE_STYLE}>category</code> — severity category filter.</li>
+          <li><code style={INLINE_CODE_STYLE}>city</code> — registered city slug (defaults to <code style={INLINE_CODE_STYLE}>philly</code>).</li>
         </ul>
         <pre style={CODE_BLOCK_STYLE}>
 {`curl -H "Authorization: Bearer $FIREBASE_ID_TOKEN" \\
-  "https://api.phlpulse.com/api/incidents?since=2026-04-24T00:00:00Z"`}
+  "https://api.phlpulse.com/api/incidents?city=philly&since=2026-04-24T00:00:00Z"`}
         </pre>
       </div>
 
@@ -223,7 +216,7 @@ export default function ApiDocsSection() {
         </SubNote>
         <pre style={CODE_BLOCK_STYLE}>
 {`curl -H "Authorization: Bearer $FIREBASE_ID_TOKEN" \\
-  "https://api.phlpulse.com/api/incidents/search?q=shots%20fired&limit=50"`}
+  "https://api.phlpulse.com/api/incidents/search?city=philly&q=shots%20fired&limit=50"`}
         </pre>
       </div>
 
@@ -233,7 +226,8 @@ export default function ApiDocsSection() {
           2–3 sentence LLM summary of recent activity. Body includes{" "}
           <code style={INLINE_CODE_STYLE}>summary</code>,{" "}
           <code style={INLINE_CODE_STYLE}>incident_count</code>, and the usual{" "}
-          <code style={INLINE_CODE_STYLE}>meta</code> object.
+          <code style={INLINE_CODE_STYLE}>meta</code> object. Pass a registered city
+          slug to scope the summary.
         </SubNote>
       </div>
 
@@ -243,6 +237,7 @@ export default function ApiDocsSection() {
           Aggregate counters for the transparency strip:{" "}
           <code style={INLINE_CODE_STYLE}>total_incidents</code> and{" "}
           <code style={INLINE_CODE_STYLE}>inhibitor_stats</code> (per-status counts).
+          Pass <code style={INLINE_CODE_STYLE}>city</code> to scope both values.
         </SubNote>
       </div>
 
@@ -264,7 +259,7 @@ export default function ApiDocsSection() {
         <a
           href="https://www.broadcastify.com/terms/"
           target="_blank"
-          rel="noreferrer"
+          rel="noopener noreferrer"
           style={{ color: "rgb(var(--accent-rgb))", textDecoration: "underline", textUnderlineOffset: 3 }}
         >
           Broadcastify terms

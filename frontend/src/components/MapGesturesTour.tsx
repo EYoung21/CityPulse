@@ -87,11 +87,12 @@ const STEPS: Step[] = [
 ];
 
 function useIsCoarsePointer(): boolean {
-  const [coarse, setCoarse] = useState(false);
+  const [coarse, setCoarse] = useState(
+    () => typeof window !== "undefined" && !!window.matchMedia && window.matchMedia("(pointer: coarse)").matches
+  );
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
     const mq = window.matchMedia("(pointer: coarse)");
-    setCoarse(mq.matches);
     const handler = (e: MediaQueryListEvent) => setCoarse(e.matches);
     mq.addEventListener?.("change", handler);
     return () => mq.removeEventListener?.("change", handler);

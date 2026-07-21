@@ -21,7 +21,13 @@
  */
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useSyncExternalStore, type PointerEvent } from "react";
+import {
+  Suspense,
+  useSyncExternalStore,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import { Map as MapIcon, List, Bell, Settings as SettingsIcon, Lock, MessageCircle } from "lucide-react";
 import { subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
@@ -187,6 +193,25 @@ function MobileBottomNavInner() {
     handleTabActivate(tab);
   };
 
+  // Pointer activation is handled on pointerup so the fixed bar remains
+  // responsive above swipeable map content. Keyboard and assistive-tech
+  // activation emits a synthetic click with detail=0, so preserve that path
+  // without routing twice after a real pointer gesture.
+  const handleTabClick = (tab: Tab) => (event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (event.detail !== 0) return;
+    handleTabActivate(tab);
+  };
+
+  // Some embedded/webview engines do not synthesize a `click` when Enter or
+  // Space is pressed on a button. Handle the keys explicitly and cancel the
+  // native follow-up click so keyboard activation is reliable without double
+  // routing in browsers that do synthesize it.
+  const handleTabKeyDown = (tab: Tab) => (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    handleTabActivate(tab);
+  };
+
   const nav = (
     <nav
       aria-label="Primary"
@@ -223,6 +248,8 @@ function MobileBottomNavInner() {
             aria-label={tab.label}
             aria-current={active ? "page" : undefined}
             onPointerUp={handleTabPointerUp(tab)}
+            onClick={handleTabClick(tab)}
+            onKeyDown={handleTabKeyDown(tab)}
             className="flex-1 flex flex-col items-center justify-center gap-0.5"
             style={{
               color: active ? "#60a5fa" : "#94a3b8",

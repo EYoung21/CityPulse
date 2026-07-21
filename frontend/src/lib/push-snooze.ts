@@ -20,6 +20,7 @@
 import { setPref, getPref } from "@/lib/prefs-sync";
 
 const KEY = "pp:push-snooze-until";
+const MAX_SNOOZE_MS = 7 * 24 * 60 * 60_000;
 
 export interface PushSnoozeState {
   active: boolean;
@@ -31,25 +32,33 @@ export function loadPushSnooze(): PushSnoozeState {
   const raw = getPref(KEY);
   if (!raw) return { active: false, untilMs: 0 };
   const n = Number(raw);
-  if (!Number.isFinite(n) || n <= Date.now()) return { active: false, untilMs: 0 };
+  const now = Date.now();
+  if (!Number.isFinite(n) || n <= now || n > now + MAX_SNOOZE_MS) {
+    return { active: false, untilMs: 0 };
+  }
   return { active: true, untilMs: n };
 }
 
 export function setPushSnoozeUntil(untilMs: number | null): PushSnoozeState {
-  if (!untilMs || untilMs <= Date.now()) {
+  const now = Date.now();
+  if (!untilMs || !Number.isFinite(untilMs) || untilMs <= now) {
     // Clearing snooze writes "" (rather than removing the key) so the
     // synced prefs doc round-trips a "user explicitly unsnoozed"
     // signal, not a "this device hasn't seen the pref yet" silence.
     setPref(KEY, "");
     return { active: false, untilMs: 0 };
   }
-  setPref(KEY, String(Math.floor(untilMs)));
-  return { active: true, untilMs };
+  const cleanUntilMs = Math.min(now + MAX_SNOOZE_MS, Math.floor(untilMs));
+  setPref(KEY, String(cleanUntilMs));
+  return { active: true, untilMs: cleanUntilMs };
 }
 
 /** Snooze for a duration (in milliseconds) starting now. */
 export function snoozeFor(durationMs: number): PushSnoozeState {
-  return setPushSnoozeUntil(Date.now() + Math.max(60_000, durationMs));
+  const cleanDuration = Number.isFinite(durationMs)
+    ? Math.max(60_000, Math.min(MAX_SNOOZE_MS, durationMs))
+    : 60_000;
+  return setPushSnoozeUntil(Date.now() + cleanDuration);
 }
 
 /** Snooze until the next local-time 7am — handles cross-midnight

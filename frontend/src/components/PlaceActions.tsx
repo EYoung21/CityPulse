@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   Navigation,
   CornerUpRight,
@@ -31,6 +31,7 @@ import {
 } from "@/hooks/useSavedDestinations";
 import { placesMatch } from "@/lib/saved-place-match";
 import { requestUpgrade } from "@/lib/upgrade";
+import { normalizeHttpUrl } from "@/lib/safe-url";
 
 interface Props {
   lat: number;
@@ -104,6 +105,7 @@ export default function PlaceActions({
 
   const coordStr = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
   const displayLabel = label?.trim() || coordStr;
+  const safeWebsite = normalizeHttpUrl(website);
 
   const savedMatch = useMemo(
     () => destinations.find((d) => placesMatch(d.lat, d.lng, lat, lng)),
@@ -111,10 +113,6 @@ export default function PlaceActions({
   );
   const isSaved = Boolean(savedMatch);
   const showSaved = isSaved || pendingSave;
-
-  useEffect(() => {
-    if (isSaved) setPendingSave(false);
-  }, [isSaved]);
 
   const onCopyCoords = useCallback(async () => {
     haptic();
@@ -187,6 +185,7 @@ export default function PlaceActions({
     setPendingSave(true);
     try {
       await addDestination(displayLabel, lat, lng, cat);
+      setPendingSave(false);
       setSavePickerOpen(false);
       flashToast("saved");
     } catch (e) {
@@ -320,13 +319,13 @@ export default function PlaceActions({
             <Phone className="w-4 h-4" />
           </a>
         )}
-        {website && (
+        {safeWebsite && (
           <a
-            href={website}
+            href={safeWebsite}
             target="_blank"
             rel="noopener noreferrer"
             onClick={haptic}
-            title={`Open website (${website})`}
+            title={`Open website (${safeWebsite})`}
             aria-label="Open website"
             className={btn}
             style={{

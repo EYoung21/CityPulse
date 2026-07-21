@@ -332,7 +332,7 @@ export default function AnalyticsPanel({
           </Link>
         </div>
         <div className="flex items-center gap-1.5">
-          <button
+          <button type="button"
             onClick={handleCsv}
             title="Export current scope as CSV"
             className="flex items-center gap-1 px-2 py-1.5 rounded-md text-[11px] font-medium hover:bg-white/5 transition-colors"
@@ -341,7 +341,7 @@ export default function AnalyticsPanel({
             <Download className="w-3.5 h-3.5" />
             CSV
           </button>
-          <button
+          <button type="button"
             onClick={handlePngExport}
             title="Export visible chart as SVG"
             className="flex items-center gap-1 px-2 py-1.5 rounded-md text-[11px] font-medium hover:bg-white/5 transition-colors"
@@ -350,7 +350,7 @@ export default function AnalyticsPanel({
             <Camera className="w-3.5 h-3.5" />
             SVG
           </button>
-          <button
+          <button type="button"
             onClick={onClose}
             className="p-1.5 transition-colors"
             style={{ color: "var(--panel-text-muted)" }}
@@ -369,7 +369,7 @@ export default function AnalyticsPanel({
         <div
           className="inline-flex rounded-full p-0.5 text-[11px]"
           style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)" }}
-          role="tablist"
+          role="group"
           aria-label="Analytics scope"
         >
           {(["city", "district", "neighborhood"] as ScopeKind[]).map((k) => {
@@ -380,6 +380,8 @@ export default function AnalyticsPanel({
             return (
               <button
                 key={k}
+                type="button"
+                aria-pressed={active}
                 onClick={() => !disabled && setScopeKind(k)}
                 disabled={disabled}
                 title={
@@ -408,6 +410,7 @@ export default function AnalyticsPanel({
         {scopeKind !== "city" && (
           <div className="relative">
             <select
+              aria-label={`Select ${scopeKind}`}
               value={effectiveScopeSlug ?? ""}
               onChange={(e) => setRequestedScopeSlug(e.target.value || null)}
               className="appearance-none pr-7 pl-2.5 py-1 rounded-full text-[11px] font-medium"
@@ -435,7 +438,7 @@ export default function AnalyticsPanel({
         <div
           className="inline-flex rounded-full p-0.5 text-[11px]"
           style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)" }}
-          role="tablist"
+          role="group"
           aria-label="Time window"
         >
           {TIME_WINDOWS.map((w) => {
@@ -443,6 +446,8 @@ export default function AnalyticsPanel({
             return (
               <button
                 key={w.label}
+                type="button"
+                aria-pressed={active}
                 onClick={() => setWindowHours(w.hours)}
                 className="px-2.5 py-1 rounded-full font-semibold tracking-wider transition-colors"
                 style={{
@@ -477,7 +482,7 @@ export default function AnalyticsPanel({
           const active = tab === t.id;
           const Icon = t.Icon;
           return (
-            <button
+            <button type="button"
               key={t.id}
               onClick={() => setTab(t.id)}
               className="flex items-center gap-1.5 px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider transition-colors relative shrink-0"
@@ -510,7 +515,6 @@ export default function AnalyticsPanel({
             sevSum={sevSum}
             sevIndex={sevIndex}
             activeNow={activeNow}
-            quietWindow={quietWindow}
             wow={wow}
             mix={mix}
             comparison={comparison}
@@ -588,7 +592,6 @@ interface OverviewProps {
   sevSum: number;
   sevIndex: number[];
   activeNow: number;
-  quietWindow: { startHour: number; endHour: number; avgIncidents: number };
   wow: ReturnType<typeof categoryWoW>;
   mix: ReturnType<typeof severityBucketMix>;
   comparison: ReturnType<typeof areaVsCityComparison> | null;
@@ -603,7 +606,6 @@ function Overview({
   sevSum,
   sevIndex,
   activeNow,
-  quietWindow,
   wow,
   mix,
   comparison,

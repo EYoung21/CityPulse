@@ -81,7 +81,7 @@ export default function AvoidancePrefsPicker({ prefs, onChange }: Props) {
             const allOn = onCount === total;
             const someOn = onCount > 0;
             return (
-              <button
+              <button type="button"
                 key={ac.id}
                 onClick={() => setBucket(ac.cats, !allOn)}
                 className={`shrink-0 px-2.5 py-1 rounded-full text-[10px] font-medium transition-all flex items-center gap-1 whitespace-nowrap ${

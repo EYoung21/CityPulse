@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Search, MapPin, Loader2, X, Navigation, Mic, Clock, Trash2, Home, Briefcase, Star, Radio, Lock, Bookmark, Plus } from "lucide-react";
 import { geocodePhilly, type GeoResult } from "@/lib/search";
 import { isVoiceSearchSupported, startVoiceSearch } from "@/lib/voice";
@@ -48,6 +48,18 @@ interface Props {
 type SearchMode = "places" | "incidents";
 
 const FREE_INCIDENT_SEARCH_HOURS = 1;
+
+function activateResultWithKeyboard(
+  event: ReactKeyboardEvent<HTMLButtonElement>,
+  activate: () => void,
+) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  // Some embedded webviews do not synthesize a click for keyboard-activated
+  // buttons. Prevent the native follow-up where it does exist so selection is
+  // reliable without firing twice.
+  event.preventDefault();
+  activate();
+}
 
 function resultPrimary(s: { display_name: string; name?: string }): string {
   return s.name?.trim() || s.display_name.split(",")[0]?.trim() || "Place";
@@ -535,6 +547,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
             void submitSearch();
           }}
           onFocus={() => setOpen(true)}
+          aria-label={mode === "incidents" ? "Search scanner incidents" : "Search CityPulse"}
           placeholder={voiceActive ? "Listening…" : mode === "incidents" ? "Search scanner feed" : "Search CityPulse"}
           className="flex-1 bg-transparent text-sm outline-none"
           style={{ color: "var(--panel-text)" }}
@@ -581,13 +594,12 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
             background: "var(--panel-bg-secondary)",
             border: "1px solid var(--panel-border)",
           }}
-          role="tablist"
+          role="group"
           aria-label="Search mode"
         >
           <button
             type="button"
-            role="tab"
-            aria-selected={mode === "places"}
+            aria-pressed={mode === "places"}
             onClick={() => setMode("places")}
             className="px-3 py-1 rounded-full font-medium transition-colors flex items-center gap-1.5"
             style={{
@@ -599,8 +611,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
           </button>
           <button
             type="button"
-            role="tab"
-            aria-selected={mode === "incidents"}
+            aria-pressed={mode === "incidents"}
             onClick={() => {
               setMode("incidents");
               if (query.trim().length >= 2) incidentSearch(query);
@@ -800,32 +811,38 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
             return (
               <div key={`${r.lat},${r.lng},${i}`} style={{ borderBottom: "1px solid var(--panel-border)" }}>
                 <div
-                  onClick={() => handleSelect(r)}
-                  className={`w-full text-left flex items-start gap-3 transition-colors cursor-pointer ${
-                    isMobile ? "px-4 py-3.5" : "px-4 py-2.5"
-                  }`}
+                  className="w-full flex items-start transition-colors"
                   onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
-                  <div
-                    className={`rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
-                      isMobile ? "w-9 h-9" : "w-7 h-7"
+                  <button
+                    type="button"
+                    onClick={() => handleSelect(r)}
+                    onKeyDown={(event) => activateResultWithKeyboard(event, () => handleSelect(r))}
+                    className={`min-w-0 flex-1 text-left flex items-start gap-3 ${
+                      isMobile ? "pl-4 pr-2 py-3.5" : "pl-4 pr-2 py-2.5"
                     }`}
-                    style={{ background: "var(--panel-input-bg)" }}
                   >
-                    <Clock
-                      className={isMobile ? "w-4 h-4" : "w-3.5 h-3.5"}
-                      style={{ color: "var(--panel-text-muted)" }}
-                    />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm truncate" style={{ color: "var(--panel-text)" }}>{primary}</p>
-                    {secondary && (
-                      <p className="text-xs truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
-                        {secondary}
-                      </p>
-                    )}
-                  </div>
+                    <span
+                      className={`rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+                        isMobile ? "w-9 h-9" : "w-7 h-7"
+                      }`}
+                      style={{ background: "var(--panel-input-bg)" }}
+                    >
+                      <Clock
+                        className={isMobile ? "w-4 h-4" : "w-3.5 h-3.5"}
+                        style={{ color: "var(--panel-text-muted)" }}
+                      />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm truncate" style={{ color: "var(--panel-text)" }}>{primary}</span>
+                      {secondary && (
+                        <span className="block text-xs truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                          {secondary}
+                        </span>
+                      )}
+                    </span>
+                  </button>
                   {/* Desktop keeps the trailing bookmark + directions
                       micro-actions; on mobile the row is the only tap
                       target so it visually matches Google Maps' clean
@@ -835,11 +852,10 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
                     <>
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
+                        onClick={() => {
                           setSaveTarget(expanded ? null : key);
                         }}
-                        className="shrink-0 mt-1 transition-colors"
+                        className="shrink-0 mt-3 transition-colors"
                         style={{ color: saved ? "#a855f7" : "var(--panel-text-muted)" }}
                         title={saved ? "Already saved" : "Save place"}
                         aria-label={saved ? `Already saved ${primary}` : `Save ${primary}`}
@@ -851,12 +867,12 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
                         />
                       </button>
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation();
+                        type="button"
+                        onClick={() => {
                           onDirections(primary, { lat: r.lat, lng: r.lng });
                           remember({ display_name: r.display_name, lat: r.lat, lng: r.lng });
                         }}
-                        className="text-blue-500/50 hover:text-blue-500 shrink-0 mt-1"
+                        className="text-blue-500/50 hover:text-blue-500 shrink-0 mt-3"
                         title="Get directions"
                         aria-label={`Get directions to ${primary}`}
                       >
@@ -865,11 +881,11 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
                     </>
                   )}
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
+                    type="button"
+                    onClick={() => {
                       setRecents(removeRecent(r.lat, r.lng));
                     }}
-                    className="text-slate-500 hover:text-rose-400 shrink-0 mt-1 opacity-50 hover:opacity-100 transition-opacity"
+                    className="text-slate-500 hover:text-rose-400 shrink-0 mt-3 mr-4 opacity-50 hover:opacity-100 transition-opacity"
                     title="Forget this destination"
                     aria-label={`Remove ${primary} from recents`}
                   >
@@ -913,33 +929,42 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
           {localMatches.saved.map((d) => (
             <div
               key={`saved-${d.id}`}
-              onClick={() => handleSelect({ display_name: d.name, lat: d.lat, lng: d.lng })}
-              className="w-full text-left px-4 py-2.5 flex items-start gap-3 last:border-0 transition-colors cursor-pointer"
+              className="w-full flex items-start last:border-0 transition-colors"
               style={{ borderBottom: "1px solid var(--panel-border)" }}
               onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
               onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
             >
-              <div
-                className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-                style={{ background: "var(--panel-input-bg)" }}
-              >
-                {d.category === "home"     ? <Home      className="w-3.5 h-3.5 text-emerald-500" /> :
-                 d.category === "work"     ? <Briefcase className="w-3.5 h-3.5 text-blue-500" /> :
-                 d.category === "favorite" ? <Star      className="w-3.5 h-3.5 text-amber-500" /> :
-                                             <MapPin    className="w-3.5 h-3.5 text-slate-500" />}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm truncate" style={{ color: "var(--panel-text)" }}>{d.name}</p>
-                <p className="text-[11px] mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
-                  Saved · {d.category}
-                </p>
-              </div>
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
+                type="button"
+                onClick={() => handleSelect({ display_name: d.name, lat: d.lat, lng: d.lng })}
+                onKeyDown={(event) => activateResultWithKeyboard(
+                  event,
+                  () => handleSelect({ display_name: d.name, lat: d.lat, lng: d.lng }),
+                )}
+                className="min-w-0 flex-1 text-left pl-4 pr-2 py-2.5 flex items-start gap-3"
+              >
+                <span
+                  className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+                  style={{ background: "var(--panel-input-bg)" }}
+                >
+                  {d.category === "home"     ? <Home      className="w-3.5 h-3.5 text-emerald-500" /> :
+                   d.category === "work"     ? <Briefcase className="w-3.5 h-3.5 text-blue-500" /> :
+                   d.category === "favorite" ? <Star      className="w-3.5 h-3.5 text-amber-500" /> :
+                                               <MapPin    className="w-3.5 h-3.5 text-slate-500" />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm truncate" style={{ color: "var(--panel-text)" }}>{d.name}</span>
+                  <span className="block text-[11px] mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                    Saved · {d.category}
+                  </span>
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
                   onDirections(d.name, { lat: d.lat, lng: d.lng });
                 }}
-                className="ml-auto text-blue-500/60 hover:text-blue-500 shrink-0 mt-1"
+                className="text-blue-500/60 hover:text-blue-500 shrink-0 mt-3 mr-4"
                 title="Get directions"
                 aria-label={`Get directions to ${d.name}`}
               >
@@ -952,29 +977,31 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
             const primary = parts[0].trim();
             const secondary = parts.slice(1, 3).map((p) => p.trim()).join(", ");
             return (
-              <div
+              <button
+                type="button"
                 key={`r-${r.lat},${r.lng}`}
                 onClick={() => handleSelect(r)}
+                onKeyDown={(event) => activateResultWithKeyboard(event, () => handleSelect(r))}
                 className="w-full text-left px-4 py-2.5 flex items-start gap-3 last:border-0 transition-colors cursor-pointer"
                 style={{ borderBottom: "1px solid var(--panel-border)" }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
                 onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
               >
-                <div
+                <span
                   className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
                   style={{ background: "var(--panel-input-bg)" }}
                 >
                   <Clock className="w-3.5 h-3.5" style={{ color: "var(--panel-text-muted)" }} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm truncate" style={{ color: "var(--panel-text)" }}>{primary}</p>
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm truncate" style={{ color: "var(--panel-text)" }}>{primary}</span>
                   {secondary && (
-                    <p className="text-[11px] mt-0.5 truncate" style={{ color: "var(--panel-text-muted)" }}>
+                    <span className="block text-[11px] mt-0.5 truncate" style={{ color: "var(--panel-text-muted)" }}>
                       Recent · {secondary}
-                    </p>
+                    </span>
                   )}
-                </div>
-              </div>
+                </span>
+              </button>
             );
           })}
         </div>
@@ -1006,31 +1033,37 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
             return (
               <div key={i} style={{ borderBottom: "1px solid var(--panel-border)" }}>
                 <div
-                  onClick={() => handleSelect(s)}
-                  className={`w-full text-left flex items-start gap-3 transition-colors cursor-pointer ${
-                    isMobile ? "px-4 py-3.5" : "px-4 py-3"
-                  }`}
+                  className="w-full flex items-start transition-colors"
                   onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
-                  <div
-                    className={`rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
-                      isMobile ? "w-9 h-9" : "w-8 h-8"
+                  <button
+                    type="button"
+                    onClick={() => handleSelect(s)}
+                    onKeyDown={(event) => activateResultWithKeyboard(event, () => handleSelect(s))}
+                    className={`min-w-0 flex-1 text-left flex items-start gap-3 ${
+                      isMobile ? "px-4 py-3.5" : "pl-4 pr-2 py-3"
                     }`}
-                    style={{ background: "var(--panel-input-bg)" }}
                   >
-                    <MapPin className="w-4 h-4" style={{ color: "var(--panel-text-muted)" }} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate" style={{ color: "var(--panel-text)" }}>
-                      {primary}
-                    </p>
-                    {secondary && (
-                      <p className="text-xs truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
-                        {secondary}
-                      </p>
-                    )}
-                  </div>
+                    <span
+                      className={`rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+                        isMobile ? "w-9 h-9" : "w-8 h-8"
+                      }`}
+                      style={{ background: "var(--panel-input-bg)" }}
+                    >
+                      <MapPin className="w-4 h-4" style={{ color: "var(--panel-text-muted)" }} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium truncate" style={{ color: "var(--panel-text)" }}>
+                        {primary}
+                      </span>
+                      {secondary && (
+                        <span className="block text-xs truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                          {secondary}
+                        </span>
+                      )}
+                    </span>
+                  </button>
                   {/* Mobile rows match Google Maps' clean "tap-to-open"
                       pattern — the place card surfaces Save + Directions
                       after selection. Desktop keeps the inline micro-
@@ -1039,11 +1072,10 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
                     <>
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
+                        onClick={() => {
                           setSaveTarget(expanded ? null : key);
                         }}
-                        className="shrink-0 mt-1 transition-colors"
+                        className="shrink-0 mt-3.5 transition-colors"
                         style={{ color: saved ? "#a855f7" : "var(--panel-text-muted)" }}
                         title={saved ? "Already saved" : "Save place"}
                         aria-label={saved ? `Already saved ${primary}` : `Save ${primary}`}
@@ -1055,12 +1087,12 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
                         />
                       </button>
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation();
+                        type="button"
+                        onClick={() => {
                           onDirections(primary, s);
                           remember(s);
                         }}
-                        className="text-blue-500/50 hover:text-blue-500 shrink-0 mt-1"
+                        className="text-blue-500/50 hover:text-blue-500 shrink-0 mt-3.5 mr-4"
                         title="Get directions"
                         aria-label={`Get directions to ${primary}`}
                       >
@@ -1141,40 +1173,45 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
             return (
               <div key={`${s.lat},${s.lng},${i}`} style={{ borderBottom: "1px solid var(--panel-border)" }}>
                 <div
-                  onClick={() => handleSelect(s)}
-                  className={`w-full text-left flex items-start gap-3 transition-colors cursor-pointer ${
-                    isMobile ? "px-4 py-3.5" : "px-4 py-3"
-                  }`}
+                  className="w-full flex items-start transition-colors"
                   onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
-                  <div
-                    className={`rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
-                      isMobile ? "w-9 h-9" : "w-8 h-8"
+                  <button
+                    type="button"
+                    onClick={() => handleSelect(s)}
+                    onKeyDown={(event) => activateResultWithKeyboard(event, () => handleSelect(s))}
+                    className={`min-w-0 flex-1 text-left flex items-start gap-3 ${
+                      isMobile ? "px-4 py-3.5" : "pl-4 pr-2 py-3"
                     }`}
-                    style={{ background: i === 0 ? "rgba(59,130,246,0.14)" : "var(--panel-input-bg)" }}
                   >
-                    <MapPin className="w-4 h-4" style={{ color: i === 0 ? "#3b82f6" : "var(--panel-text-muted)" }} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate" style={{ color: "var(--panel-text)" }}>
-                      {primary}
-                    </p>
-                    {secondary && (
-                      <p className="text-xs truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
-                        {secondary}
-                      </p>
-                    )}
-                  </div>
+                    <span
+                      className={`rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+                        isMobile ? "w-9 h-9" : "w-8 h-8"
+                      }`}
+                      style={{ background: i === 0 ? "rgba(59,130,246,0.14)" : "var(--panel-input-bg)" }}
+                    >
+                      <MapPin className="w-4 h-4" style={{ color: i === 0 ? "#3b82f6" : "var(--panel-text-muted)" }} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium truncate" style={{ color: "var(--panel-text)" }}>
+                        {primary}
+                      </span>
+                      {secondary && (
+                        <span className="block text-xs truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                          {secondary}
+                        </span>
+                      )}
+                    </span>
+                  </button>
                   {!isMobile && (
                     <>
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
+                        onClick={() => {
                           setSaveTarget(expanded ? null : key);
                         }}
-                        className="shrink-0 mt-1 transition-colors"
+                        className="shrink-0 mt-3.5 transition-colors"
                         style={{ color: saved ? "#a855f7" : "var(--panel-text-muted)" }}
                         title={saved ? "Already saved" : "Save place"}
                         aria-label={saved ? `Already saved ${primary}` : `Save ${primary}`}
@@ -1187,12 +1224,11 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
                       </button>
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
+                        onClick={() => {
                           onDirections(primary, s);
                           remember(s);
                         }}
-                        className="text-blue-500/50 hover:text-blue-500 shrink-0 mt-1"
+                        className="text-blue-500/50 hover:text-blue-500 shrink-0 mt-3.5 mr-4"
                         title="Get directions"
                         aria-label={`Get directions to ${primary}`}
                       >
@@ -1276,41 +1312,47 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
               `${Math.round(ageMin / 1440)}d ago`;
             const snippet = (inc.description || inc.raw_text || "").slice(0, 120);
             return (
-              <div
+              <button
+                type="button"
                 key={inc.id}
                 onClick={() => {
                   onSelectIncident?.(inc.id);
                   if (inc.lat != null && inc.lng != null) onFlyTo(inc.lat, inc.lng);
                   setOpen(false);
                 }}
+                onKeyDown={(event) => activateResultWithKeyboard(event, () => {
+                  onSelectIncident?.(inc.id);
+                  if (inc.lat != null && inc.lng != null) onFlyTo(inc.lat, inc.lng);
+                  setOpen(false);
+                })}
                 className="w-full text-left px-4 py-3 flex items-start gap-3 last:border-0 transition-colors cursor-pointer"
                 style={{ borderBottom: "1px solid var(--panel-border)" }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
                 onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
               >
-                <div
+                <span
                   className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5"
                   style={{ background: "var(--panel-input-bg)" }}
                 >
                   <Radio className="w-4 h-4" style={{ color: "var(--panel-text-muted)" }} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate" style={{ color: "var(--panel-text)" }}>
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium truncate" style={{ color: "var(--panel-text)" }}>
                     <span className="capitalize">{inc.severity_category}</span>
                     {inc.location_text ? ` · ${inc.location_text}` : ""}
-                  </p>
+                  </span>
                   {snippet && (
-                    <p className="text-xs mt-0.5 line-clamp-2" style={{ color: "var(--panel-text-muted)" }}>
+                    <span className="block text-xs mt-0.5 line-clamp-2" style={{ color: "var(--panel-text-muted)" }}>
                       {snippet}
-                    </p>
+                    </span>
                   )}
-                  <p className="text-[10px] mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+                  <span className="block text-[10px] mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
                     {ageLabel}
                     {inc.mention_count && inc.mention_count > 1 ? ` · +${inc.mention_count - 1} upd` : ""}
                     {inc.feed_id ? ` · ${inc.feed_id}` : ""}
-                  </p>
-                </div>
-              </div>
+                  </span>
+                </span>
+              </button>
             );
           })}
           {incidentTotal > 12 && (

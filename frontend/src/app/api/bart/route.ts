@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
 
 /** BART proxy.
  *
@@ -55,17 +56,28 @@ interface BartEtdRoot {
 const asArray = <T>(v: T | T[] | undefined): T[] =>
   v == null ? [] : Array.isArray(v) ? v : [v];
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function cleanText(value: unknown, maxLength = 200): string {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
 function normalize(raw: unknown) {
-  if (!raw || typeof raw !== "object") {
+  const data = asRecord(raw);
+  const root = asRecord(data?.root);
+  if (!root) {
     return { station_name: "", fetched_label: "", arrivals: [] };
   }
-  const data = raw as BartEtdRoot;
-  const stations = asArray(data.root?.station);
-  const station = stations[0];
+  const stations = asArray(root.station).map(asRecord).filter((row): row is Record<string, unknown> => row !== null);
+  const station = stations[0] ?? null;
   if (!station) {
     return {
       station_name: "",
-      fetched_label: data.root?.time ?? "",
+      fetched_label: cleanText(root.time, 100),
       arrivals: [],
     };
   }
@@ -75,24 +87,31 @@ function normalize(raw: unknown) {
     color: string;
     platform?: string;
   }[] = [];
-  for (const dest of asArray(station.etd)) {
-    for (const est of asArray(dest.estimate)) {
-      const hex = est.hexcolor || (est.color ? `#${est.color}` : "#888888");
+  for (const dest of asArray(station.etd).map(asRecord).filter((row): row is Record<string, unknown> => row !== null)) {
+    const destination = cleanText(dest.destination);
+    if (!destination) continue;
+    for (const est of asArray(dest.estimate).map(asRecord).filter((row): row is Record<string, unknown> => row !== null)) {
+      const rawHex = cleanText(est.hexcolor, 16) || `#${cleanText(est.color, 12)}`;
+      const hex = /^#[0-9a-f]{6}$/i.test(rawHex) ? rawHex : "#888888";
+      const minutes = cleanText(est.minutes, 20);
+      if (!minutes) continue;
       out.push({
-        destination: dest.destination,
-        minutes: est.minutes,
+        destination,
+        minutes,
         color: hex,
-        platform: est.platform,
+        platform: cleanText(est.platform, 20) || undefined,
       });
+      if (out.length >= 100) break;
     }
+    if (out.length >= 100) break;
   }
   // Numerically sortable: "Leaving" → 0, else parseInt.
   const byMin = (m: string) =>
     m === "Leaving" || m === "Now" ? 0 : Number.parseInt(m, 10) || 999;
   out.sort((a, b) => byMin(a.minutes) - byMin(b.minutes));
   return {
-    station_name: station.name,
-    fetched_label: data.root?.time ?? "",
+    station_name: cleanText(station.name),
+    fetched_label: cleanText(root.time, 100),
     arrivals: out,
   };
 }
@@ -103,8 +122,8 @@ export async function GET(request: Request) {
 
   try {
     if (op === "etd") {
-      const station = url.searchParams.get("station") || "";
-      if (!station || station.length > 4) {
+      const station = (url.searchParams.get("station") || "").trim().toUpperCase();
+      if (!/^[A-Z]{2,4}$/.test(station)) {
         return NextResponse.json(
           { error: "station param required (4-letter BART code)" },
           { status: 400 }
@@ -112,13 +131,19 @@ export async function GET(request: Request) {
       }
       const r = await fetch(
         `https://api.bart.gov/api/etd.aspx?cmd=etd&orig=${encodeURIComponent(station)}&key=${BART_KEY}&json=y`,
-        { next: { revalidate: CACHE_TTL } }
+        { next: { revalidate: CACHE_TTL }, signal: AbortSignal.timeout(8_000) }
       );
-      const raw = await r.json().catch(() => null);
+      const raw = await readBoundedJsonResponse(r, 1024 * 1024).catch(() => null);
       const out = normalize(raw);
+      const root = raw && typeof raw === "object"
+        ? (raw as Partial<BartEtdRoot>).root
+        : null;
+      const payloadOk = Boolean(
+        root && typeof root === "object" && !root.message?.error
+      );
       return NextResponse.json({
         ...out,
-        meta: { upstream_ok: r.ok, op, cached_ttl_s: CACHE_TTL },
+        meta: { upstream_ok: r.ok && payloadOk, op, cached_ttl_s: CACHE_TTL },
       });
     }
 

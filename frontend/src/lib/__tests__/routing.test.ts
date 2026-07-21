@@ -9,6 +9,7 @@ import {
   geometriesAreSimilar,
   isTransitMode,
   mergeRouteLegs,
+  normalizeAvoidancePrefs,
   orsProfile,
   type AvoidancePrefs,
   type RouteOption,
@@ -73,7 +74,7 @@ describe("avoidance preferences", () => {
     expect(zones[1]).toMatchObject({ center: [39.96, -75.17], radiusM: 250 });
   });
 
-  it("treats an empty leaf set as all categories above the severity floor", () => {
+  it("treats an empty leaf set as avoidance turned off", () => {
     const zones = buildAvoidZones(
       [
         inc({ severity_category: "medical_priority", w_eff: 0.5 }),
@@ -81,7 +82,22 @@ describe("avoidance preferences", () => {
       ],
       { leaves: new Set(), minSeverity: "low" }
     );
-    expect(zones).toHaveLength(1);
+    expect(zones).toHaveLength(0);
+  });
+
+  it("normalizes stored leaves and preserves the routing time horizon", () => {
+    const prefs = normalizeAvoidancePrefs({
+      leaves: ["violent_weapon", "not_a_category", 42],
+      minSeverity: "high",
+      maxAgeHours: 6,
+    });
+    expect([...prefs.leaves]).toEqual(["violent_weapon"]);
+    expect(prefs.minSeverity).toBe("high");
+    expect(prefs.maxAgeHours).toBe(6);
+
+    const off = normalizeAvoidancePrefs({ leaves: [], minSeverity: "any", maxAgeHours: 999 });
+    expect(off.leaves.size).toBe(0);
+    expect(off.maxAgeHours).toBeUndefined();
   });
 });
 

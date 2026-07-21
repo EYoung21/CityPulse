@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored, minified Leaflet.heat distribution; lint our adapter code,
+    // not the third-party artifact itself.
+    "src/lib/leaflet-heat.js",
   ]),
 ]);
 

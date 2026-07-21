@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import Link from "next/link";
 import SharedListPreview from "@/components/SharedListPreview";
 import { decodeListToken } from "@/lib/share-list";
+import { trustedRequestOrigin } from "@/lib/request-origin";
+import { strictSingleSearchParam, type SearchParamValue } from "@/lib/share-params";
 
 interface SearchParams {
   /** Encoded list-share token. */
-  t?: string;
+  t?: SearchParamValue;
 }
 
 interface Props {
@@ -14,15 +17,14 @@ interface Props {
 
 async function originFromHeaders(): Promise<string> {
   const h = await headers();
-  const proto = h.get("x-forwarded-proto") || "https";
-  const host = h.get("host") || "";
-  return host ? `${proto}://${host}` : "";
+  return trustedRequestOrigin(h.get("host"));
 }
 
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
   const sp = await searchParams;
+  const token = strictSingleSearchParam(sp.t, 32_000);
   const origin = await originFromHeaders();
-  const decoded = sp.t ? decodeListToken(sp.t) : null;
+  const decoded = token ? decodeListToken(token) : null;
 
   const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
   const senderLabel = decoded?.senderName?.trim() || "Someone";
@@ -71,11 +73,12 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
  *  client component since it needs Firebase + auth context. */
 export default async function SharedListPage({ searchParams }: Props) {
   const sp = await searchParams;
-  const decoded = sp.t ? decodeListToken(sp.t) : null;
+  const token = strictSingleSearchParam(sp.t, 32_000);
+  const decoded = token ? decodeListToken(token) : null;
 
   if (!decoded) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-100 p-6">
+      <main className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-100 p-6">
         <div className="max-w-md text-center">
           <p className="text-xs uppercase tracking-widest text-slate-500">PhillyPulse</p>
           <h1 className="text-2xl font-bold mt-2">This share link is invalid</h1>
@@ -83,11 +86,11 @@ export default async function SharedListPage({ searchParams }: Props) {
             The link may be incomplete, corrupted, or from a newer version of the app.
             Ask the sender for a fresh link.
           </p>
-          <a href="/" className="inline-block mt-6 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold">
+          <Link href="/" className="inline-block mt-6 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold">
             Open PhillyPulse
-          </a>
+          </Link>
         </div>
-      </div>
+      </main>
     );
   }
 

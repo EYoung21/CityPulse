@@ -74,6 +74,30 @@ function scheduleId(uid: string, bucketKey: string): string {
   return `${uid}_${safe}`;
 }
 
+function isValidPrediction(prediction: CommutePrediction): boolean {
+  return (
+    prediction.bucketKey.length > 0 &&
+    prediction.bucketKey.length <= 80 &&
+    Number.isFinite(prediction.destLat) &&
+    prediction.destLat >= -90 &&
+    prediction.destLat <= 90 &&
+    Number.isFinite(prediction.destLng) &&
+    prediction.destLng >= -180 &&
+    prediction.destLng <= 180 &&
+    prediction.destLabel.trim().length > 0 &&
+    prediction.destLabel.length <= 160 &&
+    Number.isFinite(prediction.typicalDepartureMinute) &&
+    prediction.typicalDepartureMinute >= 0 &&
+    prediction.typicalDepartureMinute < 1440 &&
+    Number.isFinite(prediction.typicalDurationMin) &&
+    prediction.typicalDurationMin > 0 &&
+    prediction.typicalDurationMin <= 1440 &&
+    Number.isFinite(prediction.confidence) &&
+    prediction.confidence >= 0 &&
+    prediction.confidence <= 1
+  );
+}
+
 /** Push (or refresh) the schedule for one prediction. Idempotent;
  *  callers can invoke this on every prediction tick — the document
  *  size is small (<300 B) so the write cost is negligible. */
@@ -82,6 +106,9 @@ export async function upsertCommuteSchedule(
   prediction: CommutePrediction
 ): Promise<void> {
   if (!isFirebaseConfigured()) return;
+  if (!uid || uid.length > 128 || !isValidPrediction(prediction)) {
+    throw new Error("Invalid commute schedule");
+  }
   const db = getFirestore(getFirebaseApp());
   const id = scheduleId(uid, prediction.bucketKey);
   const isWeekend = prediction.bucketKey.startsWith("we:");
@@ -99,10 +126,10 @@ export async function upsertCommuteSchedule(
     tz: detectTimezone(),
     updatedAt: Date.now(),
   };
-  // setDoc with merge:false so an updated prediction (e.g. user's
-  // commute time shifted by 15 min after a job change) overwrites
-  // the previous payload cleanly, including any stale fields.
-  await setDoc(doc(db, COLLECTION, id), payload);
+  // Preserve the server-owned lastFired* fields. Replacing the whole
+  // document here used to erase the daily notification dedupe marker,
+  // allowing the same commute nudge to fire repeatedly after a refresh.
+  await setDoc(doc(db, COLLECTION, id), payload, { merge: true });
 }
 
 /** Delete a single schedule by bucket key — used when the user

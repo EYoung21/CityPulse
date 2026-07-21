@@ -6,9 +6,9 @@
  * A pill next to the brand logo that opens a dropdown of all Pulse cities,
  * highlighting the current one and linking out to sister-city domains.
  *
- * If the visitor is authenticated, their Firebase ID token is appended to
- * the destination URL as `__pulse_token` so cross-domain SSO Just Works
- * (same pattern the in-app PulseNetworkNav uses).
+ * If the visitor is authenticated, their Firebase ID token is placed in the
+ * destination URL fragment so cross-domain SSO works without exposing the
+ * credential in the HTTP request or referrer.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -52,7 +52,7 @@ export function CitySwitcher({ current }: { current: PulseCity }) {
 
   return (
     <div className="lp-switcher" ref={rootRef}>
-      <button
+      <button type="button"
         className="lp-switcher-trigger"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}

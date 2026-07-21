@@ -260,36 +260,43 @@ def insert_incident(
     reported_at: Optional[str] = None,
     audio_clip: Optional[str] = None,
     feed_id: Optional[str] = None,
+    incident_id: Optional[str] = None,
     **kwargs,
 ) -> dict:
     conn = get_conn()
-    incident_id = uuid.uuid4().hex[:12]
+    incident_id = incident_id or uuid.uuid4().hex[:12]
     if reported_at is None:
         reported_at = datetime.now(timezone.utc).isoformat()
 
-    conn.execute(
-        """INSERT INTO incidents
+    try:
+        conn.execute(
+            """INSERT INTO incidents
            (id, reported_at, raw_text, severity_category, s_base,
             location_text, lat, lng, confidence, geocode_status,
             inhibitor_status, inhibitor_reason)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            incident_id,
-            reported_at,
-            raw_text,
-            severity_category,
-            s_base,
-            location_text,
-            lat,
-            lng,
-            confidence,
-            geocode_status,
-            inhibitor_status,
-            inhibitor_reason,
-        ),
-    )
-    conn.commit()
-    return get_incident(incident_id)
+            (
+                incident_id,
+                reported_at,
+                raw_text,
+                severity_category,
+                s_base,
+                location_text,
+                lat,
+                lng,
+                confidence,
+                geocode_status,
+                inhibitor_status,
+                inhibitor_reason,
+            ),
+        )
+        conn.commit()
+        return {**(get_incident(incident_id) or {}), "_was_created": True}
+    except sqlite3.IntegrityError:
+        existing = get_incident(incident_id)
+        if existing is None:
+            raise
+        return {**existing, "_was_created": False}
 
 
 def get_incident(incident_id: str) -> Optional[dict]:
@@ -351,31 +358,38 @@ def list_incidents_for_city(
     since: Optional[str] = None,
     category: Optional[str] = None,
     before_iso: Optional[str] = None,
+    cursor_id: Optional[str] = None,
     limit: int = 50,
     include_blocked: bool = False,
     include_hidden: bool = False,
 ) -> list[dict]:
-    _ = include_hidden
+    # SQLite is intentionally a single-city development store and its schema
+    # has no `city` column. The server validates the requested slug; once here,
+    # return the one local city's rows instead of issuing invalid SQL.
+    _ = city, include_hidden
     if not city:
         return []
     conn = get_conn()
-    clauses = ["city = ?"]
-    params: list = [city]
+    clauses: list[str] = []
+    params: list = []
     if not include_blocked:
         clauses.append("inhibitor_status != 'blocked'")
     if since:
         clauses.append("reported_at >= ?")
         params.append(since)
-    if before_iso:
+    if before_iso and cursor_id:
+        clauses.append("(reported_at < ? OR (reported_at = ? AND id < ?))")
+        params.extend([before_iso, before_iso, cursor_id])
+    elif before_iso:
         clauses.append("reported_at < ?")
         params.append(before_iso)
     if category:
         clauses.append("severity_category = ?")
         params.append(category)
-    where = " WHERE " + " AND ".join(clauses)
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
     params.append(int(limit))
     rows = conn.execute(
-        f"SELECT * FROM incidents{where} ORDER BY reported_at DESC LIMIT ?",
+        f"SELECT * FROM incidents{where} ORDER BY reported_at DESC, id DESC LIMIT ?",
         params,
     ).fetchall()
     return [dict(r) for r in rows]
@@ -425,6 +439,12 @@ def incident_count() -> int:
     return row["cnt"]
 
 
+def city_incident_count(slug: str) -> int:
+    """SQLite is a single-city development store, so its total is city-local."""
+    _ = slug
+    return incident_count()
+
+
 def count_city_incidents(slug: str, since_iso: Optional[str] = None) -> int:
     """SQLite schema does not carry a city column (dev-only), so we report
     -1 to let the caller fall back to static metadata.
@@ -459,6 +479,12 @@ def inhibitor_stats() -> dict:
         "SELECT inhibitor_status, COUNT(*) as cnt FROM incidents GROUP BY inhibitor_status"
     ).fetchall()
     return {row["inhibitor_status"]: row["cnt"] for row in rows}
+
+
+def city_inhibitor_stats(slug: str) -> dict:
+    """SQLite is a single-city development store, so its stats are city-local."""
+    _ = slug
+    return inhibitor_stats()
 
 
 def save_human_review(

@@ -1,7 +1,29 @@
 "use client";
 
 import { Car } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
+
+const MOBILE_RIDESHARE_QUERY = "(max-width: 900px)";
+
+function subscribeMobileRideshare(onStoreChange: () => void) {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
+  const query = window.matchMedia(MOBILE_RIDESHARE_QUERY);
+  if (typeof query.addEventListener === "function") {
+    query.addEventListener("change", onStoreChange);
+    return () => query.removeEventListener("change", onStoreChange);
+  }
+  if (typeof query.addListener === "function") {
+    query.addListener(onStoreChange);
+    return () => query.removeListener(onStoreChange);
+  }
+  return () => {};
+}
+
+function getMobileRideshareSnapshot() {
+  return typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(MOBILE_RIDESHARE_QUERY).matches;
+}
 
 interface Props {
   destLat: number;
@@ -28,11 +50,11 @@ export default function RideshareLinks({
   // Only render when at least one ridesharing service is plausibly
   // useful — i.e. on a phone-sized screen. On desktop the deep links
   // mostly bounce to a browser, which is noisier than helpful.
-  const [shouldRender, setShouldRender] = useState(false);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    setShouldRender(window.matchMedia("(max-width: 900px)").matches);
-  }, []);
+  const shouldRender = useSyncExternalStore(
+    subscribeMobileRideshare,
+    getMobileRideshareSnapshot,
+    () => false
+  );
   if (!shouldRender) return null;
 
   const dropName = destName ? destName.split(",")[0].slice(0, 80) : "Drop-off";

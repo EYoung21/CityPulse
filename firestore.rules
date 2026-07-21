@@ -14,12 +14,115 @@ service cloud.firestore {
           ];
     }
 
+    function isLatitude(value) {
+      return value is number && value >= -90 && value <= 90;
+    }
+
+    function isLongitude(value) {
+      return value is number && value >= -180 && value <= 180;
+    }
+
+    function isValidLiveTrip(data) {
+      return data.keys().hasOnly([
+          'createdAt', 'expiresAt', 'ownerUid', 'ownerName', 'dest',
+          'position', 'etaAt', 'progressPct', 'mode', 'ended'
+        ])
+        && data.createdAt is timestamp
+        && data.expiresAt is timestamp
+        && data.ownerUid is string
+        && data.ownerUid.size() > 0
+        && data.ownerUid.size() <= 128
+        && (data.ownerName == null
+            || (data.ownerName is string && data.ownerName.size() <= 80))
+        && data.dest is map
+        && data.dest.keys().hasOnly(['lat', 'lng', 'name'])
+        && isLatitude(data.dest.lat)
+        && isLongitude(data.dest.lng)
+        && data.dest.name is string
+        && data.dest.name.size() > 0
+        && data.dest.name.size() <= 120
+        && data.position is map
+        && data.position.keys().hasOnly(['lat', 'lng', 'heading'])
+        && isLatitude(data.position.lat)
+        && isLongitude(data.position.lng)
+        && (data.position.heading == null
+            || (data.position.heading is number
+                && data.position.heading >= 0
+                && data.position.heading <= 360))
+        && (data.etaAt == null || data.etaAt is number)
+        && data.progressPct is number
+        && data.progressPct >= 0
+        && data.progressPct <= 1
+        && data.mode in [
+          'foot-walking', 'cycling-regular', 'driving-car', 'wheelchair',
+          'transit-train', 'transit-subway'
+        ]
+        && data.ended is bool;
+    }
+
+    function isValidCommuteSchedule(data) {
+      return data.keys().hasOnly([
+          'uid', 'bucketKey', 'destLat', 'destLng', 'destLabel',
+          'matchedCategory', 'typicalDepartureMinute', 'typicalDurationMin',
+          'isWeekend', 'confidence', 'tz', 'updatedAt',
+          'lastFiredYmd', 'lastFiredAtMs',
+          'fireClaimYmd', 'fireClaimUntilMs', 'fireClaimToken'
+        ])
+        && data.keys().hasAll([
+          'uid', 'bucketKey', 'destLat', 'destLng', 'destLabel',
+          'matchedCategory', 'typicalDepartureMinute', 'typicalDurationMin',
+          'isWeekend', 'confidence', 'tz', 'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid.size() > 0
+        && data.uid.size() <= 128
+        && data.bucketKey is string
+        && data.bucketKey.size() > 0
+        && data.bucketKey.size() <= 80
+        && isLatitude(data.destLat)
+        && isLongitude(data.destLng)
+        && data.destLabel is string
+        && data.destLabel.size() > 0
+        && data.destLabel.size() <= 160
+        && (data.matchedCategory == null
+            || data.matchedCategory in ['home', 'work'])
+        && data.typicalDepartureMinute is number
+        && data.typicalDepartureMinute >= 0
+        && data.typicalDepartureMinute < 1440
+        && data.typicalDurationMin is number
+        && data.typicalDurationMin > 0
+        && data.typicalDurationMin <= 1440
+        && data.isWeekend is bool
+        && data.confidence is number
+        && data.confidence >= 0
+        && data.confidence <= 1
+        && data.tz is string
+        && data.tz.size() > 0
+        && data.tz.size() <= 100
+        && data.updatedAt is number
+        && (!('lastFiredYmd' in data)
+            || (data.lastFiredYmd is string
+                && data.lastFiredYmd.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')))
+        && (!('lastFiredAtMs' in data) || data.lastFiredAtMs is number)
+        && (!('fireClaimYmd' in data)
+            || (data.fireClaimYmd is string
+                && data.fireClaimYmd.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')))
+        && (!('fireClaimUntilMs' in data) || data.fireClaimUntilMs is number)
+        && (!('fireClaimToken' in data)
+            || (data.fireClaimToken is string
+                && data.fireClaimToken.size() > 0
+                && data.fireClaimToken.size() <= 128));
+    }
+
     match /incidents/{incidentId} {
       allow read: if true;
       allow write: if false;
     }
     match /extractions/{extractionId} {
-      allow read: if true;
+      // Pre-filter transcripts and raw audio identifiers include rejected,
+      // test, and otherwise unpublished scanner traffic. Only the verified
+      // moderation/admin surface consumes this collection.
+      allow read: if isAdmin();
       allow write: if false;
     }
     match /users/{userId} {
@@ -43,11 +146,50 @@ service cloud.firestore {
         && request.auth.token.firebase.sign_in_provider != 'anonymous'
         && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['email', 'displayName', 'photoURL', 'updatedAt']);
+      // Account deletion removes the owner profile after its known
+      // subcollections have been cleared. Without this explicit rule the
+      // client deleted Firebase Auth but silently left the profile, email,
+      // billing identifiers, and tier record behind forever.
+      allow delete: if request.auth != null
+        && request.auth.uid == userId
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
 
       match /savedDestinations/{destId} {
         allow read, write: if request.auth != null
           && request.auth.uid == userId
           && request.auth.token.firebase.sign_in_provider != 'anonymous';
+      }
+
+      // Named folders for saved destinations. The UI has always read and
+      // written this subcollection, but the rule was missing, so every list
+      // create/rename/delete failed with permission denied in production.
+      match /savedLists/{listId} {
+        allow read, delete: if request.auth != null
+          && request.auth.uid == userId
+          && request.auth.token.firebase.sign_in_provider != 'anonymous';
+        allow create: if request.auth != null
+          && request.auth.uid == userId
+          && request.auth.token.firebase.sign_in_provider != 'anonymous'
+          && request.resource.data.keys().hasOnly(['name', 'color', 'createdAt'])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 60
+          && (!('color' in request.resource.data)
+              || request.resource.data.color == null
+              || (request.resource.data.color is string
+                  && request.resource.data.color.size() <= 32));
+        allow update: if request.auth != null
+          && request.auth.uid == userId
+          && request.auth.token.firebase.sign_in_provider != 'anonymous'
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['name', 'color'])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 60
+          && (!('color' in request.resource.data)
+              || request.resource.data.color == null
+              || (request.resource.data.color is string
+                  && request.resource.data.color.size() <= 32));
       }
 
       // Cross-device user preferences synced by frontend/src/lib/prefs-sync.ts.
@@ -73,8 +215,20 @@ service cloud.firestore {
     match /liveTrips/{shareId} {
       allow read: if true;
       allow create: if request.auth != null
-        && request.auth.uid == request.resource.data.ownerUid;
-      allow update, delete: if request.auth != null
+        && request.auth.uid == request.resource.data.ownerUid
+        && shareId.matches('^[0-9A-HJKMNP-TV-Z]{12}$')
+        && isValidLiveTrip(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt <= request.time + duration.value(5, 'h')
+        && request.resource.data.ended == false;
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.ownerUid
+        && isValidLiveTrip(request.resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['position', 'etaAt', 'progressPct', 'ended'])
+        && (resource.data.ended == false || request.resource.data.ended == true);
+      allow delete: if request.auth != null
         && request.auth.uid == resource.data.ownerUid;
     }
 
@@ -106,6 +260,23 @@ service cloud.firestore {
         && request.resource.data.message.size() > 0
         && request.resource.data.message.size() <= 1000
         && request.resource.data.kind in ['bug', 'feature', 'praise', 'other']
+        // Attribution is optional, but when authentication exists it must
+        // describe the caller. Previously any visitor could forge another
+        // user's uid/email and have the admin inbox present it as genuine.
+        && request.resource.data.ownerUid
+            == (request.auth == null ? null : request.auth.uid)
+        && request.resource.data.ownerIsAnonymous
+            == (request.auth == null
+                || request.auth.token.firebase.sign_in_provider == 'anonymous')
+        && (((request.auth == null
+              || request.auth.token.firebase.sign_in_provider == 'anonymous')
+             && request.resource.data.ownerEmail == null)
+            || (request.auth != null
+                && request.auth.token.firebase.sign_in_provider != 'anonymous'
+                && request.resource.data.ownerEmail == request.auth.token.email))
+        && (request.resource.data.ownerDisplayName == null
+            || (request.resource.data.ownerDisplayName is string
+                && request.resource.data.ownerDisplayName.size() <= 120))
         && (!('contactEmail' in request.resource.data)
             || request.resource.data.contactEmail == null
             || (request.resource.data.contactEmail is string
@@ -245,6 +416,7 @@ service cloud.firestore {
     //   updatedAt                number  (client epoch ms)
     //   lastFiredYmd             string  (server-only; client never sets)
     //   lastFiredAtMs            number  (server-only)
+    //   fireClaim*               server-only cross-worker delivery lease
     match /commuteSchedules/{scheduleId} {
       allow read, delete: if request.auth != null
         && request.auth.token.firebase.sign_in_provider != 'anonymous'
@@ -255,18 +427,25 @@ service cloud.firestore {
       // (which bypasses these rules) and must NOT be settable by a
       // malicious client (otherwise they could permanently suppress
       // their own commute pings, or worse, someone else's).
-      allow create, update: if request.auth != null
+      allow create: if request.auth != null
         && request.auth.token.firebase.sign_in_provider != 'anonymous'
         && request.resource.data.uid == request.auth.uid
-        && request.resource.data.keys().hasOnly([
-          'uid','bucketKey','destLat','destLng','destLabel',
-          'matchedCategory','typicalDepartureMinute','typicalDurationMin',
-          'isWeekend','confidence','tz','updatedAt'
+        && isValidCommuteSchedule(request.resource.data)
+        && !('lastFiredYmd' in request.resource.data)
+        && !('lastFiredAtMs' in request.resource.data)
+        && !('fireClaimYmd' in request.resource.data)
+        && !('fireClaimUntilMs' in request.resource.data)
+        && !('fireClaimToken' in request.resource.data);
+      allow update: if request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'bucketKey', 'destLat', 'destLng', 'destLabel', 'matchedCategory',
+          'typicalDepartureMinute', 'typicalDurationMin', 'isWeekend',
+          'confidence', 'tz', 'updatedAt'
         ])
-        && request.resource.data.typicalDepartureMinute is number
-        && request.resource.data.typicalDepartureMinute >= 0
-        && request.resource.data.typicalDepartureMinute < 1440
-        && request.resource.data.confidence is number;
+        && isValidCommuteSchedule(request.resource.data);
     }
   }
 }

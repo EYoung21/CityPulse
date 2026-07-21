@@ -1,5 +1,8 @@
 import type { Incident } from "./api";
 import { apiUrl } from "@/lib/public-api-base";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
+
+const MAX_ROUTE_RESPONSE_BYTES = 16 * 1024 * 1024;
 
 const ORS_URL = "https://api.openrouteservice.org/v2/directions";
 
@@ -216,6 +219,39 @@ export function defaultAvoidancePrefs(): AvoidancePrefs {
   };
 }
 
+/** Normalize untrusted persisted avoidance preferences. Empty `leaves` is a
+ * valid explicit choice meaning avoidance is off; malformed or missing arrays
+ * fall back to the safety-first defaults instead. */
+export function normalizeAvoidancePrefs(value: unknown): AvoidancePrefs {
+  const fallback = defaultAvoidancePrefs();
+  if (!value || typeof value !== "object" || Array.isArray(value)) return fallback;
+  const source = value as Record<string, unknown>;
+  const leaves = Array.isArray(source.leaves)
+    ? new Set(
+        source.leaves
+          .filter((leaf): leaf is string =>
+            typeof leaf === "string" && Object.hasOwn(LEAF_LABELS, leaf)
+          )
+          .slice(0, Object.keys(LEAF_LABELS).length)
+      )
+    : fallback.leaves;
+  const minSeverity: SeverityFloor =
+    source.minSeverity === "any" ||
+    source.minSeverity === "low" ||
+    source.minSeverity === "medium" ||
+    source.minSeverity === "high"
+      ? source.minSeverity
+      : fallback.minSeverity;
+  const maxAgeHours =
+    source.maxAgeHours === 0.25 ||
+    source.maxAgeHours === 1 ||
+    source.maxAgeHours === 6 ||
+    source.maxAgeHours === 24
+      ? source.maxAgeHours
+      : undefined;
+  return { leaves, minSeverity, maxAgeHours };
+}
+
 /** Backwards-compat shim: any older call site still passing the
  *  bucket-level `Set<AvoidCategoryId>` gets converted to the new shape
  *  with the legacy 0.25 floor. Prefer passing `AvoidancePrefs` directly. */
@@ -253,7 +289,7 @@ export function buildAvoidZones(
         inc.lat != null &&
         inc.lng != null &&
         (inc.w_eff ?? 0) >= floor &&
-        (prefs.leaves.size === 0 || prefs.leaves.has(inc.severity_category)) &&
+        prefs.leaves.has(inc.severity_category) &&
         (ageCutoffMs == null ||
           new Date(inc.reported_at).getTime() >= ageCutoffMs)
     )
@@ -489,9 +525,10 @@ async function getRouteOSRM(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ waypoints, mode, routePref, crashAvoid }),
+      signal: AbortSignal.timeout(20_000),
     });
     if (!res.ok) return null;
-    const data = (await res.json()) as {
+    const data = (await readBoundedJsonResponse(res, MAX_ROUTE_RESPONSE_BYTES)) as {
       geometry?: [number, number][];
       distanceKm?: number;
       durationMin?: number;
@@ -665,6 +702,7 @@ async function tryTransitRoute(
         destination: [dest[0], dest[1]],
         mode: otpMode,
       }),
+      signal: AbortSignal.timeout(20_000),
     });
     
     // If we get a 501 (Not Implemented / OTP not deployed), build a mock route
@@ -679,8 +717,11 @@ async function tryTransitRoute(
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: `data=${encodeURIComponent(query)}`,
+            signal: AbortSignal.timeout(8_000),
           });
-          const data = await overpassRes.json();
+          const data = await readBoundedJsonResponse(overpassRes, 2 * 1024 * 1024) as {
+            elements?: Array<{ lat?: number; lon?: number; center?: { lat?: number; lon?: number } }>;
+          };
           const el = data.elements?.[0];
           if (!el) return null;
           return [el.lat ?? el.center?.lat, el.lon ?? el.center?.lon] as [number, number];
@@ -716,7 +757,7 @@ async function tryTransitRoute(
     }
 
     if (!res.ok) return null;
-    const data = (await res.json()) as {
+    const data = (await readBoundedJsonResponse(res, MAX_ROUTE_RESPONSE_BYTES)) as {
       itineraries?: Array<{
         id: string;
         durationMin: number;
@@ -839,10 +880,11 @@ export async function getMultiRouteVariants(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(20_000),
     });
 
     if (res.ok) {
-      const data = await res.json();
+      const data = await readBoundedJsonResponse(res, MAX_ROUTE_RESPONSE_BYTES) as { routes?: unknown };
       const routesRaw = Array.isArray(data.routes) ? data.routes : [];
       const out: RouteResult[] = [];
       for (const route of routesRaw) {

@@ -6,14 +6,19 @@ Loads all city configs from the cities/ directory for multi-city LLM/geocode sup
 """
 
 import hmac
+import hashlib
+import io
 import json
 import logging
+import math
 import os
 import random
 import re
-import subprocess
+import secrets
 import threading
 import time
+import wave
+from contextlib import asynccontextmanager
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -21,10 +26,12 @@ from typing import Any, Optional
 import httpx
 import numpy as np
 import yaml
-from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
+from google.cloud.firestore_v1.base_query import FieldFilter
+from starlette.concurrency import run_in_threadpool
 
 from . import admin_events, bedrock_chat, city_registry, geocode, ingest_location, inhibitor, llm, llm_client, persistence as store, prefilter, push as push_mod, spelling_guard, weights
 from .llm_client import LLMConfigError, LLMHTTPError
@@ -34,10 +41,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Free tier read window: unauthenticated callers (and authed free users)
-# can only read incidents within this most-recent time horizon. Defaults to
-# 24h so the standard 24h map/feed view is usable without Pro; override via env.
+# can only read incidents within this most-recent time horizon. Keep the
+# default aligned with the web client's largest free chip (3 days / 72h);
+# deployments can still override it via env.
 FREE_INCIDENT_WINDOW_SECONDS = int(
-    os.environ.get("FREE_INCIDENT_WINDOW_SECONDS", str(24 * 60 * 60))
+    os.environ.get("FREE_INCIDENT_WINDOW_SECONDS", str(72 * 60 * 60))
 )
 
 # ── Tiny in-process TTL caches ───────────────────────────────────────────────
@@ -50,22 +58,31 @@ FREE_INCIDENT_WINDOW_SECONDS = int(
 INCIDENTS_CACHE_TTL = float(os.environ.get("PULSE_INCIDENTS_CACHE_TTL", "10"))
 CITY_STATS_CACHE_TTL = float(os.environ.get("PULSE_CITY_STATS_CACHE_TTL", "60"))
 _TTL_CACHES: dict[str, dict[Any, tuple[float, Any]]] = {}
+_TTL_CACHE_LOCK = threading.Lock()
+_TTL_CACHE_MAX = 128
 
 
 def _ttl_get(bucket: str, key: Any) -> Any:
-    ent = _TTL_CACHES.get(bucket, {}).get(key)
-    if ent and ent[0] > time.monotonic():
-        return ent[1]
+    with _TTL_CACHE_LOCK:
+        ent = _TTL_CACHES.get(bucket, {}).get(key)
+        if ent and ent[0] > time.monotonic():
+            return ent[1]
     return None
 
 
 def _ttl_put(bucket: str, key: Any, value: Any, ttl: float) -> None:
-    cache = _TTL_CACHES.setdefault(bucket, {})
-    now = time.monotonic()
-    if len(cache) > 128:  # bound growth; drop expired entries first
-        for k in [k for k, v in cache.items() if v[0] <= now]:
-            cache.pop(k, None)
-    cache[key] = (now + ttl, value)
+    with _TTL_CACHE_LOCK:
+        cache = _TTL_CACHES.setdefault(bucket, {})
+        now = time.monotonic()
+        for stale_key in [k for k, v in cache.items() if v[0] <= now]:
+            cache.pop(stale_key, None)
+        if key not in cache and len(cache) >= _TTL_CACHE_MAX:
+            # A burst of unique query keys used to grow this cache without a
+            # hard ceiling until their TTLs expired. Evict the entry closest
+            # to expiry before adding a new one.
+            oldest = min(cache, key=lambda cache_key: cache[cache_key][0])
+            cache.pop(oldest, None)
+        cache[key] = (now + max(0.0, ttl), value)
 
 # When False, ingest only stores raw transcript+audio — no LLM/inhibitor/geocode.
 # Flip to True (or set env PHILLY_PULSE_LLM_AUTO=1) to resume automatic processing.
@@ -135,7 +152,111 @@ def _get_city_geo_context(city_slug: str) -> dict | None:
         "suffix": entry["geocode_suffix"],
     }
 
-app = FastAPI(title=f"{CITY_NAME} Pulse API", version="0.1.0")
+
+def _normalize_registered_city(city: str | None) -> str:
+    """Resolve an optional public API city without permitting arbitrary queries."""
+    slug = (city or CITY_SLUG or "").strip().lower()
+    if not slug or (slug not in CITY_REGISTRY and slug != CITY_SLUG):
+        raise HTTPException(status_code=400, detail="Unknown city")
+    if not store.USING_FIRESTORE and slug != (CITY_SLUG or "").strip().lower():
+        raise HTTPException(
+            status_code=400,
+            detail="City is not available on this single-city deployment",
+        )
+    return slug
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await startup()
+    yield
+
+
+_DEFAULT_REQUEST_BODY_LIMIT_BYTES = 1 * 1024 * 1024
+_AUDIO_REQUEST_BODY_LIMIT_BYTES = 40 * 1024 * 1024
+_LARGE_BODY_PATHS = frozenset({"/api/ingest", "/api/audio/upload"})
+_BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+class _RequestBodyTooLarge(Exception):
+    pass
+
+
+class RequestBodyLimitMiddleware:
+    """Bound request buffering, including bodies sent without Content-Length."""
+
+    def __init__(self, app: Any):
+        self.app = app
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http" or scope.get("method", "").upper() not in _BODY_METHODS:
+            await self.app(scope, receive, send)
+            return
+
+        limit = (
+            _AUDIO_REQUEST_BODY_LIMIT_BYTES
+            if scope.get("path") in _LARGE_BODY_PATHS
+            else _DEFAULT_REQUEST_BODY_LIMIT_BYTES
+        )
+        content_lengths = [
+            value
+            for name, value in scope.get("headers", [])
+            if name.lower() == b"content-length"
+        ]
+        if content_lengths:
+            try:
+                declared_length = int(content_lengths[-1])
+            except (TypeError, ValueError):
+                await JSONResponse(
+                    {"detail": "Invalid Content-Length"}, status_code=400
+                )(scope, receive, send)
+                return
+            if declared_length < 0:
+                await JSONResponse(
+                    {"detail": "Invalid Content-Length"}, status_code=400
+                )(scope, receive, send)
+                return
+            if declared_length > limit:
+                await JSONResponse(
+                    {"detail": "Request body too large"}, status_code=413
+                )(scope, receive, send)
+                return
+
+        received = 0
+        response_started = False
+
+        async def limited_receive() -> dict:
+            nonlocal received
+            message = await receive()
+            if message.get("type") == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    raise _RequestBodyTooLarge
+            return message
+
+        async def tracked_send(message: dict) -> None:
+            nonlocal response_started
+            if message.get("type") == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracked_send)
+        except _RequestBodyTooLarge:
+            # Request bodies are consumed before a normal FastAPI route starts
+            # its response. If a future streaming handler violates that
+            # assumption, never attempt a second response after headers began.
+            if response_started:
+                raise
+            await JSONResponse(
+                {"detail": "Request body too large"}, status_code=413
+            )(scope, receive, send)
+
+
+app = FastAPI(title=f"{CITY_NAME} Pulse API", version="0.1.0", lifespan=lifespan)
+
+# Register this before CORS so CORS remains the outer layer and applies to
+# early 400/413 responses as well as normal API responses.
+app.add_middleware(RequestBodyLimitMiddleware)
 
 # CORS: `Allow-Origin: *` must not be combined with `Allow-Credentials: true`
 # (browser will reject). The SPA calls this API with default fetch credentials
@@ -200,16 +321,16 @@ _RAW_CLIPS_DIR.mkdir(exist_ok=True)
 
 
 class IngestRequest(BaseModel):
-    text: str
-    timestamp: str | None = None
-    segment_start_utc: str | None = None
-    feed_id: str | None = None
-    feed_label: str | None = None
-    audio_clip: str | None = None
-    raw_audio_clip: str | None = None
+    text: str = Field(max_length=20_000)
+    timestamp: str | None = Field(None, max_length=64)
+    segment_start_utc: str | None = Field(None, max_length=64)
+    feed_id: str | None = Field(None, max_length=64)
+    feed_label: str | None = Field(None, max_length=160)
+    audio_clip: str | None = Field(None, max_length=12)
+    raw_audio_clip: str | None = Field(None, max_length=12)
     preprocess_meta: dict | None = None
     variants: list[dict] | None = None
-    city: str | None = None
+    city: str | None = Field(None, max_length=64)
     audio_data: dict | None = None  # {"<clip_id>": "<base64-wav>"} for uploading clips
 
 
@@ -220,12 +341,57 @@ class RouteDirectionsRequest(BaseModel):
     mode: str = "driving-car"
 
 
+_DOCUMENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,200}$")
+_INCIDENT_CURSOR_SEPARATOR = "\x1f"
+
+
+def _require_document_id(value: str, label: str = "ID") -> None:
+    if not _DOCUMENT_ID_RE.fullmatch(value or ""):
+        raise HTTPException(status_code=400, detail=f"Invalid {label}")
+
+
+def _parse_incident_cursor(value: str | None) -> tuple[str | None, str | None]:
+    """Validate and normalize a timestamp or timestamp+document-ID cursor."""
+    raw = (value or "").strip()
+    if not raw:
+        return None, None
+    if _INCIDENT_CURSOR_SEPARATOR in raw:
+        timestamp, document_id = raw.split(_INCIDENT_CURSOR_SEPARATOR, 1)
+        if not _DOCUMENT_ID_RE.fullmatch(document_id):
+            raise HTTPException(status_code=400, detail="Invalid cursor")
+    else:
+        timestamp, document_id = raw, None
+    parsed = _parse_iso_datetime(timestamp)
+    if parsed is None:
+        raise HTTPException(status_code=400, detail="Invalid cursor timestamp")
+    return parsed.isoformat(), document_id
+
+
 OSRM_BASE = "https://router.project-osrm.org/route/v1"
 OSRM_PROFILES = {
     "foot-walking": "foot",
     "cycling-regular": "bike",
     "driving-car": "car",
 }
+_MAX_ROUTE_RESPONSE_BYTES = 8 * 1024 * 1024
+
+
+async def _read_bounded_route_response(resp: httpx.Response) -> bytes:
+    content_length = resp.headers.get("content-length")
+    if content_length:
+        try:
+            declared_size = int(content_length)
+        except (TypeError, ValueError, OverflowError):
+            declared_size = -1
+        if declared_size > _MAX_ROUTE_RESPONSE_BYTES:
+            raise HTTPException(status_code=502, detail="Routing service response is too large")
+
+    content = bytearray()
+    async for chunk in resp.aiter_bytes():
+        if len(content) + len(chunk) > _MAX_ROUTE_RESPONSE_BYTES:
+            raise HTTPException(status_code=502, detail="Routing service response is too large")
+        content.extend(chunk)
+    return bytes(content)
 
 
 def _ingest_lag_sec(reported_at: str, ingested_at: str) -> float | None:
@@ -237,7 +403,29 @@ def _ingest_lag_sec(reported_at: str, ingested_at: str) -> float | None:
         return None
 
 
-@app.on_event("startup")
+def _stable_ingest_id(
+    *,
+    city: str,
+    feed_id: str,
+    reported_at: str,
+    segment_start_utc: str | None,
+    raw_audio_clip: str | None,
+    audio_clip: str | None,
+    text: str,
+) -> str:
+    """Deterministic ID for retry-safe incident/extraction writes."""
+    material = "\0".join(
+        (
+            city,
+            feed_id,
+            segment_start_utc or reported_at,
+            raw_audio_clip or audio_clip or "",
+            text,
+        )
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
+
+
 async def startup():
     """Ensure the database table exists and configure per-city geocoder/LLM."""
     store.get_conn()  # creates table if missing
@@ -278,13 +466,20 @@ async def startup():
 
 
 @app.get("/api/health")
-async def health():
+async def health(response: Response):
     try:
-        count = store.incident_count()
-    except Exception:
+        count = await run_in_threadpool(store.incident_count)
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise RuntimeError("database count unavailable")
+        database_ok = True
+    except Exception as e:
+        logger.warning("health database check failed: %s", e)
         count = -1
+        database_ok = False
+        response.status_code = 503
     return {
-        "status": "ok",
+        "status": "ok" if database_ok else "degraded",
+        "database_ok": database_ok,
         "llm_configured": llm.is_configured(),
         "llm_provider": llm_client.active_provider_name(),
         "llm_model": llm_client.active_model(),
@@ -305,29 +500,49 @@ async def route_directions(body: RouteDirectionsRequest):
         raise HTTPException(status_code=400, detail="Need at least two waypoints")
     if len(body.waypoints) > 25:
         raise HTTPException(status_code=400, detail="Too many waypoints (max 25)")
+    if body.mode not in OSRM_PROFILES:
+        raise HTTPException(status_code=400, detail="Unsupported routing mode")
     for w in body.waypoints:
         if len(w) != 2:
             raise HTTPException(status_code=400, detail="Each waypoint must be [lat, lng]")
-    profile = OSRM_PROFILES.get(body.mode, "car")
+        lat, lng = w
+        if (
+            not math.isfinite(lat)
+            or not math.isfinite(lng)
+            or lat < -90
+            or lat > 90
+            or lng < -180
+            or lng > 180
+        ):
+            raise HTTPException(status_code=400, detail="Waypoint coordinates out of range")
+    profile = OSRM_PROFILES[body.mode]
     # OSRM expects lon,lat;lon,lat;...
     coord_str = ";".join(f"{w[1]},{w[0]}" for w in body.waypoints)
     url = f"{OSRM_BASE}/{profile}/{coord_str}"
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(
+            async with client.stream(
+                "GET",
                 url,
                 params={"overview": "full", "geometries": "geojson"},
                 headers={"User-Agent": "PhillyPulse/1.0"},
-            )
+            ) as resp:
+                if resp.status_code != 200:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"OSRM error HTTP {resp.status_code}",
+                    )
+                response_bytes = await _read_bounded_route_response(resp)
     except httpx.RequestError as e:
         logger.warning("OSRM request failed: %s", e)
         raise HTTPException(status_code=502, detail="Routing service unreachable") from e
 
-    if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502, detail=f"OSRM error HTTP {resp.status_code}"
-        )
-    data = resp.json()
+    try:
+        data = json.loads(response_bytes)
+    except (TypeError, ValueError, UnicodeDecodeError) as e:
+        raise HTTPException(status_code=502, detail="Routing service returned invalid JSON") from e
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="Routing service returned an invalid payload")
     if data.get("code") not in (None, "Ok"):
         raise HTTPException(
             status_code=404,
@@ -337,15 +552,43 @@ async def route_directions(body: RouteDirectionsRequest):
     if not routes:
         raise HTTPException(status_code=404, detail="No route found for these waypoints")
     route = routes[0]
-    coords = route.get("geometry", {}).get("coordinates") or []
+    if not isinstance(route, dict):
+        raise HTTPException(status_code=502, detail="Routing service returned an invalid route")
+    geometry_data = route.get("geometry")
+    coords = geometry_data.get("coordinates") if isinstance(geometry_data, dict) else None
+    coords = coords or []
     if len(coords) < 2:
         raise HTTPException(status_code=502, detail="Invalid route geometry")
     # GeoJSON is [lng, lat]; frontend / Leaflet expect [lat, lng]
-    geometry = [[float(pt[1]), float(pt[0])] for pt in coords]
+    geometry: list[list[float]] = []
+    try:
+        for point in coords:
+            if not isinstance(point, (list, tuple)) or len(point) < 2:
+                raise ValueError("invalid coordinate")
+            lng, lat = float(point[0]), float(point[1])
+            if (
+                not math.isfinite(lat)
+                or not math.isfinite(lng)
+                or not -90 <= lat <= 90
+                or not -180 <= lng <= 180
+            ):
+                raise ValueError("coordinate out of range")
+            geometry.append([lat, lng])
+        distance = float(route.get("distance"))
+        duration = float(route.get("duration"))
+        if (
+            not math.isfinite(distance)
+            or not math.isfinite(duration)
+            or distance < 0
+            or duration < 0
+        ):
+            raise ValueError("invalid route metrics")
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=502, detail="Routing service returned invalid route data") from e
     return {
         "geometry": geometry,
-        "distanceKm": route["distance"] / 1000.0,
-        "durationMin": route["duration"] / 60.0,
+        "distanceKm": distance / 1000.0,
+        "durationMin": duration / 60.0,
     }
 
 
@@ -461,51 +704,270 @@ def _upload_to_firebase_storage(clip_id: str, wav_bytes: bytes) -> str | None:
     return None
 
 
-def _save_audio_data(audio_data: dict, only_clip_ids: set[str] | None = None) -> dict[str, str]:
+def _save_audio_data(
+    audio_data: dict, only_clip_ids: set[str] | None = None
+) -> tuple[dict[str, str], set[str]]:
     """Upload base64-encoded audio clips to Firebase Storage.
 
     audio_data is a dict of {"clip_id": "base64-wav-data", ...}.
-    Only saves processed clips (not raw).
+    Raw clips are stored privately; processed clips use public storage with a
+    local fallback.
     If only_clip_ids is given, only save clips whose ID is in that set.
     
-    Returns a dict of {clip_id: public_url} for successfully uploaded clips.
+    Returns ({clip_id: public_url}, saved_clip_ids). The second value includes
+    local-fallback and already-present clips so callers never persist dangling
+    audio identifiers when storage fails.
     """
-    import base64
     urls: dict[str, str] = {}
+    saved_ids: set[str] = set()
 
-    for clip_id, b64_data in audio_data.items():
-        # Skip raw clips entirely — they are only used for reprocessing
-        if clip_id.endswith("_raw"):
-            continue
+    for storage_key, b64_data in list(audio_data.items())[:_MAX_AUDIO_CLIPS_PER_REQUEST]:
+        is_raw = storage_key.endswith("_raw")
+        clip_id = storage_key[:-4] if is_raw else storage_key
         if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
-            logger.warning("Ignoring invalid clip_id: %s", clip_id)
+            logger.warning("Ignoring invalid clip_id: %s", storage_key)
             continue
         if only_clip_ids is not None and clip_id not in only_clip_ids:
             continue
-        try:
-            wav_bytes = base64.b64decode(b64_data)
-        except Exception as e:
-            logger.warning("Failed to decode audio for %s: %s", clip_id, e)
+        wav_bytes = _decode_bounded_audio(b64_data)
+        if wav_bytes is None:
+            logger.warning("Ignoring malformed or oversized audio for %s", clip_id)
             continue
 
-        # Upload to Firebase Storage (primary)
+        if is_raw:
+            # Raw scanner audio is moderation-only. Keep it out of the public
+            # processed-audio bucket and serve it only through the one-shot
+            # admin-ticket route.
+            raw_path = _RAW_CLIPS_DIR / f"{clip_id}.wav"
+            _write_clip_once(raw_path, wav_bytes)
+            if raw_path.exists():
+                saved_ids.add(clip_id)
+            continue
+
+        # Upload processed audio to Firebase Storage (primary).
         url = _upload_to_firebase_storage(clip_id, wav_bytes)
         if url:
             urls[clip_id] = url
+            saved_ids.add(clip_id)
         else:
             # Fallback: save to local disk if Firebase Storage fails
             dest = _AUDIO_CLIPS_DIR / f"{clip_id}.wav"
-            if not dest.exists():
-                dest.write_bytes(wav_bytes)
+            if _write_clip_once(dest, wav_bytes):
                 logger.info("Saved audio clip %s to disk (Storage fallback, %d bytes)", dest.name, len(wav_bytes))
+            if dest.exists():
+                saved_ids.add(clip_id)
     
-    return urls
+    return urls, saved_ids
+
+
+def _variants_with_published_audio(
+    variants: list[dict] | None, published_clip_id: str | None
+) -> list[dict] | None:
+    """Keep transcripts/metadata but remove references to unsaved public clips."""
+    if variants is None:
+        return None
+    return [
+        {
+            **variant,
+            "audio_clip": (
+                published_clip_id
+                if published_clip_id
+                and variant.get("audio_clip") == published_clip_id
+                else None
+            ),
+        }
+        for variant in variants
+    ]
 
 
 class AudioUploadRequest(BaseModel):
     """Batch upload audio clips (used to sync clips to the server)."""
     clips: dict  # {"clip_id": "base64-wav-data"}
     raw_clips: dict | None = None  # {"clip_id": "base64-wav-data"} for raw clips
+
+
+_MAX_AUDIO_CLIPS_PER_REQUEST = 50
+_MAX_AUDIO_CLIP_BYTES = 5 * 1024 * 1024
+_MAX_AUDIO_B64_CHARS = ((_MAX_AUDIO_CLIP_BYTES + 2) // 3) * 4 + 4
+_MAX_AUDIO_BATCH_BYTES = 25 * 1024 * 1024
+_MAX_AUDIO_BATCH_B64_CHARS = ((_MAX_AUDIO_BATCH_BYTES + 2) // 3) * 4 + 4
+_MAX_INGEST_METADATA_JSON_BYTES = 512 * 1024
+_MAX_PREPROCESS_META_JSON_BYTES = 64 * 1024
+_MAX_VARIANT_TRANSCRIPT_CHARS = 20_000
+_MAX_VARIANT_WORD_TIMINGS = 10_000
+
+
+def _compact_json_size(value: Any) -> int:
+    return len(
+        json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    )
+
+
+def _validate_ingest_metadata(req: IngestRequest) -> None:
+    """Keep extraction documents safely below Firestore's 1 MiB ceiling."""
+    if (
+        req.preprocess_meta is not None
+        and _compact_json_size(req.preprocess_meta)
+        > _MAX_PREPROCESS_META_JSON_BYTES
+    ):
+        raise HTTPException(status_code=413, detail="Preprocess metadata is too large")
+
+    for variant in req.variants or []:
+        name = variant.get("name")
+        if name is not None and (not isinstance(name, str) or len(name) > 64):
+            raise HTTPException(status_code=400, detail="Invalid transcription variant name")
+        transcript = variant.get("transcript")
+        if transcript is not None and (
+            not isinstance(transcript, str)
+            or len(transcript) > _MAX_VARIANT_TRANSCRIPT_CHARS
+        ):
+            raise HTTPException(status_code=413, detail="Transcription variant is too large")
+        clip_id = variant.get("audio_clip")
+        if clip_id is not None and (
+            not isinstance(clip_id, str)
+            or not re.fullmatch(r"[a-f0-9]{12}", clip_id)
+        ):
+            raise HTTPException(status_code=400, detail="Invalid variant audio clip ID")
+        timings = variant.get("word_timings")
+        if timings is not None and (
+            not isinstance(timings, list)
+            or len(timings) > _MAX_VARIANT_WORD_TIMINGS
+        ):
+            raise HTTPException(status_code=413, detail="Variant word timings are too large")
+
+    if _compact_json_size(
+        {"preprocess_meta": req.preprocess_meta, "variants": req.variants}
+    ) > _MAX_INGEST_METADATA_JSON_BYTES:
+        raise HTTPException(status_code=413, detail="Ingest metadata is too large")
+
+
+def _write_clip_once(path: Path, payload: bytes) -> bool:
+    """Atomically create a clip without racing another identical upload."""
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return False
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+    except Exception:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    return True
+
+
+def _validate_audio_payload(
+    audio_data: dict[str, Any],
+    *,
+    raw_suffix_allowed: bool,
+) -> None:
+    if len(audio_data) > _MAX_AUDIO_CLIPS_PER_REQUEST:
+        raise HTTPException(status_code=413, detail="Too many audio clips")
+    encoded_total = sum(len(value) for value in audio_data.values() if isinstance(value, str))
+    if encoded_total > _MAX_AUDIO_BATCH_B64_CHARS:
+        raise HTTPException(status_code=413, detail="Audio batch is too large")
+    for key, value in audio_data.items():
+        clip_id = key[:-4] if raw_suffix_allowed and key.endswith("_raw") else key
+        if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
+            raise HTTPException(status_code=400, detail="Invalid audio clip ID")
+        if _decode_bounded_audio(value) is None:
+            raise HTTPException(status_code=413, detail="Malformed or oversized audio clip")
+
+
+def _save_uploaded_audio(req: AudioUploadRequest) -> int:
+    _validate_audio_payload(req.clips, raw_suffix_allowed=False)
+    raw_clips = req.raw_clips or {}
+    _validate_audio_payload(raw_clips, raw_suffix_allowed=False)
+    encoded_total = sum(len(value) for value in req.clips.values() if isinstance(value, str))
+    encoded_total += sum(len(value) for value in raw_clips.values() if isinstance(value, str))
+    if encoded_total > _MAX_AUDIO_BATCH_B64_CHARS:
+        raise HTTPException(status_code=413, detail="Audio batch is too large")
+
+    saved = 0
+    for clip_id, b64 in req.clips.items():
+        wav_bytes = _decode_bounded_audio(b64)
+        if wav_bytes is not None and _write_clip_once(
+            _AUDIO_CLIPS_DIR / f"{clip_id}.wav", wav_bytes
+        ):
+            saved += 1
+    for clip_id, b64 in raw_clips.items():
+        wav_bytes = _decode_bounded_audio(b64)
+        if wav_bytes is not None and _write_clip_once(
+            _RAW_CLIPS_DIR / f"{clip_id}.wav", wav_bytes
+        ):
+            saved += 1
+    return saved
+
+
+def _save_collection_audio(
+    audio_data: dict[str, Any],
+    raw_clip_id: str | None,
+    fallback_clip_id: str | None,
+) -> str | None:
+    """Persist one private source clip while automatic processing is paused."""
+    candidates: list[tuple[str, str]] = []
+    if raw_clip_id:
+        candidates.append((raw_clip_id, f"{raw_clip_id}_raw"))
+    if fallback_clip_id:
+        candidates.append((fallback_clip_id, fallback_clip_id))
+    for clip_id, storage_key in candidates:
+        wav_bytes = _decode_bounded_audio(audio_data.get(storage_key))
+        if wav_bytes is None:
+            continue
+        _write_clip_once(_RAW_CLIPS_DIR / f"{clip_id}.wav", wav_bytes)
+        return clip_id
+    return None
+
+
+def _decode_bounded_audio(value: Any) -> bytes | None:
+    """Decode a bounded 16 kHz mono PCM WAV used by the scanner pipeline."""
+    if not isinstance(value, str) or len(value) > _MAX_AUDIO_B64_CHARS:
+        return None
+    try:
+        import base64
+        decoded = base64.b64decode(value, validate=True)
+    except Exception:
+        return None
+    if len(decoded) > _MAX_AUDIO_CLIP_BYTES:
+        return None
+    try:
+        with wave.open(io.BytesIO(decoded), "rb") as wav:
+            if (
+                wav.getnchannels() != 1
+                or wav.getsampwidth() != 2
+                or wav.getframerate() != 16_000
+                or wav.getcomptype() != "NONE"
+                or wav.getnframes() <= 0
+            ):
+                return None
+            expected_pcm_bytes = wav.getnframes() * 2
+            if expected_pcm_bytes > _MAX_AUDIO_CLIP_BYTES:
+                return None
+            if len(wav.readframes(wav.getnframes())) != expected_pcm_bytes:
+                return None
+    except (EOFError, wave.Error):
+        return None
+    return decoded
+
+
+def _run_push_fanout_safely(
+    label: str,
+    incident_id: str,
+    fanout: Any,
+    kwargs: dict[str, Any],
+) -> None:
+    """Run a synchronous push fan-out after the HTTP response is sent."""
+    try:
+        stats = fanout(**kwargs)
+        if stats.get("sent") or stats.get("emailed"):
+            logger.info("%s fan-out for incident %s: %s", label, incident_id, stats)
+    except Exception as e:  # pragma: no cover - defensive background boundary
+        logger.warning("%s fan-out failed for incident %s: %s", label, incident_id, e)
 
 
 @app.post("/api/audio/upload")
@@ -515,49 +977,20 @@ async def upload_audio(
 ):
     """Receive and save audio clip WAV files. Used by the transcriber bridge."""
     _verify_ingest_secret(authorization)
-    import base64
     # Cap per-request fan-out: reject oversized batches outright (413) and skip
     # any single decoded clip larger than 5 MiB so a malicious caller can't fill
     # the disk with one POST.
-    _MAX_CLIPS = 50
-    _MAX_CLIP_BYTES = 5 * 1024 * 1024
     total_clips = len(req.clips) + (len(req.raw_clips) if req.raw_clips else 0)
-    if total_clips > _MAX_CLIPS:
+    if total_clips > _MAX_AUDIO_CLIPS_PER_REQUEST:
         raise HTTPException(status_code=413, detail="Too many clips in one upload")
-    saved = 0
-    for clip_id, b64 in req.clips.items():
-        if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
-            continue
-        try:
-            wav_bytes = base64.b64decode(b64)
-        except Exception:
-            continue
-        if len(wav_bytes) > _MAX_CLIP_BYTES:
-            continue
-        dest = _AUDIO_CLIPS_DIR / f"{clip_id}.wav"
-        if not dest.exists():
-            dest.write_bytes(wav_bytes)
-            saved += 1
-    if req.raw_clips:
-        for clip_id, b64 in req.raw_clips.items():
-            if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
-                continue
-            try:
-                wav_bytes = base64.b64decode(b64)
-            except Exception:
-                continue
-            if len(wav_bytes) > _MAX_CLIP_BYTES:
-                continue
-            dest = _RAW_CLIPS_DIR / f"{clip_id}.wav"
-            if not dest.exists():
-                dest.write_bytes(wav_bytes)
-                saved += 1
+    saved = await run_in_threadpool(_save_uploaded_audio, req)
     return {"status": "ok", "saved": saved}
 
 
 @app.post("/api/ingest")
 async def ingest(
     req: IngestRequest,
+    background_tasks: BackgroundTasks,
     authorization: Optional[str] = Header(None),
 ):
     """Ingest a scanner transcript.
@@ -568,21 +1001,51 @@ async def ingest(
     """
     _verify_ingest_secret(authorization)
 
-    feed_id = req.feed_id or "unknown"
-    city = req.city or CITY_SLUG
+    if not req.text.strip() or len(req.text) > 20_000:
+        raise HTTPException(status_code=400, detail="Transcript must be 1-20000 characters")
+    if req.variants is not None and len(req.variants) > 20:
+        raise HTTPException(status_code=413, detail="Too many transcription variants")
+    _validate_ingest_metadata(req)
+    if req.audio_data is not None:
+        await run_in_threadpool(
+            _validate_audio_payload, req.audio_data, raw_suffix_allowed=True
+        )
+
+    feed_id = (req.feed_id or "unknown").strip()
+    if not feed_id or len(feed_id) > 64:
+        raise HTTPException(status_code=400, detail="Invalid feed ID")
+    city = (req.city or CITY_SLUG).strip().lower()
+    if city not in CITY_REGISTRY and city != CITY_SLUG:
+        raise HTTPException(status_code=400, detail="Unknown city")
+    for clip_id in (req.audio_clip, req.raw_audio_clip):
+        if clip_id is not None and not re.fullmatch(r"[a-f0-9]{12}", clip_id):
+            raise HTTPException(status_code=400, detail="Invalid audio clip ID")
     feed_label = _resolve_feed_label(feed_id, req.feed_label)
-    ingested_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ingested_at = datetime.now(timezone.utc).isoformat()
     feed_meta = FEED_META.get(str(feed_id).strip(), {})
     jurisdiction_hint = feed_meta.get("jurisdiction_hint")
 
-    # Audio data is saved AFTER the pipeline determines the incident is map-worthy.
-    # This avoids wasting disk on rejected/no-location transcripts (~95% reduction).
+    # Every accepted extraction retains one private source clip. The scanner
+    # bridge deletes its local staging files after any 2xx response, so delaying
+    # all writes until an incident became map-worthy permanently lost audio for
+    # prefiltered, irrelevant, and no-location extractions.
     _pending_audio_data = req.audio_data
 
     # Normalize time-only timestamps (e.g. "14:30:00") to full ISO
     ts = req.timestamp
     if ts and re.match(r"^\d{1,2}:\d{2}(:\d{2})?$", ts.strip()):
         ts = f"{date.today().isoformat()}T{ts.strip()}"
+    if ts:
+        parsed_timestamp = _parse_iso_datetime(ts)
+        if parsed_timestamp is None:
+            raise HTTPException(status_code=400, detail="Invalid transcript timestamp")
+        ts = parsed_timestamp.isoformat()
+    segment_start_utc = req.segment_start_utc
+    if segment_start_utc:
+        parsed_segment_start = _parse_iso_datetime(segment_start_utc)
+        if parsed_segment_start is None:
+            raise HTTPException(status_code=400, detail="Invalid segment start timestamp")
+        segment_start_utc = parsed_segment_start.isoformat()
     if not ts:
         logger.warning(
             "Ingest missing segment timestamp for feed=%s; using ingest time as reported_at",
@@ -592,6 +1055,15 @@ async def ingest(
     ingest_lag_sec = _ingest_lag_sec(req_timestamp, ingested_at)
 
     correlation = f"{feed_id}_{req_timestamp}"
+    ingest_event_id = _stable_ingest_id(
+        city=city,
+        feed_id=feed_id,
+        reported_at=req_timestamp,
+        segment_start_utc=segment_start_utc,
+        raw_audio_clip=req.raw_audio_clip,
+        audio_clip=req.audio_clip,
+        text=req.text,
+    )
 
     effective_audio_clip = req.audio_clip
     effective_word_timings = None
@@ -610,6 +1082,16 @@ async def ingest(
                 effective_word_timings = v.get("word_timings")
                 break
 
+    durable_raw_audio_clip = req.raw_audio_clip
+    if _pending_audio_data:
+        durable_raw_audio_clip = await run_in_threadpool(
+            _save_collection_audio,
+            _pending_audio_data,
+            req.raw_audio_clip,
+            effective_audio_clip,
+        )
+    private_variants = _variants_with_published_audio(req.variants, None)
+
     # Broadcast: transcript received
     await admin_events.broadcast({
         "type": "transcript_received",
@@ -621,14 +1103,19 @@ async def ingest(
 
     # ── Collection-only mode (LLM paused) ──────────────────────────
     if not LLM_AUTO_ENABLED:
-        store.insert_extraction(
+        await run_in_threadpool(
+            store.insert_extraction,
+            extraction_id=ingest_event_id,
             feed_id=feed_id,
             raw_text=req.text,
             reported_at=req_timestamp,
-            audio_clip=effective_audio_clip,
-            raw_audio_clip=req.raw_audio_clip,
+            ingested_at=ingested_at,
+            segment_start_utc=segment_start_utc,
+            ingest_lag_sec=ingest_lag_sec,
+            audio_clip=None,
+            raw_audio_clip=durable_raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
-            variants=req.variants,
+            variants=private_variants,
             city=city,
         )
         return {"status": "collected", "reason": "LLM auto-processing paused, raw transcript stored"}
@@ -647,14 +1134,19 @@ async def ingest(
             "feed_id": feed_id,
             "reason": pf_reason,
         })
-        store.insert_extraction(
+        await run_in_threadpool(
+            store.insert_extraction,
+            extraction_id=ingest_event_id,
             feed_id=feed_id,
             raw_text=req.text,
             reported_at=req_timestamp,
-            audio_clip=effective_audio_clip,
-            raw_audio_clip=req.raw_audio_clip,
+            ingested_at=ingested_at,
+            segment_start_utc=segment_start_utc,
+            ingest_lag_sec=ingest_lag_sec,
+            audio_clip=None,
+            raw_audio_clip=durable_raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
-            variants=req.variants,
+            variants=private_variants,
             llm_relevant=False,
             llm_confidence=0.0,
             city=city,
@@ -679,7 +1171,8 @@ async def ingest(
     # of failing to extract one. See plan: adjacent_radio_context.
     prior_context: list[str] = []
     try:
-        recent = store.get_recent_extractions(
+        recent = await run_in_threadpool(
+            store.get_recent_extractions,
             feed_id=feed_id,
             before_iso=req_timestamp,
             within_seconds=60,
@@ -707,14 +1200,19 @@ async def ingest(
             "error": str(e),
         })
         logger.warning("LLM failed, storing raw extraction: %s", e)
-        store.insert_extraction(
+        await run_in_threadpool(
+            store.insert_extraction,
+            extraction_id=ingest_event_id,
             feed_id=feed_id,
             raw_text=req.text,
             reported_at=req_timestamp,
-            audio_clip=effective_audio_clip,
-            raw_audio_clip=req.raw_audio_clip,
+            ingested_at=ingested_at,
+            segment_start_utc=segment_start_utc,
+            ingest_lag_sec=ingest_lag_sec,
+            audio_clip=None,
+            raw_audio_clip=durable_raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
-            variants=req.variants,
+            variants=private_variants,
             city=city,
         )
         return {"status": "collected", "reason": f"LLM error, raw stored: {e}"}
@@ -729,14 +1227,19 @@ async def ingest(
             "confidence": 0,
             "location_text": None,
         })
-        store.insert_extraction(
+        await run_in_threadpool(
+            store.insert_extraction,
+            extraction_id=ingest_event_id,
             feed_id=feed_id,
             raw_text=req.text,
             reported_at=req_timestamp,
-            audio_clip=effective_audio_clip,
-            raw_audio_clip=req.raw_audio_clip,
+            ingested_at=ingested_at,
+            segment_start_utc=segment_start_utc,
+            ingest_lag_sec=ingest_lag_sec,
+            audio_clip=None,
+            raw_audio_clip=durable_raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
-            variants=req.variants,
+            variants=private_variants,
             llm_relevant=False,
             llm_confidence=0.0,
             city=city,
@@ -768,14 +1271,19 @@ async def ingest(
             "location_text": None,
             "guard_reason": guard.reason,
         })
-        store.insert_extraction(
+        await run_in_threadpool(
+            store.insert_extraction,
+            extraction_id=ingest_event_id,
             feed_id=feed_id,
             raw_text=req.text,
             reported_at=req_timestamp,
-            audio_clip=effective_audio_clip,
-            raw_audio_clip=req.raw_audio_clip,
+            ingested_at=ingested_at,
+            segment_start_utc=segment_start_utc,
+            ingest_lag_sec=ingest_lag_sec,
+            audio_clip=None,
+            raw_audio_clip=durable_raw_audio_clip,
             preprocess_meta=req.preprocess_meta,
-            variants=req.variants,
+            variants=private_variants,
             llm_relevant=False,
             llm_category=category,
             llm_confidence=0.0,
@@ -909,18 +1417,34 @@ async def ingest(
     incident_id = None
     incident: dict | None = None
     merge_outcome: str | None = None
+    published_audio_clip: str | None = None
+    extraction_variants = private_variants
     if lat is not None and lng is not None:
         # Save the audio first so the resulting URL can be embedded in
         # whichever path we take (new incident, or appended mention on a
         # dedup match). Previously this only ran on the create path; now
         # it has to run before we decide.
         audio_url = None
+        published_audio_clip = effective_audio_clip
         if _pending_audio_data and effective_audio_clip:
             try:
-                urls = _save_audio_data(_pending_audio_data, only_clip_ids={effective_audio_clip})
+                selected_clip_ids = {effective_audio_clip}
+                if req.raw_audio_clip:
+                    selected_clip_ids.add(req.raw_audio_clip)
+                urls, saved_clip_ids = await run_in_threadpool(
+                    _save_audio_data,
+                    _pending_audio_data,
+                    only_clip_ids=selected_clip_ids,
+                )
                 audio_url = urls.get(effective_audio_clip)
+                if effective_audio_clip not in saved_clip_ids:
+                    published_audio_clip = None
             except OSError as e:
                 logger.error("Failed to save audio clip (disk full?): %s", e)
+                published_audio_clip = None
+        extraction_variants = _variants_with_published_audio(
+            req.variants, published_audio_clip
+        )
 
         # Build the mention payload that represents *this* transmission.
         # Used both as the seed entry on a brand-new incident and as the
@@ -932,7 +1456,7 @@ async def ingest(
         mention = {
             "at": req_timestamp,
             "raw_text": stored_raw_text,
-            "audio_clip": effective_audio_clip,
+            "audio_clip": published_audio_clip,
             "audio_url": audio_url,
             "feed_id": feed_id,
             "location_text": location_text,
@@ -948,7 +1472,8 @@ async def ingest(
         # instead of creating a duplicate pin. See plan: incident_dedup.
         existing = None
         try:
-            existing = store.find_recent_duplicate(
+            existing = await run_in_threadpool(
+                store.find_recent_duplicate,
                 city=city,
                 lat=lat,
                 lng=lng,
@@ -956,20 +1481,31 @@ async def ingest(
                 reported_at=req_timestamp,
             )
         except Exception as e:
-            logger.debug("dedup lookup failed (non-fatal): %s", e)
+            logger.warning("dedup lookup failed: %s", e)
+            raise HTTPException(
+                status_code=503, detail="Incident storage temporarily unavailable"
+            ) from e
 
         if existing:
             try:
-                merged = store.append_mention(existing["id"], mention)
+                merged = await run_in_threadpool(
+                    store.append_mention, existing["id"], mention
+                )
                 if merged is not None:
+                    mention_added = bool(merged.pop("_mention_added", True))
                     incident = merged
                     incident_id = existing["id"]
-                    merge_outcome = "merged"
+                    merge_outcome = "merged" if mention_added else "replayed"
             except Exception as e:
                 logger.warning("append_mention failed for %s: %s", existing.get("id"), e)
+                raise HTTPException(
+                    status_code=503, detail="Incident storage temporarily unavailable"
+                ) from e
 
         if incident_id is None:
-            incident = store.insert_incident(
+            incident = await run_in_threadpool(
+                store.insert_incident,
+                incident_id=ingest_event_id,
                 raw_text=stored_raw_text,
                 severity_category=category,
                 s_base=s_base,
@@ -983,7 +1519,7 @@ async def ingest(
                 inhibitor_reason=inh.reason,
                 reported_at=req_timestamp,
                 ingested_at=ingested_at,
-                audio_clip=effective_audio_clip,
+                audio_clip=published_audio_clip,
                 feed_id=feed_id,
                 description=stored_description,
                 unit_status=unit_status,
@@ -991,8 +1527,9 @@ async def ingest(
                 city=city,
                 mentions=[mention],
             )
+            was_created = bool(incident.pop("_was_created", True))
             incident_id = incident["id"]
-            merge_outcome = "created"
+            merge_outcome = "created" if was_created else "replayed"
 
             # Set audio_url on the incident root for the create path so
             # the existing player UI keeps working without having to
@@ -1001,7 +1538,11 @@ async def ingest(
             # the mentions stack.)
             if audio_url:
                 try:
-                    store.update_incident(incident_id, {"audio_url": audio_url})
+                    await run_in_threadpool(
+                        store.update_incident,
+                        incident_id,
+                        {"audio_url": audio_url},
+                    )
                 except Exception as e:
                     logger.warning("Failed to store audio_url: %s", e)
 
@@ -1027,22 +1568,23 @@ async def ingest(
         # follow-up mentions shouldn't double-notify the same users.
         if merge_outcome == "created":
             try:
-                push_stats = push_mod.notify_nearby_incident(
-                    incident_id=incident_id,
-                    city=city,
-                    lat=lat,
-                    lng=lng,
-                    severity_category=category,
-                    s_base=s_base,
-                    location_text=location_text,
-                    location_confidence=location_confidence,
-                    inhibitor_status=inh.status,
+                background_tasks.add_task(
+                    _run_push_fanout_safely,
+                    "Web Push",
+                    incident_id,
+                    push_mod.notify_nearby_incident,
+                    {
+                        "incident_id": incident_id,
+                        "city": city,
+                        "lat": lat,
+                        "lng": lng,
+                        "severity_category": category,
+                        "s_base": s_base,
+                        "location_text": location_text,
+                        "location_confidence": location_confidence,
+                        "inhibitor_status": inh.status,
+                    },
                 )
-                if push_stats.get("sent"):
-                    logger.info(
-                        "Web Push fan-out for incident %s: %s",
-                        incident_id, push_stats,
-                    )
             except Exception as e:  # pragma: no cover — defensive
                 logger.warning(
                     "Web Push fan-out failed for incident %s: %s",
@@ -1053,20 +1595,21 @@ async def ingest(
             # newsworthy alerts (serious categories above a severity bar).
             # Created-only, same as the nearby fan-out.
             try:
-                nr_stats = push_mod.notify_newsroom_incident(
-                    incident_id=incident_id,
-                    city=city,
-                    severity_category=category,
-                    s_base=s_base,
-                    description=stored_description,
-                    location_text=location_text,
-                    inhibitor_status=inh.status,
+                background_tasks.add_task(
+                    _run_push_fanout_safely,
+                    "Newsroom Push",
+                    incident_id,
+                    push_mod.notify_newsroom_incident,
+                    {
+                        "incident_id": incident_id,
+                        "city": city,
+                        "severity_category": category,
+                        "s_base": s_base,
+                        "description": stored_description,
+                        "location_text": location_text,
+                        "inhibitor_status": inh.status,
+                    },
                 )
-                if nr_stats.get("sent"):
-                    logger.info(
-                        "Newsroom Push fan-out for incident %s: %s",
-                        incident_id, nr_stats,
-                    )
             except Exception as e:  # pragma: no cover — defensive
                 logger.warning(
                     "Newsroom Push fan-out failed for incident %s: %s",
@@ -1078,37 +1621,41 @@ async def ingest(
         # phrase that the original incident didn't trigger. Per-watch
         # cooldown inside notify_keyword_watches keeps a chatty incident
         # from flooding subscribers.
-        try:
-            kw_stats = push_mod.notify_keyword_watches(
-                incident_id=incident_id,
-                city=city,
-                raw_text=req.text or "",
-                severity_category=category,
-                s_base=s_base,
-                location_text=location_text,
-            )
-            if kw_stats.get("sent"):
-                logger.info(
-                    "Keyword-watch fan-out for incident %s: %s",
-                    incident_id, kw_stats,
+        if merge_outcome != "replayed":
+            try:
+                background_tasks.add_task(
+                    _run_push_fanout_safely,
+                    "Keyword-watch",
+                    incident_id,
+                    push_mod.notify_keyword_watches,
+                    {
+                        "incident_id": incident_id,
+                        "city": city,
+                        "raw_text": req.text or "",
+                        "severity_category": category,
+                        "s_base": s_base,
+                        "location_text": location_text,
+                    },
                 )
-        except Exception as e:  # pragma: no cover — defensive
-            logger.warning(
-                "Keyword-watch fan-out failed for incident %s: %s",
-                incident_id, e,
-            )
+            except Exception as e:  # pragma: no cover — defensive
+                logger.warning(
+                    "Keyword-watch fan-out failed for incident %s: %s",
+                    incident_id, e,
+                )
 
-    store.insert_extraction(
+    await run_in_threadpool(
+        store.insert_extraction,
+        extraction_id=ingest_event_id,
         feed_id=feed_id,
         raw_text=stored_raw_text,
         reported_at=req_timestamp,
         ingested_at=ingested_at,
-        segment_start_utc=req.segment_start_utc,
+        segment_start_utc=segment_start_utc,
         ingest_lag_sec=ingest_lag_sec,
-        audio_clip=effective_audio_clip,
-        raw_audio_clip=req.raw_audio_clip,
+        audio_clip=published_audio_clip,
+        raw_audio_clip=durable_raw_audio_clip,
         preprocess_meta=req.preprocess_meta,
-        variants=req.variants,
+        variants=extraction_variants,
         llm_relevant=True,
         llm_category=category,
         llm_confidence=confidence,
@@ -1127,14 +1674,40 @@ async def ingest(
     return {"status": "no_location", "extraction_only": True}
 
 
+def _validated_incident_rows(value: Any, source: str) -> list[dict[str, Any]]:
+    """Keep a malformed legacy document from taking down an entire read path."""
+    if not isinstance(value, list):
+        raise RuntimeError(f"{source} returned a non-list incident payload")
+    rows = [dict(row) for row in value if isinstance(row, dict)]
+    dropped = len(value) - len(rows)
+    if dropped:
+        logger.warning("%s dropped %d malformed incident row(s)", source, dropped)
+    return rows
+
+
+def _incident_sort_key(incident: dict[str, Any]) -> tuple[float, str]:
+    parsed = _parse_iso_datetime(incident.get("reported_at"))
+    return (
+        parsed.timestamp() if parsed is not None else float("-inf"),
+        str(incident.get("id") or ""),
+    )
+
+
 @app.get("/api/incidents")
 def get_incidents(
     response: Response,
     since: str | None = Query(None, description="ISO timestamp filter"),
     category: str | None = Query(None, description="Severity category filter"),
+    city: str | None = None,
     authorization: Optional[str] = Header(None),
 ):
     """Return all displayable incidents with computed w_eff."""
+    category = (category or "").strip() or None
+    if category is not None and category not in SEVERITY_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Unknown severity category")
+    if since is not None and _parse_iso_datetime(since) is None:
+        raise HTTPException(status_code=400, detail="Invalid since timestamp")
+    city_slug = _normalize_registered_city(city)
     decoded = _try_verify_firebase_token(authorization)
     is_pro = bool(decoded) and _is_pro_uid(decoded or {})
     effective_since, clamped = _apply_free_since(since, is_pro)
@@ -1145,22 +1718,34 @@ def get_incidents(
         response.headers["X-Pulse-Free-Window-Sec"] = str(FREE_INCIDENT_WINDOW_SECONDS)
     # Short-TTL cache so the 12s feed poll across many tabs collapses to ~one
     # Firestore read per window. Keyed on the data-shaping inputs only (window
-    # tier + category + a minute-bucketed since so the moving "now-24h" floor
+    # tier + category + a minute-bucketed since so the moving free-tier floor
     # doesn't churn the key); per-user `meta` is still computed fresh below.
-    cache_key = (category or "", bool(is_pro), (effective_since or "")[:16])
+    cache_key = (
+        city_slug,
+        category or "",
+        bool(is_pro),
+        (effective_since or "")[:16],
+    )
     incidents = _ttl_get("incidents", cache_key)
     if incidents is None:
         try:
-            incidents = store.list_incidents(since=effective_since, category=category)
+            incidents = store.list_incidents_for_city(
+                city_slug,
+                since=effective_since,
+                category=category,
+            )
+            incidents = _validated_incident_rows(incidents, "incident feed")
             incidents = weights.enrich_incidents(incidents)
-        except Exception:
-            incidents = []
+        except Exception as e:
+            logger.warning("incident feed read failed: %s", e)
+            raise HTTPException(status_code=503, detail="Incident feed temporarily unavailable") from e
         _ttl_put("incidents", cache_key, incidents, INCIDENTS_CACHE_TTL)
     meta = {
         "tier": "pro" if is_pro else "free",
         "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
         "clamped": bool(clamped),
         "effectiveSince": effective_since,
+        "city": city_slug,
     }
     return {"incidents": incidents, "meta": meta}
 
@@ -1193,10 +1778,14 @@ def get_incident_timings(incident_id: str, response: Response):
     needs it, so it lives in a sidecar collection off the map-sync hot path
     and is fetched on demand here.
     """
+    _require_document_id(incident_id, "incident ID")
     try:
         wt = store.get_word_timings(incident_id)
-    except Exception:
-        wt = None
+    except Exception as e:
+        logger.warning("incident timings read failed for %s: %s", incident_id, e)
+        raise HTTPException(
+            status_code=503, detail="Incident timings temporarily unavailable"
+        ) from e
     # Populated timings are immutable → cache hard. An empty result may just be
     # pre-migration/eventual, so cache it only briefly to avoid a shared cache
     # pinning "no timings" for a day while the backfill runs.
@@ -1209,29 +1798,49 @@ def get_incident_timings(incident_id: str, response: Response):
 @app.get("/api/incidents/page")
 def page_incidents(
     response: Response,
-    cursor: str | None = Query(None, description="Opaque cursor: ISO reported_at of the last row from the prior page"),
+    cursor: str | None = Query(None, description="Opaque cursor from the prior page"),
     limit: int = Query(20, ge=1, le=50, description="Page size"),
-    since: str | None = Query(None, description="Lower bound (defaults to now-24h)"),
+    since: str | None = Query(None, description="Lower bound (defaults to the free-tier window)"),
     category: str | None = Query(None, description="Severity category filter"),
-    city: str | None = Query(None, description="City slug filter"),
+    city: str | None = None,
     near_lat: float | None = Query(None, ge=-90.0, le=90.0),
     near_lng: float | None = Query(None, ge=-180.0, le=180.0),
     authorization: Optional[str] = Header(None),
 ):
     """Cursor-paginated feed for the full-screen `/feed` route.
 
-    Cursor is the `reported_at` of the last row on the previous page;
-    the next page is "everything strictly older than that". When
+    Cursor binds the `reported_at` and document ID of the last row on the
+    previous page so equal-timestamp incidents are not skipped. When
     `near_lat`/`near_lng` are supplied we sort by distance instead of
     time (which makes "near me" feel right even when an old incident
     is geographically closer than a fresher one). Default `since` is
-    24h to match the map's default window — the caller passes a
-    longer `since` for power users on Pro tiers.
+    the configured free window; the caller passes a longer `since`
+    for power users on Pro tiers.
     """
+    category = (category or "").strip() or None
+    city = _normalize_registered_city(city)
+    if category is not None and category not in SEVERITY_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Unknown severity category")
+    if since is not None and _parse_iso_datetime(since) is None:
+        raise HTTPException(status_code=400, detail="Invalid since timestamp")
+    cursor_at, cursor_id = _parse_incident_cursor(cursor)
+    if (near_lat is None) != (near_lng is None):
+        raise HTTPException(status_code=400, detail="near_lat and near_lng must be supplied together")
+    if near_lat is not None and (
+        not math.isfinite(near_lat)
+        or near_lng is None
+        or not math.isfinite(near_lng)
+        or not -90 <= near_lat <= 90
+        or not -180 <= near_lng <= 180
+    ):
+        raise HTTPException(status_code=400, detail="Invalid proximity coordinates")
     decoded = _try_verify_firebase_token(authorization)
     is_pro = bool(decoded) and _is_pro_uid(decoded or {})
     if not since:
-        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        since = (
+            datetime.now(timezone.utc)
+            - timedelta(seconds=FREE_INCIDENT_WINDOW_SECONDS)
+        ).isoformat()
     effective_since, clamped = _apply_free_since(since, is_pro)
     if clamped:
         response.headers["X-Pulse-Clamped"] = "1"
@@ -1241,8 +1850,8 @@ def page_incidents(
 
     # If a free caller paginates past the allowed window, return an empty
     # page rather than leaking older incidents.
-    if not is_pro and cursor:
-        cursor_dt = _parse_iso_datetime(cursor)
+    if not is_pro and cursor_at:
+        cursor_dt = _parse_iso_datetime(cursor_at)
         if cursor_dt and cursor_dt < _free_since_dt():
             response.headers["X-Pulse-Clamped"] = "1"
             return {
@@ -1255,28 +1864,32 @@ def page_incidents(
                     "clamped": True,
                     "effectiveSince": effective_since,
                     "paywalled": "history",
+                    "city": city,
                 },
             }
     try:
-        if city and near_lat is None and near_lng is None:
+        if near_lat is None and near_lng is None:
             incidents = store.list_incidents_for_city(
                 city,
                 since=effective_since,
                 category=category,
-                before_iso=cursor,
-                limit=limit,
+                before_iso=cursor_at,
+                cursor_id=cursor_id,
+                # Fetch one extra visible row so `next_cursor` reflects actual
+                # remaining data instead of assuming a full page has more.
+                limit=limit + 1,
             )
-        elif city:
+        else:
             incidents = store.list_incidents_for_city(
                 city,
                 since=effective_since,
                 category=category,
                 limit=500,
             )
-        else:
-            incidents = store.list_incidents(since=effective_since, category=category)
-    except Exception:
-        incidents = []
+    except Exception as e:
+        logger.warning("incident page read failed: %s", e)
+        raise HTTPException(status_code=503, detail="Incident feed temporarily unavailable") from e
+    incidents = _validated_incident_rows(incidents, "incident page")
     # Apply cursor *before* sorting in proximity mode: the cursor is
     # only meaningful for chronological pagination. Proximity pages
     # don't paginate by cursor (the user expects the closest items
@@ -1289,7 +1902,18 @@ def page_incidents(
             if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
                 continue
             try:
-                d = _haversine_km_inline(near_lat, near_lng, float(lat), float(lng))
+                lat_number = float(lat)
+                lng_number = float(lng)
+                if (
+                    not math.isfinite(lat_number)
+                    or not math.isfinite(lng_number)
+                    or not -90 <= lat_number <= 90
+                    or not -180 <= lng_number <= 180
+                ):
+                    continue
+                d = _haversine_km_inline(
+                    near_lat, near_lng, lat_number, lng_number
+                )
             except Exception:
                 continue
             scored.append((d, inc))
@@ -1307,19 +1931,20 @@ def page_incidents(
                 "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
                 "clamped": bool(clamped),
                 "effectiveSince": effective_since,
+                "city": city,
             },
         }
 
-    incidents.sort(key=lambda i: i.get("reported_at") or "", reverse=True)
-    if city and near_lat is None and near_lng is None:
-        page = incidents
-    else:
-        if cursor:
-            incidents = [i for i in incidents if (i.get("reported_at") or "") < cursor]
-        page = incidents[:limit]
-    next_cursor = (
-        page[-1].get("reported_at") if len(page) == limit and page else None
-    )
+    incidents.sort(key=_incident_sort_key, reverse=True)
+    has_more = len(incidents) > limit
+    page = incidents[:limit]
+    next_cursor = None
+    if has_more and page:
+        last = page[-1]
+        last_at = str(last.get("reported_at") or "")
+        last_id = str(last.get("id") or "")
+        if _parse_iso_datetime(last_at) is not None and _DOCUMENT_ID_RE.fullmatch(last_id):
+            next_cursor = f"{last_at}{_INCIDENT_CURSOR_SEPARATOR}{last_id}"
     try:
         page = weights.enrich_incidents(page)
     except Exception:
@@ -1333,6 +1958,7 @@ def page_incidents(
             "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
             "clamped": bool(clamped),
             "effectiveSince": effective_since,
+            "city": city,
         },
     }
 
@@ -1350,12 +1976,12 @@ def _haversine_km_inline(lat1: float, lng1: float, lat2: float, lng2: float) -> 
 @app.get("/api/incidents/search")
 def search_incidents(
     response: Response,
-    q: str = Query(..., description="Free-text query"),
+    q: str = Query(..., min_length=1, max_length=200, description="Free-text query"),
     since: str | None = Query(None, description="ISO lower bound (default: today-3h)"),
     until: str | None = Query(None, description="ISO upper bound (default: now)"),
     category: str | None = Query(None, description="Severity category filter"),
     limit: int = Query(50, ge=1, le=200, description="Max results"),
-    city: str | None = Query(None, description="City slug filter"),
+    city: str | None = None,
     authorization: Optional[str] = Header(None),
 ):
     """Full-text search over incident title/category/description/transcript.
@@ -1366,6 +1992,17 @@ def search_incidents(
     callers pass an `since` that extends back further than the free 3-hr
     floor; gating is enforced by the frontend.
     """
+    if not isinstance(q, str) or len(q) > 200:
+        raise HTTPException(status_code=400, detail="Search query is too long")
+    category = (category or "").strip() or None
+    city = _normalize_registered_city(city)
+    if category is not None and category not in SEVERITY_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Unknown severity category")
+    if since is not None and _parse_iso_datetime(since) is None:
+        raise HTTPException(status_code=400, detail="Invalid since timestamp")
+    if until is not None and _parse_iso_datetime(until) is None:
+        raise HTTPException(status_code=400, detail="Invalid until timestamp")
+    until_dt = _parse_iso_datetime(until) if until is not None else None
     norm = _normalize_search_term(q)
     if not norm:
         return {"results": [], "total": 0, "query": q}
@@ -1381,23 +2018,30 @@ def search_incidents(
         response.headers["X-Pulse-Free-Window-Sec"] = str(FREE_INCIDENT_WINDOW_SECONDS)
 
     try:
-        if city:
-            incidents = store.list_incidents_for_city(
-                city,
-                since=effective_since,
-                category=category,
-                limit=500,
-            )
-        else:
-            incidents = store.list_incidents(since=effective_since, category=category)
-    except Exception:
-        incidents = []
+        incidents = store.list_incidents_for_city(
+            city,
+            since=effective_since,
+            category=category,
+            limit=500,
+        )
+    except Exception as e:
+        logger.warning("incident search read failed: %s", e)
+        raise HTTPException(status_code=503, detail="Incident search temporarily unavailable") from e
+    incidents = _validated_incident_rows(incidents, "incident search")
 
-    if until:
-        incidents = [i for i in incidents if (i.get("reported_at") or "") <= until]
+    if until_dt is not None:
+        incidents = [
+            incident
+            for incident in incidents
+            if (
+                (reported := _parse_iso_datetime(incident.get("reported_at")))
+                is not None
+                and reported <= until_dt
+            )
+        ]
 
     matched = [i for i in incidents if _incident_matches_query(i, terms)]
-    matched.sort(key=lambda i: i.get("reported_at") or "", reverse=True)
+    matched.sort(key=_incident_sort_key, reverse=True)
 
     truncated = matched[:limit]
     try:
@@ -1415,6 +2059,7 @@ def search_incidents(
             "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
             "clamped": bool(clamped),
             "effectiveSince": effective_since,
+            "city": city,
         },
     }
 
@@ -1422,49 +2067,64 @@ def search_incidents(
 @app.post("/api/seed")
 async def seed(authorization: Optional[str] = Header(None)):
     """Load pre-built demo incidents into the database. Idempotent panic button."""
-    _verify_firebase_admin(authorization)
+    await run_in_threadpool(_verify_firebase_admin, authorization)
     if not SEED_PATH.exists():
         raise HTTPException(status_code=404, detail="Seed data file not found")
     s_base_map = {cat: weights.get_s_base(cat) for cat in llm.SEVERITY_CATEGORIES}
-    count = store.seed_from_json(str(SEED_PATH), s_base_map)
+    count = await run_in_threadpool(
+        store.seed_from_json, str(SEED_PATH), s_base_map
+    )
     logger.info("Seeded %d demo incidents on demand", count)
     return {"status": "seeded", "count": count}
 
 
 @app.post("/api/simulate")
-async def simulate(authorization: Optional[str] = Header(None)):
+async def simulate(
+    background_tasks: BackgroundTasks,
+    authorization: Optional[str] = Header(None),
+):
     """Ingest a random canned transcript through the full pipeline. For demos."""
-    _verify_firebase_admin(authorization)
+    await run_in_threadpool(_verify_firebase_admin, authorization)
     transcript = random.choice(CANNED_TRANSCRIPTS)
     req = IngestRequest(text=transcript)
     # Re-use the ingest pipeline. The admin token above already authorized this
     # call, so pass the machine ingest secret (when configured) so the inner
     # `_verify_ingest_secret` check accepts the internal hand-off.
     inner_auth = f"Bearer {_PULSE_INGEST_SECRET}" if _PULSE_INGEST_SECRET else None
-    return await ingest(req, authorization=inner_auth)
+    return await ingest(req, background_tasks=background_tasks, authorization=inner_auth)
 
-
-_SUMMARY_CACHE: dict = {"summary": None, "incident_count": 0, "expires_at": 0.0}
 
 @app.get("/api/summary")
 async def summary(
     response: Response,
+    city: str | None = None,
     authorization: Optional[str] = Header(None),
 ):
     """AI-generated natural language summary of recent activity."""
-    decoded = _try_verify_firebase_token(authorization)
-    is_pro = bool(decoded) and _is_pro_uid(decoded or {})
+    city_slug = _normalize_registered_city(city)
+    city_name = str(
+        (CITY_REGISTRY.get(city_slug) or {}).get("city_name") or CITY_NAME
+    )
+    decoded = await run_in_threadpool(_try_verify_firebase_token, authorization)
+    is_pro = bool(decoded) and await run_in_threadpool(_is_pro_uid, decoded or {})
     effective_since, clamped = _apply_free_since(None, is_pro)
     if not is_pro:
         response.headers["X-Pulse-Free-Window-Sec"] = str(FREE_INCIDENT_WINDOW_SECONDS)
 
-    import starlette.concurrency
-    import time
-    
-    if not is_pro:
-        incidents = await starlette.concurrency.run_in_threadpool(lambda: store.list_incidents(since=effective_since))
-    else:
-        incidents = await starlette.concurrency.run_in_threadpool(lambda: store.list_incidents())
+    try:
+        incidents = await run_in_threadpool(
+            lambda: store.list_incidents_for_city(
+                city_slug,
+                since=effective_since if not is_pro else None,
+            )
+        )
+    except Exception as e:
+        logger.warning("summary incident read failed: %s", e)
+        raise HTTPException(
+            status_code=503, detail="Incident summary temporarily unavailable"
+        ) from e
+    incidents = _validated_incident_rows(incidents, "incident summary")
+    incidents.sort(key=_incident_sort_key, reverse=True)
     recent = incidents[:20]
 
     if not recent:
@@ -1476,50 +2136,60 @@ async def summary(
                 "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
                 "clamped": bool(clamped),
                 "effectiveSince": effective_since,
+                "city": city_slug,
             },
         }
 
-    # Use cached summary if available and valid for the current incident count
-    now = time.time()
-    if _SUMMARY_CACHE["expires_at"] > now and _SUMMARY_CACHE["incident_count"] == len(recent) and _SUMMARY_CACHE["summary"]:
+    # Bind cached text to the city, entitlement window, and exact recent rows.
+    # A count-only global cache can leak one city's (or Pro history's) summary
+    # into another response whenever their incident counts happen to match.
+    recent_fingerprint = tuple(
+        (str(inc.get("id") or ""), str(inc.get("reported_at") or ""))
+        for inc in recent
+    )
+    summary_cache_key = (city_slug, bool(is_pro), recent_fingerprint)
+    cached_summary = _ttl_get("summary", summary_cache_key)
+    if isinstance(cached_summary, str) and cached_summary:
         return {
-            "summary": _SUMMARY_CACHE["summary"],
+            "summary": cached_summary,
             "incident_count": len(recent),
             "meta": {
                 "tier": "pro" if is_pro else "free",
                 "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
                 "clamped": bool(clamped),
                 "effectiveSince": effective_since,
+                "city": city_slug,
             },
         }
 
     if not llm.is_configured():
         lines = [
-            f"- {inc['severity_category'].replace('_', ' ').title()}: "
-            f"{inc.get('location_text', 'Unknown location')}"
+            f"- {str(inc.get('severity_category') or 'Uncategorized').replace('_', ' ').title()}: "
+            f"{str(inc.get('location_text') or 'Unknown location')}"
             for inc in recent[:10]
         ]
         return {
-            "summary": f"{len(recent)} recent incidents in {CITY_NAME}:\n" + "\n".join(lines),
+            "summary": f"{len(recent)} recent incidents in {city_name}:\n" + "\n".join(lines),
             "incident_count": len(recent),
             "meta": {
                 "tier": "pro" if is_pro else "free",
                 "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
                 "clamped": bool(clamped),
                 "effectiveSince": effective_since,
+                "city": city_slug,
             },
         }
 
     # Build a summary prompt from recent incidents
     incident_lines = []
     for inc in recent[:15]:
-        loc = inc.get("location_text", "Unknown location")
-        cat = inc["severity_category"].replace("_", " ")
+        loc = str(inc.get("location_text") or "Unknown location")
+        cat = str(inc.get("severity_category") or "uncategorized").replace("_", " ")
         incident_lines.append(f"- {cat} at {loc} (confidence: {inc.get('confidence', 'N/A')})")
 
     prompt = (
         "You are a helpful assistant that summarizes recent public safety activity "
-        f"in {CITY_NAME}. Given the following recent incidents extracted from police "
+        f"in {city_name}. Given the following recent incidents extracted from police "
         "scanner audio (all UNVERIFIED), write a brief 2-3 sentence summary suitable "
         "for display on a community safety dashboard. Be factual, mention specific "
         "neighborhoods, and note that all data is unverified scanner audio.\n\n"
@@ -1535,9 +2205,7 @@ async def summary(
             timeout=8.0,
         )
         final_summary = text.strip()
-        _SUMMARY_CACHE["summary"] = final_summary
-        _SUMMARY_CACHE["incident_count"] = len(recent)
-        _SUMMARY_CACHE["expires_at"] = now + 300.0  # Cache for 5 minutes
+        _ttl_put("summary", summary_cache_key, final_summary, 300.0)
         return {
             "summary": final_summary,
             "incident_count": len(recent),
@@ -1546,15 +2214,14 @@ async def summary(
                 "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
                 "clamped": bool(clamped),
                 "effectiveSince": effective_since,
+                "city": city_slug,
             },
         }
     except Exception as e:
         logger.warning("Summary LLM call failed: %s", e)
 
-    fallback_summary = f"{len(recent)} recent incidents across {CITY_NAME}. Check the map for details."
-    _SUMMARY_CACHE["summary"] = fallback_summary
-    _SUMMARY_CACHE["incident_count"] = len(recent)
-    _SUMMARY_CACHE["expires_at"] = now + 60.0  # Cache fallback for 1 minute
+    fallback_summary = f"{len(recent)} recent incidents across {city_name}. Check the map for details."
+    _ttl_put("summary", summary_cache_key, fallback_summary, 60.0)
     
     return {
         "summary": fallback_summary,
@@ -1564,21 +2231,22 @@ async def summary(
             "freeWindowSec": FREE_INCIDENT_WINDOW_SECONDS,
             "clamped": bool(clamped),
             "effectiveSince": effective_since,
+            "city": city_slug,
         },
     }
 
 
 class PulseChatMessage(BaseModel):
-    role: str
-    content: str
+    role: str = Field(max_length=16)
+    content: str = Field(max_length=12_000)
 
 
 class PulseChatRequest(BaseModel):
     """Pro-only chat over incident RAG. Client sends recent conversation tail."""
 
-    city: Optional[str] = None
-    since: Optional[str] = None
-    messages: list[PulseChatMessage]
+    city: Optional[str] = Field(None, max_length=64)
+    since: Optional[str] = Field(None, max_length=64)
+    messages: list[PulseChatMessage] = Field(max_length=500)
 
 
 def _pulse_chat_rate_ok(uid: str) -> bool:
@@ -1586,6 +2254,18 @@ def _pulse_chat_rate_ok(uid: str) -> bool:
     now = time.time()
     floor = now - PULSE_CHAT_RL_WINDOW_SEC
     with _PULSE_CHAT_RL_LOCK:
+        if len(_PULSE_CHAT_RL) > 4096:
+            for other_uid in [
+                key for key, values in _PULSE_CHAT_RL.items()
+                if not values or values[-1] < floor
+            ]:
+                _PULSE_CHAT_RL.pop(other_uid, None)
+            if len(_PULSE_CHAT_RL) > 8192:
+                oldest = min(
+                    _PULSE_CHAT_RL,
+                    key=lambda key: _PULSE_CHAT_RL[key][-1] if _PULSE_CHAT_RL[key] else 0,
+                )
+                _PULSE_CHAT_RL.pop(oldest, None)
         hits = _PULSE_CHAT_RL.setdefault(uid, [])
         while hits and hits[0] < floor:
             hits.pop(0)
@@ -2040,12 +2720,21 @@ def pulse_chat_tool_specs() -> list[dict[str, Any]]:
 
 def _pulse_tool_exec_search(pool_by_id: dict[str, dict], args: dict[str, Any]) -> dict[str, Any]:
     keywords = _pulse_tokenize_keywords(str(args.get("keywords") or ""))
-    match_all = bool(args.get("match_all_keywords"))
-    cat = (args.get("severity_category") or "").strip() or None
-    since = (args.get("since_reported_at") or "").strip() or None
-    until = (args.get("until_reported_at") or "").strip() or None
-    lim = int(args.get("limit") or 20)
+    match_all = args.get("match_all_keywords") is True
+    cat = str(args.get("severity_category") or "").strip() or None
+    since = str(args.get("since_reported_at") or "").strip() or None
+    until = str(args.get("until_reported_at") or "").strip() or None
+    lim = _safe_int(args.get("limit"), 20)
     lim = max(1, min(40, lim, PULSE_CHAT_TOOL_RESULT_MAX))
+
+    since_dt = _parse_iso_datetime(since) if since else None
+    until_dt = _parse_iso_datetime(until) if until else None
+    if since and since_dt is None:
+        return {"error": "invalid_since", "incidents": [], "match_count": 0}
+    if until and until_dt is None:
+        return {"error": "invalid_until", "incidents": [], "match_count": 0}
+    if since_dt is not None and until_dt is not None and since_dt > until_dt:
+        return {"error": "invalid_time_range", "incidents": [], "match_count": 0}
 
     if not keywords and not cat and not since and not until:
         return {
@@ -2056,10 +2745,10 @@ def _pulse_tool_exec_search(pool_by_id: dict[str, dict], args: dict[str, Any]) -
 
     hits: list[dict] = []
     for inc in pool_by_id.values():
-        ra = str(inc.get("reported_at") or "")
-        if since and ra < since:
+        reported = _parse_iso_datetime(inc.get("reported_at"))
+        if since_dt is not None and (reported is None or reported < since_dt):
             continue
-        if until and ra > until:
+        if until_dt is not None and (reported is None or reported > until_dt):
             continue
         if cat and str(inc.get("severity_category") or "") != cat:
             continue
@@ -2072,7 +2761,7 @@ def _pulse_tool_exec_search(pool_by_id: dict[str, dict], args: dict[str, Any]) -
                 continue
         hits.append(inc)
 
-    hits.sort(key=lambda i: i.get("reported_at") or "", reverse=True)
+    hits.sort(key=_incident_sort_key, reverse=True)
     hits = hits[:lim]
     trimmed = [_trim_incident_for_pulse_bundle(i) for i in hits]
     return {
@@ -2092,6 +2781,7 @@ def _pulse_tool_exec_fetch_older(
     fs_used: list[int],
 ) -> dict[str, Any]:
     """Synchronous store fetch; invoke via ``run_in_threadpool`` from the Ask Pulse handler."""
+    page_limit = max(1, min(PULSE_CHAT_FS_TOOL_PAGE_CAP, _safe_int(page_limit, 80)))
     if fs_used[0] >= PULSE_CHAT_FS_TOOL_FETCHES_MAX:
         return {
             "error": "fetch_budget_exhausted",
@@ -2103,6 +2793,10 @@ def _pulse_tool_exec_fetch_older(
     bio = (before_iso or "").strip()
     if not bio:
         return {"error": "missing_before_reported_at", "incidents": [], "added_new_ids": 0, "documents_returned": 0}
+    before_dt = _parse_iso_datetime(bio)
+    if before_dt is None:
+        return {"error": "invalid_before_reported_at", "incidents": [], "added_new_ids": 0, "documents_returned": 0}
+    bio = before_dt.isoformat()
 
     rows = store.list_incidents_for_city(
         city_slug,
@@ -2111,6 +2805,7 @@ def _pulse_tool_exec_fetch_older(
         limit=page_limit,
         include_blocked=False,
     )
+    rows = _validated_incident_rows(rows, "Ask Pulse older-page tool")
     fs_used[0] += 1
     added = 0
     for inc in rows:
@@ -2119,7 +2814,7 @@ def _pulse_tool_exec_fetch_older(
             continue
         pool_by_id[iid] = inc
         added += 1
-    rows.sort(key=lambda x: x.get("reported_at") or "", reverse=True)
+    rows.sort(key=_incident_sort_key, reverse=True)
     cap = min(PULSE_CHAT_TOOL_RESULT_MAX, max(1, page_limit))
     trimmed = [_trim_incident_for_pulse_bundle(i) for i in rows[:cap]]
     return {
@@ -2148,13 +2843,24 @@ def _pulse_tool_exec_count(
     since_arg = (str(args.get("since") or "")).strip() or None
     until_arg = (str(args.get("until") or "")).strip() or None
 
+    since_dt = _parse_iso_datetime(since_arg) if since_arg else None
+    until_dt = _parse_iso_datetime(until_arg) if until_arg else None
+    allowed_since_dt = _parse_iso_datetime(effective_since) if effective_since else None
+    if since_arg and since_dt is None:
+        return {"error": "invalid_since"}
+    if until_arg and until_dt is None:
+        return {"error": "invalid_until"}
+    if cat is not None and cat not in SEVERITY_CATEGORIES:
+        return {"error": "invalid_severity_category"}
+
     # Pull the lower bound up to the caller's allowed window — don't let
     # the LLM pretend a free user can ask "how many in the last year".
-    since = since_arg
-    if effective_since:
-        if not since or since < effective_since:
-            since = effective_since
-    until = until_arg
+    if allowed_since_dt is not None and (since_dt is None or since_dt < allowed_since_dt):
+        since_dt = allowed_since_dt
+    if since_dt is not None and until_dt is not None and since_dt > until_dt:
+        return {"error": "invalid_time_range"}
+    since = since_dt.isoformat() if since_dt is not None else None
+    until = until_dt.isoformat() if until_dt is not None else None
 
     try:
         n = store.count_city_incidents_filtered(
@@ -2167,7 +2873,7 @@ def _pulse_tool_exec_count(
         logger.warning("pulse-chat count_incidents failed: %s", e)
         return {"error": "count_unavailable", "detail": str(e)[:120]}
 
-    if n < 0:
+    if not isinstance(n, int) or isinstance(n, bool) or n < 0:
         return {
             "error": "count_unavailable",
             "detail": "Backend does not support aggregate count on this deployment.",
@@ -2178,7 +2884,13 @@ def _pulse_tool_exec_count(
         "severity_category": cat,
         "since": since,
         "until": until,
-        "clamped_to_user_window": bool(effective_since) and (since == effective_since) and bool(since_arg) and since_arg < (effective_since or ""),
+        "clamped_to_user_window": (
+            allowed_since_dt is not None
+            and since == allowed_since_dt.isoformat()
+            and since_arg is not None
+            and _parse_iso_datetime(since_arg) is not None
+            and _parse_iso_datetime(since_arg) < allowed_since_dt
+        ),
         "hint": "Aggregate from Firestore .count(); not a list of incidents. Pair with search_incidents if the user needs the text.",
     }
 
@@ -2201,11 +2913,16 @@ def _pulse_tool_exec_find_latest(
     before = (str(args.get("before") or "")).strip() or None
     kw_raw = str(args.get("keywords") or "")
     keywords = [t for t in kw_raw.lower().replace(",", " ").split() if t]
-    try:
-        limit = int(args.get("limit") or 3)
-    except (TypeError, ValueError):
-        limit = 3
+    limit = _safe_int(args.get("limit"), 3)
     limit = max(1, min(10, limit))
+
+    if cat is not None and cat not in SEVERITY_CATEGORIES:
+        return {"error": "invalid_severity_category", "incidents": [], "match_count": 0}
+    if before:
+        before_dt = _parse_iso_datetime(before)
+        if before_dt is None:
+            return {"error": "invalid_before", "incidents": [], "match_count": 0}
+        before = before_dt.isoformat()
 
     # Free-tier floor (None for the Pro-only chat → full history).
     since = effective_since
@@ -2225,6 +2942,8 @@ def _pulse_tool_exec_find_latest(
     except Exception as e:
         logger.warning("pulse-chat find_latest_incident failed: %s", e)
         return {"error": "lookup_unavailable", "detail": str(e)[:120]}
+    rows = _validated_incident_rows(rows, "Ask Pulse latest-incident tool")
+    rows.sort(key=_incident_sort_key, reverse=True)
 
     if keywords:
         def _matches(inc: dict) -> bool:
@@ -2266,12 +2985,12 @@ async def pulse_chat(
     Uses the same Lambda/OpenAI-compatible stack as the rest of the API
     (:mod:`philly_pulse.llm_client`). Retrieval is RAG (not model training).
     """
-    decoded = _try_verify_firebase_token(authorization)
+    decoded = await run_in_threadpool(_try_verify_firebase_token, authorization)
     if not decoded:
         raise HTTPException(status_code=401, detail="Authentication required")
     if decoded.get("firebase", {}).get("sign_in_provider") == "anonymous":
         raise HTTPException(status_code=403, detail="Ask Pulse requires a non-anonymous account")
-    if not _is_pro_uid(decoded):
+    if not await run_in_threadpool(_is_pro_uid, decoded):
         raise HTTPException(status_code=403, detail="CityPulse Pro required for Ask Pulse")
     uid = str(decoded.get("uid") or "")
     if not _pulse_chat_rate_ok(uid):
@@ -2281,20 +3000,26 @@ async def pulse_chat(
         raise HTTPException(status_code=400, detail="messages must be non-empty")
     chat_tail: list[dict[str, str]] = []
     total_user_chars = 0
+    total_chars = 0
     for m in body.messages[-40:]:
         role = (m.role or "").strip().lower()
         if role not in ("user", "assistant"):
             continue
-        c = (m.content or "")[:12000]
+        c = (m.content or "").strip()
+        if not c:
+            continue
+        total_chars += len(c)
         if role == "user":
             total_user_chars += len(c)
         chat_tail.append({"role": role, "content": c})
-    if total_user_chars > 80000:
+    if total_user_chars > 80000 or total_chars > 120000:
         raise HTTPException(status_code=400, detail="Request too large")
     if not chat_tail or chat_tail[-1]["role"] != "user":
         raise HTTPException(status_code=400, detail="Last message must be a user message")
 
     city_slug = _normalize_pulse_city_slug(body.city)
+    if body.since and _parse_iso_datetime(body.since) is None:
+        raise HTTPException(status_code=400, detail="Invalid history timestamp")
     effective_since, _clamped = _apply_free_since(body.since, is_pro=True)
     last_user = _pulse_chat_last_user_message(chat_tail)
 
@@ -2313,7 +3038,8 @@ async def pulse_chat(
         )
 
     fetched = await starlette.concurrency.run_in_threadpool(_load)
-    fetched.sort(key=lambda i: i.get("reported_at") or "", reverse=True)
+    fetched = _validated_incident_rows(fetched, "Ask Pulse incident fetch")
+    fetched.sort(key=_incident_sort_key, reverse=True)
     bundle, truncated_fetch, topic_boost = _build_pulse_chat_bundle(
         fetched, last_user, PULSE_CHAT_BUNDLE_MAX
     )
@@ -2433,7 +3159,12 @@ async def pulse_chat(
                 )
                 tool_round_idx += 1
                 tool_rounds_used = tool_round_idx
-                tcalls = asst.get("tool_calls")
+                tcalls_raw = asst.get("tool_calls")
+                tcalls = (
+                    [call for call in tcalls_raw if isinstance(call, dict)]
+                    if isinstance(tcalls_raw, list)
+                    else []
+                )
                 content = (asst.get("content") or "").strip()
                 if not tcalls:
                     # Some providers (notably DeepSeek via the OpenAI-compat API)
@@ -2487,7 +3218,7 @@ async def pulse_chat(
                         out = _pulse_tool_exec_search(pool_by_id, args)
                     elif name == "fetch_older_incidents":
                         bio = str(args.get("before_reported_at") or "")
-                        plim = int(args.get("limit") or 80)
+                        plim = _safe_int(args.get("limit"), 80)
                         plim = max(1, min(PULSE_CHAT_FS_TOOL_PAGE_CAP, plim))
 
                         def _fetch_sync():
@@ -2587,11 +3318,23 @@ async def pulse_chat(
 
 
 @app.get("/api/stats")
-def stats():
-    """Inhibitor audit stats for the transparency page."""
+def stats(city: str | None = None):
+    """City-scoped inhibitor audit stats for the map's about panel."""
+    city_slug = _normalize_registered_city(city)
+    try:
+        total = store.city_incident_count(city_slug)
+        inhibitors = store.city_inhibitor_stats(city_slug)
+        if not isinstance(total, int) or isinstance(total, bool) or total < 0:
+            raise RuntimeError("city incident count unavailable")
+    except Exception as e:
+        logger.warning("transparency stats read failed: %s", e)
+        raise HTTPException(
+            status_code=503, detail="Transparency statistics temporarily unavailable"
+        ) from e
     return {
-        "total_incidents": store.incident_count(),
-        "inhibitor_stats": store.inhibitor_stats(),
+        "total_incidents": total,
+        "inhibitor_stats": inhibitors,
+        "city": city_slug,
     }
 
 
@@ -2603,6 +3346,10 @@ def city_stats(slug: str):
     counts (total + last 24h), and the city display name. Negative counts
     signal "unavailable" — the frontend falls back to static metadata.
     """
+    slug = slug.strip().lower()
+    if slug not in CITY_REGISTRY:
+        raise HTTPException(status_code=404, detail=f"Unknown city: {slug}")
+
     cities_dir = Path(__file__).resolve().parent.parent / "cities"
     cfg_path = cities_dir / slug / "config.yaml"
     if not cfg_path.exists():
@@ -2661,19 +3408,103 @@ def city_stats(slug: str):
 
 # ── Admin endpoints ─────────────────────────────────────────────────
 
+# One-shot, narrowly-scoped tickets for browser transports that cannot attach
+# an Authorization header (<audio> and the native WebSocket constructor). The
+# full Firebase admin token is exchanged over a normal authenticated POST and
+# never appears in a URL. Tickets live only long enough to bridge that request
+# to the stream/socket request and are consumed atomically on first use.
+_ADMIN_TICKET_TTL_SECONDS = 45
+_ADMIN_TICKET_MAX = 1024
+_ADMIN_TICKETS: dict[str, tuple[float, str, str | None, str]] = {}
+_ADMIN_TICKET_LOCK = threading.Lock()
+
+
+def _admin_ticket_digest(ticket: str) -> str:
+    return hashlib.sha256(ticket.encode("utf-8")).hexdigest()
+
+
+def _mint_admin_ticket(decoded: dict, purpose: str, resource: str | None = None) -> str:
+    ticket = secrets.token_urlsafe(32)
+    digest = _admin_ticket_digest(ticket)
+    expires_at = time.monotonic() + _ADMIN_TICKET_TTL_SECONDS
+    uid = str(decoded.get("uid") or "")
+    with _ADMIN_TICKET_LOCK:
+        now = time.monotonic()
+        for key in [key for key, value in _ADMIN_TICKETS.items() if value[0] <= now]:
+            _ADMIN_TICKETS.pop(key, None)
+        if len(_ADMIN_TICKETS) >= _ADMIN_TICKET_MAX:
+            oldest = min(_ADMIN_TICKETS, key=lambda key: _ADMIN_TICKETS[key][0])
+            _ADMIN_TICKETS.pop(oldest, None)
+        _ADMIN_TICKETS[digest] = (expires_at, purpose, resource, uid)
+    return ticket
+
+
+def _consume_admin_ticket(
+    ticket: str | None,
+    purpose: str,
+    resource: str | None = None,
+) -> bool:
+    if not ticket:
+        return False
+    digest = _admin_ticket_digest(ticket)
+    with _ADMIN_TICKET_LOCK:
+        record = _ADMIN_TICKETS.pop(digest, None)
+    if not record:
+        return False
+    expires_at, expected_purpose, expected_resource, uid = record
+    return (
+        expires_at > time.monotonic()
+        and bool(uid)
+        and hmac.compare_digest(expected_purpose, purpose)
+        and expected_resource == resource
+    )
+
+
+class AdminTicketRequest(BaseModel):
+    purpose: str
+    feed_id: str | None = None
+    clip_id: str | None = None
+
+
+@app.post("/api/admin/ticket")
+async def admin_ticket(
+    req: AdminTicketRequest,
+    response: Response,
+    authorization: Optional[str] = Header(None),
+):
+    decoded = await run_in_threadpool(_verify_firebase_admin, authorization)
+    if req.purpose == "ws":
+        if req.feed_id is not None or req.clip_id is not None:
+            raise HTTPException(status_code=400, detail="Resource is not valid for ws tickets")
+        resource = None
+    elif req.purpose == "stream":
+        valid_ids = {feed["feed_id"] for feed in FEEDS}
+        if req.clip_id is not None or not req.feed_id or req.feed_id not in valid_ids:
+            raise HTTPException(status_code=400, detail="Valid feed_id required")
+        resource = req.feed_id
+    elif req.purpose == "raw_audio":
+        if req.feed_id is not None or not req.clip_id or not re.fullmatch(r"[a-f0-9]{12}", req.clip_id):
+            raise HTTPException(status_code=400, detail="Valid clip_id required")
+        resource = req.clip_id
+    else:
+        raise HTTPException(status_code=400, detail="Unknown admin ticket purpose")
+
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "ticket": _mint_admin_ticket(decoded, req.purpose, resource),
+        "expires_in": _ADMIN_TICKET_TTL_SECONDS,
+    }
+
+
 @app.websocket("/ws/admin")
 async def admin_ws(ws: WebSocket):
     """WebSocket stream of all pipeline events for the admin panel.
 
-    Browsers can't set request headers on a WebSocket, so the admin
-    Firebase ID token is passed as the `token` query param. Verify it
-    before accepting the socket — on any failure close with 1008
-    (policy violation) prior to `accept()`.
+    Browsers can't set request headers on a WebSocket, so the client first
+    exchanges its Firebase credential for a one-shot, 45-second `ws` ticket.
+    The URL contains only that narrowly scoped ticket, never the credential.
     """
-    token = ws.query_params.get("token")
-    try:
-        _verify_firebase_admin(f"Bearer {token}" if token else None)
-    except HTTPException:
+    if not _consume_admin_ticket(ws.query_params.get("ticket"), "ws"):
         await ws.close(code=1008)
         return
     await admin_events.connect(ws)
@@ -2721,7 +3552,7 @@ async def admin_prefilter_metrics(authorization: Optional[str] = Header(None)):
     Each city entry has `seen` (total lines), `kept` (passed to LLM),
     and `skipped` (dropped before LLM). Resets when the worker restarts.
     """
-    _verify_firebase_admin(authorization)
+    await run_in_threadpool(_verify_firebase_admin, authorization)
     return {"enabled": prefilter.PREFILTER_ENABLED, "metrics": prefilter.get_metrics()}
 
 
@@ -2740,8 +3571,11 @@ async def admin_toggle_visibility(
     authorization: Optional[str] = Header(None),
 ):
     """Toggle an incident's visibility on the public map."""
-    _verify_firebase_admin(authorization)
-    result = store.update_incident(incident_id, {"hidden": req.hidden})
+    await run_in_threadpool(_verify_firebase_admin, authorization)
+    _require_document_id(incident_id, "incident ID")
+    result = await run_in_threadpool(
+        store.update_incident, incident_id, {"hidden": req.hidden}
+    )
     if result is None:
         raise HTTPException(status_code=404, detail="Incident not found")
     return {"status": "ok", "incident_id": incident_id, "hidden": req.hidden}
@@ -2753,8 +3587,9 @@ async def admin_delete_incident(
     authorization: Optional[str] = Header(None),
 ):
     """Permanently delete an incident."""
-    _verify_firebase_admin(authorization)
-    ok = store.delete_incident(incident_id)
+    await run_in_threadpool(_verify_firebase_admin, authorization)
+    _require_document_id(incident_id, "incident ID")
+    ok = await run_in_threadpool(store.delete_incident, incident_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Incident not found")
     return {"status": "deleted", "incident_id": incident_id}
@@ -2769,8 +3604,9 @@ async def admin_predict(
 
     Used for manual evaluation when LLM_AUTO_ENABLED is off.
     """
-    _verify_firebase_admin(authorization)
-    ext = store.get_extraction(req.extraction_id)
+    await run_in_threadpool(_verify_firebase_admin, authorization)
+    _require_document_id(req.extraction_id, "extraction ID")
+    ext = await run_in_threadpool(store.get_extraction, req.extraction_id)
     if ext is None:
         raise HTTPException(status_code=404, detail="Extraction not found")
 
@@ -2790,7 +3626,8 @@ async def admin_predict(
     prior_context: list[str] = []
     if reported_at:
         try:
-            recent = store.get_recent_extractions(
+            recent = await run_in_threadpool(
+                store.get_recent_extractions,
                 feed_id=feed_id,
                 before_iso=reported_at,
                 within_seconds=60,
@@ -2815,7 +3652,7 @@ async def admin_predict(
         raise HTTPException(status_code=502, detail=f"LLM error: {e}")
 
     if result is None:
-        store.update_extraction(req.extraction_id, {
+        await run_in_threadpool(store.update_extraction, req.extraction_id, {
             "llm_relevant": False,
             "llm_confidence": 0.0,
             "llm_category": None,
@@ -2853,7 +3690,7 @@ async def admin_predict(
         else:
             geocode_status = f"no_result_{location_confidence}"
 
-    store.update_extraction(req.extraction_id, {
+    await run_in_threadpool(store.update_extraction, req.extraction_id, {
         "llm_relevant": True,
         "llm_category": category,
         "llm_confidence": confidence,
@@ -2882,10 +3719,168 @@ async def admin_predict(
 
 class RetranscribeRequest(BaseModel):
     extraction_id: str
-    highpass_hz: int = 100
-    vad_aggressiveness: int | None = 1
-    norm_percentile: int | None = 95
-    beam_size: int = 5
+    highpass_hz: int = Field(100, ge=0, le=1000)
+    vad_aggressiveness: int | None = Field(1, ge=0, le=3)
+    norm_percentile: int | None = Field(95, ge=1, le=100)
+    beam_size: int = Field(5, ge=1, le=20)
+
+
+_RETRANSCRIBE_LOCKS = tuple(threading.Lock() for _ in range(16))
+
+
+def _retranscribe_sync(req: RetranscribeRequest) -> dict[str, Any]:
+    """Run CPU/file/Firestore work outside the async server event loop."""
+    lock_index = int(
+        hashlib.sha256(req.extraction_id.encode("utf-8")).hexdigest()[:8], 16
+    )
+    with _RETRANSCRIBE_LOCKS[lock_index % len(_RETRANSCRIBE_LOCKS)]:
+        ext = store.get_extraction(req.extraction_id)
+        if ext is None:
+            raise HTTPException(status_code=404, detail="Extraction not found")
+
+        raw_clip_id = str(ext.get("raw_audio_clip") or "")
+        if not raw_clip_id:
+            raise HTTPException(
+                status_code=400,
+                detail="No raw audio clip stored for this extraction",
+            )
+        if not re.fullmatch(r"[a-f0-9]{12}", raw_clip_id):
+            raise HTTPException(status_code=400, detail="Invalid stored raw clip ID")
+
+        raw_path = _RAW_CLIPS_DIR / f"{raw_clip_id}.wav"
+        if not raw_path.exists():
+            raise HTTPException(
+                status_code=404, detail="Raw audio file not found on disk"
+            )
+
+        import wave as _wave
+        from .preprocess import VariantConfig, preprocess_audio
+
+        try:
+            with _wave.open(str(raw_path), "rb") as wf:
+                if (
+                    wf.getnchannels() != 1
+                    or wf.getsampwidth() != 2
+                    or wf.getframerate() != 16000
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Raw audio must be 16 kHz mono 16-bit PCM WAV",
+                    )
+                raw_bytes = wf.readframes(wf.getnframes())
+        except (_wave.Error, EOFError) as e:
+            raise HTTPException(status_code=400, detail="Raw audio file is invalid") from e
+        if not raw_bytes:
+            raise HTTPException(status_code=400, detail="Raw audio file is empty")
+        raw_pcm = (
+            np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+        )
+
+        cfg = VariantConfig(
+            name="custom",
+            highpass_hz=req.highpass_hz,
+            vad_aggressiveness=req.vad_aggressiveness,
+            norm_percentile=req.norm_percentile,
+        )
+        processed, meta = preprocess_audio(raw_pcm, cfg)
+        if len(processed) == 0:
+            raise HTTPException(
+                status_code=400, detail="Audio preprocessing produced no speech"
+            )
+
+        from faster_whisper import WhisperModel as _WM
+
+        model_size = (
+            _bf_config.get("tuning", {}).get("model_size", "base")
+            if _bf_config
+            else "base"
+        )
+        language = (
+            _bf_config.get("tuning", {}).get("language", "en")
+            if _bf_config
+            else "en"
+        )
+        initial_prompt = (
+            _bf_config.get("tuning", {}).get("initial_prompt", "")
+            if _bf_config
+            else ""
+        )
+        no_speech_threshold = (
+            _bf_config.get("tuning", {}).get("no_speech_threshold", 0.6)
+            if _bf_config
+            else 0.6
+        )
+
+        whisper = _WM(model_size, device="cpu", compute_type="int8", cpu_threads=2)
+        try:
+            segments, _info = whisper.transcribe(
+                processed,
+                language=language,
+                initial_prompt=initial_prompt,
+                condition_on_previous_text=False,
+                temperature=0.0,
+                beam_size=req.beam_size,
+                patience=1.5,
+                suppress_blank=True,
+                no_speech_threshold=no_speech_threshold,
+            )
+            segments = list(segments)
+        finally:
+            del whisper
+            import gc
+
+            gc.collect()
+
+        text = " ".join(segment.text for segment in segments).strip()
+        no_speech_prob = max(
+            (segment.no_speech_prob for segment in segments), default=0
+        )
+        duration_s = round(len(processed) / 16000, 2)
+
+        existing_variants = [
+            dict(variant)
+            for variant in (ext.get("variants") or [])
+            if isinstance(variant, dict)
+        ]
+        if len(existing_variants) >= 40:
+            raise HTTPException(
+                status_code=409, detail="Extraction variant limit reached"
+            )
+        custom_count = sum(
+            1
+            for variant in existing_variants
+            if str(variant.get("name") or "").startswith("custom")
+        )
+
+        clip_id = secrets.token_hex(6)
+        clip_path = _AUDIO_CLIPS_DIR / f"{clip_id}.wav"
+        pcm_out = np.clip(processed, -1.0, 1.0)
+        pcm_out = (pcm_out * 32767).astype(np.int16)
+        with _wave.open(str(clip_path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(pcm_out.tobytes())
+
+        new_variant = {
+            "name": f"custom_{custom_count + 1}",
+            "audio_clip": clip_id,
+            "transcript": text,
+            "preprocess_meta": meta,
+            "whisper_meta": {
+                "no_speech_prob": round(no_speech_prob, 4),
+                "duration_s": duration_s,
+            },
+        }
+        existing_variants.append(new_variant)
+        try:
+            store.update_extraction(
+                req.extraction_id, {"variants": existing_variants}
+            )
+        except Exception:
+            clip_path.unlink(missing_ok=True)
+            raise
+        return new_variant
 
 
 @app.post("/api/admin/retranscribe")
@@ -2899,101 +3894,22 @@ async def admin_retranscribe(
     runs Whisper, saves a new processed clip, and appends the result to the
     extraction's variants array as 'custom_N'.
     """
-    _verify_firebase_admin(authorization)
-    from .preprocess import VariantConfig, preprocess_audio
-
-    ext = store.get_extraction(req.extraction_id)
-    if ext is None:
-        raise HTTPException(status_code=404, detail="Extraction not found")
-
-    raw_clip_id = ext.get("raw_audio_clip")
-    if not raw_clip_id:
-        raise HTTPException(status_code=400, detail="No raw audio clip stored for this extraction")
-
-    raw_path = Path("audio_clips_raw") / f"{raw_clip_id}.wav"
-    if not raw_path.exists():
-        raise HTTPException(status_code=404, detail="Raw audio file not found on disk")
-
-    import wave as _wave
-    with _wave.open(str(raw_path), "r") as wf:
-        n_frames = wf.getnframes()
-        raw_bytes = wf.readframes(n_frames)
-        raw_pcm = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-
-    cfg = VariantConfig(
-        name="custom",
-        highpass_hz=req.highpass_hz,
-        vad_aggressiveness=req.vad_aggressiveness,
-        norm_percentile=req.norm_percentile,
-    )
-    processed, meta = preprocess_audio(raw_pcm, cfg)
-
-    from faster_whisper import WhisperModel as _WM
-
-    _model_size = _bf_config.get("tuning", {}).get("model_size", "base") if _bf_config else "base"
-    _language = _bf_config.get("tuning", {}).get("language", "en") if _bf_config else "en"
-    _initial_prompt = _bf_config.get("tuning", {}).get("initial_prompt", "") if _bf_config else ""
-    _no_speech = _bf_config.get("tuning", {}).get("no_speech_threshold", 0.6) if _bf_config else 0.6
-
-    whisper = _WM(_model_size, device="cpu", compute_type="int8", cpu_threads=2)
-    segments, _info = whisper.transcribe(
-        processed,
-        language=_language,
-        initial_prompt=_initial_prompt,
-        condition_on_previous_text=False,
-        temperature=0.0,
-        beam_size=req.beam_size,
-        patience=1.5,
-        suppress_blank=True,
-        no_speech_threshold=_no_speech,
-    )
-    segments = list(segments)
-    text = " ".join(s.text for s in segments).strip()
-    no_speech_prob = max((s.no_speech_prob for s in segments), default=0)
-    duration_s = round(len(processed) / 16000, 2)
-
-    import uuid as _uuid
-    clip_id = _uuid.uuid4().hex[:12]
-    clip_path = Path("audio_clips") / f"{clip_id}.wav"
-    pcm_out = (processed * 32767).astype(np.int16)
-    with _wave.open(str(clip_path), "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(16000)
-        wf.writeframes(pcm_out.tobytes())
-
-    existing_variants = ext.get("variants") or []
-    custom_count = sum(1 for v in existing_variants if v.get("name", "").startswith("custom"))
-
-    new_variant = {
-        "name": f"custom_{custom_count + 1}",
-        "audio_clip": clip_id,
-        "transcript": text,
-        "preprocess_meta": meta,
-        "whisper_meta": {
-            "no_speech_prob": round(no_speech_prob, 4),
-            "duration_s": duration_s,
-        },
-    }
-
-    existing_variants.append(new_variant)
-    store.update_extraction(req.extraction_id, {"variants": existing_variants})
-
-    del whisper
-    import gc
-    gc.collect()
-
+    await run_in_threadpool(_verify_firebase_admin, authorization)
+    _require_document_id(req.extraction_id, "extraction ID")
+    new_variant = await run_in_threadpool(_retranscribe_sync, req)
     return {"status": "ok", "variant": new_variant}
 
 
 @app.get("/api/admin/stream/{feed_id}")
-async def admin_stream(feed_id: str, token: str = Query("")):
+async def admin_stream(feed_id: str, ticket: str = Query("")):
     """Proxy a Broadcastify MP3 stream for the admin audio player.
 
-    Played via an <audio> element, which can't set request headers, so
-    the admin Firebase ID token arrives as the `token` query param.
+    Played via an <audio> element, which can't set request headers. The URL
+    carries a one-shot ticket scoped to this exact feed instead of a reusable
+    Firebase administrator credential.
     """
-    _verify_firebase_admin(f"Bearer {token}")
+    if not _consume_admin_ticket(ticket, "stream", feed_id):
+        raise HTTPException(status_code=401, detail="Invalid or expired stream ticket")
     if not _bf_username or not _bf_password:
         raise HTTPException(status_code=503, detail="Broadcastify credentials not configured")
 
@@ -3001,30 +3917,48 @@ async def admin_stream(feed_id: str, token: str = Query("")):
     if feed_id not in valid_ids:
         raise HTTPException(status_code=404, detail=f"Unknown feed_id: {feed_id}")
 
-    url = f"http://{_bf_username}:{_bf_password}@audio.broadcastify.com/{feed_id}.mp3"
-
-    def stream_audio():
-        proc = subprocess.Popen(
-            [
-                "ffmpeg", "-reconnect", "1", "-reconnect_streamed", "1",
-                "-reconnect_delay_max", "5", "-i", url,
-                "-acodec", "libmp3lame", "-ab", "64k", "-ar", "22050", "-ac", "1",
-                "-f", "mp3", "-loglevel", "quiet", "-",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+    # Proxy the source stream directly over TLS. The previous ffmpeg command
+    # embedded Broadcastify credentials in both a plaintext HTTP URL and the
+    # child process argv, exposing them to network observers and local process
+    # listings while needlessly transcoding an already-MP3 stream.
+    upstream_client = httpx.AsyncClient(
+        auth=(_bf_username, _bf_password),
+        timeout=httpx.Timeout(connect=15.0, read=None, write=15.0, pool=15.0),
+        follow_redirects=True,
+        headers={"User-Agent": "CityPulse/1.0", "Icy-MetaData": "0"},
+    )
+    try:
+        upstream = await upstream_client.send(
+            upstream_client.build_request(
+                "GET", f"https://audio.broadcastify.com/{feed_id}.mp3"
+            ),
+            stream=True,
         )
+    except httpx.RequestError as e:
+        await upstream_client.aclose()
+        logger.warning("Broadcastify stream connection failed: %s", e)
+        raise HTTPException(status_code=502, detail="Scanner stream unreachable") from e
+    if upstream.status_code != 200:
+        status = upstream.status_code
+        await upstream.aclose()
+        await upstream_client.aclose()
+        raise HTTPException(
+            status_code=502, detail=f"Scanner stream returned HTTP {status}"
+        )
+
+    async def stream_audio():
         try:
-            while True:
-                chunk = proc.stdout.read(4096)
-                if not chunk:
-                    break
+            async for chunk in upstream.aiter_bytes(16 * 1024):
                 yield chunk
         finally:
-            proc.kill()
-            proc.wait()
+            await upstream.aclose()
+            await upstream_client.aclose()
 
-    return StreamingResponse(stream_audio(), media_type="audio/mpeg")
+    return StreamingResponse(
+        stream_audio(),
+        media_type=(upstream.headers.get("content-type") or "audio/mpeg"),
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 # ── Web Push (VAPID) ────────────────────────────────────────────────
@@ -3074,29 +4008,80 @@ _ADMIN_EMAILS = {
 
 
 _TIER_CACHE: dict[str, tuple[float, str]] = {}
+_TIER_CACHE_LOCK = threading.Lock()
+_TIER_CACHE_MAX = 2048
+
+
+def _cache_user_tier(uid: str, expires_at: float, tier: str) -> None:
+    now = time.time()
+    with _TIER_CACHE_LOCK:
+        for stale_uid in [key for key, value in _TIER_CACHE.items() if value[0] <= now]:
+            _TIER_CACHE.pop(stale_uid, None)
+        if uid not in _TIER_CACHE and len(_TIER_CACHE) >= _TIER_CACHE_MAX:
+            oldest_uid = min(_TIER_CACHE, key=lambda key: _TIER_CACHE[key][0])
+            _TIER_CACHE.pop(oldest_uid, None)
+        _TIER_CACHE[uid] = (expires_at, tier)
+
+
+def _timestamp_epoch(value: Any) -> float | None:
+    """Normalize Firestore Timestamp/datetime-like values for entitlement checks."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    to_datetime = getattr(value, "to_datetime", None)
+    if callable(to_datetime):
+        try:
+            dt = to_datetime()
+            if isinstance(dt, datetime):
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt.timestamp()
+        except Exception:
+            return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        raw = float(value)
+        if not (raw == raw and abs(raw) != float("inf")):
+            return None
+        # Accept either epoch seconds or the millisecond form used by some
+        # legacy/test records.
+        return raw / 1000 if raw > 10_000_000_000 else raw
+    return None
+
+
 def _user_tier(uid: str) -> str:
-    """Read the calling user's billing tier from `users/{uid}.tier`.
+    """Resolve permanent tier plus a finite `proUntil` pass.
 
     Returns one of "free", "pro", "enterprise" — matches the values
-    the AuthContext writes from the frontend. Anything unrecognised
-    or any read failure falls back to "free" so the caller never
-    accidentally grants Pro on a Firestore outage."""
-    import time
+    the frontend resolves. Anything unrecognised or any read failure falls
+    back to "free" so the caller never accidentally grants Pro on an outage."""
     now = time.time()
-    if uid in _TIER_CACHE and _TIER_CACHE[uid][0] > now:
-        return _TIER_CACHE[uid][1]
+    with _TIER_CACHE_LOCK:
+        cached = _TIER_CACHE.get(uid)
+    if cached and cached[0] > now:
+        return cached[1]
 
     try:
         from .firestore_store import _ensure_client
         snap = _ensure_client().collection("users").document(uid).get()
         if snap.exists:
-            t = ((snap.to_dict() or {}).get("tier") or "free")
+            data = snap.to_dict() or {}
+            t = data.get("tier") or "free"
             if t in ("free", "pro", "enterprise"):
-                _TIER_CACHE[uid] = (now + 300, t)
+                pro_until = _timestamp_epoch(data.get("proUntil"))
+                if pro_until is not None and pro_until > now:
+                    # Never cache beyond the paid boundary; otherwise a pass
+                    # expiring seconds from now would retain API access for the
+                    # old five-minute cache window.
+                    ttl = max(1.0, min(300.0, pro_until - now))
+                    _cache_user_tier(uid, now + ttl, "pro")
+                    return "pro"
+                _cache_user_tier(uid, now + 300, t)
                 return t
     except Exception as e:
         logger.debug("_user_tier read failed for %s: %s", uid, e)
-    _TIER_CACHE[uid] = (now + 60, "free")
+    _cache_user_tier(uid, now + 60, "free")
     return "free"
 
 
@@ -3117,7 +4102,16 @@ def _require_pro(decoded: dict) -> None:
         raise HTTPException(status_code=402, detail="Pro subscription required")
 
 
+_TOKEN_CACHE_MAX = 2048
 _TOKEN_CACHE: dict[str, tuple[float, dict]] = {}
+_TOKEN_CACHE_LOCK = threading.Lock()
+
+
+def _token_cache_key(token: str) -> str:
+    """Cache a digest, never the reusable Firebase credential itself."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def _try_verify_firebase_token(authorization: Optional[str]) -> dict | None:
     """Best-effort Firebase token verification.
 
@@ -3131,10 +4125,14 @@ def _try_verify_firebase_token(authorization: Optional[str]) -> dict | None:
     if not token:
         return None
         
-    import time
     now = time.time()
-    if token in _TOKEN_CACHE and _TOKEN_CACHE[token][0] > now:
-        return _TOKEN_CACHE[token][1]
+    cache_key = _token_cache_key(token)
+    with _TOKEN_CACHE_LOCK:
+        cached = _TOKEN_CACHE.get(cache_key)
+        if cached and cached[0] > now:
+            return cached[1]
+        if cached:
+            _TOKEN_CACHE.pop(cache_key, None)
 
     try:
         from firebase_admin import auth as fb_auth
@@ -3144,7 +4142,19 @@ def _try_verify_firebase_token(authorization: Optional[str]) -> dict | None:
     if not decoded or not decoded.get("uid"):
         return None
         
-    _TOKEN_CACHE[token] = (now + 300, decoded)
+    # Never let the verification cache extend a credential past its signed
+    # expiry. Bound and prune the cache so a long-lived worker does not retain
+    # every user's decoded token forever.
+    token_exp = _timestamp_epoch(decoded.get("exp"))
+    cache_until = min(now + 300, token_exp) if token_exp is not None else now + 300
+    if cache_until > now:
+        with _TOKEN_CACHE_LOCK:
+            for key in [key for key, value in _TOKEN_CACHE.items() if value[0] <= now]:
+                _TOKEN_CACHE.pop(key, None)
+            if len(_TOKEN_CACHE) >= _TOKEN_CACHE_MAX:
+                oldest = min(_TOKEN_CACHE, key=lambda key: _TOKEN_CACHE[key][0])
+                _TOKEN_CACHE.pop(oldest, None)
+            _TOKEN_CACHE[cache_key] = (cache_until, decoded)
     return decoded
 
 
@@ -3180,16 +4190,19 @@ def _apply_free_since(
     is_pro: bool,
 ) -> tuple[str | None, bool]:
     """Return (effective_since_iso, clamped) for incident read endpoints."""
+    requested_dt = _parse_iso_datetime(requested_since_iso)
     if is_pro:
-        return requested_since_iso, False
+        return requested_dt.isoformat() if requested_dt else None, False
     cutoff = _free_since_dt()
     cutoff_iso = cutoff.isoformat()
-    dt = _parse_iso_datetime(requested_since_iso)
-    if not dt:
+    if not requested_dt:
         return cutoff_iso, False
-    if dt < cutoff:
+    if requested_dt < cutoff:
         return cutoff_iso, True
-    return requested_since_iso or cutoff_iso, False
+    # Normalize all accepted offsets to UTC before comparing/querying ISO
+    # strings. Mixed `Z`, positive-offset, and `+00:00` forms do not sort in
+    # strict chronological order as raw strings.
+    return requested_dt.isoformat(), False
 
 
 def _verify_firebase_admin(authorization: Optional[str]) -> dict:
@@ -3198,7 +4211,20 @@ def _verify_firebase_admin(authorization: Optional[str]) -> dict:
     verified. Raises 403 if the user is signed in but not an admin,
     so the frontend can distinguish "you're not allowed" from "you
     aren't authenticated"."""
-    decoded = _verify_firebase_token(authorization)
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        from firebase_admin import auth as fb_auth
+        # Admin endpoints can delete incidents, expose pre-filter transcripts,
+        # and mint transport tickets. Unlike ordinary push reads, they must not
+        # honor a token from a revoked or disabled session for up to an hour.
+        decoded = fb_auth.verify_id_token(token, check_revoked=True)
+    except Exception as e:
+        logger.info("Firebase admin token verification failed: %s", e)
+        raise HTTPException(status_code=401, detail="Invalid Firebase ID token") from e
+    if not decoded.get("uid"):
+        raise HTTPException(status_code=401, detail="Token missing uid")
     email = (decoded.get("email") or "").lower()
     if not email or email not in _ADMIN_EMAILS:
         raise HTTPException(status_code=403, detail="Admin only")
@@ -3212,9 +4238,9 @@ def _verify_firebase_admin(authorization: Optional[str]) -> dict:
 
 
 # Shared secret for machine ingest endpoints (transcriber pipeline -> server).
-# Read once at module load, like `_COMMUTE_TICK_SECRET`. When set we enforce it;
-# when unset we warn once and allow, so a deploy that hasn't configured the env
-# var yet doesn't kill the live transcriber feed.
+# Read once at module load, like `_COMMUTE_TICK_SECRET`. Missing configuration
+# must fail closed: otherwise one deployment typo turns transcript injection
+# and multi-megabyte audio uploads into public unauthenticated write endpoints.
 _PULSE_INGEST_SECRET = os.getenv("PULSE_INGEST_SECRET")
 _INGEST_SECRET_WARNED = False
 
@@ -3223,19 +4249,18 @@ def _verify_ingest_secret(authorization: Optional[str]) -> None:
     """Authenticate a machine ingest request via the `PULSE_INGEST_SECRET`
     shared secret passed as a Bearer token.
 
-    Enforce-when-set: a missing or mismatched secret raises 401 (constant-time
-    compare). Allow-when-unset: log a single warning and permit the request so
-    the live pipeline keeps working during a non-breaking rollout.
+    A missing server secret is a configuration error (503); a missing or
+    mismatched caller secret is unauthorized (401). Comparisons are constant
+    time so the shared secret is not exposed through timing differences.
     """
     global _INGEST_SECRET_WARNED
     if not _PULSE_INGEST_SECRET:
         if not _INGEST_SECRET_WARNED:
             logger.warning(
-                "PULSE_INGEST_SECRET is not set; ingest endpoints are unauthenticated. "
-                "Set it to require a Bearer secret from the transcriber pipeline."
+                "PULSE_INGEST_SECRET is not set; refusing ingest and audio uploads."
             )
             _INGEST_SECRET_WARNED = True
-        return
+        raise HTTPException(status_code=503, detail="Ingest authentication not configured")
     expected = f"Bearer {_PULSE_INGEST_SECRET}"
     if not authorization or not hmac.compare_digest(authorization, expected):
         raise HTTPException(status_code=401, detail="Bad ingest credentials")
@@ -3250,11 +4275,11 @@ class PushSubscribeRequest(BaseModel):
     me to direct messages only" — useful for users who want test
     pings + future direct alerts but don't want neighborhood-wide
     notifications."""
-    endpoint: str
-    p256dh: str
-    auth: str
-    userAgent: str | None = None
-    city: str | None = None
+    endpoint: str = Field(min_length=1, max_length=4096)
+    p256dh: str = Field(min_length=1, max_length=256)
+    auth: str = Field(min_length=1, max_length=128)
+    userAgent: str | None = Field(None, max_length=500)
+    city: str | None = Field(None, max_length=64)
     notifyLat: float | None = None
     notifyLng: float | None = None
     notifyRadiusKm: float | None = None
@@ -3280,8 +4305,47 @@ async def push_subscribe(
     """Idempotent — same endpoint URL upserts the existing row so a
     user who toggles the setting off+on doesn't accumulate ghost
     rows in Firestore."""
-    decoded = _verify_firebase_token(authorization)
+    decoded = await run_in_threadpool(_verify_firebase_token, authorization)
     uid = decoded["uid"]
+    if (
+        not re.fullmatch(r"[A-Za-z0-9_-]{40,256}", body.p256dh or "")
+        or not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", body.auth or "")
+    ):
+        raise HTTPException(status_code=400, detail="Invalid push encryption keys")
+    if (body.notifyLat is None) != (body.notifyLng is None):
+        raise HTTPException(status_code=400, detail="Alert latitude and longitude must be supplied together")
+    if body.notifyLat is not None and (
+        not math.isfinite(body.notifyLat)
+        or not math.isfinite(body.notifyLng or 0)
+        or body.notifyLat < -90
+        or body.notifyLat > 90
+        or body.notifyLng is None
+        or body.notifyLng < -180
+        or body.notifyLng > 180
+    ):
+        raise HTTPException(status_code=400, detail="Alert coordinates out of range")
+    if body.notifyRadiusKm is not None and (
+        not math.isfinite(body.notifyRadiusKm)
+        or body.notifyRadiusKm < push_mod._MIN_ALERT_RADIUS_KM
+        or body.notifyRadiusKm > push_mod._MAX_ALERT_RADIUS_KM
+    ):
+        raise HTTPException(status_code=400, detail="Alert radius out of range")
+    if body.notifyRadiusKm is not None and body.notifyLat is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Alert radius requires alert coordinates",
+        )
+    city = (body.city or "").strip()
+    if city and city not in CITY_REGISTRY:
+        raise HTTPException(status_code=400, detail="Unknown city")
+    endpoint_safe = await run_in_threadpool(
+        push_mod.is_safe_push_endpoint, body.endpoint, resolve_dns=True
+    )
+    if not endpoint_safe:
+        raise HTTPException(status_code=400, detail="Invalid push endpoint")
+    newsroom_allowed = False
+    if body.notifyNewsroom or body.notifyNewsroomEmail:
+        newsroom_allowed = await run_in_threadpool(_is_pro_uid, decoded)
     if not push_mod.push_available():
         # We accept the subscription anyway so a deploy that turns
         # push on later can immediately push to existing subscribers
@@ -3296,24 +4360,32 @@ async def push_subscribe(
             auth=body.auth,
             uid=uid,
             user_agent=(body.userAgent or "")[:200],  # bound it; some UA strings are huge
-            city=(body.city or "")[:64],
+            city=city,
             notify_lat=body.notifyLat,
             notify_lng=body.notifyLng,
             notify_radius_km=body.notifyRadiusKm if body.notifyRadiusKm is not None else 3.0,
-            notify_newsroom=bool(body.notifyNewsroom),
-            notify_newsroom_email=bool(body.notifyNewsroomEmail),
+            notify_newsroom=bool(body.notifyNewsroom) and newsroom_allowed,
+            notify_newsroom_email=(
+                bool(body.notifyNewsroomEmail)
+                and bool(body.notifyNewsroom)
+                and newsroom_allowed
+            ),
             # Email comes from the verified token, never the client body.
             email=(decoded.get("email") or "")[:320],
         )
-        doc_id = push_mod.upsert_subscription(sub)
+        doc_id = await run_in_threadpool(push_mod.upsert_subscription, sub)
     except Exception as e:
         logger.warning("push subscription upsert failed: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to store subscription") from e
-    return {"status": "ok", "id": doc_id}
+        raise HTTPException(status_code=503, detail="Push subscriptions temporarily unavailable") from e
+    return {
+        "status": "ok",
+        "id": doc_id,
+        "newsroomEnabled": bool(body.notifyNewsroom) and newsroom_allowed,
+    }
 
 
 class PushUnsubscribeRequest(BaseModel):
-    endpoint: str
+    endpoint: str = Field(min_length=1, max_length=4096)
 
 
 @app.post("/api/push/unsubscribe")
@@ -3321,13 +4393,17 @@ async def push_unsubscribe(
     body: PushUnsubscribeRequest,
     authorization: Optional[str] = Header(None),
 ):
-    decoded = _verify_firebase_token(authorization)
+    decoded = await run_in_threadpool(_verify_firebase_token, authorization)
     uid = decoded["uid"]
+    if not push_mod.is_safe_push_endpoint(body.endpoint, resolve_dns=False):
+        raise HTTPException(status_code=400, detail="Invalid push endpoint")
     try:
-        ok = push_mod.delete_subscription(body.endpoint, expected_uid=uid)
+        ok = await run_in_threadpool(
+            push_mod.delete_subscription, body.endpoint, expected_uid=uid
+        )
     except Exception as e:
         logger.warning("push subscription delete failed: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to remove subscription") from e
+        raise HTTPException(status_code=503, detail="Push subscriptions temporarily unavailable") from e
     return {"status": "ok" if ok else "not_found"}
 
 
@@ -3341,13 +4417,13 @@ async def push_list_devices(authorization: Optional[str] = Header(None)):
     handle for revoke calls. UA + alert area are surfaced so users
     can recognize "this is my old phone" without leaking the
     underlying push-service identifiers."""
-    decoded = _verify_firebase_token(authorization)
+    decoded = await run_in_threadpool(_verify_firebase_token, authorization)
     uid = decoded["uid"]
     try:
-        subs = push_mod.list_subscriptions_for_uid(uid)
+        subs = await run_in_threadpool(push_mod.list_subscriptions_for_uid, uid)
     except Exception as e:
         logger.warning("push devices list failed: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to list devices") from e
+        raise HTTPException(status_code=503, detail="Push subscriptions temporarily unavailable") from e
 
     out = []
     for s in subs:
@@ -3356,16 +4432,25 @@ async def push_list_devices(authorization: Optional[str] = Header(None)):
         # user-agents (e.g. two Chromes on different desktops) but
         # not enough to be a meaningful credential.
         endpoint_hint = endpoint[-12:] if endpoint else ""
+        lat = _safe_optional_float(s.get("notifyLat"), minimum=-90, maximum=90)
+        lng = _safe_optional_float(s.get("notifyLng"), minimum=-180, maximum=180)
+        if (lat is None) != (lng is None):
+            lat = lng = None
         out.append({
-            "id": s.get("id"),
-            "userAgent": s.get("userAgent") or "",
-            "city": s.get("city") or "",
-            "createdAtMs": int(s.get("createdAtMs") or 0),
-            "lastUsedMs": int(s.get("lastUsedMs") or 0),
-            "lastNearbyPushMs": int(s.get("lastNearbyPushMs") or 0),
-            "notifyLat": s.get("notifyLat"),
-            "notifyLng": s.get("notifyLng"),
-            "notifyRadiusKm": s.get("notifyRadiusKm"),
+            "id": str(s.get("id") or ""),
+            "userAgent": str(s.get("userAgent") or "")[:200],
+            "city": str(s.get("city") or "")[:64],
+            "createdAtMs": _safe_int(s.get("createdAtMs")),
+            "lastUsedMs": _safe_int(s.get("lastUsedMs")),
+            "lastNearbyPushMs": _safe_int(s.get("lastNearbyPushMs")),
+            "notifyLat": lat,
+            "notifyLng": lng,
+            "notifyRadiusKm": _safe_float(
+                s.get("notifyRadiusKm"),
+                default=3.0,
+                minimum=push_mod._MIN_ALERT_RADIUS_KM,
+                maximum=push_mod._MAX_ALERT_RADIUS_KM,
+            ),
             "endpointHint": endpoint_hint,
         })
     # Sort newest first so the most recent registration is on top.
@@ -3378,7 +4463,7 @@ class PushRevokeDeviceRequest(BaseModel):
     hash of the endpoint URL). Using the id rather than the raw
     endpoint URL avoids ever needing to round-trip the (long, push-
     service-credentialed) endpoint string back to the server."""
-    deviceId: str
+    deviceId: str = Field(min_length=64, max_length=64)
 
 
 @app.post("/api/push/revoke-device")
@@ -3386,13 +4471,17 @@ async def push_revoke_device(
     body: PushRevokeDeviceRequest,
     authorization: Optional[str] = Header(None),
 ):
-    decoded = _verify_firebase_token(authorization)
+    decoded = await run_in_threadpool(_verify_firebase_token, authorization)
     uid = decoded["uid"]
+    if not re.fullmatch(r"[a-f0-9]{64}", body.deviceId or ""):
+        raise HTTPException(status_code=400, detail="Invalid device ID")
     try:
-        result = push_mod.revoke_subscription_by_id(body.deviceId, uid)
+        result = await run_in_threadpool(
+            push_mod.revoke_subscription_by_id, body.deviceId, uid
+        )
     except Exception as e:
         logger.warning("push revoke-device failed: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to revoke device") from e
+        raise HTTPException(status_code=503, detail="Push subscriptions temporarily unavailable") from e
     if result == "forbidden":
         raise HTTPException(status_code=403, detail="Not your device")
     return {"status": result}
@@ -3407,11 +4496,16 @@ async def push_revoke_device(
 
 _MAX_WATCHES_PER_USER = 25
 _MAX_KEYWORD_LEN = 64
+# Serialize same-user creates inside a worker. Firestore transactions still
+# provide cross-worker correctness; the striped locks remove avoidable local
+# contention that could exhaust the SDK's transaction retry budget during a
+# burst of simultaneous clicks/retries without growing an unbounded lock map.
+_WATCH_CREATE_LOCKS = tuple(threading.Lock() for _ in range(64))
 
 
 class KeywordWatchCreateRequest(BaseModel):
-    keyword: str
-    city: Optional[str] = None
+    keyword: str = Field(max_length=_MAX_KEYWORD_LEN)
+    city: Optional[str] = Field(None, max_length=64)
     severityFloor: Optional[float] = 0.0
 
 
@@ -3420,17 +4514,111 @@ class KeywordWatchUpdateRequest(BaseModel):
     severityFloor: Optional[float] = None
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _safe_float(
+    value: Any,
+    *,
+    default: float = 0.0,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if not math.isfinite(number):
+        return default
+    if minimum is not None and number < minimum:
+        return default
+    if maximum is not None and number > maximum:
+        return default
+    return number
+
+
+def _safe_optional_float(
+    value: Any,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(number):
+        return None
+    if minimum is not None and number < minimum:
+        return None
+    if maximum is not None and number > maximum:
+        return None
+    return number
+
+
 def _watch_to_response(w: dict) -> dict:
     return {
-        "id": w.get("id"),
-        "keyword": w.get("keyword") or "",
-        "city": w.get("city") or "",
-        "severityFloor": float(w.get("severityFloor") or 0.0),
-        "active": bool(w.get("active", True)),
-        "createdAtMs": int(w.get("createdAtMs") or 0),
-        "lastFiredMs": int(w.get("lastFiredMs") or 0),
-        "lastIncidentId": w.get("lastIncidentId") or None,
+        "id": str(w.get("id") or ""),
+        "keyword": str(w.get("keyword") or "")[:_MAX_KEYWORD_LEN],
+        "city": str(w.get("city") or "")[:64],
+        "severityFloor": _safe_float(
+            w.get("severityFloor"), default=0.0, minimum=0.0, maximum=1.0
+        ),
+        "active": w.get("active") if isinstance(w.get("active"), bool) else False,
+        "createdAtMs": _safe_int(w.get("createdAtMs")),
+        "lastFiredMs": _safe_int(w.get("lastFiredMs")),
+        "lastIncidentId": str(w.get("lastIncidentId") or "") or None,
     }
+
+
+def _create_keyword_watch_atomic(
+    uid: str,
+    normalized_keyword: str,
+    payload: dict[str, Any],
+) -> tuple[str, str | None]:
+    """Create a watch with a transaction-enforced per-user limit.
+
+    A deterministic document ID prevents two simultaneous requests for the
+    same normalized keyword from creating duplicates. The transactional query
+    makes the 25-watch ceiling survive concurrent requests and multiple API
+    workers instead of relying on a racy list-then-set sequence.
+    """
+    from firebase_admin import firestore as fb_firestore
+
+    db = push_mod._db()  # type: ignore[attr-defined]
+    collection_ref = db.collection("keywordWatches")
+    watch_id = hashlib.sha256(
+        f"{uid}\0{normalized_keyword}".encode("utf-8")
+    ).hexdigest()
+    watch_ref = collection_ref.document(watch_id)
+    transaction = db.transaction(max_attempts=20)
+
+    @fb_firestore.transactional
+    def create_in_transaction(txn):
+        existing = list(
+            txn.get(collection_ref.where(filter=FieldFilter("uid", "==", uid)))
+        )
+        for snap in existing:
+            data = snap.to_dict() or {}
+            current = re.sub(
+                r"\s+", " ", str(data.get("keyword") or "").strip()
+            ).casefold()
+            if current == normalized_keyword:
+                return "duplicate", snap.id
+        if len(existing) >= _MAX_WATCHES_PER_USER:
+            return "limit", None
+        txn.set(watch_ref, payload)
+        return "created", watch_id
+
+    lock_index = int(hashlib.sha256(uid.encode("utf-8")).hexdigest()[:8], 16)
+    with _WATCH_CREATE_LOCKS[lock_index % len(_WATCH_CREATE_LOCKS)]:
+        return create_in_transaction(transaction)
 
 
 @app.get("/api/keyword-watches")
@@ -3438,17 +4626,17 @@ async def list_keyword_watches(authorization: Optional[str] = Header(None)):
     """Return every keyword watch the calling user owns. Read-only is
     allowed for free users so the UI can show the existing watches and
     a Pro-upsell when they try to add another."""
-    decoded = _verify_firebase_token(authorization)
+    decoded = await run_in_threadpool(_verify_firebase_token, authorization)
     uid = decoded["uid"]
     try:
-        watches = push_mod.list_keyword_watches_for_uid(uid)
+        watches = await run_in_threadpool(push_mod.list_keyword_watches_for_uid, uid)
     except Exception as e:
         logger.warning("list_keyword_watches failed: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to list watches") from e
-    watches.sort(key=lambda w: w.get("createdAtMs") or 0, reverse=True)
+        raise HTTPException(status_code=503, detail="Keyword watches temporarily unavailable") from e
+    watches.sort(key=lambda w: _safe_int(w.get("createdAtMs")), reverse=True)
     return {
         "watches": [_watch_to_response(w) for w in watches],
-        "isPro": _is_pro_uid(decoded),
+        "isPro": await run_in_threadpool(_is_pro_uid, decoded),
         "maxWatches": _MAX_WATCHES_PER_USER,
     }
 
@@ -3459,39 +4647,29 @@ async def create_keyword_watch(
     authorization: Optional[str] = Header(None),
 ):
     """Pro-only. Creates a watch and returns the newly-created doc."""
-    decoded = _verify_firebase_token(authorization)
-    _require_pro(decoded)
+    decoded = await run_in_threadpool(_verify_firebase_token, authorization)
+    await run_in_threadpool(_require_pro, decoded)
     uid = decoded["uid"]
 
-    keyword = (body.keyword or "").strip()
+    keyword = re.sub(r"\s+", " ", (body.keyword or "").strip())
     if not keyword or len(keyword) > _MAX_KEYWORD_LEN:
         raise HTTPException(status_code=400, detail="Keyword must be 1-64 chars")
     # Don't allow nakedly broad single-letter watches.
     if len(keyword.strip('"')) < 2:
         raise HTTPException(status_code=400, detail="Keyword too short")
 
-    try:
-        existing = push_mod.list_keyword_watches_for_uid(uid)
-    except Exception as e:
-        logger.warning("list watches failed: %s", e)
-        existing = []
-    if len(existing) >= _MAX_WATCHES_PER_USER:
-        raise HTTPException(status_code=400, detail=f"Watch limit reached ({_MAX_WATCHES_PER_USER})")
-    # Prevent dupes (case-insensitive). Keeps the user's settings page
-    # from silently filling with copies on rapid double-submits.
-    norm = keyword.lower()
-    if any((str(w.get("keyword") or "").lower() == norm) for w in existing):
-        raise HTTPException(status_code=400, detail="Watch already exists")
+    norm = keyword.casefold()
 
     severity_floor = float(body.severityFloor or 0.0)
+    if not math.isfinite(severity_floor):
+        raise HTTPException(status_code=400, detail="Invalid severity floor")
     if severity_floor < 0.0 or severity_floor > 1.0:
         severity_floor = max(0.0, min(1.0, severity_floor))
 
     city = (body.city or "").strip()
+    if city and city not in CITY_REGISTRY:
+        raise HTTPException(status_code=400, detail="Unknown city")
     now_ms = int(time.time() * 1000)
-    doc_ref = (
-        push_mod._db().collection("keywordWatches").document()  # type: ignore[attr-defined]
-    )
     payload = {
         "uid": uid,
         "keyword": keyword,
@@ -3502,8 +4680,23 @@ async def create_keyword_watch(
         "lastFiredMs": 0,
         "lastIncidentId": None,
     }
-    doc_ref.set(payload)
-    return {"watch": _watch_to_response({"id": doc_ref.id, **payload})}
+    try:
+        status, watch_id = await run_in_threadpool(
+            _create_keyword_watch_atomic, uid, norm, payload
+        )
+    except Exception as e:
+        logger.warning("create keyword watch failed: %s", e)
+        raise HTTPException(
+            status_code=503, detail="Keyword watches temporarily unavailable"
+        ) from e
+    if status == "duplicate":
+        raise HTTPException(status_code=400, detail="Watch already exists")
+    if status == "limit" or not watch_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Watch limit reached ({_MAX_WATCHES_PER_USER})",
+        )
+    return {"watch": _watch_to_response({"id": watch_id, **payload})}
 
 
 @app.patch("/api/keyword-watches/{watch_id}")
@@ -3514,31 +4707,43 @@ async def update_keyword_watch(
 ):
     """Toggle active or change severity floor. No keyword edits — those
     require deleting and re-creating so the change is intentional."""
-    decoded = _verify_firebase_token(authorization)
+    decoded = await run_in_threadpool(_verify_firebase_token, authorization)
     uid = decoded["uid"]
-    ref = push_mod._db().collection("keywordWatches").document(watch_id)  # type: ignore[attr-defined]
-    snap = ref.get()
-    if not snap.exists:
-        raise HTTPException(status_code=404, detail="Watch not found")
-    data = snap.to_dict() or {}
-    if data.get("uid") != uid:
-        raise HTTPException(status_code=403, detail="Not your watch")
-
+    _require_document_id(watch_id, "watch ID")
     updates: dict[str, Any] = {}
     if body.active is not None:
         updates["active"] = bool(body.active)
     if body.severityFloor is not None:
-        sf = max(0.0, min(1.0, float(body.severityFloor)))
+        sf = float(body.severityFloor)
+        if not math.isfinite(sf):
+            raise HTTPException(status_code=400, detail="Invalid severity floor")
+        sf = max(0.0, min(1.0, sf))
         updates["severityFloor"] = sf
-    if not updates:
-        return {"watch": _watch_to_response({"id": watch_id, **data})}
     # Pro check only if turning a watch back on — disabling is always
     # allowed (so a user who downgrades doesn't get stuck with active
     # watches they can't silence).
-    if updates.get("active") is True and not _is_pro_uid(decoded):
+    if updates.get("active") is True and not await run_in_threadpool(_is_pro_uid, decoded):
         raise HTTPException(status_code=402, detail="Pro subscription required")
-    ref.update(updates)
-    merged = {**data, **updates, "id": watch_id}
+
+    def update_owned_watch() -> dict[str, Any]:
+        ref = push_mod._db().collection("keywordWatches").document(watch_id)  # type: ignore[attr-defined]
+        snap = ref.get()
+        if not snap.exists:
+            raise HTTPException(status_code=404, detail="Watch not found")
+        data = snap.to_dict() or {}
+        if data.get("uid") != uid:
+            raise HTTPException(status_code=403, detail="Not your watch")
+        if updates:
+            ref.update(updates)
+        return {**data, **updates, "id": watch_id}
+
+    try:
+        merged = await run_in_threadpool(update_owned_watch)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("update keyword watch failed: %s", e)
+        raise HTTPException(status_code=503, detail="Keyword watches temporarily unavailable") from e
     return {"watch": _watch_to_response(merged)}
 
 
@@ -3547,17 +4752,28 @@ async def delete_keyword_watch(
     watch_id: str,
     authorization: Optional[str] = Header(None),
 ):
-    decoded = _verify_firebase_token(authorization)
+    decoded = await run_in_threadpool(_verify_firebase_token, authorization)
     uid = decoded["uid"]
-    ref = push_mod._db().collection("keywordWatches").document(watch_id)  # type: ignore[attr-defined]
-    snap = ref.get()
-    if not snap.exists:
-        return {"status": "not_found"}
-    data = snap.to_dict() or {}
-    if data.get("uid") != uid:
-        raise HTTPException(status_code=403, detail="Not your watch")
-    ref.delete()
-    return {"status": "ok"}
+    _require_document_id(watch_id, "watch ID")
+    def delete_owned_watch() -> str:
+        ref = push_mod._db().collection("keywordWatches").document(watch_id)  # type: ignore[attr-defined]
+        snap = ref.get()
+        if not snap.exists:
+            return "not_found"
+        data = snap.to_dict() or {}
+        if data.get("uid") != uid:
+            raise HTTPException(status_code=403, detail="Not your watch")
+        ref.delete()
+        return "ok"
+
+    try:
+        status = await run_in_threadpool(delete_owned_watch)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("delete keyword watch failed: %s", e)
+        raise HTTPException(status_code=503, detail="Keyword watches temporarily unavailable") from e
+    return {"status": status}
 
 
 _COMMUTE_TICK_SECRET = os.getenv("PHILLY_PULSE_COMMUTE_TICK_SECRET")
@@ -3577,13 +4793,13 @@ async def push_tick_commutes(authorization: Optional[str] = Header(None)):
     if not _COMMUTE_TICK_SECRET:
         raise HTTPException(status_code=503, detail="Commute tick not configured")
     expected = f"Bearer {_COMMUTE_TICK_SECRET}"
-    if not authorization or authorization != expected:
+    if not authorization or not hmac.compare_digest(authorization, expected):
         raise HTTPException(status_code=401, detail="Bad tick credentials")
     try:
-        result = push_mod.notify_due_commutes()
+        result = await run_in_threadpool(push_mod.notify_due_commutes)
     except Exception as e:
         logger.warning("commute tick failed: %s", e)
-        raise HTTPException(status_code=500, detail="Commute tick failed") from e
+        raise HTTPException(status_code=503, detail="Commute tick temporarily unavailable") from e
     return {"status": "ok", **result}
 
 
@@ -3593,7 +4809,7 @@ async def push_test(authorization: Optional[str] = Header(None)):
     subscribed. The response includes per-device counts so the UI can
     surface "we tried 2 devices, 1 succeeded" rather than a blunt
     pass/fail."""
-    decoded = _verify_firebase_token(authorization)
+    decoded = await run_in_threadpool(_verify_firebase_token, authorization)
     uid = decoded["uid"]
     if not push_mod.push_available():
         raise HTTPException(
@@ -3606,12 +4822,33 @@ async def push_test(authorization: Optional[str] = Header(None)):
         "body": "You'll get alerts here when something nearby happens.",
         "tag": "pp:push-test",
     }
-    result = push_mod.send_to_uid(uid, payload, ttl_seconds=120)
+    result = await run_in_threadpool(
+        push_mod.send_to_uid, uid, payload, ttl_seconds=120
+    )
     if result["sent"] == 0 and result["failed"] == 0 and result["gone"] == 0:
         # Don't 404 — just tell the truth so the UI can prompt
         # "looks like you haven't subscribed any devices yet."
         return {"status": "no_devices", **result}
     return {"status": "ok", **result}
+
+
+async def _read_bounded_audio_response(resp: httpx.Response) -> bytes:
+    """Read a streamed storage response without exceeding the upload ceiling."""
+    content_length = resp.headers.get("content-length")
+    if content_length:
+        try:
+            declared_size = int(content_length)
+        except (TypeError, ValueError, OverflowError):
+            declared_size = -1
+        if declared_size > _MAX_AUDIO_CLIP_BYTES:
+            raise HTTPException(status_code=502, detail="Stored audio clip is too large")
+
+    content = bytearray()
+    async for chunk in resp.aiter_bytes():
+        if len(content) + len(chunk) > _MAX_AUDIO_CLIP_BYTES:
+            raise HTTPException(status_code=502, detail="Stored audio clip is too large")
+        content.extend(chunk)
+    return bytes(content)
 
 
 @app.get("/api/audio/{clip_id}")
@@ -3628,6 +4865,11 @@ async def get_audio_clip(clip_id: str):
     # Try local disk first (for backward compatibility with existing clips)
     clip_path = _AUDIO_CLIPS_DIR / f"{clip_id}.wav"
     if clip_path.exists():
+        try:
+            if clip_path.stat().st_size > _MAX_AUDIO_CLIP_BYTES:
+                raise HTTPException(status_code=502, detail="Stored audio clip is too large")
+        except OSError as e:
+            raise HTTPException(status_code=502, detail="Stored audio clip is unreadable") from e
         from fastapi.responses import FileResponse
         return FileResponse(
             path=str(clip_path),
@@ -3641,14 +4883,15 @@ async def get_audio_clip(clip_id: str):
         async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
             for bucket in _storage_bucket_candidates():
                 url = f"https://storage.googleapis.com/{bucket}/{object_path}"
-                resp = await client.get(url)
-                last_status = resp.status_code
-                if resp.status_code == 200:
-                    return Response(
-                        content=resp.content,
-                        media_type="audio/wav",
-                        headers={"Cache-Control": "public, max-age=86400"},
-                    )
+                async with client.stream("GET", url) as resp:
+                    last_status = resp.status_code
+                    if resp.status_code == 200:
+                        content = await _read_bounded_audio_response(resp)
+                        return Response(
+                            content=content,
+                            media_type="audio/wav",
+                            headers={"Cache-Control": "public, max-age=86400"},
+                        )
     except httpx.RequestError as e:
         logger.warning("Failed to fetch audio clip %s from storage: %s", clip_id, e)
         raise HTTPException(status_code=502, detail="Storage unreachable") from e
@@ -3662,18 +4905,25 @@ async def get_audio_clip(clip_id: str):
 
 
 @app.get("/api/audio-raw/{clip_id}")
-async def get_raw_audio_clip(clip_id: str):
-    """Serve a saved raw (pre-normalization) audio clip WAV file."""
+async def get_raw_audio_clip(clip_id: str, ticket: str = Query("")):
+    """Serve an admin-only raw (pre-normalization) audio clip WAV file."""
     if not re.fullmatch(r"[a-f0-9]{12}", clip_id):
         raise HTTPException(status_code=400, detail="Invalid clip ID")
+    if not _consume_admin_ticket(ticket, "raw_audio", clip_id):
+        raise HTTPException(status_code=401, detail="Invalid or expired raw-audio ticket")
 
     clip_path = _RAW_CLIPS_DIR / f"{clip_id}.wav"
     if not clip_path.exists():
         raise HTTPException(status_code=404, detail="Raw audio clip not found")
+    try:
+        if clip_path.stat().st_size > _MAX_AUDIO_CLIP_BYTES:
+            raise HTTPException(status_code=502, detail="Stored raw audio clip is too large")
+    except OSError as e:
+        raise HTTPException(status_code=502, detail="Stored raw audio clip is unreadable") from e
 
     from fastapi.responses import FileResponse
     return FileResponse(
         path=str(clip_path),
         media_type="audio/wav",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": "private, no-store"},
     )

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { Mail, Eye, EyeOff, AlertCircle, CheckCircle2 } from "lucide-react";
@@ -63,7 +64,7 @@ export default function LoginScreen() {
                 </p>
               </div>
               <div className="space-y-3 mt-5">
-                <button
+                <button type="button"
                   onClick={async () => {
                     try {
                       await resendVerification();
@@ -82,7 +83,7 @@ export default function LoginScreen() {
                     Verification email sent!
                   </div>
                 )}
-                <button
+                <button type="button"
                   onClick={() => window.location.reload()}
                   className="lp-login-btn"
                   style={{ color: `rgb(${accentRgb})` }}
@@ -132,19 +133,19 @@ export default function LoginScreen() {
       }
     >
       <div className="lp-login-bg" />
-      <div className="lp-login-shell">
+      <main className="lp-login-shell">
         <div className="lp-login-card relative">
           <div className="lp-login-card-inner">
             <div className="lp-login-brand">
-              <img src="/logo.png" alt="CityPulse" className="w-12 h-12" />
-              <span className="lp-login-wordmark">CityPulse</span>
+              <Image src="/logo.png" alt="" width={48} height={48} className="w-12 h-12" />
+              <h1 className="lp-login-wordmark m-0">CityPulse</h1>
             </div>
             <div className="lp-login-subhead">
               {siteName} &middot; {cityName}
             </div>
 
         {/* Google sign-in */}
-        <button
+        <button type="button"
           onClick={async () => {
             setError("");
             try {
@@ -165,7 +166,7 @@ export default function LoginScreen() {
         </button>
 
         {lastAuthError && (
-          <div className="flex items-start gap-2 text-xs text-red-400 -mt-1">
+          <div role="alert" className="flex items-start gap-2 text-xs text-red-400 -mt-1">
             <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
             {lastAuthError}
           </div>
@@ -208,8 +209,12 @@ export default function LoginScreen() {
         {/* Email form */}
         <form onSubmit={handleEmailSubmit} className="space-y-3">
           <div>
+            <label htmlFor="login-email" className="sr-only">Email address</label>
             <input
+              id="login-email"
               type="email"
+              name="email"
+              autoComplete="email"
               placeholder="Email address"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -218,8 +223,12 @@ export default function LoginScreen() {
             />
           </div>
           <div className="relative">
+            <label htmlFor="login-password" className="sr-only">Password</label>
             <input
+              id="login-password"
               type={showPassword ? "text" : "password"}
+              name="password"
+              autoComplete={mode === "signup" ? "new-password" : "current-password"}
               placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -230,6 +239,8 @@ export default function LoginScreen() {
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-pressed={showPassword}
               className="absolute right-3 top-1/2 -translate-y-1/2 opacity-40 hover:opacity-70 transition-opacity"
               style={{ color: "white" }}
             >
@@ -238,7 +249,7 @@ export default function LoginScreen() {
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 text-xs text-red-400">
+            <div role="alert" className="flex items-start gap-2 text-xs text-red-400">
               <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
               {error}
             </div>
@@ -258,7 +269,7 @@ export default function LoginScreen() {
           {mode === "login" ? (
             <>
               Don&apos;t have an account?{" "}
-              <button
+              <button type="button"
                 onClick={() => { setMode("signup"); setError(""); }}
                 className="lp-login-link hover:underline"
               >
@@ -268,7 +279,7 @@ export default function LoginScreen() {
           ) : (
             <>
               Already have an account?{" "}
-              <button
+              <button type="button"
                 onClick={() => { setMode("login"); setError(""); }}
                 className="lp-login-link hover:underline"
               >
@@ -283,7 +294,7 @@ export default function LoginScreen() {
         </div>
           </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

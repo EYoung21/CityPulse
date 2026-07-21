@@ -79,16 +79,15 @@ export function subscribeRouteState(fn: (s: RouteState) => void): () => void {
 // React at module top-level because this file is also imported from
 // non-component code (event handlers, libs); React's tree-shaker is
 // fine with a re-exported import inside an exported fn.
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 /** React subscription helper. Returns the latest published RouteState
  *  and re-renders on change. Safe in SSR (returns the default state
  *  during the initial render, then hydrates from `current`). */
 export function useRouteState(): RouteState {
-  const [state, setState] = useState<RouteState>(current);
-  useEffect(() => {
-    setState(current);
-    return subscribeRouteState(setState);
-  }, []);
-  return state;
+  return useSyncExternalStore(
+    subscribeRouteState,
+    getRouteState,
+    () => DEFAULT_STATE
+  );
 }

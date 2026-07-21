@@ -66,7 +66,9 @@ export default function ClusterListPanel({ incidents, onSelect, onClose }: Props
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Close overlapping incidents"
             className="transition-colors p-1 -m-1 shrink-0"
             style={{ color: "var(--panel-text-muted)" }}
           >
@@ -79,7 +81,7 @@ export default function ClusterListPanel({ incidents, onSelect, onClose }: Props
           {incidents.map((inc) => {
             const sev = getSeverity(inc.severity_category);
             return (
-              <button
+              <button type="button"
                 key={inc.id}
                 onClick={() => onSelect(inc.id)}
                 className="w-full text-left rounded-lg p-2.5 transition-all hover:scale-[1.01] active:scale-[0.99]"

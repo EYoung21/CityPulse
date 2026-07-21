@@ -27,6 +27,16 @@
 import type { TransportMode } from "./routing";
 
 export const TRIP_TOKEN_VERSION = 1;
+const MAX_TRIP_TOKEN_CHARS = 64_000;
+const MAX_DECODED_GEOMETRY_POINTS = 1_000;
+const VALID_TRANSPORT_MODES = new Set<TransportMode>([
+  "foot-walking",
+  "cycling-regular",
+  "driving-car",
+  "wheelchair",
+  "transit-train",
+  "transit-subway",
+]);
 
 export interface TripShareSnapshot {
   /** Optional friendly name for the sender, shown in the recipient view. */
@@ -161,13 +171,19 @@ function base64UrlEncode(s: string): string {
   if (typeof window === "undefined") {
     return Buffer.from(s, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   }
-  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const bytes = new TextEncoder().encode(s);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function base64UrlDecode(s: string): string {
   const padded = s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4);
   if (typeof window === "undefined") return Buffer.from(padded, "base64").toString("utf8");
-  return atob(padded);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
 }
 
 /* --------- Public API ------------------------------------------------ */
@@ -206,20 +222,32 @@ interface RawPayload {
  *  unparseable / from a future version / missing required fields. */
 export function decodeTripToken(token: string): DecodedTripToken | null {
   try {
+    if (!token || token.length > MAX_TRIP_TOKEN_CHARS) return null;
     const json = base64UrlDecode(token);
     const obj = JSON.parse(json) as RawPayload;
     if (obj.v !== TRIP_TOKEN_VERSION) return null;
     if (!Array.isArray(obj.d) || obj.d.length !== 2) return null;
-    if (typeof obj.eta !== "number" || typeof obj.sentAt !== "number") return null;
+    if (
+      typeof obj.eta !== "number" || !Number.isFinite(obj.eta) ||
+      typeof obj.sentAt !== "number" || !Number.isFinite(obj.sentAt)
+    ) return null;
     if (typeof obj.g !== "string") return null;
-    if (typeof obj.m !== "string") return null;
+    if (typeof obj.m !== "string" || !VALID_TRANSPORT_MODES.has(obj.m as TransportMode)) return null;
     const geometry = decodePolyline(obj.g);
     const dLat = Number(obj.d[0]);
     const dLng = Number(obj.d[1]);
-    if (!Number.isFinite(dLat) || !Number.isFinite(dLng)) return null;
+    if (
+      !Number.isFinite(dLat) || dLat < -90 || dLat > 90 ||
+      !Number.isFinite(dLng) || dLng < -180 || dLng > 180 ||
+      geometry.length > MAX_DECODED_GEOMETRY_POINTS ||
+      geometry.some(([lat, lng]) =>
+        !Number.isFinite(lat) || lat < -90 || lat > 90 ||
+        !Number.isFinite(lng) || lng < -180 || lng > 180
+      )
+    ) return null;
     return {
       version: obj.v,
-      name: typeof obj.n === "string" ? obj.n : undefined,
+      name: typeof obj.n === "string" ? obj.n.slice(0, 32) : undefined,
       destination: [dLat, dLng],
       mode: obj.m as TransportMode,
       etaEpochMs: obj.eta,

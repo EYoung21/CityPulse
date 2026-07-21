@@ -33,12 +33,11 @@ def upload_batch(api_url: str, clips: dict, raw_clips: dict | None = None):
         payload["raw_clips"] = raw_clips
     body = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
-    # Authenticate to the ingest endpoint when the shared secret is configured.
-    # Absent the env var we send no auth header, matching the server's
-    # allow-when-unset rollout behaviour.
+    # The server fails closed; do not start a batch that cannot authenticate.
     ingest_secret = os.environ.get("PULSE_INGEST_SECRET")
-    if ingest_secret:
-        headers["Authorization"] = f"Bearer {ingest_secret}"
+    if not ingest_secret:
+        raise RuntimeError("PULSE_INGEST_SECRET is required for audio sync")
+    headers["Authorization"] = f"Bearer {ingest_secret}"
     req = Request(
         f"{api_url}/api/audio/upload",
         data=body,

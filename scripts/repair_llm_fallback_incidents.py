@@ -52,6 +52,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from philly_pulse import geocode, llm  # noqa: E402
 from philly_pulse import persistence as store  # noqa: E402
 from philly_pulse.city_registry import CITY_REGISTRY, FEED_LABELS, load_city_registry  # noqa: E402
+from google.cloud.firestore_v1.base_query import FieldFilter  # noqa: E402
 
 
 def _feed_label(feed_id: str | None) -> str | None:
@@ -101,15 +102,15 @@ def _iter_llm_fallback_incidents(city: str | None, limit: int | None):
     db = _get_db()
     q = (
         db.collection("incidents")
-        .where("geocode_status", ">=", "llm_fallback")
-        .where("geocode_status", "<", "llm_fallback~")
+        .where(filter=FieldFilter("geocode_status", ">=", "llm_fallback"))
+        .where(filter=FieldFilter("geocode_status", "<", "llm_fallback~"))
         .order_by("geocode_status")
         .order_by("__name__")
     )
     if city:
         # Keep the range filter on geocode_status; chain a city equality.
         # Firestore allows multiple equality filters alongside one range.
-        q = q.where("city", "==", city)
+        q = q.where(filter=FieldFilter("city", "==", city))
     if limit:
         q = q.limit(int(limit))
 
@@ -124,7 +125,7 @@ def _find_extraction_for_incident(incident_id: str) -> dict | None:
     try:
         snap_iter = (
             db.collection("extractions")
-            .where("incident_id", "==", incident_id)
+            .where(filter=FieldFilter("incident_id", "==", incident_id))
             .limit(1)
             .stream()
         )

@@ -105,11 +105,11 @@ export const USE_CASE_CAMPAIGNS: Record<UseCaseSlug, UseCaseCampaign> = {
     slug: "research",
     cardTitle: "Research & public-good",
     pageTitle: `Research and incident stream | ${site}`,
-    metaDescription: `Searchable, paginated incident data on ${site}. Public API window is about one hour without Pro. Pro unlocks deeper history plus pre-built Analytics dashboards.`,
+    metaDescription: `Searchable, paginated incident data on ${site}. Public API access includes the latest three days; Pro unlocks deeper history plus pre-built Analytics dashboards.`,
     headline: "Structured stream for analysis and civic tooling",
     paragraphs: [
       "Incidents include category, location text, timestamps, and (when geocoded) coordinates. That is enough for many oversight, academic, and civic use cases—treat outputs as research inputs, not certified records.",
-      "Without Pro, HTTP reads are clamped to roughly the **last hour** of incidents. **Pro** unlocks longer history for the same endpoints **plus the Analytics tab** — pre-built neighborhood hotspots, 30-day category trends, time-of-day grids, and data-quality charts (SVG export per chart). The **full-screen feed** at `/feed` is another way to browse the stream without the main map chrome.",
+      "Without Pro, HTTP reads are clamped to the **latest three days** of incidents. **Pro** unlocks longer history for the same endpoints **plus the Analytics tab** — pre-built neighborhood hotspots, 30-day category trends, time-of-day grids, and data-quality charts (SVG export per chart). The **full-screen feed** at `/feed` is another way to browse the stream without the main map chrome.",
     ],
     ctas: [
       { label: "Open Analytics", href: "/?view=analytics" },

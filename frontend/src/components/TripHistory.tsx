@@ -9,7 +9,6 @@ import {
   Accessibility,
   Clock,
   Download,
-  MapPin,
   Navigation,
   Star,
   Trash2,
@@ -75,12 +74,11 @@ function fmtDate(ts: number): string {
  *  state hides the whole section to keep the sidebar tidy for new
  *  users. */
 export default function TripHistory({ onReplay }: Props) {
-  const [entries, setEntries] = useState<TripHistoryEntry[]>([]);
+  const [entries, setEntries] = useState<TripHistoryEntry[]>(getTripHistory);
   const [expanded, setExpanded] = useState(false);
   const unit = preferredSpeedUnit();
 
   useEffect(() => {
-    setEntries(getTripHistory());
     return subscribeTripHistory(setEntries);
   }, []);
 
@@ -105,18 +103,19 @@ export default function TripHistory({ onReplay }: Props) {
           return (
             <div
               key={e.id}
-              className="group flex items-start gap-2 px-3 py-2 rounded-lg transition-colors cursor-pointer"
+              className="group relative flex items-start gap-2 px-3 py-2 rounded-lg transition-colors"
               style={{ background: "var(--panel-input-bg)" }}
-              onClick={() => onReplay(e)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") onReplay(e); }}
               onMouseEnter={(ev) => (ev.currentTarget.style.background = "var(--panel-hover)")}
               onMouseLeave={(ev) => (ev.currentTarget.style.background = "var(--panel-input-bg)")}
-              title={`Replay: ${destLabel}`}
             >
+              <button
+                type="button"
+                onClick={() => onReplay(e)}
+                className="absolute inset-0 z-0 rounded-lg cursor-pointer"
+                aria-label={`Replay trip to ${destLabel}`}
+              />
               <div
-                className="w-6 h-6 shrink-0 rounded-full flex items-center justify-center mt-0.5"
+                className="relative z-10 pointer-events-none w-6 h-6 shrink-0 rounded-full flex items-center justify-center mt-0.5"
                 style={{
                   background: e.completed ? "rgba(34,197,94,0.15)" : "rgba(59,130,246,0.15)",
                   color: e.completed ? "#22c55e" : "#3b82f6",
@@ -124,7 +123,7 @@ export default function TripHistory({ onReplay }: Props) {
               >
                 <Icon className="w-3 h-3" />
               </div>
-              <div className="min-w-0 flex-1">
+              <div className="relative z-10 pointer-events-none min-w-0 flex-1">
                 <div className="flex items-center gap-1">
                   <p
                     className="text-xs font-semibold truncate"
@@ -157,9 +156,10 @@ export default function TripHistory({ onReplay }: Props) {
                   </p>
                 )}
               </div>
-              <div className="flex items-center gap-0.5 shrink-0">
+              <div className="relative z-20 pointer-events-auto flex items-center gap-0.5 shrink-0">
                 {hasExportableGeometry(e) && (
                   <button
+                    type="button"
                     onClick={(ev) => {
                       ev.stopPropagation();
                       downloadTripGpx(e);
@@ -172,6 +172,7 @@ export default function TripHistory({ onReplay }: Props) {
                   </button>
                 )}
                 <button
+                  type="button"
                   onClick={(ev) => {
                     ev.stopPropagation();
                     onReplay(e);
@@ -183,6 +184,7 @@ export default function TripHistory({ onReplay }: Props) {
                   <Navigation className="w-3 h-3" />
                 </button>
                 <button
+                  type="button"
                   onClick={(ev) => {
                     ev.stopPropagation();
                     // Soft-delete: snapshot the entry and remove it

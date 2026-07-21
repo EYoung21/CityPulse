@@ -24,8 +24,11 @@ function loadDismiss(): DismissRecord | null {
     const raw = window.localStorage.getItem(DISMISS_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as DismissRecord;
-    if (parsed && typeof parsed.date === "string" && typeof parsed.bucketKey === "string") {
-      return parsed;
+    if (
+      parsed && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date) &&
+      typeof parsed.bucketKey === "string" && parsed.bucketKey.length <= 200
+    ) {
+      return { date: parsed.date, bucketKey: parsed.bucketKey };
     }
   } catch { /* ignore */ }
   return null;

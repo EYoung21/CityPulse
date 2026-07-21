@@ -36,6 +36,7 @@ import { districtFillsGreedy } from "@/lib/district-fill-colors";
 import { useCityDistricts } from "@/hooks/useCityDistricts";
 import { getCurrentCity } from "@/lib/pulse-cities";
 import { spawnSnapPulse } from "@/lib/snap-pulse";
+import { safeSvgIdPart } from "@/lib/svg-id";
 
 /** One colour per *category*; sub-types within a category share the same hue. */
 type MonoColor = { fill: string; stroke: string; pulse: string };
@@ -92,7 +93,7 @@ function monoColor(kind: string): MonoColor {
 }
 
 function gid(uid: string | number, name: string): string {
-  return `ppig_${uid}_${name}`;
+  return `ppig_${safeSvgIdPart(uid)}_${safeSvgIdPart(name)}`;
 }
 
 
@@ -240,7 +241,6 @@ function createIncidentGlyphIcon(
   const kind = resolveBlipKind(inc);
   const base = 18;
   const box = 22;
-  const half = 11;
   const opacity = greyed ? 0.54 : 0.92;
   const filt = greyed
     ? "filter:saturate(0.65) brightness(0.9) drop-shadow(0 1px 2px rgba(0,0,0,0.35));"
@@ -1385,7 +1385,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         }
         const sevColor = maxSev >= 0.7 ? "#ef4444" : maxSev >= 0.4 ? "#f59e0b" : "#3b82f6";
         return L.divIcon({
-          html: `<div class="pp-cluster ${cls}" style="border-color:${sevColor};box-shadow:0 0 0 1px ${sevColor}66, 0 0 14px ${sevColor}66;"><span>${count}</span></div>`,
+          html: `<div class="pp-cluster ${cls}" aria-label="${count} incidents" style="border-color:${sevColor};box-shadow:0 0 0 1px ${sevColor}66, 0 0 14px ${sevColor}66;"><span>${count}</span></div>`,
           className: "pp-cluster-icon",
           iconSize: L.point(size, size),
         });
@@ -1840,7 +1840,17 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         inc.s_base >= 0.7,
         greyed
       );
-      const marker = L.marker([inc.lat, inc.lng], { icon }) as IncidentMarker;
+      const location = inc.location_text?.trim();
+      const markerLabel = `${inc.severity_category} incident${location ? ` at ${location}` : ""}`;
+      const marker = L.marker([inc.lat, inc.lng], {
+        icon,
+        title: markerLabel,
+        alt: markerLabel,
+        // Route mode intentionally dims far-away incidents. Do not leave
+        // those non-actionable markers in the keyboard tab order.
+        interactive: !greyed,
+        keyboard: !greyed,
+      }) as IncidentMarker;
       marker._ppIncidentId = inc.id;
       marker._ppSev = inc.s_base ?? 0;
       if (!greyed) marker.on("click", () => stableOnSelect(inc.id));
@@ -2250,6 +2260,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         icon: ringIcon,
         zIndexOffset: 800,
         interactive: false,
+        keyboard: false,
       }).addTo(highlight);
     }
 
@@ -2300,6 +2311,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         icon,
         zIndexOffset: 4500,
         interactive: false,
+        keyboard: false,
       }).addTo(map);
       parkedPinMarkerRef.current.bindTooltip("Parked here", {
         direction: "top",
@@ -2497,7 +2509,11 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         iconSize: [0, 0],
         iconAnchor: [0, 0],
       });
-      L.marker([district.center.lat, district.center.lng], { icon: label, interactive: false }).addTo(layer);
+      L.marker([district.center.lat, district.center.lng], {
+        icon: label,
+        interactive: false,
+        keyboard: false,
+      }).addTo(layer);
     }
   }, [districtsEnabled, incidents, districtsVersion]);
 
@@ -2679,6 +2695,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
             icon: createEndpointDotIcon(wp.label, wp.color, wp.glowColor),
             zIndexOffset: 2000,
             interactive: false,
+            keyboard: false,
           }).addTo(routeLayer);
         }
       } else {
@@ -2688,11 +2705,13 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
           icon: createEndpointDotIcon("A", "#22c55e", "rgba(34,197,94,0.5)"),
           zIndexOffset: 2000,
           interactive: false,
+          keyboard: false,
         }).addTo(routeLayer);
         L.marker(endPt, {
           icon: createEndpointDotIcon("B", "#ef4444", "rgba(239,68,68,0.5)"),
           zIndexOffset: 2000,
           interactive: false,
+          keyboard: false,
         }).addTo(routeLayer);
       }
 
@@ -2745,6 +2764,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         icon: createEndpointDotIcon("✦", "#06b6d4", "rgba(6,182,212,0.5)"),
         zIndexOffset: 2000,
         interactive: false,
+        keyboard: false,
       }).addTo(layer);
     }
 
@@ -2768,6 +2788,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
           icon: createEndpointDotIcon(wp.label, wp.color, wp.glowColor),
           zIndexOffset: 1800,
           interactive: false,
+          keyboard: false,
         }).addTo(layer);
       }
       if (previewWaypoints.length >= 2) {
@@ -2791,6 +2812,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
           icon: createEndpointDotIcon("A", "#22c55e", "rgba(34,197,94,0.5)"),
           zIndexOffset: 1800,
           interactive: false,
+          keyboard: false,
         }).addTo(layer);
       }
       if (previewDest) {
@@ -2798,6 +2820,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
           icon: createEndpointDotIcon("B", "#ef4444", "rgba(239,68,68,0.5)"),
           zIndexOffset: 1800,
           interactive: false,
+          keyboard: false,
         }).addTo(layer);
         if (previewOrigin) {
           const destSame =
@@ -2880,6 +2903,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         icon,
         zIndexOffset: 1500,
         interactive: false,
+        keyboard: false,
       }).addTo(map);
     }
     // We only rebuild the full DivIcon when the marker is first added; for
@@ -3079,6 +3103,7 @@ const IncidentMap = forwardRef<MapHandle, Props>(function IncidentMap(
         icon: createTransportIcon(tripMode, heatmapDemoBoost),
         zIndexOffset: 3000,
         interactive: false,
+        keyboard: false,
       }).addTo(map);
       layers.marker = liveMarker;
       transportMarkerRef.current = liveMarker;

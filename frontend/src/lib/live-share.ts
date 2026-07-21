@@ -104,6 +104,16 @@ function trim5(n: number): number {
   return Math.round(n * 1e5) / 1e5;
 }
 
+export function liveShareMovedEnough(
+  previous: { lat: number; lng: number },
+  next: { lat: number; lng: number }
+): boolean {
+  return (
+    Math.abs(next.lat - previous.lat) > 4e-5 ||
+    Math.abs(next.lng - previous.lng) > 4e-5
+  );
+}
+
 export interface LiveShareSnapshot {
   position: { lat: number; lng: number };
   heading: number | null;
@@ -193,16 +203,13 @@ export async function startLiveShare(initial: LiveShareSnapshot): Promise<LiveSh
     shareId,
     url,
     update: async (snap) => {
+      const previousPosition = last.position;
       last = { ...last, ...snap };
       // Coalesce: only fire an immediate write if the position has
       // moved by more than ~5m. ETA-only updates ride the 15s timer
       // so we're not paying for cosmetic changes.
-      if (snap.position) {
-        const dLat = Math.abs(snap.position.lat - last.position.lat);
-        const dLng = Math.abs(snap.position.lng - last.position.lng);
-        if (dLat > 4e-5 || dLng > 4e-5) {
-          await flush();
-        }
+      if (snap.position && liveShareMovedEnough(previousPosition, snap.position)) {
+        await flush();
       }
     },
     stop: async () => {

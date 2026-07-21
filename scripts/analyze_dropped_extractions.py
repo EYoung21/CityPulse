@@ -17,6 +17,7 @@ if str(REPO) not in sys.path:
 
 import firebase_admin
 from firebase_admin import credentials, firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 
 def _client() -> firestore.Client:
@@ -37,8 +38,8 @@ def mine_city(db: firestore.Client, slug: str, hours: int, limit: int) -> Counte
     floor = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     q = (
         db.collection("extractions")
-        .where("city", "==", slug)
-        .where("reported_at", ">=", floor)
+        .where(filter=FieldFilter("city", "==", slug))
+        .where(filter=FieldFilter("reported_at", ">=", floor))
         .limit(limit)
     )
     counts: Counter[str] = Counter()

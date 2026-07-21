@@ -1,3 +1,9 @@
+import { isCoordinatePair } from "@/lib/geo-validation";
+import { normalizeHttpUrl } from "@/lib/safe-url";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
+
+const MAX_OVERPASS_RESPONSE_BYTES = 16 * 1024 * 1024;
+
 /** Overpass API client for nearby Points-of-Interest.
  *
  *  Uses the public Overpass instance (rate-limited but free). Results are
@@ -121,6 +127,63 @@ function parseWheelchair(value: string | undefined): "yes" | "limited" | "no" | 
 
 const memCache = new Map<string, { at: number; data: Poi[] }>();
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const MEMORY_CACHE_MAX = 128;
+
+function optionalText(value: unknown, maxLength = 500): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, maxLength) : undefined;
+}
+
+function parseCachedPoi(value: unknown): Poi | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const id = optionalText(row.id, 200);
+  const name = optionalText(row.name);
+  const category = row.category;
+  const distance = row.distance;
+  const coordinates = [row.lat, row.lng];
+  if (
+    !id ||
+    !name ||
+    typeof category !== "string" ||
+    !Object.prototype.hasOwnProperty.call(FILTERS, category) ||
+    !isCoordinatePair(coordinates) ||
+    typeof distance !== "number" ||
+    !Number.isFinite(distance) ||
+    distance < 0
+  ) {
+    return null;
+  }
+  return {
+    id,
+    name,
+    category: category as PoiCategory,
+    lat: coordinates[0],
+    lng: coordinates[1],
+    distance,
+    hint: optionalText(row.hint),
+    openingHours: optionalText(row.openingHours, 2_048),
+    phone: optionalText(row.phone, 200),
+    website: normalizeHttpUrl(row.website) ?? undefined,
+    wheelchair: parseWheelchair(typeof row.wheelchair === "string" ? row.wheelchair : undefined),
+  };
+}
+
+function setBoundedMemoryCache<K, V>(
+  cache: Map<K, V>,
+  key: K,
+  value: V,
+  maxEntries = MEMORY_CACHE_MAX
+): void {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > maxEntries) {
+    const oldest = cache.keys().next().value as K | undefined;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
 
 function cacheKey(cat: PoiCategory, lat: number, lng: number, r: number): string {
   return `${cat}:${lat.toFixed(4)},${lng.toFixed(4)}:${r}`;
@@ -129,11 +192,30 @@ function cacheKey(cat: PoiCategory, lat: number, lng: number, r: number): string
 function loadSessionCache(key: string): Poi[] | null {
   if (typeof sessionStorage === "undefined") return null;
   try {
-    const raw = sessionStorage.getItem(`pp:overpass:${key}`);
+    const storageKey = `pp:overpass:${key}`;
+    const raw = sessionStorage.getItem(storageKey);
     if (!raw) return null;
-    const { at, data } = JSON.parse(raw) as { at: number; data: Poi[] };
-    if (Date.now() - at > CACHE_TTL_MS) return null;
-    return data;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const { at, data } = parsed as { at?: unknown; data?: unknown };
+    const now = Date.now();
+    if (
+      typeof at !== "number" ||
+      !Number.isFinite(at) ||
+      at > now + 60_000 ||
+      now - at > CACHE_TTL_MS ||
+      !Array.isArray(data) ||
+      data.length > 200
+    ) {
+      sessionStorage.removeItem(storageKey);
+      return null;
+    }
+    const clean = data.map(parseCachedPoi);
+    if (clean.some((row) => row === null)) {
+      sessionStorage.removeItem(storageKey);
+      return null;
+    }
+    return clean as Poi[];
   } catch {
     return null;
   }
@@ -178,6 +260,9 @@ export async function fetchNearbyPois(
   radiusM = 800,
   limit = 25
 ): Promise<Poi[]> {
+  if (!FILTERS[category] || !isCoordinatePair([lat, lng])) return [];
+  radiusM = Math.min(10_000, Math.max(50, Number.isFinite(radiusM) ? radiusM : 800));
+  limit = Math.min(100, Math.max(1, Number.isFinite(limit) ? Math.floor(limit) : 25));
   const key = cacheKey(category, lat, lng, radiusM);
 
   const mem = memCache.get(key);
@@ -185,7 +270,7 @@ export async function fetchNearbyPois(
 
   const sess = loadSessionCache(key);
   if (sess) {
-    memCache.set(key, { at: Date.now(), data: sess });
+    setBoundedMemoryCache(memCache, key, { at: Date.now(), data: sess });
     return sess.slice(0, limit);
   }
 
@@ -204,17 +289,19 @@ out center ${limit * 2};`;
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: `data=${encodeURIComponent(query)}`,
+        signal: AbortSignal.timeout(12_000),
       });
       if (!res.ok) {
         lastErr = new Error(`Overpass ${res.status}`);
         continue;
       }
-      const data = (await res.json()) as { elements?: OverpassElement[] };
+      const data = (await readBoundedJsonResponse(res, MAX_OVERPASS_RESPONSE_BYTES)) as { elements?: OverpassElement[] };
       const pois = (data.elements ?? [])
         .map((el): Poi | null => {
           const elLat = el.lat ?? el.center?.lat;
           const elLng = el.lon ?? el.center?.lon;
-          if (elLat == null || elLng == null) return null;
+          const coordinates = [elLat, elLng];
+          if (!isCoordinatePair(coordinates)) return null;
           const tags = el.tags ?? {};
           const name = tags.name || tags.brand || tags.operator;
           if (!name) return null;
@@ -222,13 +309,13 @@ out center ${limit * 2};`;
             id: `${el.type}/${el.id}`,
             name,
             category,
-            lat: elLat,
-            lng: elLng,
-            distance: haversineM(lat, lng, elLat, elLng),
+            lat: coordinates[0],
+            lng: coordinates[1],
+            distance: haversineM(lat, lng, coordinates[0], coordinates[1]),
             hint: tags["addr:street"] || tags.cuisine || tags.brand || undefined,
             openingHours: tags["opening_hours"] || undefined,
             phone: tags.phone || tags["contact:phone"] || undefined,
-            website: tags.website || tags["contact:website"] || undefined,
+            website: normalizeHttpUrl(tags.website || tags["contact:website"]) ?? undefined,
             wheelchair: parseWheelchair(tags.wheelchair),
           };
         })
@@ -236,7 +323,7 @@ out center ${limit * 2};`;
         .sort((a, b) => a.distance - b.distance)
         .slice(0, limit);
 
-      memCache.set(key, { at: Date.now(), data: pois });
+      setBoundedMemoryCache(memCache, key, { at: Date.now(), data: pois });
       saveSessionCache(key, pois);
       return pois;
     } catch (e) {
@@ -255,6 +342,14 @@ export async function fetchPoisInBounds(
   bounds: { south: number; west: number; north: number; east: number },
   limit = 80
 ): Promise<Poi[]> {
+  if (
+    !FILTERS[category] ||
+    !isCoordinatePair([bounds.south, bounds.west]) ||
+    !isCoordinatePair([bounds.north, bounds.east]) ||
+    bounds.south > bounds.north ||
+    bounds.west > bounds.east
+  ) return [];
+  limit = Math.min(200, Math.max(1, Number.isFinite(limit) ? Math.floor(limit) : 80));
   // Snap to ~3 decimal places (~110m at the equator) so small map jitter
   // doesn't bypass the cache. Wider categories like food would still hit
   // the network often, but safety POIs are sparse and stable enough to
@@ -266,7 +361,7 @@ export async function fetchPoisInBounds(
   if (mem && Date.now() - mem.at < CACHE_TTL_MS) return mem.data.slice(0, limit);
   const sess = loadSessionCache(cKey);
   if (sess) {
-    memCache.set(cKey, { at: Date.now(), data: sess });
+    setBoundedMemoryCache(memCache, cKey, { at: Date.now(), data: sess });
     return sess.slice(0, limit);
   }
 
@@ -291,14 +386,16 @@ out center ${limit * 2};`;
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: `data=${encodeURIComponent(query)}`,
+        signal: AbortSignal.timeout(12_000),
       });
       if (!res.ok) { lastErr = new Error(`Overpass ${res.status}`); continue; }
-      const data = (await res.json()) as { elements?: OverpassElement[] };
+      const data = (await readBoundedJsonResponse(res, MAX_OVERPASS_RESPONSE_BYTES)) as { elements?: OverpassElement[] };
       const pois = (data.elements ?? [])
         .map((el): Poi | null => {
           const elLat = el.lat ?? el.center?.lat;
           const elLng = el.lon ?? el.center?.lon;
-          if (elLat == null || elLng == null) return null;
+          const coordinates = [elLat, elLng];
+          if (!isCoordinatePair(coordinates)) return null;
           const tags = el.tags ?? {};
           const name =
             tags.name || tags.brand || tags.operator ||
@@ -319,20 +416,20 @@ out center ${limit * 2};`;
             id: `${el.type}/${el.id}`,
             name,
             category,
-            lat: elLat,
-            lng: elLng,
-            distance: haversineM(cLat, cLng, elLat, elLng),
+            lat: coordinates[0],
+            lng: coordinates[1],
+            distance: haversineM(cLat, cLng, coordinates[0], coordinates[1]),
             hint: tags["addr:street"] || tags.operator || tags.brand || undefined,
             openingHours: tags["opening_hours"] || undefined,
             phone: tags.phone || tags["contact:phone"] || undefined,
-            website: tags.website || tags["contact:website"] || undefined,
+            website: normalizeHttpUrl(tags.website || tags["contact:website"]) ?? undefined,
             wheelchair: parseWheelchair(tags.wheelchair),
           };
         })
         .filter((p): p is Poi => p !== null)
         .slice(0, limit);
 
-      memCache.set(cKey, { at: Date.now(), data: pois });
+      setBoundedMemoryCache(memCache, cKey, { at: Date.now(), data: pois });
       saveSessionCache(cKey, pois);
       return pois;
     } catch (e) {
@@ -362,6 +459,37 @@ export interface PlaceAtPoint {
   kind?: string;
 }
 
+function parseCachedPlaceAtPoint(value: unknown): PlaceAtPoint | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const id = optionalText(row.id, 200);
+  const name = optionalText(row.name);
+  const distanceM = row.distanceM;
+  const coordinates = [row.lat, row.lng];
+  if (
+    !id ||
+    !name ||
+    !isCoordinatePair(coordinates) ||
+    typeof distanceM !== "number" ||
+    !Number.isFinite(distanceM) ||
+    distanceM < 0
+  ) {
+    return null;
+  }
+  return {
+    id,
+    name,
+    lat: coordinates[0],
+    lng: coordinates[1],
+    distanceM,
+    phone: optionalText(row.phone, 200),
+    website: normalizeHttpUrl(row.website) ?? undefined,
+    openingHours: optionalText(row.openingHours, 2_048),
+    wheelchair: parseWheelchair(typeof row.wheelchair === "string" ? row.wheelchair : undefined),
+    kind: optionalText(row.kind, 200),
+  };
+}
+
 const placeAtMemCache = new Map<string, { at: number; data: PlaceAtPoint | null }>();
 
 /** Look up the nearest *named* tagged place within `radiusM` meters of
@@ -381,6 +509,8 @@ export async function fetchPlaceAtPoint(
   lng: number,
   radiusM = 30
 ): Promise<PlaceAtPoint | null> {
+  if (!isCoordinatePair([lat, lng])) return null;
+  radiusM = Math.min(500, Math.max(5, Number.isFinite(radiusM) ? radiusM : 30));
   const key = `place:${lat.toFixed(5)},${lng.toFixed(5)}:${radiusM}`;
   const mem = placeAtMemCache.get(key);
   if (mem && Date.now() - mem.at < CACHE_TTL_MS) return mem.data;
@@ -389,13 +519,31 @@ export async function fetchPlaceAtPoint(
   // separately so the type's safe to read back.
   if (typeof sessionStorage !== "undefined") {
     try {
-      const raw = sessionStorage.getItem(`pp:overpass:${key}`);
+      const storageKey = `pp:overpass:${key}`;
+      const raw = sessionStorage.getItem(storageKey);
       if (raw) {
-        const parsed = JSON.parse(raw) as { at: number; data: PlaceAtPoint | null };
-        if (Date.now() - parsed.at < CACHE_TTL_MS) {
-          placeAtMemCache.set(key, parsed);
-          return parsed.data;
+        const parsed = JSON.parse(raw) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          const { at, data } = parsed as { at?: unknown; data?: unknown };
+          const now = Date.now();
+          if (
+            typeof at === "number" &&
+            Number.isFinite(at) &&
+            at <= now + 60_000 &&
+            now - at < CACHE_TTL_MS
+          ) {
+            if (data === null) {
+              setBoundedMemoryCache(placeAtMemCache, key, { at, data: null });
+              return null;
+            }
+            const clean = parseCachedPlaceAtPoint(data);
+            if (clean) {
+              setBoundedMemoryCache(placeAtMemCache, key, { at, data: clean });
+              return clean;
+            }
+          }
         }
+        sessionStorage.removeItem(storageKey);
       }
     } catch { /* ignore parse errors */ }
   }
@@ -422,14 +570,16 @@ out center 12;`;
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: `data=${encodeURIComponent(query)}`,
+        signal: AbortSignal.timeout(12_000),
       });
       if (!res.ok) { lastErr = new Error(`Overpass ${res.status}`); continue; }
-      const data = (await res.json()) as { elements?: OverpassElement[] };
+      const data = (await readBoundedJsonResponse(res, MAX_OVERPASS_RESPONSE_BYTES)) as { elements?: OverpassElement[] };
       const ranked = (data.elements ?? [])
         .map((el): PlaceAtPoint | null => {
           const elLat = el.lat ?? el.center?.lat;
           const elLng = el.lon ?? el.center?.lon;
-          if (elLat == null || elLng == null) return null;
+          const coordinates = [elLat, elLng];
+          if (!isCoordinatePair(coordinates)) return null;
           const tags = el.tags ?? {};
           const name = tags.name || tags.brand || tags.operator;
           if (!name) return null;
@@ -445,11 +595,11 @@ out center 12;`;
           return {
             id: `${el.type}/${el.id}`,
             name,
-            lat: elLat,
-            lng: elLng,
-            distanceM: haversineM(lat, lng, elLat, elLng),
+            lat: coordinates[0],
+            lng: coordinates[1],
+            distanceM: haversineM(lat, lng, coordinates[0], coordinates[1]),
             phone: tags.phone || tags["contact:phone"] || undefined,
-            website: tags.website || tags["contact:website"] || undefined,
+            website: normalizeHttpUrl(tags.website || tags["contact:website"]) ?? undefined,
             openingHours: tags["opening_hours"] || undefined,
             wheelchair: parseWheelchair(tags.wheelchair),
             kind,
@@ -459,7 +609,10 @@ out center 12;`;
         .sort((a, b) => a.distanceM - b.distanceM);
 
       const nearest = ranked[0] ?? null;
-      placeAtMemCache.set(key, { at: Date.now(), data: nearest });
+      setBoundedMemoryCache(placeAtMemCache, key, {
+        at: Date.now(),
+        data: nearest,
+      });
       if (typeof sessionStorage !== "undefined") {
         try {
           sessionStorage.setItem(

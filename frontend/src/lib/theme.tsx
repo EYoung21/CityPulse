@@ -39,38 +39,36 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [colorBlindSafe, setColorBlindSafeState] = useState<boolean>(false);
 
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY) as ThemeMode | null;
-    if (saved && ["auto", "light", "dark"].includes(saved)) {
-      setModeState(saved);
-    }
-    const cb = localStorage.getItem(CB_STORAGE_KEY) === "1";
-    if (cb) {
-      setColorBlindSafeState(true);
-      setColorBlindMode(true);
-    }
+    const hydrateTimer = window.setTimeout(() => {
+      const saved = localStorage.getItem(STORAGE_KEY) as ThemeMode | null;
+      if (saved && ["auto", "light", "dark"].includes(saved)) {
+        setModeState(saved);
+      }
+      const cb = localStorage.getItem(CB_STORAGE_KEY) === "1";
+      if (cb) {
+        setColorBlindSafeState(true);
+        setColorBlindMode(true);
+      }
+    }, 0);
+    return () => window.clearTimeout(hydrateTimer);
   }, []);
 
   useEffect(() => {
-    const r = mode === "auto" ? resolveAuto() : mode;
-    setResolved(r);
-
-    const html = document.documentElement;
-    if (r === "dark") {
-      html.classList.add("dark");
-      html.classList.remove("light");
-    } else {
-      html.classList.add("light");
-      html.classList.remove("dark");
-    }
-  }, [mode]);
-
-  // Re-check auto mode every minute (in case it crosses the 6 AM/PM boundary)
-  useEffect(() => {
-    if (mode !== "auto") return;
-    const interval = setInterval(() => {
-      setResolved(resolveAuto());
-    }, 60_000);
-    return () => clearInterval(interval);
+    const updateResolvedTheme = () => {
+      const next = mode === "auto" ? resolveAuto() : mode;
+      setResolved(next);
+      const html = document.documentElement;
+      html.classList.toggle("dark", next === "dark");
+      html.classList.toggle("light", next === "light");
+    };
+    const updateTimer = window.setTimeout(updateResolvedTheme, 0);
+    const interval = mode === "auto"
+      ? window.setInterval(updateResolvedTheme, 60_000)
+      : null;
+    return () => {
+      window.clearTimeout(updateTimer);
+      if (interval != null) window.clearInterval(interval);
+    };
   }, [mode]);
 
   const setMode = useCallback((m: ThemeMode) => {

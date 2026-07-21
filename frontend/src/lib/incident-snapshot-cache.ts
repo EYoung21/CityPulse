@@ -1,4 +1,5 @@
 import type { Incident } from "@/lib/api";
+import { normalizeIncidentList } from "@/lib/firestore-values";
 
 const KEY_PREFIX = "pp:incidents:v1:";
 /** Show cached pins up to this age while a fresh fetch runs. */
@@ -21,13 +22,23 @@ export function loadCachedIncidents(city: string): { incidents: Incident[]; save
   try {
     const raw = localStorage.getItem(cacheKey(city));
     if (!raw) return null;
-    const entry = JSON.parse(raw) as CacheEntry;
-    if (!entry || entry.city !== city || !Array.isArray(entry.incidents)) return null;
+    const entry = JSON.parse(raw) as Partial<CacheEntry> | null;
+    if (
+      !entry ||
+      entry.city !== city ||
+      !Array.isArray(entry.incidents) ||
+      typeof entry.savedAt !== "number" ||
+      !Number.isFinite(entry.savedAt) ||
+      entry.savedAt > Date.now() + 60_000
+    ) return null;
     if (Date.now() - entry.savedAt > MAX_AGE_MS) {
       localStorage.removeItem(cacheKey(city));
       return null;
     }
-    return { incidents: entry.incidents.slice(0, MAX_ROWS), savedAt: entry.savedAt };
+    return {
+      incidents: normalizeIncidentList(entry.incidents, MAX_ROWS),
+      savedAt: entry.savedAt,
+    };
   } catch {
     return null;
   }

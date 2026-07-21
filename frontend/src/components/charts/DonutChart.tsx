@@ -26,22 +26,22 @@ export default function DonutChart({
   const circumference = 2 * Math.PI * radius;
   const center = size / 2;
 
-  let rotation = -90;
   const arcs = segments
     .filter((s) => s.value > 0)
-    .map((seg) => {
+    .reduce<Array<Segment & { pct: number; dashArray: string; rotation: number }>>((result, seg) => {
       const pct = seg.value / total;
       const dashLen = pct * circumference;
       const gap = circumference - dashLen;
-      const arc = {
+      const previous = result[result.length - 1];
+      const rotation = previous ? previous.rotation + previous.pct * 360 : -90;
+      result.push({
         ...seg,
         pct,
         dashArray: `${dashLen} ${gap}`,
         rotation,
-      };
-      rotation += pct * 360;
-      return arc;
-    });
+      });
+      return result;
+    }, []);
 
   return (
     <div className={`relative inline-block ${className}`}>

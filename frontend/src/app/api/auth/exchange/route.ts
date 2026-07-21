@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
+import { readJsonBody, RequestBodyError } from "@/lib/server-body";
 
 function ensureAdmin() {
   if (getApps().length === 0) {
@@ -23,6 +24,7 @@ function ensureAdmin() {
 // follow-up.
 const RATE_LIMIT_MAX = 10; // requests
 const RATE_LIMIT_WINDOW_MS = 60_000; // per 60s, per IP
+const RATE_LIMIT_BUCKET_MAX = 10_000;
 const rateLimitBuckets = new Map<string, { count: number; windowStart: number }>();
 
 function clientIp(req: NextRequest): string {
@@ -31,9 +33,9 @@ function clientIp(req: NextRequest): string {
   const xff = req.headers.get("x-forwarded-for");
   if (xff) {
     const first = xff.split(",")[0]?.trim();
-    if (first) return first;
+    if (first) return first.slice(0, 128);
   }
-  return req.headers.get("x-real-ip")?.trim() || "unknown";
+  return req.headers.get("x-real-ip")?.trim().slice(0, 128) || "unknown";
 }
 
 /** Returns true if this IP is over its limit for the current window. */
@@ -44,6 +46,20 @@ function isRateLimited(ip: string): boolean {
   const now = Date.now();
   const bucket = rateLimitBuckets.get(ip);
   if (!bucket || now - bucket.windowStart >= RATE_LIMIT_WINDOW_MS) {
+    if (!bucket && rateLimitBuckets.size >= RATE_LIMIT_BUCKET_MAX) {
+      for (const [key, value] of rateLimitBuckets) {
+        if (now - value.windowStart >= RATE_LIMIT_WINDOW_MS) {
+          rateLimitBuckets.delete(key);
+        }
+      }
+      while (rateLimitBuckets.size >= RATE_LIMIT_BUCKET_MAX) {
+        const oldest = rateLimitBuckets.keys().next().value as string | undefined;
+        if (!oldest) break;
+        rateLimitBuckets.delete(oldest);
+      }
+    }
+    // Refresh insertion order when rolling an existing IP into a new window.
+    rateLimitBuckets.delete(ip);
     rateLimitBuckets.set(ip, { count: 1, windowStart: now });
     return false;
   }
@@ -71,7 +87,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "rate limited" }, { status: 429 });
     }
 
-    const { idToken } = (await req.json()) as { idToken?: string };
+    let body: { idToken?: string };
+    try {
+      body = await readJsonBody<{ idToken?: string }>(req, 16 * 1024);
+    } catch (err) {
+      if (err instanceof RequestBodyError) {
+        return NextResponse.json({ error: err.message }, { status: err.status });
+      }
+      throw err;
+    }
+    const { idToken } = body;
     if (!idToken) {
       return NextResponse.json({ error: "idToken required" }, { status: 400 });
     }

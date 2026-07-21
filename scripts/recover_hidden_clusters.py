@@ -61,6 +61,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from philly_pulse import geocode, llm  # noqa: E402
 from philly_pulse.city_registry import CITY_REGISTRY, FEED_LABELS, load_city_registry  # noqa: E402
+from google.cloud.firestore_v1.base_query import FieldFilter  # noqa: E402
 
 
 def _feed_label(feed_id: str | None) -> str | None:
@@ -98,10 +99,10 @@ def _load_hidden_incidents(city: str | None, limit: int | None, force: bool) -> 
     db = _get_db()
     q = (
         db.collection("incidents")
-        .where("geocode_status", "==", "hidden_city_center_cluster")
+        .where(filter=FieldFilter("geocode_status", "==", "hidden_city_center_cluster"))
     )
     if city:
-        q = q.where("city", "==", city)
+        q = q.where(filter=FieldFilter("city", "==", city))
 
     rows: list[tuple] = []
     for snap in q.stream():
@@ -143,9 +144,9 @@ def _adjacent_context(feed_id: str, reported_at: str, *, window_s: int = 60,
         from google.cloud import firestore as gcf  # type: ignore
         q = (
             db.collection("extractions")
-            .where("feed_id", "==", feed_id)
-            .where("reported_at", ">=", floor_iso)
-            .where("reported_at", "<=", ceil_iso)
+            .where(filter=FieldFilter("feed_id", "==", feed_id))
+            .where(filter=FieldFilter("reported_at", ">=", floor_iso))
+            .where(filter=FieldFilter("reported_at", "<=", ceil_iso))
             .order_by("reported_at", direction=gcf.Query.DESCENDING)
             .limit(20)
         )

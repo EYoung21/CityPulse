@@ -2,6 +2,32 @@ import { fetchPublicApi } from "@/lib/public-api-base";
 import { isFirebaseConfigured, getFirebaseApp } from "@/lib/firebase";
 import { getAuth } from "firebase/auth";
 import { requestUpgrade } from "@/lib/upgrade";
+import { getCurrentCity } from "@/lib/pulse-cities";
+import {
+  normalizeFiniteNumber,
+  normalizeIncidentList,
+  normalizeIncidentRecord,
+} from "@/lib/firestore-values";
+import { readBoundedJsonResponse, readBoundedTextResponse } from "@/lib/upstream-response";
+
+const MAX_API_JSON_BYTES = 8 * 1024 * 1024;
+const MAX_SMALL_API_JSON_BYTES = 1024 * 1024;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+async function readApiJson(
+  response: Response,
+  maxBytes = MAX_API_JSON_BYTES,
+): Promise<unknown> {
+  return readBoundedJsonResponse(response, maxBytes);
+}
+
+function apiSignal(signal?: AbortSignal, timeoutMs = 15_000): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
 
 /** Dedupe concurrent token reads (e.g. `Promise.all` of fetchIncidents + fetchSummary). */
 let idTokenInFlight: Promise<string | null> | null = null;
@@ -37,7 +63,7 @@ export async function maybeIdToken(): Promise<string | null> {
   return p;
 }
 
-function handleClampHeaders(res: Response, feature = "History beyond 24 hours") {
+function handleClampHeaders(res: Response, feature = "History beyond 3 days") {
   const clamped = res.headers.get("x-pulse-clamped");
   if (clamped === "1") requestUpgrade(feature);
 }
@@ -176,20 +202,24 @@ export interface SummaryResponse {
 
 export async function fetchIncidents(
   since?: string,
-  category?: string
+  category?: string,
+  city = getCurrentCity().slug,
 ): Promise<Incident[]> {
   const params = new URLSearchParams();
   if (since) params.set("since", since);
   if (category) params.set("category", category);
+  params.set("city", city);
   const qs = params.toString();
   const idToken = await maybeIdToken();
   const res = await fetchPublicApi(`/api/incidents${qs ? `?${qs}` : ""}`, {
+    signal: apiSignal(undefined, 10_000),
     headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
   });
   handleClampHeaders(res);
   if (!res.ok) throw new Error(`Failed to fetch incidents: ${res.status}`);
-  const data = await res.json();
-  return data.incidents;
+  const data = await readApiJson(res);
+  if (!isRecord(data) || !Array.isArray(data.incidents)) throw new Error("Malformed incidents response");
+  return normalizeIncidentList(data.incidents);
 }
 
 export interface KeywordWatch {
@@ -209,12 +239,50 @@ export interface KeywordWatchListResponse {
   maxWatches: number;
 }
 
+export function normalizeKeywordWatch(value: unknown): KeywordWatch | null {
+  if (!isRecord(value)) return null;
+  const id = typeof value.id === "string" ? value.id.trim().slice(0, 500) : "";
+  if (
+    !id ||
+    typeof value.keyword !== "string" || !value.keyword.trim() ||
+    typeof value.city !== "string" || !value.city.trim()
+  ) return null;
+  return {
+    id,
+    keyword: value.keyword.trim().slice(0, 200),
+    city: value.city.trim().slice(0, 100),
+    severityFloor: normalizeFiniteNumber(value.severityFloor, 0, 0, 1),
+    active: value.active === true,
+    createdAtMs: normalizeFiniteNumber(value.createdAtMs, 0, 0, Number.MAX_SAFE_INTEGER),
+    lastFiredMs: normalizeFiniteNumber(value.lastFiredMs, 0, 0, Number.MAX_SAFE_INTEGER),
+    lastIncidentId: typeof value.lastIncidentId === "string" ? value.lastIncidentId.slice(0, 500) : null,
+  };
+}
+
+function normalizeKeywordWatchEnvelope(value: unknown): { watch: KeywordWatch } {
+  const watch = isRecord(value) ? normalizeKeywordWatch(value.watch) : null;
+  if (!watch) throw new Error("Malformed keyword watch response");
+  return { watch };
+}
+
 export async function listKeywordWatches(idToken: string): Promise<KeywordWatchListResponse> {
   const res = await fetchPublicApi("/api/keyword-watches", {
+    signal: apiSignal(),
     headers: { Authorization: `Bearer ${idToken}` },
   });
   if (!res.ok) throw new Error(`Failed to list keyword watches: ${res.status}`);
-  return res.json();
+  const data = await readApiJson(res, MAX_SMALL_API_JSON_BYTES);
+  if (!isRecord(data) || !Array.isArray(data.watches)) {
+    throw new Error("Malformed keyword watch list response");
+  }
+  return {
+    watches: data.watches.flatMap((watch) => {
+      const normalized = normalizeKeywordWatch(watch);
+      return normalized ? [normalized] : [];
+    }).slice(0, 100),
+    isPro: data.isPro === true,
+    maxWatches: Math.floor(normalizeFiniteNumber(data.maxWatches, 0, 0, 100)),
+  };
 }
 
 export async function createKeywordWatch(
@@ -223,14 +291,15 @@ export async function createKeywordWatch(
 ): Promise<{ watch: KeywordWatch }> {
   const res = await fetchPublicApi("/api/keyword-watches", {
     method: "POST",
+    signal: apiSignal(),
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const detail = await res.text();
+    const detail = await readBoundedTextResponse(res, 64 * 1024).catch(() => "");
     throw new Error(detail || `Failed to create keyword watch: ${res.status}`);
   }
-  return res.json();
+  return normalizeKeywordWatchEnvelope(await readApiJson(res, MAX_SMALL_API_JSON_BYTES));
 }
 
 export async function updateKeywordWatch(
@@ -240,16 +309,18 @@ export async function updateKeywordWatch(
 ): Promise<{ watch: KeywordWatch }> {
   const res = await fetchPublicApi(`/api/keyword-watches/${watchId}`, {
     method: "PATCH",
+    signal: apiSignal(),
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Failed to update keyword watch: ${res.status}`);
-  return res.json();
+  return normalizeKeywordWatchEnvelope(await readApiJson(res, MAX_SMALL_API_JSON_BYTES));
 }
 
 export async function deleteKeywordWatch(idToken: string, watchId: string): Promise<void> {
   const res = await fetchPublicApi(`/api/keyword-watches/${watchId}`, {
     method: "DELETE",
+    signal: apiSignal(),
     headers: { Authorization: `Bearer ${idToken}` },
   });
   if (!res.ok) throw new Error(`Failed to delete keyword watch: ${res.status}`);
@@ -287,17 +358,32 @@ export async function fetchIncidentPage(opts: {
   if (opts.limit != null) params.set("limit", String(opts.limit));
   if (opts.since) params.set("since", opts.since);
   if (opts.category) params.set("category", opts.category);
-  if (opts.city) params.set("city", opts.city);
+  params.set("city", opts.city || getCurrentCity().slug);
   if (opts.nearLat != null) params.set("near_lat", String(opts.nearLat));
   if (opts.nearLng != null) params.set("near_lng", String(opts.nearLng));
   const idToken = await maybeIdToken();
   const res = await fetchPublicApi(`/api/incidents/page?${params}`, {
-    signal: opts.signal,
+    signal: apiSignal(opts.signal),
     headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
   });
   handleClampHeaders(res);
   if (!res.ok) throw new Error(`Failed to fetch incident page: ${res.status}`);
-  return res.json();
+  const data = await readApiJson(res);
+  if (!isRecord(data) || !Array.isArray(data.incidents)) throw new Error("Malformed incident page response");
+  const incidents: (Incident & { distance_km?: number })[] = [];
+  for (const raw of data.incidents) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const source = raw as Record<string, unknown>;
+    const incident = normalizeIncidentRecord(source.id, source);
+    if (!incident) continue;
+    const distance = normalizeFiniteNumber(source.distance_km, Number.NaN, 0);
+    incidents.push(Number.isFinite(distance) ? { ...incident, distance_km: distance } : incident);
+  }
+  return {
+    incidents,
+    next_cursor: typeof data.next_cursor === "string" ? data.next_cursor.slice(0, 2_000) : null,
+    mode: data.mode === "near" ? "near" : "recent",
+  };
 }
 
 /** Free-text search over the scanner feed. Honors the same time
@@ -317,25 +403,43 @@ export async function searchIncidentsApi(opts: {
   if (opts.until) params.set("until", opts.until);
   if (opts.category) params.set("category", opts.category);
   if (opts.limit != null) params.set("limit", String(opts.limit));
-  if (opts.city) params.set("city", opts.city);
+  params.set("city", opts.city || getCurrentCity().slug);
   const idToken = await maybeIdToken();
   const res = await fetchPublicApi(`/api/incidents/search?${params}`, {
-    signal: opts.signal,
+    signal: apiSignal(opts.signal),
     headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
   });
   handleClampHeaders(res);
   if (!res.ok) throw new Error(`Incident search failed: ${res.status}`);
-  return (await res.json()) as IncidentSearchResponse;
+  const data = await readApiJson(res);
+  if (!isRecord(data) || !Array.isArray(data.results)) throw new Error("Malformed incident search response");
+  return {
+    results: normalizeIncidentList(data.results),
+    total: Math.max(0, Math.floor(normalizeFiniteNumber(data.total, 0, 0, 1_000_000))),
+    query: typeof data.query === "string" ? data.query.slice(0, 500) : opts.q,
+    terms: Array.isArray(data.terms)
+      ? data.terms.filter((term): term is string => typeof term === "string").slice(0, 100)
+      : undefined,
+  };
 }
 
-export async function fetchSummary(): Promise<SummaryResponse> {
+export async function fetchSummary(city = getCurrentCity().slug): Promise<SummaryResponse> {
   const idToken = await maybeIdToken();
-  const res = await fetchPublicApi("/api/summary", {
+  const params = new URLSearchParams({ city });
+  const res = await fetchPublicApi(`/api/summary?${params}`, {
+    signal: apiSignal(undefined, 10_000),
     headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
   });
   handleClampHeaders(res);
   if (!res.ok) throw new Error(`Failed to fetch summary: ${res.status}`);
-  return res.json();
+  const data = await readApiJson(res, MAX_SMALL_API_JSON_BYTES);
+  if (!isRecord(data) || typeof data.summary !== "string") {
+    throw new Error("Malformed summary response");
+  }
+  return {
+    summary: data.summary.slice(0, 100_000),
+    incident_count: Math.floor(normalizeFiniteNumber(data.incident_count, 0, 0, 1_000_000)),
+  };
 }
 
 /** Pro-only Ask Pulse chat (Lambda via server RAG over incidents). */
@@ -373,6 +477,47 @@ export interface PulseChatResponse {
   };
 }
 
+export function normalizePulseChatResponse(value: unknown): PulseChatResponse {
+  if (!isRecord(value) || typeof value.reply !== "string") {
+    throw new Error("Malformed Ask Pulse response");
+  }
+  const meta = isRecord(value.meta) ? value.meta : {};
+  const optionalCount = (raw: unknown): number | undefined =>
+    typeof raw === "number" && Number.isFinite(raw)
+      ? Math.floor(Math.max(0, Math.min(1_000_000, raw)))
+      : undefined;
+  const citations = Array.isArray(value.citations)
+    ? value.citations.flatMap((citation): PulseChatCitation[] => {
+        if (!isRecord(citation) || typeof citation.id !== "string" || !citation.id) return [];
+        return [{
+          id: citation.id.slice(0, 500),
+          reported_at: typeof citation.reported_at === "string" ? citation.reported_at.slice(0, 100) : null,
+          category: typeof citation.category === "string" ? citation.category.slice(0, 100) : null,
+        }];
+      }).slice(0, 100)
+    : [];
+  return {
+    reply: value.reply.slice(0, 100_000),
+    citations,
+    cited_incidents: Array.isArray(value.cited_incidents)
+      ? normalizeIncidentList(value.cited_incidents).slice(0, 100)
+      : undefined,
+    meta: {
+      city: typeof meta.city === "string" ? meta.city.slice(0, 100) : getCurrentCity().slug,
+      effective_since: typeof meta.effective_since === "string" ? meta.effective_since.slice(0, 100) : null,
+      incidents_in_context: optionalCount(meta.incidents_in_context) ?? 0,
+      incidents_fetched: optionalCount(meta.incidents_fetched) ?? 0,
+      truncated: meta.truncated === true,
+      fetch_cap: optionalCount(meta.fetch_cap),
+      topic_boost: typeof meta.topic_boost === "string" ? meta.topic_boost.slice(0, 200) : null,
+      tools_enabled: typeof meta.tools_enabled === "boolean" ? meta.tools_enabled : undefined,
+      tool_rounds: optionalCount(meta.tool_rounds),
+      firestore_tool_fetches: optionalCount(meta.firestore_tool_fetches),
+      pool_incidents: optionalCount(meta.pool_incidents),
+    },
+  };
+}
+
 export async function fetchPulseChat(opts: {
   messages: PulseChatMessage[];
   city?: string;
@@ -385,6 +530,7 @@ export async function fetchPulseChat(opts: {
   }
   const res = await fetchPublicApi("/api/pulse-chat", {
     method: "POST",
+    signal: apiSignal(opts.signal, 60_000),
     headers: {
       Authorization: `Bearer ${idToken}`,
       "Content-Type": "application/json",
@@ -394,7 +540,6 @@ export async function fetchPulseChat(opts: {
       since: opts.since ?? undefined,
       messages: opts.messages,
     }),
-    signal: opts.signal,
   });
   handleClampHeaders(res);
   if (res.status === 401) {
@@ -409,46 +554,80 @@ export async function fetchPulseChat(opts: {
   if (!res.ok) {
     let detail = `Ask Pulse failed (${res.status})`;
     try {
-      const j = (await res.json()) as { detail?: unknown };
-      if (j.detail != null) {
-        detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+      const j = await readApiJson(res, MAX_SMALL_API_JSON_BYTES);
+      if (isRecord(j) && j.detail != null) {
+        detail = typeof j.detail === "string" ? j.detail.slice(0, 2_000) : JSON.stringify(j.detail).slice(0, 2_000);
       }
     } catch {
       /* ignore */
     }
     throw new Error(detail);
   }
-  return (await res.json()) as PulseChatResponse;
+  return normalizePulseChatResponse(await readApiJson(res, 4 * 1024 * 1024));
 }
 
-export async function fetchStats(): Promise<StatsResponse> {
-  const res = await fetchPublicApi("/api/stats");
+export async function fetchStats(city = getCurrentCity().slug): Promise<StatsResponse> {
+  const params = new URLSearchParams({ city });
+  const res = await fetchPublicApi(`/api/stats?${params}`, { signal: apiSignal(undefined, 10_000) });
   if (!res.ok) throw new Error(`Failed to fetch stats: ${res.status}`);
-  return res.json();
+  const data = await readApiJson(res, MAX_SMALL_API_JSON_BYTES);
+  if (!isRecord(data)) throw new Error("Malformed stats response");
+  const inhibitor_stats: Record<string, number> = {};
+  if (isRecord(data.inhibitor_stats)) {
+    for (const [key, raw] of Object.entries(data.inhibitor_stats).slice(0, 100)) {
+      inhibitor_stats[key.slice(0, 100)] = normalizeFiniteNumber(raw, 0, 0, 1_000_000);
+    }
+  }
+  return {
+    total_incidents: Math.floor(normalizeFiniteNumber(data.total_incidents, 0, 0, 1_000_000)),
+    inhibitor_stats,
+  };
 }
 
 export async function fetchHealth(): Promise<HealthResponse> {
-  const res = await fetchPublicApi("/api/health");
+  const res = await fetchPublicApi("/api/health", { signal: apiSignal(undefined, 10_000) });
   if (!res.ok) throw new Error(`Failed to fetch health: ${res.status}`);
-  return res.json();
+  const data = await readApiJson(res, MAX_SMALL_API_JSON_BYTES);
+  if (!isRecord(data) || typeof data.status !== "string") {
+    throw new Error("Malformed health response");
+  }
+  return {
+    status: data.status.slice(0, 100),
+    llm_configured: data.llm_configured === true,
+    llm_provider: typeof data.llm_provider === "string" ? data.llm_provider.slice(0, 100) : undefined,
+    llm_model: typeof data.llm_model === "string" ? data.llm_model.slice(0, 200) : undefined,
+    pulse_chat_llm_configured: typeof data.pulse_chat_llm_configured === "boolean" ? data.pulse_chat_llm_configured : undefined,
+    pulse_chat_deepseek_fallback: typeof data.pulse_chat_deepseek_fallback === "boolean" ? data.pulse_chat_deepseek_fallback : undefined,
+    inhibitor_configured: data.inhibitor_configured === true,
+    incident_count: Math.floor(normalizeFiniteNumber(data.incident_count, 0, 0, 1_000_000)),
+  };
 }
 
 export async function simulateIncident(): Promise<unknown> {
   const idToken = await maybeIdToken();
   const res = await fetchPublicApi("/api/simulate", {
     method: "POST",
+    signal: apiSignal(undefined, 30_000),
     headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
   });
   if (!res.ok) throw new Error(`Simulate failed: ${res.status}`);
-  return res.json();
+  return readApiJson(res, MAX_SMALL_API_JSON_BYTES);
 }
 
 export async function seedDemoData(): Promise<{ status: string; count: number }> {
   const idToken = await maybeIdToken();
   const res = await fetchPublicApi("/api/seed", {
     method: "POST",
+    signal: apiSignal(undefined, 30_000),
     headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
   });
   if (!res.ok) throw new Error(`Seed failed: ${res.status}`);
-  return res.json();
+  const data = await readApiJson(res, MAX_SMALL_API_JSON_BYTES);
+  if (!isRecord(data) || typeof data.status !== "string") {
+    throw new Error("Malformed seed response");
+  }
+  return {
+    status: data.status.slice(0, 100),
+    count: Math.floor(normalizeFiniteNumber(data.count, 0, 0, 1_000_000)),
+  };
 }

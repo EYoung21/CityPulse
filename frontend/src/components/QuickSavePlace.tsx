@@ -215,6 +215,7 @@ export default function QuickSavePlace({
       <input
         ref={inputRef}
         type="text"
+        aria-label="Saved place name"
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="Name this place"
@@ -304,6 +305,7 @@ export default function QuickSavePlace({
               <input
                 autoFocus
                 type="text"
+                aria-label="New list name"
                 value={newListName}
                 onChange={(e) => setNewListName(e.target.value)}
                 placeholder="List name"

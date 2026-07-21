@@ -8,11 +8,9 @@ import {
   useSyncExternalStore,
 } from "react";
 import { createPortal } from "react-dom";
-import { getAuth } from "firebase/auth";
 import { PULSE_CITIES, getCurrentCity, type PulseCity } from "@/lib/pulse-cities";
-import { useAuth } from "@/contexts/AuthContext";
-import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
 import { MOBILE_NAV_HEIGHT_PX } from "@/components/MobileBottomNav";
+import { buildCityUrl } from "@/lib/pulse-navigate";
 
 const MOBILE_LAYOUT_QUERY = "(max-width: 767px)";
 /** Above the MobileBottomNav portal. Scrim uses the overlay layer just
@@ -48,6 +46,18 @@ function getServerMobileLayoutSnapshot() {
   return false;
 }
 
+function subscribeMounted() {
+  return () => {};
+}
+
+function getMountedSnapshot() {
+  return true;
+}
+
+function getServerMountedSnapshot() {
+  return false;
+}
+
 /**
  * Pulse Network navigation dropdown.
  *
@@ -64,21 +74,19 @@ function getServerMobileLayoutSnapshot() {
  */
 export default function PulseNetworkNav() {
   const [open, setOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const current = getCurrentCity();
-  const { user } = useAuth();
-
   const isMobile = useSyncExternalStore(
     subscribeMobileLayout,
     getMobileLayoutSnapshot,
     getServerMobileLayoutSnapshot
   );
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = useSyncExternalStore(
+    subscribeMounted,
+    getMountedSnapshot,
+    getServerMountedSnapshot
+  );
 
   const navigateToCity = useCallback(async (city: PulseCity) => {
     // Preview-only cities don't have a real domain yet — view them by
@@ -89,18 +97,9 @@ export default function PulseNetworkNav() {
       window.location.href = url.toString();
       return;
     }
-    let url = `https://${city.domain}`;
-    if (user && isFirebaseConfigured()) {
-      try {
-        const auth = getAuth(getFirebaseApp());
-        const idToken = await auth.currentUser?.getIdToken();
-        if (idToken) {
-          url += `?__pulse_token=${encodeURIComponent(idToken)}`;
-        }
-      } catch { /* navigate without token */ }
-    }
+    const url = await buildCityUrl(city);
     window.location.href = url;
-  }, [user]);
+  }, []);
 
   useEffect(() => {
     if (!open) return;

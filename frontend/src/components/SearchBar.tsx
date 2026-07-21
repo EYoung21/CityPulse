@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   Search,
   MapPin,
@@ -31,7 +31,6 @@ import { geocodePhilly, assessSafety } from "@/lib/search";
 import { withAlpha } from "@/lib/colors";
 import { useSavedDestinations } from "@/hooks/useSavedDestinations";
 import {
-  getRoute,
   getMultiStopRoute,
   buildAvoidZones,
   buildAvoidPolygons,
@@ -68,6 +67,15 @@ const MODES: { id: TransportMode; label: string; icon: typeof Footprints }[] = [
 type View = "search" | "directions" | "trip";
 
 const STOP_COLORS = ["#f97316", "#a855f7", "#06b6d4", "#ec4899", "#84cc16"];
+
+function activateSearchResult(
+  event: ReactKeyboardEvent<HTMLButtonElement>,
+  activate: () => void,
+) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  activate();
+}
 
 interface StopLoc {
   display_name: string;
@@ -132,7 +140,6 @@ export default function SearchBar({
   const [stopLoading, setStopLoading] = useState(false);
   const [activeStopIdx, setActiveStopIdx] = useState<number | null>(null);
   const [activeMode, setActiveMode] = useState<TransportMode>("driving-car");
-  const [routeLoading, setRouteLoading] = useState(false);
   const [routeInfo, setRouteInfo] = useState<{
     isSafe: boolean;
     distanceKm: number;
@@ -459,7 +466,7 @@ export default function SearchBar({
     setRouteError(null);
 
     try {
-      let directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
+      const directRoute = await getMultiStopRoute(ORS_API_KEY, activeMode, waypoints);
       if (!directRoute) {
         setRouteError(
           "Could not calculate route. Check your connection or try again."
@@ -552,24 +559,32 @@ export default function SearchBar({
     return (
       <div
         key={i}
-        onClick={onSelect}
-        className="w-full text-left px-4 py-3 flex items-start gap-3 last:border-0 transition-colors cursor-pointer"
+        className="w-full flex items-start last:border-0 transition-colors"
         style={{ borderBottom: "1px solid var(--panel-border)" }}
         onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
         onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
       >
-        <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5" style={{ background: "var(--panel-input-bg)" }}>
-          <MapPin className="w-4 h-4" style={{ color: "var(--panel-text-muted)" }} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium truncate" style={{ color: "var(--panel-text)" }}>{primary}</p>
-          {secondary && <p className="text-xs truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>{secondary}</p>}
-        </div>
+        <button
+          type="button"
+          onClick={onSelect}
+          onKeyDown={(event) => activateSearchResult(event, onSelect)}
+          className="min-w-0 flex-1 text-left pl-4 pr-2 py-3 flex items-start gap-3"
+        >
+          <span className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5" style={{ background: "var(--panel-input-bg)" }}>
+            <MapPin className="w-4 h-4" style={{ color: "var(--panel-text-muted)" }} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium truncate" style={{ color: "var(--panel-text)" }}>{primary}</span>
+            {secondary && <span className="block text-xs truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>{secondary}</span>}
+          </span>
+        </button>
         {showDirections && (
           <button
-            onClick={(e) => { e.stopPropagation(); openDirections(primary, s); }}
-            className="ml-auto text-blue-500/50 hover:text-blue-500 shrink-0 mt-1"
+            type="button"
+            onClick={() => openDirections(primary, s)}
+            className="text-blue-500/50 hover:text-blue-500 shrink-0 mt-3.5 mr-4"
             title="Get directions"
+            aria-label={`Get directions to ${primary}`}
           >
             <Navigation className="w-4 h-4" />
           </button>
@@ -611,6 +626,7 @@ export default function SearchBar({
                 <Search className="w-5 h-5 text-blue-500 shrink-0" />
                 <input
                   type="text"
+                  aria-label="Search CityPulse"
                   value={searchQuery}
                   onChange={(e) => { setSearchQuery(e.target.value); setActiveDropdown("search"); geocode(e.target.value, setSearchSuggestions, setSearchLoading); }}
                   onFocus={() => { if (searchQuery.length >= 2) setActiveDropdown("search"); }}
@@ -619,13 +635,18 @@ export default function SearchBar({
                   style={{ color: "var(--panel-text)" }}
                 />
                 {searchQuery && (
-                  <button onClick={() => { setSearchQuery(""); setSearchSuggestions([]); setActiveDropdown(null); }} style={{ color: "var(--panel-text-muted)" }}>
+                  <button
+                    type="button"
+                    onClick={() => { setSearchQuery(""); setSearchSuggestions([]); setActiveDropdown(null); }}
+                    style={{ color: "var(--panel-text-muted)" }}
+                    aria-label="Clear search"
+                  >
                     <X className="w-4 h-4" />
                   </button>
                 )}
               </div>
 
-              <button
+              <button type="button"
                 onClick={() => openDirections()}
                 className="mt-3 w-full flex items-center gap-3 px-4 py-2.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/15 border border-blue-500/20 transition-all text-sm text-blue-500 font-medium"
               >
@@ -662,26 +683,36 @@ export default function SearchBar({
                   {savedDests.map((dest) => (
                     <div
                       key={dest.id}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg transition-colors cursor-pointer group"
+                      className="flex items-center rounded-lg transition-colors group"
                       style={{ background: "var(--panel-input-bg)" }}
-                      onClick={() => { onFlyTo(dest.lat, dest.lng); }}
                       onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
                       onMouseLeave={(e) => e.currentTarget.style.background = "var(--panel-input-bg)"}
                     >
-                      <Star className="w-3.5 h-3.5 text-amber-500 shrink-0 fill-amber-500" />
-                      <span className="text-xs truncate flex-1" style={{ color: "var(--panel-text)" }}>{dest.name}</span>
                       <button
-                        onClick={(e) => { e.stopPropagation(); openDirections(dest.name, { lat: dest.lat, lng: dest.lng }); }}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity text-blue-500/50 hover:text-blue-500 shrink-0"
+                        type="button"
+                        onClick={() => onFlyTo(dest.lat, dest.lng)}
+                        onKeyDown={(event) => activateSearchResult(event, () => onFlyTo(dest.lat, dest.lng))}
+                        className="min-w-0 flex-1 flex items-center gap-2 px-3 py-2 text-left"
+                      >
+                        <Star className="w-3.5 h-3.5 text-amber-500 shrink-0 fill-amber-500" />
+                        <span className="text-xs truncate flex-1" style={{ color: "var(--panel-text)" }}>{dest.name}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openDirections(dest.name, { lat: dest.lat, lng: dest.lng })}
+                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity text-blue-500/50 hover:text-blue-500 shrink-0"
                         title="Get directions"
+                        aria-label={`Get directions to ${dest.name}`}
                       >
                         <Navigation className="w-3.5 h-3.5" />
                       </button>
                       <button
-                        onClick={(e) => { e.stopPropagation(); void removeDestination(dest.id); }}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                        type="button"
+                        onClick={() => { void removeDestination(dest.id); }}
+                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shrink-0 mr-3"
                         style={{ color: "var(--panel-text-muted)" }}
                         title="Remove"
+                        aria-label={`Remove ${dest.name}`}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -718,28 +749,43 @@ export default function SearchBar({
                 return (
                   <div
                     key={inc.id}
-                    className={`w-full text-left px-4 py-3 flex items-start gap-3 transition-colors cursor-pointer ${isSelected ? "bg-blue-500/10" : ""}`}
+                    className={`w-full flex items-start transition-colors ${isSelected ? "bg-blue-500/10" : ""}`}
                     style={{ borderBottom: "1px solid var(--panel-border)" }}
-                    onClick={() => { onSelectIncident?.(inc.id); onFlyTo(inc.lat!, inc.lng!); }}
                     onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "var(--panel-hover)"; }}
                     onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
                   >
-                    <div className="w-3 h-3 rounded-full mt-1 shrink-0 ring-2" style={{ backgroundColor: sev.markerColor, ["--tw-ring-color" as string]: withAlpha(sev.markerColor, 25) }} />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs truncate" style={{ color: "var(--panel-text)" }}>{inc.location_text || "Unknown location"}</p>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px]" style={{ color: "var(--panel-text-secondary)" }}>{sev.label}</span>
-                        <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>·</span>
-                        <span className="text-[10px]" style={{ color: "var(--panel-text-secondary)" }}>
-                          {new Date(inc.reported_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
-                        </span>
-                      </div>
-                    </div>
                     <button
-                      onClick={(e) => { e.stopPropagation(); if (inc.lat && inc.lng) openDirections(inc.location_text?.split(",")[0], { lat: inc.lat, lng: inc.lng }); }}
-                      className="hover:text-blue-500 shrink-0"
+                      type="button"
+                      className="min-w-0 flex-1 text-left pl-4 pr-2 py-3 flex items-start gap-3"
+                      onClick={() => { onSelectIncident?.(inc.id); onFlyTo(inc.lat!, inc.lng!); }}
+                      onKeyDown={(event) => activateSearchResult(event, () => {
+                        onSelectIncident?.(inc.id);
+                        onFlyTo(inc.lat!, inc.lng!);
+                      })}
+                    >
+                      <span className="w-3 h-3 rounded-full mt-1 shrink-0 ring-2" style={{ backgroundColor: sev.markerColor, ["--tw-ring-color" as string]: withAlpha(sev.markerColor, 25) }} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-xs truncate" style={{ color: "var(--panel-text)" }}>{inc.location_text || "Unknown location"}</span>
+                        <span className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px]" style={{ color: "var(--panel-text-secondary)" }}>{sev.label}</span>
+                          <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>·</span>
+                          <span className="text-[10px]" style={{ color: "var(--panel-text-secondary)" }}>
+                            {new Date(inc.reported_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                          </span>
+                        </span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (inc.lat != null && inc.lng != null) {
+                          openDirections(inc.location_text?.split(",")[0], { lat: inc.lat, lng: inc.lng });
+                        }
+                      }}
+                      className="hover:text-blue-500 shrink-0 mt-3 mr-4"
                       style={{ color: "var(--panel-text-muted)" }}
                       title="Directions to here"
+                      aria-label={`Get directions to ${inc.location_text || "incident"}`}
                     >
                       <Navigation className="w-3.5 h-3.5" />
                     </button>
@@ -765,6 +811,8 @@ export default function SearchBar({
           <>
             <div className="flex items-center gap-2 px-3 py-3" style={{ borderBottom: "1px solid var(--panel-border)" }}>
               <button
+                type="button"
+                aria-label="Back to search"
                 onClick={() => { setView("search"); setDestLoc(null); setDestQuery(""); setStops([]); setPreviewRoute(null); onRoutesChange(null); onPreviewPins?.(originLoc, null); onPreviewWaypoints?.(null); }}
                 className="p-1.5 rounded-lg transition-colors"
                 style={{ color: "var(--panel-text-secondary)" }}
@@ -782,7 +830,7 @@ export default function SearchBar({
                 const Icon = m.icon;
                 const active = activeMode === m.id;
                 return (
-                  <button
+                  <button type="button"
                     key={m.id}
                     onClick={() => setActiveMode(m.id)}
                     className={`flex-1 flex flex-col items-center gap-1 py-3 text-[10px] font-medium transition-all border-b-2 ${
@@ -817,6 +865,7 @@ export default function SearchBar({
                   <div className="relative">
                     <input
                       type="text"
+                      aria-label="Starting point"
                       value={originQuery}
                       onChange={(e) => { setOriginQuery(e.target.value); setOriginLoc(null); setActiveDropdown("origin"); geocode(e.target.value, setOriginSuggestions, setOriginLoading); }}
                       onFocus={() => { setActiveDropdown("origin"); if (originQuery.length >= 2 && !originLoc) geocode(originQuery, setOriginSuggestions, setOriginLoading); }}
@@ -825,13 +874,13 @@ export default function SearchBar({
                       style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-input-border)", color: "var(--panel-text)" }}
                     />
                     {originLoc && (
-                      <button onClick={() => { setOriginLoc(null); setOriginQuery(""); setPreviewRoute(null); onRoutesChange(null); }}
+                      <button type="button" aria-label="Clear starting point" onClick={() => { setOriginLoc(null); setOriginQuery(""); setPreviewRoute(null); onRoutesChange(null); }}
                         className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full" style={{ color: "var(--panel-text-muted)" }}>
                         <X className="w-3.5 h-3.5" />
                       </button>
                     )}
                     {!originLoc && gpsStatus === "found" && (
-                      <button onClick={() => { setOriginLoc({ display_name: "Your location", ...userPos! }); setOriginQuery("Your location"); }}
+                      <button type="button" aria-label="Use my location as starting point" onClick={() => { setOriginLoc({ display_name: "Your location", ...userPos! }); setOriginQuery("Your location"); }}
                         className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full text-blue-500/50 hover:text-blue-500" title="Use my location">
                         <LocateFixed className="w-4 h-4" />
                       </button>
@@ -843,6 +892,7 @@ export default function SearchBar({
                     <div key={idx} className="relative flex gap-1">
                       <input
                         type="text"
+                        aria-label={`Stop ${idx + 1}`}
                         value={stop.query}
                         onChange={(e) => {
                           const next = [...stops];
@@ -861,6 +911,7 @@ export default function SearchBar({
                         style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-input-border)", color: "var(--panel-text)" }}
                       />
                       <button
+                        type="button"
                         onClick={() => {
                           setStops(stops.filter((_, i) => i !== idx));
                           setPreviewRoute(null);
@@ -869,6 +920,7 @@ export default function SearchBar({
                         className="p-1.5 rounded-lg self-center"
                         style={{ color: "var(--panel-text-muted)" }}
                         title="Remove stop"
+                        aria-label={`Remove stop ${idx + 1}`}
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -879,6 +931,7 @@ export default function SearchBar({
                   <div className="relative">
                     <input
                       type="text"
+                      aria-label="Destination"
                       value={destQuery}
                       onChange={(e) => { setDestQuery(e.target.value); setDestLoc(null); setActiveDropdown("dest"); geocode(e.target.value, setDestSuggestions, setDestLoading); }}
                       onFocus={() => { setActiveDropdown("dest"); if (destQuery.length >= 2 && !destLoc) geocode(destQuery, setDestSuggestions, setDestLoading); }}
@@ -888,7 +941,7 @@ export default function SearchBar({
                       autoFocus={!destLoc}
                     />
                     {destLoc && (
-                      <button onClick={() => { setDestLoc(null); setDestQuery(""); setPreviewRoute(null); setRouteError(null); onRoutesChange(null); }}
+                      <button type="button" aria-label="Clear destination" onClick={() => { setDestLoc(null); setDestQuery(""); setPreviewRoute(null); setRouteError(null); onRoutesChange(null); }}
                         className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full" style={{ color: "var(--panel-text-muted)" }}>
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -896,7 +949,7 @@ export default function SearchBar({
                   </div>
                 </div>
 
-                <button onClick={swapLocations} className="self-start mt-3 p-2 rounded-full transition-colors" style={{ color: "var(--panel-text-muted)" }}
+                <button type="button" aria-label="Swap starting point and destination" onClick={swapLocations} className="self-start mt-3 p-2 rounded-full transition-colors" style={{ color: "var(--panel-text-muted)" }}
                   onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}
                   onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
                   <ArrowUpDown className="w-4 h-4" />
@@ -905,7 +958,7 @@ export default function SearchBar({
 
               {/* Add stop button */}
               {stops.length < 5 && (
-                <button
+                <button type="button"
                   onClick={() => setStops([...stops, { query: "", loc: null }])}
                   className="mt-2 flex items-center gap-2 px-3 py-1.5 text-xs font-medium transition-colors rounded-lg"
                   style={{ color: "var(--panel-text-secondary)" }}
@@ -983,7 +1036,7 @@ export default function SearchBar({
 
               {/* GO button */}
               <div className="mt-3 flex gap-2">
-                <button
+                <button type="button"
                   onClick={() => void startTrip()}
                   disabled={!originLoc || !destLoc || startNavBusy}
                   className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-full text-sm font-semibold transition-all ${
@@ -1008,6 +1061,7 @@ export default function SearchBar({
                 </button>
                 {canSave && destLoc && (
                   <button
+                    type="button"
                     onClick={() => {
                       if (destLoc) {
                         void addDestination(destLoc.display_name.split(",")[0], destLoc.lat, destLoc.lng);
@@ -1024,6 +1078,9 @@ export default function SearchBar({
                     }}
                     title={savedDests.some(d => Math.abs(d.lat - destLoc.lat) < 0.0001 && Math.abs(d.lng - destLoc.lng) < 0.0001)
                       ? "Saved"
+                      : "Save destination"}
+                    aria-label={savedDests.some(d => Math.abs(d.lat - destLoc.lat) < 0.0001 && Math.abs(d.lng - destLoc.lng) < 0.0001)
+                      ? "Destination saved"
                       : "Save destination"}
                   >
                     <Star
@@ -1112,7 +1169,7 @@ export default function SearchBar({
                     {routeInfo.isSafe ? "Safe Route Active" : "Navigation Active"}
                   </span>
                 </div>
-                <button onClick={resetTrip} className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs transition-colors"
+                <button type="button" onClick={resetTrip} className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs transition-colors"
                   style={{ color: "var(--panel-text-secondary)", background: "var(--panel-input-bg)" }}>
                   <RotateCcw className="w-3 h-3" /> End
                 </button>
@@ -1215,7 +1272,7 @@ export default function SearchBar({
               {recentIncidents.filter(inc => inc.lat && inc.lng).slice(0, 8).map((inc) => {
                 const sev = getSeverity(inc.severity_category);
                 return (
-                  <button key={inc.id} onClick={() => { onSelectIncident?.(inc.id); onFlyTo(inc.lat!, inc.lng!); }}
+                  <button type="button" key={inc.id} onClick={() => { onSelectIncident?.(inc.id); onFlyTo(inc.lat!, inc.lng!); }}
                     className="w-full text-left px-4 py-2.5 flex items-start gap-3 transition-colors"
                     style={{ borderBottom: "1px solid var(--panel-border)" }}
                     onMouseEnter={(e) => e.currentTarget.style.background = "var(--panel-hover)"}

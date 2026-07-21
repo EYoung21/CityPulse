@@ -30,7 +30,7 @@ interface Props {
 }
 
 export function SafeRouteSection({ city }: Props) {
-  const pairs = city.routeDemoPairs ?? [];
+  const pairs = useMemo(() => city.routeDemoPairs ?? [], [city.routeDemoPairs]);
   const brand = city.brand ?? city.name;
   const accentRgb = city.accentRgb ?? "171, 255, 2";
   const [idx, setIdx] = useState(0);

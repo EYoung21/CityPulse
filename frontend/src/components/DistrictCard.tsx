@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { X, Shield, AlertTriangle, Flame, HeartPulse, Car, Siren } from "lucide-react";
 import type { Incident } from "@/lib/api";
 import type { District } from "@/lib/districts";
@@ -37,6 +38,7 @@ interface Props {
 }
 
 export default function DistrictCard({ district, incidents, color, onClose }: Props) {
+  const [now] = useState(Date.now);
   const breakdown = categoryBreakdown(incidents);
   const threat = threatLevel(incidents.length);
   const criticalCount = incidents.filter((i) => i.w_eff >= 0.7).length;
@@ -47,7 +49,7 @@ export default function DistrictCard({ district, incidents, color, onClose }: Pr
     : null;
 
   const timeSinceRecent = recentIncident
-    ? Math.round((Date.now() - new Date(recentIncident.reported_at).getTime()) / 60000)
+    ? Math.round((now - new Date(recentIncident.reported_at).getTime()) / 60000)
     : null;
 
   return (
@@ -81,7 +83,9 @@ export default function DistrictCard({ district, incidents, color, onClose }: Pr
           </div>
         </div>
         <button
+          type="button"
           onClick={onClose}
+          aria-label="Close district overview"
           className="w-6 h-6 flex items-center justify-center rounded-md hover:bg-white/10 transition-colors"
           style={{ color: "var(--panel-text-muted)" }}
         >

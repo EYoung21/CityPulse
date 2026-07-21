@@ -31,23 +31,10 @@ function FeedAlertsInboxHost() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const inbox = searchParams?.get("inbox");
-  const [open, setOpen] = useState(false);
-  const [panel, setPanel] = useState<"list" | "settings">("list");
-
-  useEffect(() => {
-    if (inbox === "settings") {
-      setPanel("settings");
-      setOpen(true);
-    } else if (inbox != null && inbox !== "") {
-      setPanel("list");
-      setOpen(true);
-    } else {
-      setOpen(false);
-    }
-  }, [inbox]);
+  const open = inbox != null && inbox !== "";
+  const panel: "list" | "settings" = inbox === "settings" ? "settings" : "list";
 
   const onClose = useCallback(() => {
-    setOpen(false);
     const p = new URLSearchParams(searchParams?.toString() ?? "");
     p.delete("inbox");
     const qs = p.toString();
@@ -102,7 +89,6 @@ export default function FeedPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [activeCats, setActiveCats] = useState<Set<string>>(() => new Set());
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-  const scrollTopRef = useRef<HTMLDivElement | null>(null);
   const [feedScrollRoot, setFeedScrollRoot] = useState<HTMLDivElement | null>(null);
 
   const city = getCurrentCity();
@@ -130,6 +116,7 @@ export default function FeedPage() {
     requestLocation,
     lastUpdatedLabel,
     pendingNewCount,
+    newIncidentIds,
     acknowledgeNew,
     onScrollNearTop,
   } = useFeedIncidents({
@@ -143,11 +130,6 @@ export default function FeedPage() {
     () => incidents.filter((i) => incidentMatchesCategoryFilter(i, activeCats)),
     [incidents, activeCats]
   );
-
-  const newIncidentIds = useMemo(() => {
-    if (pendingNewCount <= 0) return undefined;
-    return new Set(incidents.slice(0, pendingNewCount).map((i) => i.id));
-  }, [incidents, pendingNewCount]);
 
   const activeNow = useMemo(() => activeNowCount(visibleIncidents, 30), [visibleIncidents]);
 
@@ -210,12 +192,17 @@ export default function FeedPage() {
 
   const jumpToNew = useCallback(() => {
     acknowledgeNew();
-    scrollTopRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-  }, [acknowledgeNew]);
+    feedScrollRoot?.scrollTo({ top: 0, behavior: "smooth" });
+  }, [acknowledgeNew, feedScrollRoot]);
+
+  const selectedTimeLabel = useMemo(
+    () => TIME_FILTERS.find((tf) => tf.hours === timeFilter)?.label ?? "selected window",
+    [timeFilter]
+  );
 
   return (
     <div
-      className="min-h-dvh flex flex-col"
+      className="h-dvh overflow-hidden flex flex-col"
       style={{ background: "var(--page-bg, #0b1120)", color: "var(--panel-text, #e2e8f0)" }}
     >
       <header
@@ -293,6 +280,8 @@ export default function FeedPage() {
                 }
                 setTimeFilter(tf.hours);
               }}
+              aria-pressed={timeFilter === tf.hours}
+              aria-label={`${tf.label} incident window${locked ? ", Pro feature" : ""}`}
               className={`px-2.5 py-1 rounded-full text-[11px] font-medium shrink-0 relative ${
                 timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
               } ${locked ? "opacity-50" : ""}`}
@@ -319,13 +308,12 @@ export default function FeedPage() {
             background: "var(--panel-bg-secondary, rgba(30,41,59,0.5))",
             border: "1px solid var(--panel-border, rgba(148,163,184,0.2))",
           }}
-          role="tablist"
+          role="group"
           aria-label="Feed mode"
         >
           <button
             type="button"
-            role="tab"
-            aria-selected={mode === "recent"}
+            aria-pressed={mode === "recent"}
             onClick={() => setMode("recent")}
             className="px-3 py-1 rounded-full font-medium flex items-center gap-1.5"
             style={{
@@ -337,8 +325,7 @@ export default function FeedPage() {
           </button>
           <button
             type="button"
-            role="tab"
-            aria-selected={mode === "near"}
+            aria-pressed={mode === "near"}
             onClick={() => {
               if (userLoc) setMode("near");
               else void requestLocation();
@@ -355,8 +342,7 @@ export default function FeedPage() {
           </button>
           <button
             type="button"
-            role="tab"
-            aria-selected={mode === "newsroom"}
+            aria-pressed={mode === "newsroom"}
             onClick={() => setMode("newsroom")}
             className="px-3 py-1 rounded-full font-medium flex items-center gap-1.5"
             style={{
@@ -417,7 +403,7 @@ export default function FeedPage() {
       {!isPro && (
         <div className="px-4 py-2 text-[10px] md:text-xs font-medium flex items-center justify-center gap-2 bg-purple-500/10 border-y border-purple-500/20 text-purple-400">
           <Zap className="w-3 h-3 fill-current" />
-          Showing last 60 minutes of activity. Upgrade to Pro for full history.
+          Showing the last {selectedTimeLabel} of activity. Upgrade to Pro for deeper history.
         </div>
       )}
 
@@ -444,7 +430,7 @@ export default function FeedPage() {
           onScroll={onScrollNearTop}
           onScrollContainerReady={setFeedScrollRoot}
         >
-          <div ref={scrollTopRef}>
+          <div>
             {mode === "newsroom" ? (
               <NewsroomDesk
                 incidents={incidents}

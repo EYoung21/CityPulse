@@ -35,20 +35,25 @@ export function ArchivedModerationAuditTab() {
   const [kindFilter, setKindFilter] = useState<"all" | ModerationAuditEntry["kind"]>("all");
 
   useEffect(() => {
-    setLoading(true);
+    const loadingTimer = window.setTimeout(() => setLoading(true), 0);
     const unsub = subscribeModerationAudit(
       kindFilter === "all" ? {} : { kind: kindFilter },
       (data) => {
+        window.clearTimeout(loadingTimer);
         setRows(data);
         setLoading(false);
         setError(null);
       },
       (err) => {
+        window.clearTimeout(loadingTimer);
         setError(err.message);
         setLoading(false);
       }
     );
-    return unsub;
+    return () => {
+      window.clearTimeout(loadingTimer);
+      unsub();
+    };
   }, [kindFilter]);
 
   const KINDS: { value: "all" | ModerationAuditEntry["kind"]; label: string; color: string }[] = [

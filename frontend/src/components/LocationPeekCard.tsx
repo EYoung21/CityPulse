@@ -62,10 +62,10 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function formatRelative(iso: string): string {
+function formatRelative(iso: string, now: number): string {
   const then = Date.parse(iso);
   if (!Number.isFinite(then)) return "-";
-  const sec = Math.max(0, Math.round((Date.now() - then) / 1000));
+  const sec = Math.max(0, Math.round((now - then) / 1000));
   if (sec < 60) return `${sec}s ago`;
   const min = Math.round(sec / 60);
   if (min < 60) return `${min}m ago`;
@@ -83,36 +83,39 @@ export default function LocationPeekCard({
   radiusKm = 0.5,
   windowHours = 1,
 }: Props) {
-  const [address, setAddress] = useState<string | null>(null);
-  const [addressLoading, setAddressLoading] = useState(true);
+  const [now] = useState(Date.now);
+  const locationKey = `${lat},${lng}`;
+  const [addressResult, setAddressResult] = useState<{
+    key: string;
+    label: string | null;
+  } | null>(null);
 
   // Reverse-geocode runs once per (lat, lng); the upstream
   // long-press handler already debounces multi-touch so we don't need
   // to throttle here. Failure falls back to formatted coords below.
   useEffect(() => {
     let cancelled = false;
-    setAddress(null);
-    setAddressLoading(true);
     reverseGeocode(lat, lng)
       .then((label) => {
-        if (!cancelled) setAddress(label);
+        if (!cancelled) setAddressResult({ key: locationKey, label });
       })
       .catch(() => {
         // Network blip / Nominatim 429 — silently fall back to coords.
         // The card still renders meaningfully without an address.
-      })
-      .finally(() => {
-        if (!cancelled) setAddressLoading(false);
+        if (!cancelled) setAddressResult({ key: locationKey, label: null });
       });
     return () => {
       cancelled = true;
     };
-  }, [lat, lng]);
+  }, [lat, lng, locationKey]);
+
+  const address = addressResult?.key === locationKey ? addressResult.label : null;
+  const addressLoading = addressResult?.key !== locationKey;
 
   // Filter the in-memory `incidents` array. Cheap (<1ms for ~10k
   // incidents) so we don't bother memoizing across renders.
-  const { nearby, mostRecent, byCategory, total } = useMemo(() => {
-    const cutoff = Date.now() - windowHours * 60 * 60 * 1000;
+  const { mostRecent, byCategory, total } = useMemo(() => {
+    const cutoff = now - windowHours * 60 * 60 * 1000;
     const matched: Incident[] = [];
     for (const inc of incidents) {
       if (inc.lat == null || inc.lng == null) continue;
@@ -136,12 +139,11 @@ export default function LocationPeekCard({
       return Date.parse(curr.reported_at) > Date.parse(best.reported_at) ? curr : best;
     }, null);
     return {
-      nearby: matched,
       mostRecent: mr,
       byCategory: buckets,
       total: matched.length,
     };
-  }, [incidents, lat, lng, radiusKm, windowHours, categoryPills]);
+  }, [incidents, lat, lng, radiusKm, windowHours, categoryPills, now]);
 
   const heading =
     address?.trim() ||
@@ -215,7 +217,7 @@ export default function LocationPeekCard({
             >
               <Clock className="w-3 h-3" />
               <span>
-                Most recent: {formatRelative(mostRecent.reported_at)}
+                Most recent: {formatRelative(mostRecent.reported_at, now)}
                 {mostRecentPill ? ` · ${mostRecentPill.label.toLowerCase()}` : ""}
               </span>
             </div>

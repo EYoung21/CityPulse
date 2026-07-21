@@ -1,5 +1,7 @@
 "use client";
 
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
+
 /** SEPTA real-time helpers.
  *
  *  SEPTA exposes a small set of unauthenticated JSON endpoints (no
@@ -145,6 +147,48 @@ export interface SeptaArrivalsResponse {
   southbound: SeptaArrival[];
 }
 
+function cleanTransitText(value: unknown, maxLength = 200): string {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function normalizeSeptaArrival(value: unknown): SeptaArrival | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const destination = cleanTransitText(row.destination);
+  const schedTime = cleanTransitText(row.sched_time, 64);
+  const departTime = cleanTransitText(row.depart_time, 64);
+  if (!destination || (!schedTime && !departTime)) return null;
+  return {
+    direction: cleanTransitText(row.direction, 16),
+    origin: cleanTransitText(row.origin),
+    destination,
+    sched_time: schedTime,
+    depart_time: departTime,
+    status: cleanTransitText(row.status, 100),
+    line: typeof row.line === "string" ? cleanTransitText(row.line, 100) : null,
+    train_id: cleanTransitText(row.train_id, 100),
+    track: cleanTransitText(row.track, 50),
+    service_type: cleanTransitText(row.service_type, 100),
+  };
+}
+
+export function normalizeSeptaArrivalsResponse(value: unknown): SeptaArrivalsResponse | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const data = value as Record<string, unknown>;
+  const normalizeList = (rows: unknown): SeptaArrival[] => Array.isArray(rows)
+    ? rows.slice(0, 100).flatMap((row) => {
+        const arrival = normalizeSeptaArrival(row);
+        return arrival ? [arrival] : [];
+      })
+    : [];
+  return {
+    station: cleanTransitText(data.station, 100),
+    fetched_label: cleanTransitText(data.fetched_label, 100),
+    northbound: normalizeList(data.northbound),
+    southbound: normalizeList(data.southbound),
+  };
+}
+
 /** Fetch arrivals for a station via our /api/septa proxy. Throws on
  *  network / 5xx so callers can show an inline error state. */
 export async function fetchArrivals(
@@ -154,6 +198,7 @@ export async function fetchArrivals(
   const params = new URLSearchParams({ op: "arrivals", station });
   const r = await fetch(`/api/septa?${params}`, { signal, cache: "no-store" });
   if (!r.ok) throw new Error(`SEPTA proxy ${r.status}`);
-  return (await r.json()) as SeptaArrivalsResponse;
+  const data = normalizeSeptaArrivalsResponse(await readBoundedJsonResponse(r, 1024 * 1024));
+  if (!data) throw new Error("SEPTA proxy returned a malformed response");
+  return data;
 }
-

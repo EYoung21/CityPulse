@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, Suspense } from "react";
 import dynamic from "next/dynamic";
-import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -10,25 +10,19 @@ import {
   Shield,
   Eye,
   X,
-  Layers,
   Flame,
   Siren,
   HeartPulse,
   Car,
   Volume2,
   Clock,
-  Sun,
-  Moon,
-  Monitor,
   BarChart3,
-  Menu,
   List,
   Map as MapIcon,
   LocateFixed,
   House,
   TrendingUp,
   TrendingDown,
-  MapPin,
   Radio,
   Lock,
   Bell,
@@ -58,9 +52,7 @@ import AnalyticsPanel from "@/components/AnalyticsPanel";
 import AskPulsePanel from "@/components/AskPulsePanel";
 import MoreMenu from "@/components/MoreMenu";
 import DistrictCard from "@/components/DistrictCard";
-import OfflineTilesPanel from "@/components/OfflineTilesPanel";
 import MeasureToolPanel from "@/components/MeasureToolPanel";
-import MapSnapshotButton from "@/components/MapSnapshotButton";
 import ReminderRunner from "@/components/ReminderRunner";
 import ReminderBanner from "@/components/ReminderBanner";
 import FilterPresetsBar from "@/components/FilterPresetsBar";
@@ -89,13 +81,12 @@ import AlertsInbox from "@/components/AlertsInbox";
 import { recordAlert, subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
 import { setAppBadge } from "@/lib/app-badge";
 import { loadMutedCategories } from "@/lib/alert-mutes";
-import { recordTrip, updateTrip, type TripHistoryEntry } from "@/lib/trip-history";
+import { recordTrip } from "@/lib/trip-history";
 import { getParkedPin, subscribeParkedPin, type ParkedPin } from "@/lib/parked-pin";
 import { setPref } from "@/lib/prefs-sync";
 import ParkedPinPill from "@/components/ParkedPinPill";
 import {
   fetchPoisInBounds,
-  SAFETY_POI_CATEGORIES,
   NEARBY_POI_CATEGORIES,
   type SafetyPoiCategory,
   type NearbyPoiCategory,
@@ -111,7 +102,7 @@ import { useGpsSpeed } from "@/hooks/useGpsSpeed";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useMobileHomeRedirect } from "@/hooks/useMobileHomeRedirect";
 import { useMobilePrimaryTabSwipe } from "@/hooks/useMobilePrimaryTabSwipe";
-import MobileBottomNav, { MOBILE_NAV_HEIGHT_PX } from "@/components/MobileBottomNav";
+import MobileBottomNav from "@/components/MobileBottomNav";
 import InboxUrlSync, { type InboxPanel } from "@/components/InboxUrlSync";
 import { decodeTripToken, type DecodedTripToken } from "@/lib/share-trip";
 import type { ManeuverStep } from "@/lib/routing";
@@ -143,15 +134,14 @@ import {
 } from "@/lib/firestore";
 import { enrichIncidents } from "@/lib/incident-weights";
 import { loadCachedIncidents, saveCachedIncidents } from "@/lib/incident-snapshot-cache";
-import { apiUrl, fetchPublicApi } from "@/lib/public-api-base";
+import { fetchPublicApi } from "@/lib/public-api-base";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
 import { buildLocalSummary } from "@/lib/local-summary";
 import { getRandomCityPulseTip } from "@/lib/citypulse-tips";
 import {
-  getNeighborhood,
   getNeighborhoodBySlug,
   incidentsInNeighborhood,
   NEIGHBORHOODS,
-  type Neighborhood,
 } from "@/lib/neighborhoods";
 import {
   DISTRICTS,
@@ -160,12 +150,12 @@ import {
   type District,
 } from "@/lib/districts";
 import { getCurrentCity } from "@/lib/pulse-cities";
-import { assessSafety } from "@/lib/search";
-import Sparkline from "@/components/charts/Sparkline";
 import PulseNetworkNav from "@/components/PulseNetworkNav";
 import { useAuth } from "@/contexts/AuthContext";
-import UpgradePrompt, { ProBadge } from "@/components/UpgradePrompt";
+import UpgradePrompt from "@/components/UpgradePrompt";
+import UpgradeModal from "@/components/UpgradeModal";
 import { onUpgradeRequested } from "@/lib/upgrade";
+import { useCityNeighborhoods } from "@/hooks/useCityNeighborhoods";
 
 const WEIGHT_REFRESH_MS = 15000;
 
@@ -211,7 +201,7 @@ function readStoredTimeFilterHours(): number {
   if (typeof window === "undefined") return DEFAULT_TIME_FILTER_HOURS;
   try {
     const raw = sessionStorage.getItem(STORAGE_TIME_FILTER_HOURS);
-    // Fresh session (nothing stored): open on the 24h view. Non-Pro sessions
+    // Fresh session (nothing stored): open on the default free view. Non-Pro sessions
     // are clamped down to the largest free window by the effect below.
     if (raw == null || raw === "") return DEFAULT_TIME_FILTER_HOURS;
     const n = Number(raw);
@@ -264,12 +254,6 @@ const IncidentMap = dynamic(() => import("@/components/IncidentMap"), {
 
 const POLL_INTERVAL = 12000;
 
-const THEME_OPTIONS = [
-  { id: "auto" as const, icon: Monitor, label: "Auto" },
-  { id: "light" as const, icon: Sun, label: "Light" },
-  { id: "dark" as const, icon: Moon, label: "Dark" },
-];
-
 /**
  * Mobile-aware home shell. Fresh visits are map-first on every
  * viewport; the redirect path is reserved for explicit feed hints or a
@@ -293,6 +277,9 @@ export default function Home() {
 }
 
 function MapHome() {
+  // Populate the active city's lazy polygon registry before any map,
+  // district, or analytics consumer tries to resolve a neighborhood.
+  useCityNeighborhoods();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { mode, resolved, setMode, colorBlindSafe, setColorBlindSafe } = useTheme();
@@ -314,14 +301,10 @@ function MapHome() {
     if (typeof window === "undefined") return [];
     return loadCachedIncidents(getCurrentCity().slug)?.incidents ?? [];
   });
-  /** Latest map pins for API summary/stats fallbacks when Firestore owns the map. */
-  const incidentsForStatsRef = useRef<Incident[]>([]);
-  /** After Firestore paints pins, re-fetch summary/stats once (initial API call saw ref []). */
-  const statsAfterFirestoreRef = useRef(false);
+  const currentIncidentsRef = useRef(incidents);
   useEffect(() => {
-    incidentsForStatsRef.current = incidents;
+    currentIncidentsRef.current = incidents;
   }, [incidents]);
-
   useEffect(() => {
     if (incidents.length === 0) return;
     saveCachedIncidents(getCurrentCity().slug, incidents);
@@ -659,21 +642,12 @@ function MapHome() {
 
   // Community voting removed — incidents are driven purely by timestamps.
 
-  const [safetyPoiCats, setSafetyPoiCats] = useState<Set<SafetyPoiCategory>>(() => new Set());
+  const [safetyPoiCats] = useState<Set<SafetyPoiCategory>>(() => new Set());
   const [safetyPois, setSafetyPois] = useState<
     Array<{ id: string; name: string; category: SafetyPoiCategory; lat: number; lng: number }>
   >([]);
   const safetyFetchSeqRef = useRef(0);
   const lastSafetyBboxRef = useRef<string>("");
-
-  const toggleSafetyCat = useCallback((id: SafetyPoiCategory) => {
-    setSafetyPoiCats((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
 
   // Same pattern as safetyPois, but for the convenience overlays
   // (gas, EV, food, ATM, parking, restroom). Persisted across reloads
@@ -699,15 +673,6 @@ function MapHome() {
     if (typeof window === "undefined") return;
     setPref("pp:nearby-poi-cats", JSON.stringify([...nearbyPoiCats]));
   }, [nearbyPoiCats]);
-
-  const toggleNearbyCat = useCallback((id: NearbyPoiCategory) => {
-    setNearbyPoiCats((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
 
   // Kick off an initial fetch whenever the set of enabled categories
   // changes — otherwise the user has to pan the map before anything
@@ -813,6 +778,27 @@ function MapHome() {
     // panel === null → don't auto-close; the user might have opened
     // the drawer themselves and there's no `?inbox=` to honor.
   }, []);
+  // Keep the URL-sync callback stable. Passing an inline function makes the
+  // child effect re-run after every local tab change and re-apply the stale
+  // `?view=` value, effectively trapping deep-linked users on that surface.
+  const handleViewUrlChange = useCallback((view: "map" | "feed" | "analytics" | "ask" | null) => {
+    if (view) setViewTab(view);
+  }, []);
+  // User-driven view changes must update the bookmarkable URL as well as the
+  // local panel. Otherwise a deep link such as `?view=map` remains stale after
+  // switching to Feed and a reload silently sends the user back to Map.
+  const selectViewTab = useCallback((view: "map" | "feed" | "analytics" | "ask") => {
+    setViewTab(view);
+    if (typeof window === "undefined" || window.location.pathname !== "/") return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("view") === view) return;
+    url.searchParams.set("view", view);
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`
+    );
+  }, []);
   // Tracked separately from the inbox panel itself so the bell badge
   // updates even while the panel is closed (e.g. an alert lands while
   // the user is mid-trip).
@@ -908,23 +894,23 @@ function MapHome() {
         setShowUpgrade("Ask Pulse");
         return;
       }
-      setViewTab("ask");
+      selectViewTab("ask");
     }
     window.addEventListener("pp:open-ask", onOpenAsk);
     return () => window.removeEventListener("pp:open-ask", onOpenAsk);
-  }, [isPro]);
+  }, [isPro, selectViewTab]);
 
   // When PlaceActions in any card requests directions, ensure the sidebar
   // is visible (mobile auto-collapses) and dismiss the lightweight overlays.
   useEffect(() => {
     function handler() {
-      setViewTab("map");
+      selectViewTab("map");
       setSidebarOpen(true);
       setMapTap(null);
     }
     window.addEventListener("pp:plan-route", handler);
     return () => window.removeEventListener("pp:plan-route", handler);
-  }, []);
+  }, [selectViewTab]);
 
   // Click-throughs from the AnalyticsPanel: jump back to the map and focus the
   // selected scope. Kept event-driven so the panel never needs a callback ref
@@ -937,7 +923,7 @@ function MapHome() {
         | { kind: "point"; lat: number; lng: number }
         | undefined;
       if (!detail) return;
-      setViewTab("map");
+      selectViewTab("map");
       if (detail.kind === "district") {
         const district = getDistrictBySlug(detail.slug);
         if (!district) return;
@@ -961,7 +947,7 @@ function MapHome() {
     }
     window.addEventListener("pp:analytics-scope", onScope);
     return () => window.removeEventListener("pp:analytics-scope", onScope);
-  }, [incidents]);
+  }, [incidents, selectViewTab]);
 
   // Native (Android) hardware back-button: pop the topmost overlay before
   // letting Capacitor exit the app. Calling preventDefault() consumes the
@@ -1082,14 +1068,22 @@ function MapHome() {
   useEffect(() => {
     const slug = getCurrentCity().slug;
     const q = slug ? `?city=${encodeURIComponent(slug)}` : "";
-    fetchPublicApi(`/api/admin/feeds${q}`)
+    fetchPublicApi(`/api/admin/feeds${q}`, { signal: AbortSignal.timeout(10_000) })
       .then(async (r) => {
         if (!r.ok) return;
-        const data = (await r.json()) as { feeds?: { feed_id?: string; label?: string }[] };
-        if (data.feeds && Array.isArray(data.feeds)) {
+        const raw = await readBoundedJsonResponse(r, 512 * 1024);
+        const data = raw && typeof raw === "object" && !Array.isArray(raw)
+          ? raw as Record<string, unknown>
+          : null;
+        if (Array.isArray(data?.feeds)) {
           const labels: Record<string, string> = {};
-          for (const f of data.feeds) {
-            if (f.feed_id && f.label) labels[f.feed_id] = f.label;
+          for (const value of data.feeds.slice(0, 500)) {
+            if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+            const f = value as Record<string, unknown>;
+            if (typeof f.feed_id !== "string" || typeof f.label !== "string") continue;
+            const id = f.feed_id.trim().slice(0, 200);
+            const label = f.label.trim().slice(0, 200);
+            if (id && label) labels[id] = label;
           }
           if (Object.keys(labels).length > 0) setFeedLabels(labels);
         }
@@ -1257,60 +1251,16 @@ function MapHome() {
   }, [basemapStyle, recenterCity]);
 
   const loadFromApi = useCallback(async () => {
-    if (useFirestoreData) {
-      // Firestore listener + snapshot own `incidents`. A parallel REST pull
-      // that calls `setIncidents` can wipe pins when the Python API returns
-      // 200 with an empty list, errors, or races behind Firestore — and
-      // 502 retries to api.phlpulse.com hit nginx error pages without CORS,
-      // surfacing as misleading "CORS" noise while the map goes blank.
-      const [sr, tr] = await Promise.allSettled([fetchSummary(), fetchStats()]);
-      if (sr.status === "fulfilled") {
-        setSummary(sr.value.summary);
-      } else {
-        const cur = incidentsForStatsRef.current;
-        if (cur.length) setSummary(buildLocalSummary(cur));
-      }
-      if (tr.status === "fulfilled") {
-        setStats(tr.value);
-      } else {
-        const cur = incidentsForStatsRef.current;
-        if (cur.length) setStats(statsFromIncidents(cur));
-      }
-      return;
-    }
-
-    // API-only mode: pins + summary/stats all come from the backend.
-    const incPromise = fetchIncidents()
+    // API-only mode: the REST endpoint owns pins. Summary/stats have their own
+    // single poll below; fetching them here as well doubled every request.
+    await fetchIncidents()
       .then((rows) => {
         setIncidents(rows);
-        return rows;
       })
       .catch((reason) => {
         console.error("Failed to load incidents:", reason);
-        return null;
       });
-
-    const [sr, tr] = await Promise.allSettled([fetchSummary(), fetchStats()]);
-    const inc = await incPromise;
-
-    if (sr.status === "fulfilled") {
-      setSummary(sr.value.summary);
-    } else if (inc) {
-      setSummary(buildLocalSummary(inc));
-    }
-    if (tr.status === "fulfilled") {
-      setStats(tr.value);
-    } else if (inc) {
-      setStats(statsFromIncidents(inc));
-    }
-  }, [useFirestoreData]);
-
-  useEffect(() => {
-    if (!useFirestoreData || statsAfterFirestoreRef.current) return;
-    if (incidents.length === 0) return;
-    statsAfterFirestoreRef.current = true;
-    void loadFromApi();
-  }, [useFirestoreData, incidents.length, loadFromApi]);
+  }, []);
 
   useEffect(() => {
     const cached = loadCachedIncidents(getCurrentCity().slug);
@@ -1325,7 +1275,6 @@ function MapHome() {
       // Initial pins come from localStorage (see ``useState`` above) and the
       // first ``onSnapshot`` tick. Avoid a duplicate full-query ``getDocs`` —
       // it billed the same ~MAP_SYNC_LIMIT document reads twice per cold load.
-      void loadFromApi();
       const unsub = subscribeIncidents(
         (next) => setIncidents(next),
         (e) => {
@@ -1614,34 +1563,44 @@ function MapHome() {
     }
   }, [tripGeometry, userLocation, incidents, aheadAlert]);
 
-  // API-backed summary + stats poll. Self-degrades when the Python
-  // backend is unreachable: after the first failure we stop polling
-  // and let the Firestore-derived effect below take over, so a hung
-  // /api/summary endpoint doesn't spam the console with a failure
-  // every POLL_INTERVAL ms forever.
+  // One city-scoped API poll for summary + audit stats. Each half degrades
+  // independently, so a summary-model outage cannot discard valid stats (or
+  // vice versa). Only stop polling when both endpoints fail twice.
   const [apiSummaryDown, setApiSummaryDown] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (apiSummaryDown) return;
     let cancelled = false;
     let consecutiveFailures = 0;
+    let failureLogged = false;
     const pull = async () => {
-      try {
-        const [sum, st] = await Promise.all([fetchSummary(), fetchStats()]);
-        if (!cancelled) {
-          setSummary(sum.summary);
-          setStats(st);
-          consecutiveFailures = 0;
-        }
-      } catch (e) {
+      const [sum, st] = await Promise.allSettled([fetchSummary(), fetchStats()]);
+      if (cancelled) return;
+
+      if (sum.status === "fulfilled") {
+        setSummary(sum.value.summary);
+      } else {
+        setSummary(buildLocalSummary(currentIncidentsRef.current));
+      }
+      if (st.status === "fulfilled") {
+        setStats(st.value);
+      } else {
+        setStats(statsFromIncidents(currentIncidentsRef.current));
+      }
+
+      const bothFailed = sum.status === "rejected" && st.status === "rejected";
+      if (!bothFailed) {
+        consecutiveFailures = 0;
+      } else {
         consecutiveFailures += 1;
-        // Log once on the first failure, then stop polling. The
-        // Firestore-derived fallback effect below will take it from
-        // here so the UI keeps showing fresh stats from local data.
-        if (consecutiveFailures === 1) {
-          console.warn("[summary/stats] API unavailable, falling back to client-derived stats", e);
+        if (!failureLogged) {
+          failureLogged = true;
+          console.warn(
+            "[summary/stats] API unavailable, falling back to client-derived stats",
+            { summary: sum.reason, stats: st.reason },
+          );
         }
-        if (consecutiveFailures >= 2 && !cancelled) {
+        if (consecutiveFailures >= 2) {
           setApiSummaryDown(true);
         }
       }
@@ -1714,7 +1673,7 @@ function MapHome() {
 
   // Newsroom ranks across ALL categories in the time window (it does its own
   // editorial filtering), so it bypasses the category-chip filter. Free-tier
-  // gating still applies: non-Pro is clamped to the 24h free window, same as
+  // gating still applies: non-Pro is clamped to the 3-day free window, same as
   // the rest of the feed.
   const newsroomIncidents = useMemo(() => {
     const effectiveHours = isPro
@@ -1843,21 +1802,6 @@ function MapHome() {
       .map(([id, count]) => ({ id, label: feedLabels[id] || id, count }));
   }, [filteredIncidents, feedLabels]);
 
-  const analyticsAreaName = mapTap
-    ? getNeighborhood(mapTap.lat, mapTap.lng)?.name
-    : undefined;
-
-  const analyticsAreaIncidents = mapTap
-    ? (() => {
-        const result = assessSafety(
-          { display_name: "", lat: mapTap.lat, lng: mapTap.lng },
-          filteredIncidents,
-          1.5
-        );
-        return result.nearbyIncidents;
-      })()
-    : undefined;
-
   const inboxParam = searchParams.get("inbox");
   const incidentParam = searchParams.get("incident");
   const tripParam = searchParams.get("trip");
@@ -1956,7 +1900,7 @@ function MapHome() {
       <MobileBottomNav />
       <InboxUrlSync 
         onInboxChange={handleInboxUrlChange} 
-        onViewChange={(v) => { if (v) setViewTab(v); }} 
+        onViewChange={handleViewUrlChange}
       />
       {!tripGeometry && <AlertToast incidents={incidents} />}
 
@@ -1964,7 +1908,8 @@ function MapHome() {
       {/* API Docs lives at /use-cases/api and is reachable from the More menu
           and from the Analytics header — surfacing it as a fourth top-bar tab
           is redundant and crowds the bar on mobile. */}
-      <header
+      <nav
+        aria-label="Primary views"
         className="pp-app-topnav relative z-[2000] hidden md:flex items-stretch shrink-0 isolate"
         style={{
           background: "var(--panel-bg)",
@@ -1977,6 +1922,8 @@ function MapHome() {
           return (
             <button
               key={tab}
+              type="button"
+              aria-pressed={active}
               onClick={() => {
                 if (tab === "analytics" && !isPro) {
                   setShowUpgrade("Analytics");
@@ -1986,7 +1933,7 @@ function MapHome() {
                   setShowUpgrade("Ask Pulse");
                   return;
                 }
-                setViewTab(tab);
+                selectViewTab(tab);
               }}
               className="flex-1 flex items-center justify-center gap-2.5 py-3.5 text-xs font-bold tracking-widest uppercase transition-all relative"
               style={{
@@ -2027,10 +1974,19 @@ function MapHome() {
             </button>
           );
         })}
-      </header>
+      </nav>
 
       {/* ──── Content Area ──── */}
-      <motion.div className="pp-app-main relative z-0 flex-1 min-h-0 w-full overflow-hidden isolate">
+      <motion.main className="pp-app-main relative z-0 flex-1 min-h-0 w-full overflow-hidden isolate">
+      <h1 className="sr-only">
+        {viewTab === "map"
+          ? `${cityDisplayName} CityPulse safety map`
+          : viewTab === "feed"
+            ? `${cityDisplayName} incident feed`
+            : viewTab === "analytics"
+              ? `${cityDisplayName} incident analytics`
+              : `Ask ${cityDisplayName} CityPulse`}
+      </h1>
 
       {/* ──── Map view ──── */}
       <div
@@ -2219,28 +2175,12 @@ function MapHome() {
       />
       </div>
 
-      {/* Mobile sidebar toggle */}
-      <button
-        onClick={() => setSidebarOpen(!sidebarOpen)}
-        className="md:hidden fixed z-[2001] w-10 h-10 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg"
-        style={{
-          background: "var(--pill-bg)",
-          border: "1px solid var(--pill-border)",
-          color: "var(--pill-text)",
-          bottom: sidebarOpen ? "calc(55vh + 0.5rem)" : "1rem",
-          left: "0.75rem",
-          transition: "bottom 0.3s ease",
-        }}
-      >
-        {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-      </button>
-
       {/* Mobile top search pill — Google-Maps-style entry into the search
           sheet. Hidden on desktop (sidebar is always visible there) and
           while the bottom sheet is open (the real search input is then
           on-screen so a duplicate affordance would be noise). */}
       {!sidebarOpen && !tripGeometry && (
-        <button
+        <button type="button"
           onClick={() => {
             setSidebarOpen(true);
             // Let the vaul snap-in finish before stealing focus, otherwise
@@ -2433,7 +2373,10 @@ function MapHome() {
                 return (
                   <button
                     key={tf.label}
+                    type="button"
                     onClick={() => applyTimeFilter(tf)}
+                    aria-pressed={timeFilter === tf.hours}
+                    aria-label={`${tf.label} incident window${locked ? ", Pro feature" : ""}`}
                     className={`px-3 md:px-4 py-2 md:py-2.5 text-xs md:text-sm font-medium transition-colors relative shrink-0 ${
                       timeFilter === tf.hours ? "bg-blue-500/15 text-blue-500" : ""
                     } ${locked ? "opacity-50" : ""}`}
@@ -2479,6 +2422,8 @@ function MapHome() {
                           key={tf.label}
                           type="button"
                           onClick={() => applyTimeFilter(tf)}
+                          aria-pressed={active}
+                          aria-label={`${tf.label} incident window${locked ? ", Pro feature" : ""}`}
                           className={`relative rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
                             locked ? "opacity-50" : ""
                           }`}
@@ -2516,7 +2461,10 @@ function MapHome() {
 
             <div className="flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0 w-full">
               <button
+                type="button"
                 onClick={() => setActiveCats(new Set())}
+                aria-pressed={activeCats.size === 0}
+                aria-label="Show all incident categories"
                 className={`flex items-center gap-1.5 px-3 md:px-4 py-2 md:py-2.5 rounded-full text-xs md:text-sm font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
                   activeCats.size === 0 ? "bg-blue-500/15 text-blue-500 ring-1 ring-blue-500/30" : "opacity-70 hover:opacity-100"
                 }`}
@@ -2532,7 +2480,10 @@ function MapHome() {
                 return (
                   <button
                     key={pill.label}
+                    type="button"
                     onClick={() => toggleCat(pill.cats)}
+                    aria-pressed={isActive}
+                    aria-label={`${pill.label}, ${count} incident${count === 1 ? "" : "s"}`}
                     className={`flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 md:py-2.5 rounded-full text-xs md:text-sm font-medium transition-all shrink-0 backdrop-blur-md shadow-lg ${
                       isActive ? "ring-1" : "opacity-70 hover:opacity-100"
                     }`}
@@ -2893,7 +2844,7 @@ function MapHome() {
                 )}
               </div>
               <div className="flex items-center gap-1 ml-auto">
-                <button
+                <button type="button"
                   onClick={() => setPerimeterPoints((p) => p.slice(0, -1))}
                   className="px-1.5 py-0.5 rounded text-[10px]"
                   style={{ background: "var(--panel-input-bg)", color: "var(--panel-text-muted)" }}
@@ -2902,7 +2853,9 @@ function MapHome() {
                   Undo
                 </button>
                 <button
+                  type="button"
                   onClick={() => { setPerimeterMode(false); setPerimeterPoints([]); }}
+                  aria-label="Close perimeter tool"
                   className="p-1 rounded-full"
                   style={{ color: "var(--panel-text-muted)" }}
                   title="Close perimeter tool"
@@ -3020,7 +2973,7 @@ function MapHome() {
             /inbox and /more by InboxUrlSync). Less buttons in the right
             rail = a calmer mobile map. */}
         <div className="relative hidden md:block">
-          <button
+          <button type="button"
             onClick={() => {
               setShowInbox(!showInbox);
               setShowLayers(false);
@@ -3152,7 +3105,7 @@ function MapHome() {
             <span className="text-[10px] hidden sm:inline" style={{ color: "var(--panel-text-muted)" }}>
               {new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })} EST
             </span>
-            <img src="/logo.png" alt="" className="w-4 h-4 opacity-50" />
+            <Image src="/logo.png" alt="" width={16} height={16} className="w-4 h-4 opacity-50" />
           </div>
         </div>
       </div>
@@ -3386,17 +3339,31 @@ function MapHome() {
       {/* Analytics: outside map shell so parent opacity/visibility does not hide it */}
       {viewTab === "analytics" && (
         <motion.div className="absolute inset-x-0 top-0 bottom-[calc(64px+env(safe-area-inset-bottom,0px))] md:bottom-0 z-20 bg-[var(--map-bg)] overflow-y-auto">
-          <div className="max-w-5xl mx-auto p-4 md:p-8">
-            <AnalyticsPanel
-              incidents={allIncidents}
-              areaName={cityDisplayName}
-              feedLabels={feedLabels}
-              routeGeometry={tripGeometry ?? undefined}
-              activeCats={activeCats}
-              onActiveCatsChange={setActiveCats}
-              onClose={() => setViewTab("map")}
-            />
-          </div>
+          {authLoading ? (
+            <div className="min-h-full flex items-center justify-center" aria-label="Checking analytics access">
+              <div className="w-8 h-8 border-2 border-purple-400/30 border-t-purple-400 rounded-full animate-spin" />
+            </div>
+          ) : isPro ? (
+            <div className="max-w-5xl mx-auto p-4 md:p-8">
+              <AnalyticsPanel
+                incidents={allIncidents}
+                areaName={cityDisplayName}
+                feedLabels={feedLabels}
+                routeGeometry={tripGeometry ?? undefined}
+                activeCats={activeCats}
+                onActiveCatsChange={setActiveCats}
+                onClose={() => selectViewTab("map")}
+              />
+            </div>
+          ) : (
+            <div className="min-h-full flex items-center justify-center p-4">
+              <UpgradePrompt
+                feature="Analytics"
+                description="Explore trends, hotspots, timing, and exportable incident data."
+                onClose={() => selectViewTab("map")}
+              />
+            </div>
+          )}
         </motion.div>
       )}
 
@@ -3426,7 +3393,7 @@ function MapHome() {
               {isPro && (
                 <button
                   type="button"
-                  onClick={() => setViewTab("analytics")}
+                  onClick={() => selectViewTab("analytics")}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium"
                   style={{ background: "var(--pp-accent-soft)", color: "var(--pp-accent)" }}
                 >
@@ -3456,13 +3423,12 @@ function MapHome() {
                 background: "var(--panel-input-bg)",
                 border: "1px solid var(--panel-border)",
               }}
-              role="tablist"
+              role="group"
               aria-label="Feed sorting"
             >
               <button
                 type="button"
-                role="tab"
-                aria-selected={feedSortMode === "recent"}
+                aria-pressed={feedSortMode === "recent"}
                 onClick={() => setFeedSortMode("recent")}
                 className="px-3 py-1 rounded-full font-medium flex items-center gap-1.5 transition-colors"
                 style={{
@@ -3474,8 +3440,7 @@ function MapHome() {
               </button>
               <button
                 type="button"
-                role="tab"
-                aria-selected={feedSortMode === "near"}
+                aria-pressed={feedSortMode === "near"}
                 onClick={requestFeedLocation}
                 disabled={feedLocating}
                 className="px-3 py-1 rounded-full font-medium flex items-center gap-1.5 transition-colors"
@@ -3490,8 +3455,7 @@ function MapHome() {
               </button>
               <button
                 type="button"
-                role="tab"
-                aria-selected={feedSortMode === "newsroom"}
+                aria-pressed={feedSortMode === "newsroom"}
                 onClick={() => setFeedSortMode("newsroom")}
                 className="px-3 py-1 rounded-full font-medium flex items-center gap-1.5 transition-colors"
                 style={{
@@ -3508,6 +3472,7 @@ function MapHome() {
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5" style={{ color: "var(--panel-text-muted)" }} />
               <input
                 type="text"
+                aria-label="Search incident feed"
                 placeholder="Search feed..."
                 value={feedSearchQuery}
                 onChange={(e) => setFeedSearchQuery(e.target.value)}
@@ -3520,6 +3485,8 @@ function MapHome() {
               />
               {feedSearchQuery && (
                 <button
+                  type="button"
+                  aria-label="Clear feed search"
                   onClick={() => setFeedSearchQuery("")}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2"
                 >
@@ -3705,7 +3672,7 @@ function MapHome() {
                   setSelectedId(id);
                   const inc = newsroomIncidents.find((i) => i.id === id);
                   if (inc?.lat != null && inc?.lng != null) {
-                    setViewTab("map");
+                    selectViewTab("map");
                     requestAnimationFrame(() => {
                       mapRef.current?.flyTo(inc.lat!, inc.lng!, 16);
                     });
@@ -3723,7 +3690,7 @@ function MapHome() {
                   setSelectedId(id);
                   const inc = filteredIncidents.find((i) => i.id === id);
                   if (inc?.lat != null && inc?.lng != null) {
-                    setViewTab("map");
+                    selectViewTab("map");
                     requestAnimationFrame(() => {
                       mapRef.current?.flyTo(inc.lat!, inc.lng!, 16);
                     });
@@ -3768,12 +3735,12 @@ function MapHome() {
           citySlug={getCurrentCity().slug}
           isPro={isPro}
           authLoading={authLoading}
-          onClose={() => setViewTab("map")}
+          onClose={() => selectViewTab("map")}
           onRequestPro={() => setShowUpgrade("Ask Pulse")}
           onViewOnMap={(inc) => {
             if (inc.lat == null || inc.lng == null) return;
             setSelectedId(inc.id);
-            setViewTab("map");
+            selectViewTab("map");
             requestAnimationFrame(() => {
               mapRef.current?.flyTo(inc.lat!, inc.lng!, 16);
             });
@@ -3781,7 +3748,7 @@ function MapHome() {
         />
       </motion.div>
 
-      </motion.div>{/* end content area wrapper */}
+      </motion.main>{/* end content area wrapper */}
 
       {/* Trip recap — root-level so it clears the desktop tab bar on every view. */}
       {tripRecap && (
@@ -3793,35 +3760,17 @@ function MapHome() {
       )}
 
       {/* Upgrade prompt overlay */}
-      <AnimatePresence>
-        {showUpgrade && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
-            style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}
-            onClick={() => setShowUpgrade(null)}
-          >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <UpgradePrompt
-                feature={showUpgrade}
-                description={
-                  showUpgrade === "Ask Pulse"
-                    ? "Unlock Ask Pulse for AI answers grounded in scanner-sourced incidents, plus extended history, analytics, and more."
-                    : "Get extended history, analytics, safe routing, audio clips, and multi-city access."
-                }
-                onClose={() => setShowUpgrade(null)}
-              />
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {showUpgrade && (
+        <UpgradeModal
+          feature={showUpgrade}
+          description={
+            showUpgrade === "Ask Pulse"
+              ? "Unlock Ask Pulse for AI answers grounded in scanner-sourced incidents, plus extended history, analytics, and more."
+              : "Get extended history, analytics, safe routing, audio clips, and multi-city access."
+          }
+          onClose={() => setShowUpgrade(null)}
+        />
+      )}
     </div>
   );
 }

@@ -189,6 +189,7 @@ export default function AlertsInbox({
             : {}),
         }),
   };
+  const panelLabel = showSettings ? "Settings and more" : "Alerts inbox";
 
   return (
     <AnimatePresence>
@@ -200,7 +201,7 @@ export default function AlertsInbox({
           className={wrapperClassName}
           style={wrapperStyle}
           role="dialog"
-          aria-label="Alerts inbox"
+          aria-label={panelLabel}
         >
           <div
             className="flex items-center justify-between px-3 py-2.5 shrink-0"
@@ -208,7 +209,7 @@ export default function AlertsInbox({
           >
             <div className="flex items-center gap-2 min-w-0">
               <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--panel-text-muted)" }}>
-                Alerts ({alerts.length})
+                {showSettings ? "Settings & More" : `Alerts (${alerts.length})`}
               </p>
               {/* Status pill — only renders when quiet hours are
                   actively suppressing notifications, so users see at a
@@ -240,12 +241,12 @@ export default function AlertsInbox({
                 onMouseEnter={(e) => { if (!showSettings) (e.currentTarget.style.background = "var(--panel-hover)"); }}
                 onMouseLeave={(e) => { if (!showSettings) (e.currentTarget.style.background = "transparent"); }}
                 aria-pressed={showSettings}
-                aria-label="Quiet-hours settings"
-                title="Quiet-hours settings"
+                aria-label="Settings"
+                title="Settings"
               >
                 <Moon className="w-3.5 h-3.5" />
               </button>
-              {alerts.length > 0 && (
+              {!showSettings && alerts.length > 0 && (
                 <button
                   type="button"
                   onClick={() => clearAlerts()}
@@ -266,7 +267,7 @@ export default function AlertsInbox({
                 style={{ color: "var(--panel-text-muted)" }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
                 onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                aria-label="Close inbox"
+                aria-label={showSettings ? "Close settings" : "Close inbox"}
               >
                 <X className="w-3.5 h-3.5" />
               </button>

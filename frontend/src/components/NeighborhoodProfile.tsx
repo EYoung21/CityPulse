@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo, useEffect, useState, useRef } from "react";
+import { useMemo, useEffect, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
 import {
   MapPin,
   TrendingUp,
   Shield,
   Clock,
-  Radio,
   Play,
   Pause,
   ChevronLeft,
@@ -23,7 +23,6 @@ import {
   hourDistribution,
   areaVsCityComparison,
 } from "@/lib/analytics";
-import { assessSafety } from "@/lib/search";
 import { sanitizeScannerTranscriptForDisplay } from "@/lib/sanitize-scanner-transcript";
 import { getSeverity } from "@/lib/severity";
 import Sparkline from "@/components/charts/Sparkline";
@@ -32,6 +31,12 @@ import HourClock from "@/components/charts/HourClock";
 import { subscribeIncidents } from "@/lib/firestore";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { incidentAudioSrc } from "@/lib/public-api-base";
+import { useCityNeighborhoods } from "@/hooks/useCityNeighborhoods";
+import FeedAudioMiniPlayer, {
+  getFeedAudioState,
+  subscribeFeedAudio,
+  toggleFeedAudio,
+} from "@/components/FeedAudioMiniPlayer";
 
 interface Props {
   slug: string;
@@ -39,6 +44,7 @@ interface Props {
 
 export default function NeighborhoodProfile({ slug }: Props) {
   const [allIncidents, setAllIncidents] = useState<Incident[]>([]);
+  const { ready } = useCityNeighborhoods();
   const hood = getNeighborhoodBySlug(slug);
 
   useEffect(() => {
@@ -50,14 +56,27 @@ export default function NeighborhoodProfile({ slug }: Props) {
     return () => unsub();
   }, []);
 
+  if (!ready) {
+    return (
+      <main
+        className="min-h-screen flex items-center justify-center"
+        style={{ background: "var(--map-bg, #0a0a0a)" }}
+        aria-busy="true"
+      >
+        <h1 className="sr-only">Loading neighborhood</h1>
+        <div className="w-8 h-8 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" aria-hidden="true" />
+      </main>
+    );
+  }
+
   if (!hood) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--map-bg, #0a0a0a)" }}>
+      <main className="min-h-screen flex items-center justify-center" style={{ background: "var(--map-bg, #0a0a0a)" }}>
         <div className="text-center">
           <h1 className="text-xl font-bold mb-2" style={{ color: "var(--panel-text, #fff)" }}>Neighborhood not found</h1>
-          <a href="/" className="text-blue-500 hover:underline text-sm">Back to map</a>
+          <Link href="/" className="text-blue-500 hover:underline text-sm">Back to map</Link>
         </div>
-      </div>
+      </main>
     );
   }
 
@@ -71,25 +90,15 @@ function ProfileContent({
   hood: Neighborhood;
   allIncidents: Incident[];
 }) {
+  const [now] = useState(Date.now);
   const areaIncidents = useMemo(
     () => incidentsInNeighborhood(allIncidents, hood.slug),
     [allIncidents, hood.slug]
   );
 
-  const safety = useMemo(
-    () =>
-      assessSafety(
-        { display_name: hood.name, lat: hood.center.lat, lng: hood.center.lng },
-        allIncidents,
-        1.5
-      ),
-    [allIncidents, hood]
-  );
-
   const safetyScores = useMemo(() => {
     const days = 30;
     const scores: number[] = [];
-    const now = Date.now();
     for (let d = 0; d < days; d++) {
       const dayStart = now - (days - d) * 24 * 60 * 60 * 1000;
       const dayEnd = dayStart + 24 * 60 * 60 * 1000;
@@ -101,7 +110,7 @@ function ProfileContent({
       scores.push(Math.round(Math.max(0, Math.min(100, score))));
     }
     return scores;
-  }, [areaIncidents]);
+  }, [areaIncidents, now]);
 
   const trends = useMemo(() => trendByDay(areaIncidents, 30), [areaIncidents]);
   const hours = useMemo(() => hourDistribution(areaIncidents), [areaIncidents]);
@@ -144,17 +153,18 @@ function ProfileContent({
     currentScore >= 70 ? "Low Risk" : currentScore >= 40 ? "Moderate Risk" : "High Risk";
 
   return (
-    <div className="min-h-screen" style={{ background: "var(--map-bg, #0a0a0a)" }}>
+    <main className="min-h-screen" style={{ background: "var(--map-bg, #0a0a0a)" }}>
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
         {/* Header */}
         <div className="flex items-center gap-3">
-          <a
+          <Link
             href="/"
+            aria-label="Back to map"
             className="p-2 rounded-lg transition-colors"
             style={{ color: "var(--panel-text-secondary, #aaa)" }}
           >
             <ChevronLeft className="w-5 h-5" />
-          </a>
+          </Link>
           <div className="flex-1">
             <h1
               className="text-xl font-bold"
@@ -375,7 +385,8 @@ function ProfileContent({
           CityPulse · AI-Powered Community Safety
         </div>
       </div>
-    </div>
+      <FeedAudioMiniPlayer />
+    </main>
   );
 }
 
@@ -386,25 +397,18 @@ function NotableIncidentCard({
   inc: Incident;
   sev: { label: string; markerColor: string };
 }) {
-  const [playing, setPlaying] = useState(false);
   const audioSrc = incidentAudioSrc(inc);
   const hasAudio = !!audioSrc;
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioState = useSyncExternalStore(
+    subscribeFeedAudio,
+    getFeedAudioState,
+    getFeedAudioState
+  );
+  const playing = audioState.incidentId === inc.id && audioState.playing;
 
   const toggleAudio = () => {
     if (!audioSrc) return;
-    if (!audioRef.current) {
-      audioRef.current = new Audio(audioSrc);
-      audioRef.current.addEventListener("ended", () => setPlaying(false));
-      audioRef.current.addEventListener("error", () => setPlaying(false));
-    }
-    if (playing) {
-      audioRef.current.pause();
-      setPlaying(false);
-    } else {
-      audioRef.current.play().catch(() => setPlaying(false));
-      setPlaying(true);
-    }
+    toggleFeedAudio(inc, inc.location_text || sev.label);
   };
 
   return (
@@ -434,7 +438,7 @@ function NotableIncidentCard({
           })}
         </span>
         {hasAudio && (
-          <button
+          <button type="button"
             onClick={toggleAudio}
             className={`ml-auto flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium transition-all ${
               playing

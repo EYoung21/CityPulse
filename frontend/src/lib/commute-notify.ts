@@ -101,7 +101,10 @@ function loadFired(): FiredRecord {
       // the persisted set from growing forever and lets the same
       // bucket fire again tomorrow.
       if (parsed.date !== todayKey()) return { date: todayKey(), buckets: [] };
-      return parsed;
+      return {
+        date: parsed.date.slice(0, 10),
+        buckets: [...new Set(parsed.buckets.filter((bucket): bucket is string => typeof bucket === "string"))].slice(0, 200),
+      };
     }
   } catch { /* ignore */ }
   return { date: todayKey(), buckets: [] };

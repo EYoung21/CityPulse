@@ -26,10 +26,12 @@ function pinEl(opts: { accentRgb: string; fresh: boolean; label: string }) {
   const wrap = document.createElement("div");
   wrap.className = `lp-research-pin ${opts.fresh ? "is-fresh" : ""}`;
   wrap.style.setProperty("--accent-rgb", opts.accentRgb);
-  wrap.innerHTML = `
-    <span class="lp-research-pin-core"></span>
-    <span class="lp-research-pin-label">${opts.label}</span>
-  `;
+  const core = document.createElement("span");
+  core.className = "lp-research-pin-core";
+  const label = document.createElement("span");
+  label.className = "lp-research-pin-label";
+  label.textContent = opts.label;
+  wrap.append(core, label);
   return wrap;
 }
 

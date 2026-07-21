@@ -9,7 +9,11 @@
  */
 
 import type { GeoResult } from "@/lib/search";
+import { isCoordinatePair } from "@/lib/geo-validation";
 import { getCurrentCity } from "@/lib/pulse-cities";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
+
+const MAX_POI_RESPONSE_BYTES = 4 * 1024 * 1024;
 
 export interface PoiCategory {
   /** URL-safe slug we pass to /api/poi?category=… */
@@ -102,8 +106,16 @@ async function searchTomTomPOI(
     cache: "no-store",
   });
   if (!r.ok) return [];
-  const data = (await r.json()) as { results?: GeoResult[] };
-  return (data.results ?? []).map(toPoiResult);
+  const data = await readBoundedJsonResponse(r, MAX_POI_RESPONSE_BYTES);
+  const results = data && typeof data === "object" && !Array.isArray(data)
+    ? (data as { results?: unknown }).results
+    : null;
+  return (Array.isArray(results) ? results : [])
+    .filter((result) =>
+      typeof result?.display_name === "string" &&
+      isCoordinatePair([result.lat, result.lng])
+    )
+    .map(toPoiResult);
 }
 
 async function searchOverpassPOI(
@@ -127,8 +139,16 @@ async function searchOverpassPOI(
     cache: "no-store",
   });
   if (!r.ok) throw new Error(`POI proxy ${r.status}`);
-  const data = (await r.json()) as { results?: PoiResult[] };
-  return (data.results ?? []).map((p) => ({ ...p, provider: "overpass" as const }));
+  const data = await readBoundedJsonResponse(r, MAX_POI_RESPONSE_BYTES);
+  const results = data && typeof data === "object" && !Array.isArray(data)
+    ? (data as { results?: unknown }).results
+    : null;
+  return (Array.isArray(results) ? results : [])
+    .filter((result) =>
+      typeof result?.name === "string" &&
+      isCoordinatePair([result.lat, result.lng])
+    )
+    .map((p) => ({ ...p, provider: "overpass" as const }));
 }
 
 /** Search POIs of a category within a radius of (lat, lng). Returns

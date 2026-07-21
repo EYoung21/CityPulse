@@ -91,11 +91,18 @@ export function useSavedDestinations() {
   const canAddCustom = isPro || customCount < FREE_SAVED_LIMIT;
 
   useEffect(() => {
+    const loadingTimer = window.setTimeout(() => {
+      if (canSave) {
+        setLoading(true);
+      } else {
+        setDestinations([]);
+        setLists([]);
+        setLoading(false);
+      }
+    }, 0);
+
     if (!canSave) {
-      setDestinations([]);
-      setLists([]);
-      setLoading(false);
-      return;
+      return () => window.clearTimeout(loadingTimer);
     }
 
     const db = getFirestore(getFirebaseApp());
@@ -107,6 +114,7 @@ export function useSavedDestinations() {
     const unsubDest = onSnapshot(
       destQ,
       (snap) => {
+        window.clearTimeout(loadingTimer);
         const list: SavedDestination[] = [];
         snap.forEach((d) => {
           const data = d.data();
@@ -124,7 +132,10 @@ export function useSavedDestinations() {
         setDestinations(list);
         setLoading(false);
       },
-      () => setLoading(false)
+      () => {
+        window.clearTimeout(loadingTimer);
+        setLoading(false);
+      }
     );
 
     const unsubLists = onSnapshot(
@@ -145,7 +156,11 @@ export function useSavedDestinations() {
       () => { /* non-fatal — lists feature degrades silently */ }
     );
 
-    return () => { unsubDest(); unsubLists(); };
+    return () => {
+      window.clearTimeout(loadingTimer);
+      unsubDest();
+      unsubLists();
+    };
   }, [canSave, user]);
 
   const addDestination = useCallback(

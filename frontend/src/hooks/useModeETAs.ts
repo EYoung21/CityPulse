@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiUrl } from "@/lib/public-api-base";
 import type { TransportMode } from "@/lib/routing";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
 
 export type ModeETAStatus = "idle" | "loading" | "ready" | "error";
 
@@ -12,6 +13,22 @@ export interface ModeETA {
   durationMin?: number;
   /** Kilometers. May be a stale value while a refresh is loading/erroring. */
   distanceKm?: number;
+}
+
+export function normalizeModeEtaResponse(value: unknown): Pick<ModeETA, "durationMin" | "distanceKm"> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const data = value as Record<string, unknown>;
+  if (
+    typeof data.durationMin !== "number" || !Number.isFinite(data.durationMin) ||
+    data.durationMin < 0 || data.durationMin > 7 * 24 * 60
+  ) {
+    return null;
+  }
+  const distanceKm = typeof data.distanceKm === "number" && Number.isFinite(data.distanceKm) &&
+    data.distanceKm >= 0 && data.distanceKm <= 20_000
+    ? data.distanceKm
+    : undefined;
+  return { durationMin: data.durationMin, distanceKm };
 }
 
 export function coordKey(point: { lat: number; lng: number } | null): string {
@@ -70,6 +87,16 @@ export function useModeETAs(
     const controller = new AbortController();
     abortRef.current = controller;
     const snapshot = inputsRef.current;
+    const timeout = window.setTimeout(() => {
+      controller.abort();
+      setEtas((prev) => {
+        const next = { ...prev };
+        for (const mode of snapshot.modes) {
+          next[mode] = keepPreviousOnError(prev, mode);
+        }
+        return next;
+      });
+    }, 15_000);
 
     const waypoints: [number, number][] = [
       [snapshot.origin!.lat, snapshot.origin!.lng],
@@ -105,12 +132,9 @@ export function useModeETAs(
             setEtas((prev) => ({ ...prev, [mode]: keepPreviousOnError(prev, mode) }));
             return;
           }
-          const data = (await res.json()) as {
-            durationMin?: number;
-            distanceKm?: number;
-          };
+          const data = normalizeModeEtaResponse(await readBoundedJsonResponse(res, 512 * 1024));
           if (controller.signal.aborted) return;
-          if (typeof data.durationMin !== "number") {
+          if (!data) {
             setEtas((prev) => ({ ...prev, [mode]: keepPreviousOnError(prev, mode) }));
             return;
           }
@@ -127,9 +151,12 @@ export function useModeETAs(
           setEtas((prev) => ({ ...prev, [mode]: keepPreviousOnError(prev, mode) }));
         }
       })
-    );
+    ).finally(() => window.clearTimeout(timeout));
 
-    return () => controller.abort();
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [originKey, destKey, stopsKey, modes.join(",")]);
 
