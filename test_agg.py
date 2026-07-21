@@ -1,5 +1,6 @@
 import firebase_admin
 from firebase_admin import credentials, firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 import json, os
 from dotenv import load_dotenv
 
@@ -18,7 +19,12 @@ def get_stats():
     
     stats = {}
     for status in ["passed", "blocked"]:
-        agg = db.collection("incidents").where("inhibitor_status", "==", status).count().get()
+        agg = (
+            db.collection("incidents")
+            .where(filter=FieldFilter("inhibitor_status", "==", status))
+            .count()
+            .get()
+        )
         stats[status] = agg[0][0].value
     return stats
 

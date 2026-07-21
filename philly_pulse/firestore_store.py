@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -11,6 +12,8 @@ from typing import Any, Optional
 
 import firebase_admin
 from firebase_admin import credentials, firestore
+from google.api_core.exceptions import AlreadyExists
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +23,19 @@ logger = logging.getLogger(__name__)
 WORD_TIMINGS_COLLECTION = "incident_word_timings"
 
 _db: Optional[firestore.Client] = None
+
+
+def _canonical_utc_iso(value: str | None = None) -> str:
+    """Store one sortable UTC representation instead of mixing offsets and ``Z``."""
+    if value is None:
+        return datetime.now(timezone.utc).isoformat()
+    raw = str(value).strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(raw)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 def _ensure_client() -> firestore.Client:
@@ -52,8 +68,18 @@ def get_conn() -> Any:
     return None
 
 
+def _json_safe_firestore_value(value: Any) -> Any:
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {str(key): _json_safe_firestore_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_firestore_value(item) for item in value]
+    return value
+
+
 def _doc_to_row(doc_id: str, data: dict[str, Any]) -> dict[str, Any]:
-    row = dict(data)
+    row = _json_safe_firestore_value(dict(data))
     row["id"] = doc_id
     return row
 
@@ -79,15 +105,16 @@ def insert_incident(
     word_timings: Optional[list] = None,
     city: Optional[str] = None,
     mentions: Optional[list[dict]] = None,
+    incident_id: Optional[str] = None,
 ) -> dict:
     db = _ensure_client()
-    incident_id = uuid.uuid4().hex[:12]
-    if reported_at is None:
-        reported_at = datetime.now(timezone.utc).isoformat()
+    incident_id = incident_id or uuid.uuid4().hex[:12]
+    reported_at = _canonical_utc_iso(reported_at)
+    ingested_at = _canonical_utc_iso(ingested_at)
 
     payload = {
         "reported_at": reported_at,
-        "ingested_at": ingested_at or datetime.now(timezone.utc).isoformat(),
+        "ingested_at": ingested_at,
         "raw_text": raw_text,
         "severity_category": severity_category,
         "s_base": s_base,
@@ -112,7 +139,19 @@ def insert_incident(
         "last_mention_at": reported_at,
     }
     ref = db.collection("incidents").document(incident_id)
-    ref.set(payload)
+    try:
+        ref.create(payload)
+        was_created = True
+    except AlreadyExists:
+        existing = ref.get()
+        if existing.exists:
+            return {
+                **_doc_to_row(existing.id, existing.to_dict() or {}),
+                "_was_created": False,
+            }
+        # A delete raced the idempotent retry between create() and get().
+        ref.create(payload)
+        was_created = True
     # Sidecar write is best-effort: an incident must never fail to save over
     # its (optional) word timings. On failure has_word_timings stays True but
     # the detail view simply renders the transcript without per-word sync.
@@ -124,7 +163,10 @@ def insert_incident(
         except Exception as e:  # pragma: no cover — defensive
             logger.warning("word_timings sidecar write failed for %s: %s", incident_id, e)
     # Avoid an extra ``get()`` — ``set`` already wrote the full payload.
-    return _doc_to_row(incident_id, payload)
+    return {
+        **_doc_to_row(incident_id, payload),
+        "_was_created": was_created,
+    }
 
 
 def get_word_timings(incident_id: str) -> Optional[list]:
@@ -133,11 +175,7 @@ def get_word_timings(incident_id: str) -> Optional[list]:
     Returns None when there are no timings (redacted incident, best-effort
     write that failed, or a legacy doc not yet migrated)."""
     db = _ensure_client()
-    try:
-        snap = db.collection(WORD_TIMINGS_COLLECTION).document(incident_id).get()
-    except Exception as e:  # pragma: no cover — defensive
-        logger.warning("word_timings sidecar read failed for %s: %s", incident_id, e)
-        return None
+    snap = db.collection(WORD_TIMINGS_COLLECTION).document(incident_id).get()
     if not snap.exists:
         return None
     wt = (snap.to_dict() or {}).get("word_timings")
@@ -190,31 +228,28 @@ def find_recent_duplicate(
     floor_iso = (before_dt - timedelta(seconds=within_seconds)).isoformat()
 
     db = _ensure_client()
-    try:
-        query = (
-            db.collection("incidents")
-            .where("severity_category", "==", severity_category)
-            .where("reported_at", ">=", floor_iso)
-            .order_by("reported_at", direction=firestore.Query.DESCENDING)
-            .limit(candidate_limit)
-        )
-        if city:
-            query = query.where("city", "==", city)
+    query = (
+        db.collection("incidents")
+        .where(filter=FieldFilter("severity_category", "==", severity_category))
+        .where(filter=FieldFilter("reported_at", ">=", floor_iso))
+        .order_by("reported_at", direction=firestore.Query.DESCENDING)
+        .limit(candidate_limit)
+    )
+    if city:
+        query = query.where(filter=FieldFilter("city", "==", city))
 
-        for snap in query.stream():
-            data = snap.to_dict() or {}
-            if data.get("hidden") is True:
-                continue
-            if data.get("inhibitor_status") == "blocked":
-                continue
-            cand_lat = data.get("lat")
-            cand_lng = data.get("lng")
-            if cand_lat is None or cand_lng is None:
-                continue
-            if _haversine_km(lat, lng, cand_lat, cand_lng) <= radius_km:
-                return _doc_to_row(snap.id, data)
-    except Exception:
-        return None
+    for snap in query.stream():
+        data = snap.to_dict() or {}
+        if data.get("hidden") is True:
+            continue
+        if data.get("inhibitor_status") == "blocked":
+            continue
+        cand_lat = data.get("lat")
+        cand_lng = data.get("lng")
+        if cand_lat is None or cand_lng is None:
+            continue
+        if _haversine_km(lat, lng, cand_lat, cand_lng) <= radius_km:
+            return _doc_to_row(snap.id, data)
     return None
 
 
@@ -227,46 +262,71 @@ def append_mention(incident_id: str, mention: dict) -> Optional[dict]:
     """
     db = _ensure_client()
     ref = db.collection("incidents").document(incident_id)
-    snap = ref.get()
-    if not snap.exists:
-        return None
-    current = snap.to_dict() or {}
+    transaction = db.transaction()
 
-    updates: dict[str, Any] = {
-        "mentions": firestore.ArrayUnion([mention]),
-        "mention_count": firestore.Increment(1),
-    }
-    new_at = mention.get("at")
-    if new_at and (not current.get("last_mention_at") or new_at > current["last_mention_at"]):
-        updates["last_mention_at"] = new_at
+    @firestore.transactional
+    def append_in_transaction(txn):
+        snap = ref.get(transaction=txn)
+        if not snap.exists:
+            return None
+        current = snap.to_dict() or {}
+        mentions = list(current.get("mentions") or [])
+        mention_key = (
+            mention.get("at"),
+            mention.get("feed_id"),
+            mention.get("audio_clip"),
+            mention.get("raw_text"),
+        )
+        if any(
+            (
+                existing.get("at"),
+                existing.get("feed_id"),
+                existing.get("audio_clip"),
+                existing.get("raw_text"),
+            )
+            == mention_key
+            for existing in mentions
+            if isinstance(existing, dict)
+        ):
+            return {
+                **_doc_to_row(snap.id, current),
+                "_mention_added": False,
+            }
 
-    new_conf = float(mention.get("confidence") or 0)
-    cur_conf = float(current.get("confidence") or 0)
-    if new_conf > cur_conf:
-        updates["confidence"] = new_conf
-        if mention.get("description"):
-            updates["description"] = mention["description"]
-        # If the higher-confidence mention also reclassified the call,
-        # adopt that. The s_base bump is the responsibility of the
-        # caller (server.py knows the weights table).
-        new_cat = mention.get("severity_category")
-        if new_cat and new_cat != current.get("severity_category"):
-            updates["severity_category"] = new_cat
-            if mention.get("s_base") is not None:
-                updates["s_base"] = mention["s_base"]
+        mentions.append(mention)
+        # Bound the recent-update stack below Firestore's 1 MiB document cap;
+        # mention_count remains the lifetime total.
+        mentions = mentions[-25:]
+        updates: dict[str, Any] = {
+            "mentions": mentions,
+            "mention_count": int(current.get("mention_count") or 0) + 1,
+        }
+        new_at = mention.get("at")
+        if new_at and (
+            not current.get("last_mention_at")
+            or new_at > current["last_mention_at"]
+        ):
+            updates["last_mention_at"] = new_at
 
-    ref.update(updates)
-    mentions = list(current.get("mentions") or [])
-    mentions.append(mention)
-    merged: dict[str, Any] = {**current}
-    merged["mentions"] = mentions
-    merged["mention_count"] = int(current.get("mention_count") or 0) + 1
-    if "last_mention_at" in updates:
-        merged["last_mention_at"] = updates["last_mention_at"]
-    for k in ("confidence", "description", "severity_category", "s_base"):
-        if k in updates:
-            merged[k] = updates[k]
-    return _doc_to_row(snap.id, merged)
+        new_conf = float(mention.get("confidence") or 0)
+        cur_conf = float(current.get("confidence") or 0)
+        if new_conf > cur_conf:
+            updates["confidence"] = new_conf
+            if mention.get("description"):
+                updates["description"] = mention["description"]
+            new_cat = mention.get("severity_category")
+            if new_cat and new_cat != current.get("severity_category"):
+                updates["severity_category"] = new_cat
+                if mention.get("s_base") is not None:
+                    updates["s_base"] = mention["s_base"]
+
+        txn.update(ref, updates)
+        return {
+            **_doc_to_row(snap.id, {**current, **updates}),
+            "_mention_added": True,
+        }
+
+    return append_in_transaction(transaction)
 
 
 def insert_extraction(
@@ -293,16 +353,19 @@ def insert_extraction(
     ingested_at: Optional[str] = None,
     segment_start_utc: Optional[str] = None,
     ingest_lag_sec: Optional[float] = None,
+    extraction_id: Optional[str] = None,
 ) -> dict:
     db = _ensure_client()
-    eid = uuid.uuid4().hex[:12]
-    if reported_at is None:
-        reported_at = datetime.now(timezone.utc).isoformat()
+    eid = extraction_id or uuid.uuid4().hex[:12]
+    reported_at = _canonical_utc_iso(reported_at)
+    ingested_at = _canonical_utc_iso(ingested_at)
+    if segment_start_utc is not None:
+        segment_start_utc = _canonical_utc_iso(segment_start_utc)
     payload = {
         "feed_id": feed_id,
         "raw_text": raw_text,
         "reported_at": reported_at,
-        "ingested_at": ingested_at or datetime.now(timezone.utc).isoformat(),
+        "ingested_at": ingested_at,
         "segment_start_utc": segment_start_utc,
         "ingest_lag_sec": ingest_lag_sec,
         "audio_clip": audio_clip,
@@ -324,8 +387,15 @@ def insert_extraction(
         "prefilter_reason": prefilter_reason,
     }
     ref = db.collection("extractions").document(eid)
-    ref.set(payload)
-    return {"id": eid, **payload}
+    try:
+        ref.create(payload)
+        return {"id": eid, **payload}
+    except AlreadyExists:
+        existing = ref.get()
+        if existing.exists:
+            return {"id": existing.id, **(existing.to_dict() or {})}
+        ref.create(payload)
+        return {"id": eid, **payload}
 
 
 def get_extraction(extraction_id: str) -> Optional[dict]:
@@ -366,9 +436,9 @@ def get_recent_extractions(
     try:
         query = (
             db.collection("extractions")
-            .where("feed_id", "==", feed_id)
-            .where("reported_at", ">=", floor_iso)
-            .where("reported_at", "<", before_iso)
+            .where(filter=FieldFilter("feed_id", "==", feed_id))
+            .where(filter=FieldFilter("reported_at", ">=", floor_iso))
+            .where(filter=FieldFilter("reported_at", "<", before_iso))
             .order_by("reported_at", direction=firestore.Query.DESCENDING)
             .limit(limit)
         )
@@ -428,25 +498,24 @@ def list_incidents(
     db = _ensure_client()
     col = db.collection("incidents")
     rows: list[dict] = []
-    try:
-        query = col.order_by("reported_at", direction=firestore.Query.DESCENDING).limit(1000)
-        for doc in query.stream():
-            row = _doc_to_row(doc.id, doc.to_dict() or {})
-            reported_at = row.get("reported_at") or ""
-            if since and reported_at < since:
-                break
-            if not include_blocked and row.get("inhibitor_status") == "blocked":
-                continue
-            # Soft-hidden incidents (e.g. backfill_geocode_repair couldn't
-            # map them) are filtered out of public reads but preserved on
-            # disk so stable IDs / shared URLs / vote history still resolve.
-            if not include_hidden and row.get("hidden") is True:
-                continue
-            if category and row.get("severity_category") != category:
-                continue
-            rows.append(row)
-    except Exception:
-        pass
+    query = col
+    if category:
+        query = query.where(filter=FieldFilter("severity_category", "==", category))
+    if since:
+        query = query.where(filter=FieldFilter("reported_at", ">=", since))
+    query = query.order_by(
+        "reported_at", direction=firestore.Query.DESCENDING
+    ).limit(1000)
+    for doc in query.stream():
+        row = _doc_to_row(doc.id, doc.to_dict() or {})
+        if not include_blocked and row.get("inhibitor_status") == "blocked":
+            continue
+        # Soft-hidden incidents (e.g. backfill_geocode_repair couldn't
+        # map them) are filtered out of public reads but preserved on
+        # disk so stable IDs / shared URLs / vote history still resolve.
+        if not include_hidden and row.get("hidden") is True:
+            continue
+        rows.append(row)
     return rows
 
 
@@ -455,6 +524,7 @@ def list_incidents_for_city(
     since: Optional[str] = None,
     category: Optional[str] = None,
     before_iso: Optional[str] = None,
+    cursor_id: Optional[str] = None,
     limit: int = 50,
     include_blocked: bool = False,
     include_hidden: bool = False,
@@ -464,28 +534,57 @@ def list_incidents_for_city(
         return []
     db = _ensure_client()
     rows: list[dict] = []
-    try:
-        query = (
-            db.collection("incidents")
-            .where("city", "==", city)
-            .order_by("reported_at", direction=firestore.Query.DESCENDING)
-        )
-        if since:
-            query = query.where("reported_at", ">=", since)
-        if before_iso:
-            query = query.where("reported_at", "<", before_iso)
-        query = query.limit(int(limit))
-        for doc in query.stream():
+    query = db.collection("incidents").where(filter=FieldFilter("city", "==", city))
+    # Apply all public filters before the limit. Filtering category in Python
+    # after limiting the newest mixed-category rows silently omitted older
+    # matches and produced short/empty category pages.
+    if category:
+        query = query.where(filter=FieldFilter("severity_category", "==", category))
+    if since:
+        query = query.where(filter=FieldFilter("reported_at", ">=", since))
+    # A compound (reported_at, document ID) cursor prevents rows that share a
+    # scanner segment timestamp from being skipped between pages. Legacy
+    # timestamp-only cursors retain the old strict-before behavior.
+    cursor_snap = None
+    if cursor_id:
+        candidate = db.collection("incidents").document(cursor_id).get()
+        if candidate.exists:
+            cursor_snap = candidate
+    if before_iso and cursor_snap is None:
+        query = query.where(filter=FieldFilter("reported_at", "<", before_iso))
+    query = query.order_by(
+        "reported_at", direction=firestore.Query.DESCENDING
+    ).order_by("__name__", direction=firestore.Query.DESCENDING)
+
+    # Public visibility flags are not uniformly present on legacy documents,
+    # so filtering them with Firestore inequalities would exclude missing-field
+    # rows. Scan bounded chunks until we have the requested number of visible
+    # rows; a single raw `limit()` followed by Python filtering caused short
+    # pages and incorrectly ended pagination whenever a hidden/blocked row was
+    # inside the batch.
+    desired = max(1, int(limit))
+    scanned = 0
+    last_snap = cursor_snap
+    max_scan = max(5000, desired * 10)
+    while len(rows) < desired and scanned < max_scan:
+        chunk_size = min(250, max(50, desired - len(rows) + 25))
+        page_query = query.start_after(last_snap) if last_snap is not None else query
+        docs = list(page_query.limit(chunk_size).stream())
+        if not docs:
+            break
+        scanned += len(docs)
+        last_snap = docs[-1]
+        for doc in docs:
             row = _doc_to_row(doc.id, doc.to_dict() or {})
             if not include_blocked and row.get("inhibitor_status") == "blocked":
                 continue
             if not include_hidden and row.get("hidden") is True:
                 continue
-            if category and row.get("severity_category") != category:
-                continue
             rows.append(row)
-    except Exception:
-        pass
+            if len(rows) >= desired:
+                break
+        if len(docs) < chunk_size:
+            break
     return rows
 
 
@@ -500,56 +599,47 @@ def get_city_pipeline_freshness(slug: str, hours: int = 6) -> dict[str, Any]:
         "promoted_6h": 0,
         "promotion_rate_6h": None,
     }
-    try:
-        inc_q = (
-            db.collection("incidents")
-            .where("city", "==", slug)
-            .order_by("reported_at", direction=firestore.Query.DESCENDING)
-            .limit(1)
-        )
-        for snap in inc_q.stream():
-            out["newest_incident_at"] = (snap.to_dict() or {}).get("reported_at")
-            break
-    except Exception:
-        pass
-    try:
-        ext_q = (
-            db.collection("extractions")
-            .where("city", "==", slug)
-            .order_by("reported_at", direction=firestore.Query.DESCENDING)
-            .limit(1)
-        )
-        for snap in ext_q.stream():
-            out["newest_extraction_at"] = (snap.to_dict() or {}).get("reported_at")
-            break
-    except Exception:
-        pass
-    try:
-        rel = 0
-        promoted = 0
-        # Promotion rate is a ratio over the last `hours`; a 1500-doc sample is
-        # plenty representative and bounds the read cost for high-volume cities
-        # (this query was up to 5000 docs/call and is hit on every city-stats
-        # request). Limit only — no extra order_by, to reuse the existing
-        # (city, reported_at) index exactly and avoid a new-index requirement.
-        ext_recent = (
-            db.collection("extractions")
-            .where("city", "==", slug)
-            .where("reported_at", ">=", floor)
-            .limit(1500)
-        )
-        for snap in ext_recent.stream():
-            data = snap.to_dict() or {}
-            if not data.get("llm_relevant"):
-                continue
-            rel += 1
-            if data.get("incident_id"):
-                promoted += 1
-        out["llm_relevant_6h"] = rel
-        out["promoted_6h"] = promoted
-        out["promotion_rate_6h"] = (promoted / rel) if rel else None
-    except Exception:
-        pass
+    inc_q = (
+        db.collection("incidents")
+        .where(filter=FieldFilter("city", "==", slug))
+        .order_by("reported_at", direction=firestore.Query.DESCENDING)
+        .limit(1)
+    )
+    for snap in inc_q.stream():
+        out["newest_incident_at"] = (snap.to_dict() or {}).get("reported_at")
+        break
+    ext_q = (
+        db.collection("extractions")
+        .where(filter=FieldFilter("city", "==", slug))
+        .order_by("reported_at", direction=firestore.Query.DESCENDING)
+        .limit(1)
+    )
+    for snap in ext_q.stream():
+        out["newest_extraction_at"] = (snap.to_dict() or {}).get("reported_at")
+        break
+    rel = 0
+    promoted = 0
+    # Promotion rate is a ratio over the last `hours`; a 1500-doc sample is
+    # plenty representative and bounds the read cost for high-volume cities
+    # (this query was up to 5000 docs/call and is hit on every city-stats
+    # request). Limit only — no extra order_by, to reuse the existing
+    # (city, reported_at) index exactly and avoid a new-index requirement.
+    ext_recent = (
+        db.collection("extractions")
+        .where(filter=FieldFilter("city", "==", slug))
+        .where(filter=FieldFilter("reported_at", ">=", floor))
+        .limit(1500)
+    )
+    for snap in ext_recent.stream():
+        data = snap.to_dict() or {}
+        if not data.get("llm_relevant"):
+            continue
+        rel += 1
+        if data.get("incident_id"):
+            promoted += 1
+    out["llm_relevant_6h"] = rel
+    out["promoted_6h"] = promoted
+    out["promotion_rate_6h"] = (promoted / rel) if rel else None
     return out
 
 
@@ -593,11 +683,20 @@ def seed_from_json(seed_path: str, s_base_lookup: dict[str, float]) -> int:
 
 def incident_count() -> int:
     db = _ensure_client()
-    try:
-        agg = db.collection("incidents").count().get()
-        return agg[0][0].value
-    except Exception:
-        return -1
+    agg = db.collection("incidents").count().get()
+    return agg[0][0].value
+
+
+def city_incident_count(slug: str) -> int:
+    """Count incidents for one city and propagate datastore failures."""
+    db = _ensure_client()
+    agg = (
+        db.collection("incidents")
+        .where(filter=FieldFilter("city", "==", slug))
+        .count()
+        .get()
+    )
+    return agg[0][0].value
 
 
 def count_city_incidents(slug: str, since_iso: Optional[str] = None) -> int:
@@ -608,9 +707,9 @@ def count_city_incidents(slug: str, since_iso: Optional[str] = None) -> int:
     """
     db = _ensure_client()
     try:
-        query = db.collection("incidents").where("city", "==", slug)
+        query = db.collection("incidents").where(filter=FieldFilter("city", "==", slug))
         if since_iso:
-            query = query.where("reported_at", ">=", since_iso)
+            query = query.where(filter=FieldFilter("reported_at", ">=", since_iso))
         agg = query.count().get()
         return agg[0][0].value
     except Exception:
@@ -637,13 +736,13 @@ def count_city_incidents_filtered(
     """
     db = _ensure_client()
     try:
-        query = db.collection("incidents").where("city", "==", slug)
+        query = db.collection("incidents").where(filter=FieldFilter("city", "==", slug))
         if severity_category:
-            query = query.where("severity_category", "==", severity_category)
+            query = query.where(filter=FieldFilter("severity_category", "==", severity_category))
         if since_iso:
-            query = query.where("reported_at", ">=", since_iso)
+            query = query.where(filter=FieldFilter("reported_at", ">=", since_iso))
         if until_iso:
-            query = query.where("reported_at", "<", until_iso)
+            query = query.where(filter=FieldFilter("reported_at", "<", until_iso))
         agg = query.count().get()
         return agg[0][0].value
     except Exception:
@@ -670,43 +769,60 @@ def find_latest_city_incidents(
 
     Reuses the (city, severity_category, reported_at) composite index already
     maintained for :func:`count_city_incidents_filtered`, so no new index is
-    required. Returns [] on error so the caller can degrade gracefully.
+    required. Datastore failures propagate so callers can distinguish an
+    unavailable query from a valid empty result.
     """
     if not slug:
         return []
     db = _ensure_client()
     rows: list[dict] = []
-    try:
-        query = db.collection("incidents").where("city", "==", slug)
-        if severity_category:
-            query = query.where("severity_category", "==", severity_category)
-        if since_iso:
-            query = query.where("reported_at", ">=", since_iso)
-        if before_iso:
-            query = query.where("reported_at", "<", before_iso)
-        query = query.order_by(
-            "reported_at", direction=firestore.Query.DESCENDING
-        ).limit(int(limit))
-        for doc in query.stream():
-            row = _doc_to_row(doc.id, doc.to_dict() or {})
-            if row.get("inhibitor_status") == "blocked":
-                continue
-            if row.get("hidden") is True:
-                continue
-            rows.append(row)
-    except Exception:
-        pass
+    query = db.collection("incidents").where(filter=FieldFilter("city", "==", slug))
+    if severity_category:
+        query = query.where(filter=FieldFilter("severity_category", "==", severity_category))
+    if since_iso:
+        query = query.where(filter=FieldFilter("reported_at", ">=", since_iso))
+    if before_iso:
+        query = query.where(filter=FieldFilter("reported_at", "<", before_iso))
+    query = query.order_by(
+        "reported_at", direction=firestore.Query.DESCENDING
+    ).limit(int(limit))
+    for doc in query.stream():
+        row = _doc_to_row(doc.id, doc.to_dict() or {})
+        if row.get("inhibitor_status") == "blocked":
+            continue
+        if row.get("hidden") is True:
+            continue
+        rows.append(row)
     return rows
 
 
 def inhibitor_stats() -> dict:
     db = _ensure_client()
     stats: dict[str, int] = {}
-    try:
-        for status in ["passed", "blocked"]:
-            agg = db.collection("incidents").where("inhibitor_status", "==", status).count().get()
-            if agg:
-                stats[status] = agg[0][0].value
-    except Exception:
-        pass
+    for status in ["passed", "blocked"]:
+        agg = (
+            db.collection("incidents")
+            .where(filter=FieldFilter("inhibitor_status", "==", status))
+            .count()
+            .get()
+        )
+        if agg:
+            stats[status] = agg[0][0].value
+    return stats
+
+
+def city_inhibitor_stats(slug: str) -> dict:
+    """Return inhibitor counts for one city, never a cross-city aggregate."""
+    db = _ensure_client()
+    stats: dict[str, int] = {}
+    for status in ["passed", "blocked"]:
+        agg = (
+            db.collection("incidents")
+            .where(filter=FieldFilter("city", "==", slug))
+            .where(filter=FieldFilter("inhibitor_status", "==", status))
+            .count()
+            .get()
+        )
+        if agg:
+            stats[status] = agg[0][0].value
     return stats

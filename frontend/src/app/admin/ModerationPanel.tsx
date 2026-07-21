@@ -57,7 +57,7 @@ export default function ModerationPanel({ onBack }: Props) {
           backdropFilter: "blur(12px)",
         }}
       >
-        <button
+        <button type="button"
           onClick={onBack}
           className="p-1.5 rounded-lg transition-colors hover:bg-white/5"
           style={{ color: "rgba(255,255,255,0.7)" }}
@@ -301,6 +301,7 @@ function FeedbackTab() {
               <div className="mt-2 flex items-center gap-2">
                 <select
                   value={row.status}
+                  aria-label={`Status for ${row.kind} feedback`}
                   onChange={(e) => void setStatus(row, e.target.value as FeedbackStatus)}
                   disabled={busyIds.has(row.id)}
                   className="px-2 py-1 rounded text-[11px] disabled:opacity-50"
@@ -339,4 +340,3 @@ function FeedbackTab() {
     </div>
   );
 }
-

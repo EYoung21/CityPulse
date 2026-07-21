@@ -49,7 +49,7 @@ export default function SafetyScoreCard({ lat, lng, incidents, onClose }: Props)
               {result.riskLevel} Risk Area
             </span>
           </div>
-          <button
+          <button type="button"
             onClick={onClose}
             className="p-1 -m-1"
             style={{ color: "var(--panel-text-muted)" }}

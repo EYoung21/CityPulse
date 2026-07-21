@@ -1,5 +1,6 @@
 import { ImageResponse } from "next/og";
 import { NextRequest } from "next/server";
+import { trustedRequestOrigin } from "@/lib/request-origin";
 
 export const runtime = "edge";
 
@@ -48,15 +49,18 @@ function relTime(iso: string): string {
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const title = searchParams.get("title")?.slice(0, 120) || "Live Safety Map";
-  const category = searchParams.get("category") || "";
+  const category = searchParams.get("category")?.slice(0, 64) || "";
   const location = searchParams.get("location")?.slice(0, 80) || "";
-  const time = searchParams.get("time") || "";
-  const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
+  const time = searchParams.get("time")?.slice(0, 64) || "";
+  const cityName = (process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia").slice(0, 100);
 
   const accent = SEVERITY_COLOR[category] || "#3b82f6";
   const catLabel = category ? categoryLabel(category) : "CityPulse";
   const timeLabel = time ? relTime(time) : "";
-  const logoUrl = new URL("/logo.png", req.url).toString();
+  const logoUrl = new URL(
+    "/logo.png",
+    trustedRequestOrigin(req.headers.get("host")),
+  ).toString();
 
   return new ImageResponse(
     (

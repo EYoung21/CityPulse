@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   MapPin,
   Footprints,
@@ -53,6 +53,15 @@ import OptimizeOrderButton from "@/components/OptimizeOrderButton";
 import { Reorder, useDragControls } from "framer-motion";
 import { GripVertical } from "lucide-react";
 
+function activateDirectionSuggestion(
+  event: ReactKeyboardEvent<HTMLButtonElement>,
+  activate: () => void,
+) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  activate();
+}
+
 /** A single draggable stop row. Lives outside DirectionsPanel so each
  *  row owns its own `useDragControls()` hook (calling hooks inside a
  *  loop would violate the rules of hooks). The grip handle on the left
@@ -92,6 +101,7 @@ function DraggableStopRow({
       </button>
       <input
         type="text"
+        aria-label={`Stop ${String.fromCharCode(66 + idx)}`}
         value={stop.query}
         onChange={(e) => onChange(e.target.value)}
         onFocus={onFocus}
@@ -103,7 +113,7 @@ function DraggableStopRow({
           color: "var(--panel-text)",
         }}
       />
-      <button
+      <button type="button"
         onClick={onRemove}
         className="p-1.5 rounded-lg self-center"
         style={{ color: "var(--panel-text-muted)" }}
@@ -411,7 +421,7 @@ export default function DirectionsPanel({
     destLoc ? { lat: destLoc.lat, lng: destLoc.lng } : null,
     stopLocs
   );
-  const routeTip = useMemo(() => getRandomCityPulseTip(), [routeRequestKey]);
+  const routeTip = useMemo(() => getRandomCityPulseTip(), []);
 
   const { destinations: savedDests, canSave, addDestination } = useSavedDestinations();
 
@@ -635,7 +645,7 @@ export default function DirectionsPanel({
     })();
 
     return () => controller.abort();
-  }, [routeRequestKey, startNavBusy, onRoutesChange, updateSelectedOptionId]);
+  }, [routeRequestKey, avoidTraffic, startNavBusy, onRoutesChange, updateSelectedOptionId]);
 
   const swapLocations = () => {
     const tmpQ = originQuery;
@@ -704,31 +714,33 @@ export default function DirectionsPanel({
     const primary = parts[0].trim();
     const secondary = parts.slice(1, 3).map((p) => p.trim()).join(", ");
     return (
-      <div
+      <button
+        type="button"
         key={i}
         onClick={onSelect}
+        onKeyDown={(event) => activateDirectionSuggestion(event, onSelect)}
         className="w-full text-left px-4 py-3 flex items-start gap-3 last:border-0 transition-colors cursor-pointer"
         style={{ borderBottom: "1px solid var(--panel-border)" }}
         onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
         onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
       >
-        <div
+        <span
           className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5"
           style={{ background: "var(--panel-input-bg)" }}
         >
           <MapPin className="w-4 h-4" style={{ color: "var(--panel-text-muted)" }} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium truncate" style={{ color: "var(--panel-text)" }}>
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium truncate" style={{ color: "var(--panel-text)" }}>
             {primary}
-          </p>
+          </span>
           {secondary && (
-            <p className="text-xs truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
+            <span className="block text-xs truncate mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
               {secondary}
-            </p>
+            </span>
           )}
-        </div>
-      </div>
+        </span>
+      </button>
     );
   };
 
@@ -739,6 +751,8 @@ export default function DirectionsPanel({
         style={{ borderBottom: "1px solid var(--panel-border)" }}
       >
         <button
+          type="button"
+          aria-label="Back to search"
           onClick={onBack}
           className="p-1.5 rounded-lg transition-colors"
           style={{ color: "var(--panel-text-secondary)" }}
@@ -758,7 +772,7 @@ export default function DirectionsPanel({
           const active = activeMode === m.id;
           const eta = modeEtas[m.id];
           return (
-            <button
+            <button type="button"
               key={m.id}
               onClick={() => setActiveMode(m.id)}
               className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition-all border-b-2 ${
@@ -854,6 +868,7 @@ export default function DirectionsPanel({
             <div className="relative">
               <input
                 type="text"
+                aria-label="Starting point"
                 value={originQuery}
                 onChange={(e) => {
                   setOriginQuery(e.target.value);
@@ -876,6 +891,8 @@ export default function DirectionsPanel({
               />
               {originLoc && (
                 <button
+                  type="button"
+                  aria-label="Clear starting point"
                   onClick={() => {
                     setOriginLoc(null);
                     setOriginQuery("");
@@ -889,6 +906,8 @@ export default function DirectionsPanel({
               )}
               {!originLoc && gpsStatus === "found" && (
                 <button
+                  type="button"
+                  aria-label="Use my location as starting point"
                   onClick={() => {
                     setOriginLoc({ display_name: "Your location", ...userPos! });
                     setOriginQuery("Your location");
@@ -943,6 +962,7 @@ export default function DirectionsPanel({
             <div className="relative">
               <input
                 type="text"
+                aria-label="Destination"
                 value={destQuery}
                 onChange={(e) => {
                   setDestQuery(e.target.value);
@@ -966,6 +986,8 @@ export default function DirectionsPanel({
               />
               {destLoc && (
                 <button
+                  type="button"
+                  aria-label="Clear destination"
                   onClick={() => {
                     setDestLoc(null);
                     setDestQuery("");
@@ -982,6 +1004,8 @@ export default function DirectionsPanel({
           </div>
 
           <button
+            type="button"
+            aria-label="Swap starting point and destination"
             onClick={swapLocations}
             className="self-start mt-3 p-2 rounded-full transition-colors"
             style={{ color: "var(--panel-text-muted)" }}
@@ -1034,7 +1058,7 @@ export default function DirectionsPanel({
 
         <div className="mt-2 flex items-center gap-1 flex-wrap">
           {stops.length < 5 && (
-            <button
+            <button type="button"
               onClick={() =>
                 setStops([
                   ...stops,
@@ -1295,6 +1319,7 @@ export default function DirectionsPanel({
                 >
                   <input
                     type="datetime-local"
+                    aria-label="Departure time"
                     value={(() => {
                       const d = departAt ?? new Date(Date.now() + 60 * 60_000);
                       // datetime-local needs YYYY-MM-DDTHH:MM in *local* time.
@@ -1429,7 +1454,7 @@ export default function DirectionsPanel({
         })()}
 
         <div className="mt-3 flex gap-2">
-          <button
+          <button type="button"
             onClick={() => void handleStartTrip()}
             disabled={!originLoc || !destLoc || startNavBusy}
             className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-full text-sm font-semibold transition-all ${
@@ -1454,6 +1479,7 @@ export default function DirectionsPanel({
           </button>
           {canSave && destLoc && (
             <button
+              type="button"
               onClick={() => {
                 if (destLoc) {
                   void addDestination(destLoc.display_name.split(",")[0], destLoc.lat, destLoc.lng);
@@ -1483,6 +1509,15 @@ export default function DirectionsPanel({
                     Math.abs(d.lng - destLoc.lng) < 0.0001
                 )
                   ? "Saved"
+                  : "Save destination"
+              }
+              aria-label={
+                savedDests.some(
+                  (d) =>
+                    Math.abs(d.lat - destLoc.lat) < 0.0001 &&
+                    Math.abs(d.lng - destLoc.lng) < 0.0001
+                )
+                  ? "Destination saved"
                   : "Save destination"
               }
             >

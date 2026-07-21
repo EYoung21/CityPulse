@@ -29,6 +29,7 @@
 
 import { setPref } from "@/lib/prefs-sync";
 import type { AvoidZone } from "@/lib/routing";
+import { isCoordinatePair } from "@/lib/geo-validation";
 
 export interface AvoidArea {
   /** Stable random id — used for deletion + cross-device dedupe. */
@@ -67,15 +68,29 @@ export function loadAvoidAreas(): AvoidArea[] {
     if (!raw) return [];
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return [];
-    return arr.filter(
-      (a): a is AvoidArea =>
-        a &&
-        typeof a.id === "string" &&
-        typeof a.lat === "number" &&
-        typeof a.lng === "number" &&
-        typeof a.radiusM === "number" &&
-        typeof a.createdAt === "number"
-    );
+    return arr.slice(0, MAX_AREAS).flatMap((value): AvoidArea[] => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+      const a = value as Record<string, unknown>;
+      const coordinates = [a.lat, a.lng];
+      if (
+        typeof a.id !== "string" ||
+        !a.id ||
+        !isCoordinatePair(coordinates) ||
+        typeof a.radiusM !== "number" ||
+        !Number.isFinite(a.radiusM) ||
+        typeof a.createdAt !== "number" ||
+        !Number.isFinite(a.createdAt) ||
+        a.createdAt <= 0
+      ) return [];
+      return [{
+        id: a.id.slice(0, 500),
+        lat: coordinates[0],
+        lng: coordinates[1],
+        radiusM: Math.max(25, Math.min(1_500, a.radiusM)),
+        label: typeof a.label === "string" ? a.label.slice(0, 60) : undefined,
+        createdAt: a.createdAt,
+      }];
+    });
   } catch {
     return [];
   }
@@ -92,11 +107,13 @@ function persist(next: AvoidArea[]): void {
 export function addAvoidArea(input: {
   lat: number; lng: number; radiusM: number; label?: string;
 }): AvoidArea {
+  const coordinates = [input.lat, input.lng];
+  if (!isCoordinatePair(coordinates)) throw new TypeError("Invalid avoid-area coordinates");
   const entry: AvoidArea = {
     id: genId(),
-    lat: input.lat,
-    lng: input.lng,
-    radiusM: Math.max(25, Math.min(1500, input.radiusM)),
+    lat: coordinates[0],
+    lng: coordinates[1],
+    radiusM: Math.max(25, Math.min(1500, Number.isFinite(input.radiusM) ? input.radiusM : 100)),
     label: input.label?.slice(0, 60),
     createdAt: Date.now(),
   };
@@ -123,7 +140,9 @@ export function updateAvoidArea(id: string, patch: Partial<Pick<AvoidArea, "radi
     a.id === id
       ? {
           ...a,
-          ...(patch.radiusM != null ? { radiusM: Math.max(25, Math.min(1500, patch.radiusM)) } : {}),
+          ...(patch.radiusM != null && Number.isFinite(patch.radiusM)
+            ? { radiusM: Math.max(25, Math.min(1500, patch.radiusM)) }
+            : {}),
           ...(patch.label != null ? { label: patch.label.slice(0, 60) } : {}),
         }
       : a

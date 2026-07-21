@@ -1,4 +1,9 @@
 import { NextResponse } from "next/server";
+import {
+  isCoordinatePair,
+  parseBoundedInteger,
+} from "@/lib/geo-validation";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
 
 /** OpenStreetMap POI proxy.
  *
@@ -33,17 +38,19 @@ const CATEGORIES: Record<string, CategoryDef> = {
   transit:  { key: "transit",  tags: ["public_transport=station", "railway=station"] },
 };
 
-interface OverpassElement {
-  type: "node" | "way" | "relation";
-  id: number;
-  lat?: number;
-  lon?: number;
-  center?: { lat: number; lon: number };
-  tags?: Record<string, string>;
+interface OverpassResponse {
+  elements?: unknown[];
 }
 
-interface OverpassResponse {
-  elements?: OverpassElement[];
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function tagText(tags: Record<string, unknown> | null, key: string, maxLength = 500): string {
+  const value = tags?.[key];
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
 function buildQuery(tags: string[], lat: number, lng: number, radiusM: number): string {
@@ -90,7 +97,7 @@ async function fetchOverpass(query: string, signal?: AbortSignal): Promise<Overp
         lastErr = new Error(`${endpoint} → HTTP ${r.status}`);
         continue;
       }
-      return (await r.json()) as OverpassResponse;
+      return (await readBoundedJsonResponse(r, 4 * 1024 * 1024)) as OverpassResponse;
     } catch (e) {
       lastErr = e;
       continue;
@@ -104,14 +111,8 @@ export async function GET(request: Request) {
   const categoryKey = url.searchParams.get("category") || "";
   const lat = parseFloat(url.searchParams.get("lat") || "");
   const lng = parseFloat(url.searchParams.get("lng") || "");
-  const radius = Math.min(
-    10_000,
-    Math.max(100, parseInt(url.searchParams.get("radius") || "2500", 10))
-  );
-  const limit = Math.min(
-    50,
-    Math.max(1, parseInt(url.searchParams.get("limit") || "25", 10))
-  );
+  const radius = parseBoundedInteger(url.searchParams.get("radius"), 2500, 100, 10_000);
+  const limit = parseBoundedInteger(url.searchParams.get("limit"), 25, 1, 50);
 
   const cat = CATEGORIES[categoryKey];
   if (!cat) {
@@ -120,30 +121,40 @@ export async function GET(request: Request) {
       { status: 400 }
     );
   }
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+  if (!isCoordinatePair([lat, lng])) {
     return NextResponse.json(
-      { error: "lat and lng required (decimal degrees)" },
+      { error: "valid lat and lng required (decimal degrees)" },
       { status: 400 }
     );
   }
 
   try {
-    const data = await fetchOverpass(buildQuery(cat.tags, lat, lng, radius));
-    const results = (data.elements ?? [])
-      .map((el) => {
-        const elLat = el.lat ?? el.center?.lat;
-        const elLng = el.lon ?? el.center?.lon;
-        if (elLat == null || elLng == null) return null;
-        const name = el.tags?.name?.trim() || "";
-        const street = el.tags?.["addr:street"]?.trim() || "";
-        const houseNo = el.tags?.["addr:housenumber"]?.trim() || "";
+    const data = await fetchOverpass(
+      buildQuery(cat.tags, lat, lng, radius),
+      AbortSignal.timeout(20_000)
+    );
+    const elements = Array.isArray(data.elements) ? data.elements.slice(0, 10_000) : [];
+    const results = elements
+      .map((value) => {
+        const el = asRecord(value);
+        if (!el) return null;
+        const center = asRecord(el.center);
+        const tags = asRecord(el.tags);
+        const elLat = el.lat ?? center?.lat;
+        const elLng = el.lon ?? center?.lon;
+        const coordinates: unknown = [elLat, elLng];
+        if (!isCoordinatePair(coordinates)) return null;
+        const [safeLat, safeLng] = coordinates;
+        const name = tagText(tags, "name");
+        const street = tagText(tags, "addr:street");
+        const houseNo = tagText(tags, "addr:housenumber", 50);
         const subtitle = [houseNo, street].filter(Boolean).join(" ") || undefined;
         return {
           name: name || categoryKey,
-          lat: elLat,
-          lng: elLng,
+          lat: safeLat,
+          lng: safeLng,
           subtitle,
-          meters: Math.round(haversineM(lat, lng, elLat, elLng)),
+          meters: Math.round(haversineM(lat, lng, safeLat, safeLng)),
         };
       })
       .filter((x): x is NonNullable<typeof x> => !!x)

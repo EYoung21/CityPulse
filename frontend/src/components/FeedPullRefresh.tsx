@@ -32,6 +32,11 @@ export default function FeedPullRefresh({
     onScroll?.(el.scrollTop < 48);
   }, [onScroll]);
 
+  const setScrollNode = useCallback((el: HTMLDivElement | null) => {
+    scrollRef.current = el;
+    onScrollContainerReady?.(el);
+  }, [onScrollContainerReady]);
+
   const finishRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -56,10 +61,7 @@ export default function FeedPullRefresh({
         )}
       </div>
       <div
-        ref={(el) => {
-          scrollRef.current = el;
-          onScrollContainerReady?.(el);
-        }}
+        ref={setScrollNode}
         className="h-full overflow-y-auto"
         onScroll={handleScroll}
         onTouchStart={(e) => {

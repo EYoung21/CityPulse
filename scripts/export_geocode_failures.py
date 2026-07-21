@@ -28,6 +28,7 @@ if str(REPO) not in sys.path:
 
 from philly_pulse.firestore_store import _ensure_client  # noqa: E402
 from google.cloud import firestore  # noqa: E402
+from google.cloud.firestore_v1.base_query import FieldFilter  # noqa: E402
 
 
 def _parse_args() -> argparse.Namespace:
@@ -50,8 +51,8 @@ def _iter_city(city: str, days: int, page_size: int):
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     base = (
         db.collection("extractions")
-        .where("city", "==", city)
-        .where("reported_at", ">=", cutoff)
+        .where(filter=FieldFilter("city", "==", city))
+        .where(filter=FieldFilter("reported_at", ">=", cutoff))
         .order_by("reported_at", direction=firestore.Query.DESCENDING)
         .limit(page_size)
     )

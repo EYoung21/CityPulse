@@ -33,10 +33,10 @@ import {
   isNearRoute,
   distanceAlongRoute,
   defaultAvoidancePrefs,
+  normalizeAvoidancePrefs,
   SAFEST_ROUTE_ONLY_UI,
   type TransportMode,
   type AvoidancePrefs,
-  type SeverityFloor,
   type ManeuverStep,
 } from "@/lib/routing";
 import type { Incident } from "@/lib/api";
@@ -278,15 +278,7 @@ export default function SearchSidebar({
     try {
       const raw = window.localStorage.getItem("pp:avoid-prefs-v2");
       if (!raw) return defaultAvoidancePrefs();
-      const parsed = JSON.parse(raw) as { leaves?: string[]; minSeverity?: SeverityFloor };
-      return {
-        leaves: new Set(Array.isArray(parsed.leaves) ? parsed.leaves : []),
-        minSeverity:
-          parsed.minSeverity === "any" || parsed.minSeverity === "low" ||
-          parsed.minSeverity === "medium" || parsed.minSeverity === "high"
-            ? parsed.minSeverity
-            : "low",
-      };
+      return normalizeAvoidancePrefs(JSON.parse(raw) as unknown);
     } catch {
       return defaultAvoidancePrefs();
     }
@@ -299,7 +291,11 @@ export default function SearchSidebar({
         // the user across devices when signed in.
         setPref(
           "pp:avoid-prefs-v2",
-          JSON.stringify({ leaves: Array.from(next.leaves), minSeverity: next.minSeverity })
+          JSON.stringify({
+            leaves: Array.from(next.leaves),
+            minSeverity: next.minSeverity,
+            maxAgeHours: next.maxAgeHours,
+          })
         );
       } catch { /* storage full / blocked — non-fatal */ }
     }
@@ -1031,7 +1027,7 @@ export default function SearchSidebar({
                   onPlaceSelected={handlePlaceSelected}
                 />
 
-                <button
+                <button type="button"
                   onClick={() => openDirections()}
                   className="mx-4 mb-2 w-[calc(100%-2rem)] flex items-center gap-3 px-4 py-2.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/15 border border-blue-500/20 transition-all text-sm text-blue-500 font-medium"
                 >
@@ -1144,7 +1140,8 @@ export default function SearchSidebar({
                   </p>
                   <div className="flex h-2 rounded-full overflow-hidden gap-px">
                     {categoryBreakdown.map((cat) => (
-                      <div
+                      <button
+                        type="button"
                         key={cat.label}
                         className="h-full cursor-pointer transition-opacity hover:opacity-80"
                         style={{
@@ -1152,13 +1149,14 @@ export default function SearchSidebar({
                           flexGrow: cat.count,
                         }}
                         title={`${cat.label}: ${cat.count}`}
+                        aria-label={`Filter by ${cat.label}, ${cat.count} incidents`}
                         onClick={() => onToggleCat?.(cat.cats)}
                       />
                     ))}
                   </div>
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5">
                     {categoryBreakdown.map((cat) => (
-                      <button
+                      <button type="button"
                         key={cat.label}
                         className="flex items-center gap-1 text-[9px] transition-opacity hover:opacity-80"
                         style={{ color: "var(--panel-text-secondary)" }}

@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
+import { getFirestore } from "firebase-admin/firestore";
+import { stripeCustomerId } from "@/lib/stripe-pass";
+import { readJsonBody, RequestBodyError } from "@/lib/server-body";
 
 function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -23,8 +26,6 @@ function ensureAdmin() {
 
 export async function POST(req: NextRequest) {
   try {
-    const stripe = getStripe();
-
     // Derive the caller's identity from a verified Firebase ID token.
     // The uid that ends up in Stripe metadata.firebaseUid MUST come from
     // the token, never the request body — otherwise a client could mint
@@ -41,7 +42,7 @@ export async function POST(req: NextRequest) {
     let uid: string;
     let email: string | undefined;
     try {
-      const decoded = await ensureAdmin().verifyIdToken(idToken);
+      const decoded = await ensureAdmin().verifyIdToken(idToken, true);
       uid = decoded.uid;
       email = decoded.email;
     } catch (err) {
@@ -49,7 +50,35 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid or expired token" }, { status: 401 });
     }
 
-    const { plan } = await req.json();
+    // Initialize billing only after authentication. Otherwise a deployment
+    // with missing Stripe configuration turns a normal signed-out request
+    // into a misleading 500 and leaks configuration state ahead of the auth
+    // gate.
+    const stripe = getStripe();
+
+    // Reuse the subscription customer recorded by the webhook. Otherwise each
+    // checkout creates a new Customer, and canceling one subscription can no
+    // longer reliably answer whether the same account has another active one.
+    let existingCustomerId: string | null = null;
+    try {
+      const userSnap = await getFirestore().doc(`users/${uid}`).get();
+      existingCustomerId = stripeCustomerId(userSnap.data()?.stripeCustomerId);
+    } catch (err) {
+      // Billing can still proceed if the optional lookup is temporarily
+      // unavailable; the webhook metadata remains the identity authority.
+      console.warn("Checkout customer lookup failed:", err);
+    }
+
+    let body: { plan?: unknown };
+    try {
+      body = await readJsonBody<{ plan?: unknown }>(req, 16 * 1024);
+    } catch (err) {
+      if (err instanceof RequestBodyError) {
+        return NextResponse.json({ error: err.message }, { status: err.status });
+      }
+      throw err;
+    }
+    const { plan } = body;
 
     // Resolve the Stripe Price ID and Checkout mode for the selected
     // plan. The 3-day pass is the only one-time SKU we sell — it uses
@@ -95,8 +124,12 @@ export async function POST(req: NextRequest) {
       metadata: sessionMetadata,
       ...(isOneTimePass
         ? { payment_intent_data: { metadata: sessionMetadata } }
-        : {}),
-      ...(email ? { customer_email: email } : {}),
+        : { subscription_data: { metadata: sessionMetadata } }),
+      ...(existingCustomerId
+        ? { customer: existingCustomerId }
+        : email
+          ? { customer_email: email }
+          : {}),
     });
 
     return NextResponse.json({ url: session.url });

@@ -18,13 +18,68 @@ export interface TripResumeSnapshot {
   progress: number;
 }
 
+import { isCoordinatePair } from "@/lib/geo-validation";
+
 const KEY = "pp:trip-resume-v1";
 const TTL_MS = 2 * 60 * 60 * 1000; // 2h — past that the user has clearly moved on
+
+function parseLocation(value: unknown): TripResumeSnapshot["origin"] | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const coordinates = [row.lat, row.lng];
+  if (typeof row.display_name !== "string" || !isCoordinatePair(coordinates)) return null;
+  return {
+    display_name: row.display_name.slice(0, 1_000),
+    lat: coordinates[0],
+    lng: coordinates[1],
+  };
+}
+
+function parseSnapshot(value: unknown): TripResumeSnapshot | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const origin = parseLocation(row.origin);
+  const dest = parseLocation(row.dest);
+  if (
+    !origin ||
+    !dest ||
+    typeof row.mode !== "string" ||
+    !row.mode.trim() ||
+    typeof row.startedAt !== "number" ||
+    !Number.isFinite(row.startedAt) ||
+    row.startedAt <= 0 ||
+    row.startedAt > Date.now() + 5 * 60_000
+  ) {
+    return null;
+  }
+  const stops = Array.isArray(row.stops)
+    ? row.stops.slice(0, 10).flatMap((value): TripResumeSnapshot["stops"] => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+        const stop = value as Record<string, unknown>;
+        if (typeof stop.id !== "string" || typeof stop.query !== "string") return [];
+        const loc = stop.loc === null ? null : parseLocation(stop.loc);
+        if (stop.loc !== null && !loc) return [];
+        return [{ id: stop.id.slice(0, 200), query: stop.query.slice(0, 1_000), loc }];
+      })
+    : [];
+  const progress = typeof row.progress === "number" && Number.isFinite(row.progress)
+    ? Math.max(0, Math.min(1, row.progress))
+    : 0;
+  return {
+    origin,
+    dest,
+    stops,
+    mode: row.mode.slice(0, 100),
+    startedAt: row.startedAt,
+    progress,
+  };
+}
 
 export function saveTripSnapshot(snap: TripResumeSnapshot): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(KEY, JSON.stringify(snap));
+    const clean = parseSnapshot(snap);
+    if (clean) window.localStorage.setItem(KEY, JSON.stringify(clean));
   } catch {
     /* storage full / blocked — non-fatal */
   }
@@ -35,8 +90,11 @@ export function loadTripSnapshot(): TripResumeSnapshot | null {
   try {
     const raw = window.localStorage.getItem(KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as TripResumeSnapshot;
-    if (!parsed || typeof parsed.startedAt !== "number") return null;
+    const parsed = parseSnapshot(JSON.parse(raw));
+    if (!parsed) {
+      clearTripSnapshot();
+      return null;
+    }
     if (Date.now() - parsed.startedAt > TTL_MS) {
       // Snapshot is stale — clean up so we don't spam the prompt
       // every page load.
@@ -72,8 +130,12 @@ export function updateTripProgress(progress: number): void {
   try {
     const raw = window.localStorage.getItem(KEY);
     if (!raw) return;
-    const parsed = JSON.parse(raw) as TripResumeSnapshot;
-    parsed.progress = progress;
+    const parsed = parseSnapshot(JSON.parse(raw));
+    if (!parsed) {
+      clearTripSnapshot();
+      return;
+    }
+    parsed.progress = Number.isFinite(progress) ? Math.max(0, Math.min(1, progress)) : parsed.progress;
     window.localStorage.setItem(KEY, JSON.stringify(parsed));
   } catch {
     /* ignore */

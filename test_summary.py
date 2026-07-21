@@ -1,12 +1,17 @@
 import asyncio
-from philly_pulse.server import summary
 from fastapi import Response
+from philly_pulse import server
 
-async def main():
-    try:
-        res = await summary(Response())
-        print(res)
-    except Exception as e:
-        print("ERROR:", type(e), e)
 
-asyncio.run(main())
+def test_empty_city_summary_is_deterministic(monkeypatch) -> None:
+    monkeypatch.setattr(
+        server.store,
+        "list_incidents_for_city",
+        lambda _slug, **_kwargs: [],
+    )
+
+    result = asyncio.run(server.summary(Response(), city="philly"))
+
+    assert result["summary"] == "No recent incidents to summarize."
+    assert result["incident_count"] == 0
+    assert result["meta"]["city"] == "philly"

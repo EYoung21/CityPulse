@@ -14,7 +14,13 @@ import {
 import { getFirestoreDb } from "@/lib/firebase";
 import type { Incident, Extraction, IncidentPageResponse, PreprocessMeta, VariantResult, WhisperMeta } from "@/lib/api";
 import { enrichIncidents } from "@/lib/incident-weights";
+import {
+  normalizeFiniteNumber,
+  normalizeIncidentRecord,
+  normalizeFirestoreTimestamp,
+} from "@/lib/firestore-values";
 import { getCurrentCity } from "@/lib/pulse-cities";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
 
 const COLLECTION = "incidents";
 /** Map + live listener: recent incidents for first paint + live updates. */
@@ -23,76 +29,62 @@ export const MAP_SYNC_LIMIT = 1200;
 export const EXTENDED_HISTORY_PAGE_SIZE = 2000;
 /** Per-query page ceiling (not a session total — paging runs until the window is full). */
 const EXTENDED_HISTORY_MAX_PAGE = 10_000;
+const FIRESTORE_READ_TIMEOUT_MS = 10_000;
+const INCIDENT_CURSOR_SEPARATOR = "\x1f";
 
-function toISOString(val: unknown): string {
-  if (!val) return new Date().toISOString();
-  if (typeof val === "string") {
-    let s = val;
-    // Treat timezone-naive ISO strings as UTC (server stores UTC without Z)
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s) && !s.endsWith("Z") && !/[+-]\d{2}:?\d{2}$/.test(s)) {
-      s += "Z";
+export function getDocsWithDeadline<T>(
+  operation: Promise<T>,
+  signal?: AbortSignal,
+  timeoutMs = FIRESTORE_READ_TIMEOUT_MS,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = () => finish(() => reject(new DOMException("Aborted", "AbortError")));
+    const timeout = window.setTimeout(
+      () => finish(() => reject(new Error("Firestore request timed out"))),
+      timeoutMs,
+    );
+    if (signal?.aborted) {
+      onAbort();
+      return;
     }
-    const d = new Date(s);
-    return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
-  }
-  if (typeof val === "object" && val !== null && "toDate" in val && typeof (val as { toDate: () => Date }).toDate === "function") {
-    return (val as { toDate: () => Date }).toDate().toISOString();
-  }
-  if (typeof val === "object" && val !== null && "seconds" in val) {
-    return new Date((val as { seconds: number }).seconds * 1000).toISOString();
-  }
-  return new Date().toISOString();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    operation.then(
+      (value) => finish(() => resolve(value)),
+      (error) => finish(() => reject(error)),
+    );
+  });
+}
+
+export function encodeIncidentCursor(reportedAt: string, documentIdValue: string): string {
+  return `${reportedAt}${INCIDENT_CURSOR_SEPARATOR}${documentIdValue}`;
+}
+
+export function decodeIncidentCursor(cursor?: string | null): {
+  reportedAt: string;
+  documentId: string;
+} {
+  const raw = (cursor || "").trim();
+  const separatorIndex = raw.indexOf(INCIDENT_CURSOR_SEPARATOR);
+  return separatorIndex >= 0
+    ? {
+        reportedAt: raw.slice(0, separatorIndex),
+        documentId: raw.slice(separatorIndex + INCIDENT_CURSOR_SEPARATOR.length),
+      }
+    : { reportedAt: raw, documentId: "" };
 }
 
 function mapDoc(id: string, data: Record<string, unknown>): Incident {
-  return {
-    id,
-    reported_at: toISOString(data.reported_at),
-    raw_text: String(data.raw_text ?? ""),
-    severity_category: String(data.severity_category ?? ""),
-    s_base: Number(data.s_base ?? 0),
-    location_text:
-      data.location_text === null || data.location_text === undefined
-        ? null
-        : String(data.location_text),
-    lat:
-      data.lat === null || data.lat === undefined ? null : Number(data.lat),
-    lng:
-      data.lng === null || data.lng === undefined ? null : Number(data.lng),
-    confidence: Number(data.confidence ?? 1),
-    geocode_status: String(data.geocode_status ?? "pending"),
-    location_confidence: (["direct", "context", "none"].includes(String(data.location_confidence ?? "none"))
-      ? String(data.location_confidence)
-      : "none") as import("./api").LocationConfidence,
-    inhibitor_status: String(data.inhibitor_status ?? "passed"),
-    inhibitor_reason:
-      data.inhibitor_reason === null || data.inhibitor_reason === undefined
-        ? null
-        : String(data.inhibitor_reason),
-    w_eff: 0,
-    audio_clip:
-      data.audio_clip === null || data.audio_clip === undefined
-        ? null
-        : String(data.audio_clip),
-    audio_url:
-      data.audio_url === null || data.audio_url === undefined
-        ? null
-        : String(data.audio_url),
-    feed_id:
-      data.feed_id === null || data.feed_id === undefined
-        ? null
-        : String(data.feed_id),
-    description:
-      data.description === null || data.description === undefined
-        ? null
-        : String(data.description),
-    hidden: data.hidden === true,
-    // word_timings is kept off the map-sync payload (it was ~73% of it). New
-    // docs carry only the flag; legacy/unmigrated docs may still have it inline.
-    word_timings: Array.isArray(data.word_timings) ? data.word_timings : null,
-    has_word_timings:
-      data.has_word_timings === true || Array.isArray(data.word_timings),
-  };
+  // Firestore document ids are always non-empty, so normalization can only
+  // return null if the SDK hands us a non-object (which d.data() never does).
+  return normalizeIncidentRecord(id, data)!;
 }
 
 /** Cheap accurate total via the server-cached /api/stats/count endpoint.
@@ -115,7 +107,7 @@ export async function fetchIncidentCount(opts: {
   // server can choose to skip the `reported_at` clause entirely.
   const hoursParam = Number.isFinite(opts.hours) ? String(opts.hours) : "all";
   const url = `/api/stats/count?city=${encodeURIComponent(city)}&hours=${hoursParam}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
   // 503: Firestore aggregate index still building — same sentinel as other failures.
   if (res.status === 503) {
     return -1;
@@ -123,8 +115,11 @@ export async function fetchIncidentCount(opts: {
   if (!res.ok) {
     throw new Error(`count endpoint returned ${res.status}`);
   }
-  const data = (await res.json()) as { count: number };
-  return data.count;
+  const raw = await readBoundedJsonResponse(res, 64 * 1024);
+  const count = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>).count
+    : null;
+  return Number.isSafeInteger(count) && (count as number) >= 0 ? count as number : -1;
 }
 
 /** One page of historical incidents in the (sinceISO, cursor?] window.
@@ -161,8 +156,8 @@ export async function fetchExtendedHistoryPage(opts: {
    *  provisioned yet, and we already have `(city, reported_at desc)`
    *  from the live listener which is the index this query DOES use. */
   sinceISO: string | null;
-  /** Previous page's `nextCursor` — ISO string of the last doc in the
-   *  prior page. Omit on the first call. */
+  /** Previous page's opaque `nextCursor` — reported-at timestamp plus
+   *  document ID. Omit on the first call. */
   cursor?: string | null;
   /** Page size; defaults to {@link EXTENDED_HISTORY_PAGE_SIZE}. */
   pageSize?: number;
@@ -178,17 +173,35 @@ export async function fetchExtendedHistoryPage(opts: {
   const clauses = [
     where("city", "==", getCurrentCity().slug),
     orderBy("reported_at", "desc"),
+    orderBy(documentId(), "desc"),
   ];
-  const q = opts.cursor
-    ? query(collection(db, COLLECTION), ...clauses, startAfter(opts.cursor), limitFn(size))
-    : query(collection(db, COLLECTION), ...clauses, limitFn(size));
-  const snap = await getDocs(q);
+  const { reportedAt: cursorAt, documentId: cursorId } = decodeIncidentCursor(
+    opts.cursor,
+  );
+  const q = cursorAt && cursorId
+    ? query(
+        collection(db, COLLECTION),
+        ...clauses,
+        startAfter(cursorAt, cursorId),
+        limitFn(size),
+      )
+    : cursorAt
+      ? query(
+          collection(db, COLLECTION),
+          ...clauses,
+          startAfter(cursorAt),
+          limitFn(size),
+        )
+      : query(collection(db, COLLECTION), ...clauses, limitFn(size));
+  const snap = await getDocsWithDeadline(getDocs(q));
   const list: Incident[] = [];
   let lastReportedAt: string | null = null;
+  let lastDocumentId: string | null = null;
   let crossedCutoff = false;
   snap.forEach((d) => {
     const row = mapDoc(d.id, d.data());
     lastReportedAt = row.reported_at;
+    lastDocumentId = d.id;
     // Stop including rows once we cross the lower bound. We still walk
     // the rest of the page so the cursor advances, but we don't keep
     // rows the user didn't ask for.
@@ -201,7 +214,9 @@ export async function fetchExtendedHistoryPage(opts: {
   // Stop paging when (a) we got a partial page (no more data) OR (b)
   // we walked past the time window.
   const nextCursor =
-    !crossedCutoff && snap.size === size ? lastReportedAt : null;
+    !crossedCutoff && snap.size === size && lastReportedAt && lastDocumentId
+      ? encodeIncidentCursor(lastReportedAt, lastDocumentId)
+      : null;
   return { rows: enrichIncidents(list), nextCursor };
 }
 
@@ -216,7 +231,7 @@ export async function fetchIncidentsSnapshotOnce(): Promise<Incident[]> {
   } catch {
     /* no IndexedDB cache yet */
   }
-  const snap = await getDocs(q);
+  const snap = await getDocsWithDeadline(getDocs(q));
   return incidentsFromSnapshot(snap);
 }
 
@@ -286,9 +301,8 @@ export function shouldRenderIncident(inc: Incident): boolean {
  *
  * Modes:
  *   - "recent": orderBy(reported_at desc) with cursor pagination.
- *     Cursor is the ISO timestamp of the last incident in the previous
- *     page (we use Firestore's `startAfter(value)` since we already
- *     have the doc value, no extra read).
+ *     Cursor contains the ISO timestamp and document ID of the last incident
+ *     in the previous page, so equal timestamps cannot skip records.
  *   - "near": fetches a single 7-day window of recent incidents with
  *     valid coords, sorts client-side by haversine distance, returns
  *     the closest `limit`. No cursor (matches the Python endpoint's
@@ -302,6 +316,7 @@ export async function fetchIncidentPageFromFirestore(opts: {
   nearLat?: number | null;
   nearLng?: number | null;
   since?: string;
+  signal?: AbortSignal;
 }): Promise<IncidentPageResponse> {
   const db = getFirestoreDb();
   const limit = opts.limit ?? 20;
@@ -320,7 +335,7 @@ export async function fetchIncidentPageFromFirestore(opts: {
       orderBy("reported_at", "desc"),
       limitFn(500),
     );
-    const snap = await getDocs(q);
+    const snap = await getDocsWithDeadline(getDocs(q), opts.signal);
     const list: (Incident & { distance_km?: number })[] = [];
     snap.forEach((doc) => {
       const inc = mapDoc(doc.id, doc.data());
@@ -346,19 +361,9 @@ export async function fetchIncidentPageFromFirestore(opts: {
   // `startAfter` through hidden/blocked rows without stalling pagination.
   // We over-fetch raw docs, filter client-side, then still know whether
   // Firestore has more rows when the raw batch fills the cap.
-  const SEP = "\x1f";
-  const rawCursor = (opts.cursor || "").trim();
-  let cursorAt = "";
-  let cursorId = "";
-  if (rawCursor) {
-    const i = rawCursor.indexOf(SEP);
-    if (i >= 0) {
-      cursorAt = rawCursor.slice(0, i);
-      cursorId = rawCursor.slice(i + SEP.length);
-    } else {
-      cursorAt = rawCursor;
-    }
-  }
+  const { reportedAt: cursorAt, documentId: cursorId } = decodeIncidentCursor(
+    opts.cursor,
+  );
 
   const fetchCap = Math.min(120, Math.max(limit + 25, limit * 3));
   const baseConstraintsCompound = [
@@ -375,26 +380,41 @@ export async function fetchIncidentPageFromFirestore(opts: {
     orderBy("reported_at", "desc"),
   ];
   const runLegacy = (after?: string) =>
-    getDocs(
-      after
-        ? query(collection(db, COLLECTION), ...legacy, startAfter(after), limitFn(fetchCap))
-        : query(collection(db, COLLECTION), ...legacy, limitFn(fetchCap))
+    getDocsWithDeadline(
+      getDocs(
+        after
+          ? query(collection(db, COLLECTION), ...legacy, startAfter(after), limitFn(fetchCap))
+          : query(collection(db, COLLECTION), ...legacy, limitFn(fetchCap))
+      ),
+      opts.signal,
     );
 
   try {
     if (cursorAt && cursorId) {
-      snap = await getDocs(
-        query(
-          collection(db, COLLECTION),
-          ...baseConstraintsCompound,
-          startAfter(cursorAt, cursorId),
-          limitFn(fetchCap)
-        )
+      snap = await getDocsWithDeadline(
+        getDocs(
+          query(
+            collection(db, COLLECTION),
+            ...baseConstraintsCompound,
+            startAfter(cursorAt, cursorId),
+            limitFn(fetchCap)
+          )
+        ),
+        opts.signal,
       );
     } else if (cursorAt) {
       snap = await runLegacy(cursorAt);
     } else {
-      snap = await getDocs(query(collection(db, COLLECTION), ...baseConstraintsCompound, limitFn(fetchCap)));
+      snap = await getDocsWithDeadline(
+        getDocs(
+          query(
+            collection(db, COLLECTION),
+            ...baseConstraintsCompound,
+            limitFn(fetchCap),
+          )
+        ),
+        opts.signal,
+      );
     }
   } catch {
     // Missing / building composite index (city, reported_at desc, __name__ desc), or
@@ -419,11 +439,11 @@ export async function fetchIncidentPageFromFirestore(opts: {
   let next: string | null = null;
   if (hasMore) {
     if (hasMoreInBatch && last) {
-      next = `${last.reported_at}${SEP}${last.id}`;
+      next = encodeIncidentCursor(last.reported_at, last.id);
     } else if (lastRaw) {
       const d = lastRaw.data();
-      const at = toISOString(d.reported_at);
-      next = `${at}${SEP}${lastRaw.id}`;
+      const at = normalizeFirestoreTimestamp(d.reported_at);
+      next = encodeIncidentCursor(at, lastRaw.id);
     }
   }
 
@@ -471,7 +491,7 @@ function mapExtraction(id: string, data: Record<string, unknown>): Extraction {
     id,
     feed_id: String(data.feed_id ?? "unknown"),
     raw_text: String(data.raw_text ?? ""),
-    reported_at: toISOString(data.reported_at),
+    reported_at: normalizeFirestoreTimestamp(data.reported_at),
     audio_clip:
       data.audio_clip === null || data.audio_clip === undefined
         ? null
@@ -490,7 +510,7 @@ function mapExtraction(id: string, data: Record<string, unknown>): Extraction {
       data.llm_category === null || data.llm_category === undefined
         ? null
         : String(data.llm_category),
-    llm_confidence: Number(data.llm_confidence ?? 0),
+    llm_confidence: normalizeFiniteNumber(data.llm_confidence, 0, 0, 1),
     llm_location_text:
       data.llm_location_text === null || data.llm_location_text === undefined
         ? null

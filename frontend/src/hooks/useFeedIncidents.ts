@@ -59,6 +59,13 @@ function prependUnique(prev: Incident[], incoming: Incident[]): Incident[] {
   return [...fresh, ...prev];
 }
 
+export function filterIncidentsSince(rows: Incident[], sinceIso?: string): Incident[] {
+  if (!sinceIso) return rows;
+  const boundary = Date.parse(sinceIso);
+  if (!Number.isFinite(boundary)) return rows;
+  return rows.filter((incident) => Date.parse(incident.reported_at) >= boundary);
+}
+
 export interface UseFeedIncidentsOptions {
   citySlug: string;
   mode: FeedMode;
@@ -79,7 +86,7 @@ export function useFeedIncidents({
   const [incidents, setIncidents] = useState<Incident[]>(() => {
     if (typeof window === "undefined") return [];
     const cached = loadCachedIncidents(citySlug);
-    return cached ? cached.incidents.slice(0, pageSize) : [];
+    return cached ? filterIncidentsSince(cached.incidents, sinceIso).slice(0, pageSize) : [];
   });
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
@@ -92,11 +99,25 @@ export function useFeedIncidents({
     return loadCachedIncidents(citySlug)?.savedAt ?? null;
   });
   const [pendingNewCount, setPendingNewCount] = useState(0);
+  const [newIncidentIds, setNewIncidentIds] = useState<Set<string> | undefined>(undefined);
   const abortRef = useRef<AbortController | null>(null);
   const knownIdsRef = useRef<Set<string>>(new Set());
   const newestAtRef = useRef<number>(0);
   const userScrolledDownRef = useRef(false);
   const pendingBufferRef = useRef<Incident[]>([]);
+  const newHighlightTimerRef = useRef<number | null>(null);
+
+  const highlightNew = useCallback((rows: Incident[]) => {
+    if (rows.length === 0) return;
+    setNewIncidentIds(new Set(rows.map((incident) => incident.id)));
+    if (newHighlightTimerRef.current != null) {
+      window.clearTimeout(newHighlightTimerRef.current);
+    }
+    newHighlightTimerRef.current = window.setTimeout(() => {
+      setNewIncidentIds(undefined);
+      newHighlightTimerRef.current = null;
+    }, 10_000);
+  }, []);
 
   const markKnown = useCallback((rows: Incident[]) => {
     for (const inc of rows) knownIdsRef.current.add(inc.id);
@@ -116,12 +137,14 @@ export function useFeedIncidents({
     setCursor(null);
     setHasMore(true);
     setPendingNewCount(0);
+    setNewIncidentIds(undefined);
     pendingBufferRef.current = [];
     userScrolledDownRef.current = false;
 
     const cached = loadCachedIncidents(citySlug);
-    if (cached && cached.incidents.length > 0) {
-      const slice = cached.incidents.slice(0, pageSize);
+    const cachedRows = cached ? filterIncidentsSince(cached.incidents, sinceIso) : [];
+    if (cached && cachedRows.length > 0) {
+      const slice = cachedRows.slice(0, pageSize);
       setIncidents(slice);
       knownIdsRef.current = new Set(slice.map((i) => i.id));
       const top = slice[0];
@@ -223,15 +246,22 @@ export function useFeedIncidents({
     if (pending.length > 0) {
       setIncidents((prev) => prependUnique(prev, pending));
       setLastUpdatedAt(Date.now());
+      highlightNew(pending);
     }
     pendingBufferRef.current = [];
     setPendingNewCount(0);
     userScrolledDownRef.current = false;
-  }, []);
+  }, [highlightNew]);
 
   const onScrollNearTop = useCallback((nearTop: boolean) => {
     userScrolledDownRef.current = !nearTop;
-    if (nearTop) setPendingNewCount(0);
+    if (nearTop) acknowledgeNew();
+  }, [acknowledgeNew]);
+
+  useEffect(() => () => {
+    if (newHighlightTimerRef.current != null) {
+      window.clearTimeout(newHighlightTimerRef.current);
+    }
   }, []);
 
   useEffect(() => {
@@ -252,14 +282,15 @@ export function useFeedIncidents({
       markKnown(fresh);
       if (userScrolledDownRef.current) {
         pendingBufferRef.current = prependUnique(pendingBufferRef.current, fresh);
-        setPendingNewCount((n) => n + fresh.length);
+        setPendingNewCount(pendingBufferRef.current.length);
       } else {
         setIncidents((prev) => prependUnique(prev, fresh));
         setLastUpdatedAt(Date.now());
+        highlightNew(fresh);
       }
     });
     return unsub;
-  }, [enableLive, markKnown, mode, sinceIso]);
+  }, [enableLive, highlightNew, markKnown, mode, sinceIso]);
 
   const lastUpdatedLabel = useMemo(() => {
     if (!lastUpdatedAt) return null;
@@ -284,6 +315,7 @@ export function useFeedIncidents({
     lastUpdatedAt,
     lastUpdatedLabel,
     pendingNewCount,
+    newIncidentIds,
     acknowledgeNew,
     onScrollNearTop,
   };

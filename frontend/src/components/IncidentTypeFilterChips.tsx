@@ -44,6 +44,8 @@ export default function IncidentTypeFilterChips({
       <button
         type="button"
         onClick={() => onActiveCatsChange(new Set())}
+        aria-pressed={activeCats.size === 0}
+        aria-label={`Show all incident types${incidentsForCounts ? `, ${incidentsForCounts.length} incidents` : ""}`}
         className="px-2.5 py-1 rounded-full text-[11px] font-semibold uppercase tracking-wider transition-colors shrink-0"
         style={
           activeCats.size === 0
@@ -68,6 +70,8 @@ export default function IncidentTypeFilterChips({
           <button
             key={pill.label}
             type="button"
+            aria-pressed={isActive}
+            aria-label={`${pill.label}${n != null ? `, ${n} incident${n === 1 ? "" : "s"}` : ""}`}
             onClick={() =>
               onActiveCatsChange((prev) => toggleCategoryGroupSelection(pill.cats, prev))
             }

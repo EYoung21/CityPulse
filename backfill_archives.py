@@ -169,11 +169,16 @@ def post_transcript_payload(
     timeout = float(os.environ.get("BACKFILL_INGEST_TIMEOUT_SEC", "120"))
     last_err = ""
 
-    # Authenticate to the ingest endpoint when the shared secret is configured.
-    # Absent the env var we send no auth header, matching the server's
-    # allow-when-unset rollout behaviour.
+    # The ingest API fails closed. Missing credentials are a local
+    # configuration error, not a transient 503 worth retrying eight times.
     ingest_secret = os.environ.get("PULSE_INGEST_SECRET")
-    headers = {"Authorization": f"Bearer {ingest_secret}"} if ingest_secret else None
+    if not ingest_secret:
+        last_err = "PULSE_INGEST_SECRET is required"
+        print(f"    [INGEST CONFIG] {last_err}", flush=True)
+        if deadletter_on_failure:
+            _append_failed_ingest(payload, last_err)
+        return False
+    headers = {"Authorization": f"Bearer {ingest_secret}"}
 
     for attempt in range(1, max_attempts + 1):
         try:
@@ -407,7 +412,7 @@ def get_broadcastify_session() -> requests.Session:
     })
 
     login_url = "https://www.broadcastify.com/login/"
-    session.get(login_url)
+    session.get(login_url, timeout=30)
     pause_login()
 
     login_data = {
@@ -416,7 +421,7 @@ def get_broadcastify_session() -> requests.Session:
         "action": "auth",
         "redirect": "https://www.broadcastify.com",
     }
-    resp = session.post(login_url, data=login_data, allow_redirects=True)
+    resp = session.post(login_url, data=login_data, allow_redirects=True, timeout=30)
     resp.raise_for_status()
 
     if "bcfyuser1" not in session.cookies.get_dict():

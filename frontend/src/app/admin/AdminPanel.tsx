@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import Image from "next/image";
 import {
   ArrowLeft,
   Play,
@@ -31,9 +32,22 @@ import { maybeIdToken } from "@/lib/api";
 import type { Extraction, VariantResult } from "@/lib/api";
 import AuthBar from "@/components/AuthBar";
 import { apiUrl } from "@/lib/public-api-base";
+import { requestAdminTicket } from "@/lib/admin-tickets";
+import { readBoundedJsonResponse, readBoundedResponseBytes } from "@/lib/upstream-response";
 
 interface Props {
   onBack: () => void;
+}
+
+const MAX_ADMIN_WAVEFORM_AUDIO_BYTES = 64 * 1024 * 1024;
+
+async function readAdminErrorDetail(response: Response): Promise<string> {
+  const raw = await readBoundedJsonResponse(response, 64 * 1024).catch(() => null);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "Request failed";
+  const detail = (raw as Record<string, unknown>).detail;
+  return typeof detail === "string" && detail.trim()
+    ? detail.trim().slice(0, 1_000)
+    : "Request failed";
 }
 
 const TIME_FILTERS = [
@@ -55,6 +69,7 @@ function confidenceColor(c: number): string {
 
 // ── Live Audio Header ────────────────────────────────────────────────
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- retained for the dormant live-audio admin view
 function LiveAudioHeader({ feed }: { feed: FeedInfo }) {
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -62,16 +77,18 @@ function LiveAudioHeader({ feed }: { feed: FeedInfo }) {
 
   const toggle = async () => {
     if (!audioRef.current) {
-      const token = await maybeIdToken();
+      const ticket = await requestAdminTicket("stream", feed.feed_id);
+      if (!ticket) return;
       const a = new Audio(
         apiUrl(
-          `/api/admin/stream/${feed.feed_id}${
-            token ? `?token=${encodeURIComponent(token)}` : ""
-          }`
+          `/api/admin/stream/${feed.feed_id}?ticket=${encodeURIComponent(ticket)}`
         )
       );
       a.addEventListener("ended", () => setPlaying(false));
-      a.addEventListener("error", () => setPlaying(false));
+      a.addEventListener("error", () => {
+        setPlaying(false);
+        audioRef.current = null;
+      });
       audioRef.current = a;
     }
     if (playing) {
@@ -114,13 +131,15 @@ function LiveAudioHeader({ feed }: { feed: FeedInfo }) {
 
       <div className="ml-auto flex items-center gap-2">
         <button
+          type="button"
           onClick={toggleMute}
+          aria-label={muted ? `Unmute ${feed.label}` : `Mute ${feed.label}`}
           className="p-1.5 rounded opacity-60 hover:opacity-100 transition-opacity"
           style={{ color: "var(--panel-text-muted)" }}
         >
           {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
         </button>
-        <button
+        <button type="button"
           onClick={toggle}
           className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all ${
             playing
@@ -201,27 +220,40 @@ function AudioPlayer({
   const accent = accentColor || "#3b82f6";
   const audioUrl = clipId ? apiUrl(`/api/${endpoint}/${clipId}`) : null;
 
-  const fetchWaveform = useCallback(() => {
+  const authorizedAudioUrl = useCallback(async (): Promise<string | null> => {
+    if (!audioUrl || !clipId) return null;
+    if (endpoint !== "audio-raw") return audioUrl;
+    const ticket = await requestAdminTicket("raw_audio", clipId);
+    return ticket ? `${audioUrl}?ticket=${encodeURIComponent(ticket)}` : null;
+  }, [audioUrl, clipId, endpoint]);
+
+  const fetchWaveform = useCallback(async () => {
     if (!audioUrl || waveformFetched.current) return;
     waveformFetched.current = true;
-    fetch(audioUrl)
+    const readableUrl = await authorizedAudioUrl();
+    if (!readableUrl) {
+      setLoadError(true);
+      return;
+    }
+    fetch(readableUrl, { signal: AbortSignal.timeout(15_000) })
       .then((r) => {
         if (!r.ok) throw new Error(`${r.status}`);
-        return r.arrayBuffer();
+        return readBoundedResponseBytes(r, MAX_ADMIN_WAVEFORM_AUDIO_BYTES);
       })
-      .then((buf) => getAudioContext().decodeAudioData(buf))
+      .then((bytes) => getAudioContext().decodeAudioData(new Uint8Array(bytes).buffer))
       .then((decoded) => {
         setWaveform(computeWaveform(decoded, WAVEFORM_BARS));
         setDuration(decoded.duration);
         setLoaded(true);
       })
       .catch(() => { setLoadError(true); });
-  }, [audioUrl]);
+  }, [audioUrl, authorizedAudioUrl]);
 
-  const ensureAudio = useCallback(() => {
+  const ensureAudio = useCallback(async () => {
     if (ref.current) return ref.current;
-    if (!audioUrl) return null;
-    const a = new Audio(audioUrl);
+    const playableUrl = await authorizedAudioUrl();
+    if (!playableUrl) return null;
+    const a = new Audio(playableUrl);
     a.addEventListener("loadedmetadata", () => {
       setDuration(a.duration);
       setLoaded(true);
@@ -237,17 +269,17 @@ function AudioPlayer({
     });
     ref.current = a;
     return a;
-  }, [audioUrl]);
+  }, [authorizedAudioUrl]);
 
-  const tick = useCallback(() => {
+  const tick = useCallback(function updateAudioTime() {
     if (ref.current) setCurrentTime(ref.current.currentTime);
-    animRef.current = requestAnimationFrame(tick);
+    animRef.current = requestAnimationFrame(updateAudioTime);
   }, []);
 
-  const togglePlay = () => {
-    const a = ensureAudio();
+  const togglePlay = async () => {
+    const a = await ensureAudio();
     if (!a) return;
-    fetchWaveform();
+    void fetchWaveform();
     if (playing) {
       a.pause();
       cancelAnimationFrame(animRef.current);
@@ -259,10 +291,10 @@ function AudioPlayer({
     }
   };
 
-  const restart = () => {
-    const a = ensureAudio();
+  const restart = async () => {
+    const a = await ensureAudio();
     if (!a) return;
-    fetchWaveform();
+    void fetchWaveform();
     a.currentTime = 0;
     setCurrentTime(0);
     if (!playing) {
@@ -272,12 +304,30 @@ function AudioPlayer({
     }
   };
 
-  const seek = (e: React.MouseEvent<HTMLDivElement>) => {
-    const a = ensureAudio();
-    if (!a || !duration) return;
+  const seek = async (e: React.MouseEvent<HTMLDivElement>) => {
+    // React only guarantees currentTarget during synchronous dispatch; capture
+    // geometry before awaiting a raw-audio ticket.
     const rect = e.currentTarget.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const clientX = e.clientX;
+    const a = await ensureAudio();
+    if (!a || !duration) return;
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     a.currentTime = ratio * duration;
+    setCurrentTime(a.currentTime);
+  };
+
+  const seekWithKeyboard = async (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+    e.preventDefault();
+    const a = await ensureAudio();
+    const total = duration || a?.duration || 0;
+    if (!a || !total) return;
+    const next =
+      e.key === "Home" ? 0 :
+      e.key === "End" ? total :
+      e.key === "ArrowLeft" ? currentTime - 5 :
+      currentTime + 5;
+    a.currentTime = Math.max(0, Math.min(total, next));
     setCurrentTime(a.currentTime);
   };
 
@@ -299,7 +349,9 @@ function AudioPlayer({
     <div className="flex items-center gap-1.5 w-full min-w-0">
       {/* Restart */}
       <button
+        type="button"
         onClick={restart}
+        aria-label={`Restart ${label}`}
         className="shrink-0 p-0.5 rounded hover:bg-white/10 transition-colors"
         style={{ color: "var(--panel-text-muted)" }}
         title="Restart"
@@ -311,7 +363,9 @@ function AudioPlayer({
 
       {/* Play / Pause */}
       <button
+        type="button"
         onClick={togglePlay}
+        aria-label={playing ? `Pause ${label}` : `Play ${label}`}
         className="shrink-0 p-1 rounded transition-all"
         style={{
           background: playing ? accent : "rgba(255,255,255,0.05)",
@@ -328,6 +382,14 @@ function AudioPlayer({
           className="h-6 cursor-pointer relative group flex items-end gap-px rounded"
           style={{ background: "rgba(255,255,255,0.03)" }}
           onClick={seek}
+          onKeyDown={seekWithKeyboard}
+          role="slider"
+          tabIndex={0}
+          aria-label={`Seek ${label}`}
+          aria-valuemin={0}
+          aria-valuemax={Math.max(0, Math.round(duration))}
+          aria-valuenow={Math.max(0, Math.round(currentTime))}
+          aria-valuetext={`${formatTime(currentTime)} of ${formatTime(duration)}`}
         >
           {waveform ? (
             waveform.map((amp, i) => {
@@ -391,6 +453,7 @@ function AudioPlayer({
 
 // ── Variant Column ──────────────────────────────────────────────────
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- retained for the dormant prompt-comparison admin view
 function VariantColumn({ v }: { v: VariantResult }) {
   const meta = v.preprocess_meta;
   const wm = v.whisper_meta;
@@ -470,7 +533,7 @@ function RetranscribeForm({
 
   if (!open) {
     return (
-      <button
+      <button type="button"
         onClick={() => setOpen(true)}
         className="text-[10px] font-medium px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-400 hover:bg-cyan-500/25 transition-colors"
       >
@@ -497,10 +560,10 @@ function RetranscribeForm({
           ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
         },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(180_000),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: "Request failed" }));
-        alert(`Re-transcribe failed: ${err.detail || res.status}`);
+        alert(`Re-transcribe failed: ${await readAdminErrorDetail(res) || res.status}`);
       } else {
         onDone();
       }
@@ -518,7 +581,12 @@ function RetranscribeForm({
     >
       <div className="flex items-center gap-2 text-[10px] font-semibold uppercase" style={{ color: "var(--panel-text-muted)" }}>
         Custom Re-transcription
-        <button onClick={() => setOpen(false)} className="ml-auto text-gray-500 hover:text-gray-300">
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          aria-label="Close custom re-transcription"
+          className="ml-auto text-gray-500 hover:text-gray-300"
+        >
           <XCircle className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -567,7 +635,7 @@ function RetranscribeForm({
           />
         </label>
       </div>
-      <button
+      <button type="button"
         onClick={submit}
         disabled={running}
         className="w-full py-1.5 rounded-lg text-[11px] font-medium bg-cyan-500 text-white hover:bg-cyan-600 transition-colors disabled:opacity-50"
@@ -587,12 +655,21 @@ function VerifyPlayButton({ extraction }: { extraction: Extraction }) {
 
   const clipId = extraction.variants?.[0]?.audio_clip ?? extraction.raw_audio_clip;
   const endpoint = extraction.variants?.[0]?.audio_clip ? "audio" : "audio-raw";
-  const audioUrl = clipId ? apiUrl(`/api/${endpoint}/${clipId}`) : null;
 
-  const toggle = () => {
-    if (!audioUrl) { setError(true); return; }
+  const toggle = async () => {
+    if (!clipId) { setError(true); return; }
     if (!audioRef.current) {
-      const a = new Audio(audioUrl);
+      const baseUrl = apiUrl(`/api/${endpoint}/${clipId}`);
+      const ticket = endpoint === "audio-raw"
+        ? await requestAdminTicket("raw_audio", clipId)
+        : null;
+      if (endpoint === "audio-raw" && !ticket) {
+        setError(true);
+        return;
+      }
+      const a = new Audio(
+        ticket ? `${baseUrl}?ticket=${encodeURIComponent(ticket)}` : baseUrl
+      );
       a.addEventListener("ended", () => setPlaying(false));
       a.addEventListener("error", () => { setPlaying(false); setError(true); });
       audioRef.current = a;
@@ -612,8 +689,8 @@ function VerifyPlayButton({ extraction }: { extraction: Extraction }) {
   if (!clipId) return null;
 
   return (
-    <button
-      onClick={toggle}
+    <button type="button"
+      onClick={() => void toggle()}
       className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
         error
           ? "bg-red-500/15 text-red-400"
@@ -857,7 +934,7 @@ function ExtractionCard({
 
             <div className="ml-auto flex items-center gap-2">
               <VerifyPlayButton extraction={extraction} />
-              <button
+              <button type="button"
                 onClick={runPredict}
                 disabled={predicting}
                 className="px-2 py-0.5 rounded text-[10px] font-medium bg-purple-500/15 text-purple-400 hover:bg-purple-500/25 transition-colors disabled:opacity-50"
@@ -872,7 +949,7 @@ function ExtractionCard({
               <Brain className="w-3 h-3 text-gray-500" />
               <span style={{ color: "var(--panel-text-muted)" }}>No LLM prediction yet</span>
             </div>
-            <button
+            <button type="button"
               onClick={runPredict}
               disabled={predicting}
               className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium bg-purple-500 text-white hover:bg-purple-600 transition-colors disabled:opacity-50"
@@ -896,7 +973,7 @@ function ExtractionCard({
           <Map className="w-3 h-3" style={{ color: "var(--panel-text-muted)" }} />
           <span style={{ color: "var(--panel-text-muted)" }}>Map:</span>
 
-          <button
+          <button type="button"
             onClick={async () => {
               setTogglingVis(true);
               try {
@@ -908,8 +985,14 @@ function ExtractionCard({
                     ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
                   },
                   body: JSON.stringify({ hidden: !hiddenOnMap }),
+                  signal: AbortSignal.timeout(15_000),
                 });
-                if (res.ok) setHiddenOnMap(!hiddenOnMap);
+                if (!res.ok) {
+                  throw new Error(await readAdminErrorDetail(res));
+                }
+                setHiddenOnMap(!hiddenOnMap);
+              } catch (err) {
+                alert(`Visibility update failed: ${err instanceof Error ? err.message : err}`);
               } finally {
                 setTogglingVis(false);
               }
@@ -925,7 +1008,7 @@ function ExtractionCard({
             {togglingVis ? "..." : hiddenOnMap ? "Hidden · Show on Map" : "Visible on Map"}
           </button>
 
-          <button
+          <button type="button"
             onClick={async () => {
               if (!confirm("Permanently delete this incident from the map?")) return;
               try {
@@ -933,9 +1016,15 @@ function ExtractionCard({
                 const res = await fetch(apiUrl(`/api/admin/incident/${extraction.incident_id}`), {
                   method: "DELETE",
                   headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
+                  signal: AbortSignal.timeout(15_000),
                 });
-                if (res.ok) setIncidentDeleted(true);
-              } catch { /* ignore */ }
+                if (!res.ok) {
+                  throw new Error(await readAdminErrorDetail(res));
+                }
+                setIncidentDeleted(true);
+              } catch (err) {
+                alert(`Delete failed: ${err instanceof Error ? err.message : err}`);
+              }
             }}
             className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all"
           >
@@ -957,7 +1046,7 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
+    const loadingTimer = window.setTimeout(() => setLoading(true), 0);
     const now = new Date();
     const since =
       timeFilter === 0
@@ -969,13 +1058,20 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
       since,
       now,
       (data) => {
+        window.clearTimeout(loadingTimer);
         setExtractions(data);
         setLoading(false);
       },
-      () => setLoading(false)
+      () => {
+        window.clearTimeout(loadingTimer);
+        setLoading(false);
+      }
     );
 
-    return unsub;
+    return () => {
+      window.clearTimeout(loadingTimer);
+      unsub();
+    };
   }, [feed.feed_id, timeFilter]);
 
   const visibleExtractions = onMapOnly
@@ -992,10 +1088,10 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
           ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
         },
         body: JSON.stringify({ extraction_id: extractionId }),
+        signal: AbortSignal.timeout(120_000),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: "Request failed" }));
-        alert(`Prediction failed: ${err.detail || res.status}`);
+        alert(`Prediction failed: ${await readAdminErrorDetail(res) || res.status}`);
       }
     } catch (err) {
       alert(`Prediction error: ${err}`);
@@ -1030,7 +1126,7 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
           Range:
         </span>
         {TIME_FILTERS.map((tf) => (
-          <button
+          <button type="button"
             key={tf.label}
             onClick={() => setTimeFilter(tf.hours)}
             className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all whitespace-nowrap ${
@@ -1050,7 +1146,7 @@ function FeedTabContent({ feed }: { feed: FeedInfo }) {
 
         <div className="w-px h-4 mx-1 bg-white/10" />
 
-        <button
+        <button type="button"
           onClick={() => setOnMapOnly((v) => !v)}
           className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium transition-all whitespace-nowrap ${
             onMapOnly
@@ -1110,7 +1206,7 @@ function AllFeedsContent({ feeds }: { feeds: FeedInfo[] }) {
   }, [feeds]);
 
   useEffect(() => {
-    setLoading(true);
+    const loadingTimer = window.setTimeout(() => setLoading(true), 0);
     const now = new Date();
     const since =
       timeFilter === 0
@@ -1121,13 +1217,20 @@ function AllFeedsContent({ feeds }: { feeds: FeedInfo[] }) {
       since,
       now,
       (data) => {
+        window.clearTimeout(loadingTimer);
         setExtractions(data);
         setLoading(false);
       },
-      () => setLoading(false)
+      () => {
+        window.clearTimeout(loadingTimer);
+        setLoading(false);
+      }
     );
 
-    return unsub;
+    return () => {
+      window.clearTimeout(loadingTimer);
+      unsub();
+    };
   }, [timeFilter]);
 
   const visibleExtractions = onMapOnly
@@ -1144,10 +1247,10 @@ function AllFeedsContent({ feeds }: { feeds: FeedInfo[] }) {
           ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
         },
         body: JSON.stringify({ extraction_id: extractionId }),
+        signal: AbortSignal.timeout(120_000),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: "Request failed" }));
-        alert(`Prediction failed: ${err.detail || res.status}`);
+        alert(`Prediction failed: ${await readAdminErrorDetail(res) || res.status}`);
       }
     } catch (err) {
       alert(`Prediction error: ${err}`);
@@ -1182,7 +1285,7 @@ function AllFeedsContent({ feeds }: { feeds: FeedInfo[] }) {
           Range:
         </span>
         {TIME_FILTERS.map((tf) => (
-          <button
+          <button type="button"
             key={tf.label}
             onClick={() => setTimeFilter(tf.hours)}
             className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all whitespace-nowrap ${
@@ -1202,7 +1305,7 @@ function AllFeedsContent({ feeds }: { feeds: FeedInfo[] }) {
 
         <div className="w-px h-4 mx-1 bg-white/10" />
 
-        <button
+        <button type="button"
           onClick={() => setOnMapOnly((v) => !v)}
           className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium transition-all whitespace-nowrap ${
             onMapOnly
@@ -1278,16 +1381,25 @@ function AllFeedsSidebarItem({
       setPlaying(false);
     } else {
       audiosRef.current.forEach((a) => a.pause());
-      const token = await maybeIdToken();
-      const q = token ? `?token=${encodeURIComponent(token)}` : "";
-      const elements = feeds.map((f) => {
-        const a = new Audio(apiUrl(`/api/admin/stream/${f.feed_id}${q}`));
+      const ticketRows = await Promise.all(
+        feeds.map(async (feed) => ({
+          feed,
+          ticket: await requestAdminTicket("stream", feed.feed_id),
+        }))
+      );
+      const elements = ticketRows.flatMap(({ feed, ticket }) => {
+        if (!ticket) return [];
+        const a = new Audio(
+          apiUrl(
+            `/api/admin/stream/${feed.feed_id}?ticket=${encodeURIComponent(ticket)}`
+          )
+        );
         a.addEventListener("error", () => {});
         a.play().catch(() => {});
-        return a;
+        return [a];
       });
       audiosRef.current = elements;
-      setPlaying(true);
+      setPlaying(elements.length > 0);
     }
   };
 
@@ -1297,10 +1409,7 @@ function AllFeedsSidebarItem({
 
   return (
     <div
-      onClick={onClick}
-      role="button"
-      tabIndex={0}
-      className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition-all cursor-pointer ${
+      className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition-all ${
         isActive ? "bg-blue-500/10" : "hover:bg-white/5"
       }`}
       style={{
@@ -1308,18 +1417,26 @@ function AllFeedsSidebarItem({
         borderBottom: "1px solid var(--panel-border, rgba(255,255,255,0.06))",
       }}
     >
-      <Layers className="w-3.5 h-3.5 shrink-0" style={{ color: isActive ? "#3b82f6" : "var(--panel-text-muted)" }} />
-      <span
-        className="text-[11px] font-semibold flex-1"
-        style={{
-          color: isActive
-            ? "var(--panel-text, #e5e7eb)"
-            : "var(--panel-text-muted, #6b7280)",
-        }}
-      >
-        All Feeds
-      </span>
       <button
+        type="button"
+        onClick={onClick}
+        className="flex flex-1 min-w-0 items-center gap-2 text-left"
+        aria-pressed={isActive}
+      >
+        <Layers className="w-3.5 h-3.5 shrink-0" style={{ color: isActive ? "#3b82f6" : "var(--panel-text-muted)" }} />
+        <span
+          className="text-[11px] font-semibold flex-1"
+          style={{
+            color: isActive
+              ? "var(--panel-text, #e5e7eb)"
+              : "var(--panel-text-muted, #6b7280)",
+          }}
+        >
+          All Feeds
+        </span>
+      </button>
+      <button
+        type="button"
         onClick={togglePlayAll}
         className={`shrink-0 p-1 rounded transition-all ${
           playing
@@ -1327,6 +1444,7 @@ function AllFeedsSidebarItem({
             : "bg-white/5 hover:bg-white/10 text-gray-500 hover:text-gray-300"
         }`}
         title={playing ? "Stop all streams" : "Play ALL streams simultaneously"}
+        aria-label={playing ? "Stop all streams" : "Play all streams simultaneously"}
       >
         {playing ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
       </button>
@@ -1354,16 +1472,22 @@ function SidebarFeedItem({
   const togglePlay = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!audioRef.current) {
-      const token = await maybeIdToken();
+      const ticket = await requestAdminTicket("stream", feed.feed_id);
+      if (!ticket) {
+        setStreamError(true);
+        return;
+      }
       const a = new Audio(
         apiUrl(
-          `/api/admin/stream/${feed.feed_id}${
-            token ? `?token=${encodeURIComponent(token)}` : ""
-          }`
+          `/api/admin/stream/${feed.feed_id}?ticket=${encodeURIComponent(ticket)}`
         )
       );
       a.addEventListener("ended", () => setPlaying(false));
-      a.addEventListener("error", () => { setPlaying(false); setStreamError(true); });
+      a.addEventListener("error", () => {
+        setPlaying(false);
+        setStreamError(true);
+        audioRef.current = null;
+      });
       audioRef.current = a;
     }
     if (playing) {
@@ -1380,30 +1504,35 @@ function SidebarFeedItem({
 
   return (
     <div
-      onClick={onClick}
-      role="button"
-      tabIndex={0}
-      className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-all cursor-pointer ${
+      className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-all ${
         isActive ? "bg-blue-500/10" : "hover:bg-white/5"
       }`}
       style={{
         borderLeft: isActive ? "3px solid #3b82f6" : "3px solid transparent",
       }}
     >
-      {hasActivity && (
-        <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />
-      )}
-      <span
-        className="text-[11px] font-medium truncate flex-1"
-        style={{
-          color: isActive
-            ? "var(--panel-text, #e5e7eb)"
-            : "var(--panel-text-muted, #6b7280)",
-        }}
-      >
-        {feed.label}
-      </span>
       <button
+        type="button"
+        onClick={onClick}
+        className="flex flex-1 min-w-0 items-center gap-2 text-left"
+        aria-pressed={isActive}
+      >
+        {hasActivity && (
+          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />
+        )}
+        <span
+          className="text-[11px] font-medium truncate flex-1"
+          style={{
+            color: isActive
+              ? "var(--panel-text, #e5e7eb)"
+              : "var(--panel-text-muted, #6b7280)",
+          }}
+        >
+          {feed.label}
+        </span>
+      </button>
+      <button
+        type="button"
         onClick={togglePlay}
         className={`shrink-0 p-1 rounded transition-all ${
           streamError
@@ -1413,6 +1542,7 @@ function SidebarFeedItem({
               : "bg-white/5 hover:bg-white/10 text-gray-500 hover:text-gray-300"
         }`}
         title={streamError ? "Stream unavailable" : playing ? "Pause live stream" : "Play live stream"}
+        aria-label={streamError ? `${feed.label} stream unavailable` : playing ? `Pause ${feed.label} live stream` : `Play ${feed.label} live stream`}
       >
         {streamError ? <WifiOff className="w-3 h-3" /> : playing ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
       </button>
@@ -1451,14 +1581,16 @@ export default function AdminPanel({ onBack }: Props) {
         }}
       >
         <button
+          type="button"
           onClick={onBack}
+          aria-label="Back from admin panel"
           className="p-1.5 rounded-lg transition-colors hover:bg-white/5"
           style={{ color: "var(--panel-text-secondary)" }}
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
 
-        <img src="/logo.png" alt="CityPulse" className="w-5 h-5" />
+        <Image src="/logo.png" alt="CityPulse" width={20} height={20} className="w-5 h-5" />
         <span className="text-sm font-semibold" style={{ color: "var(--panel-text)" }}>
           Admin Panel
         </span>

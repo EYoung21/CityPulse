@@ -2,10 +2,12 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import ShareRedirect from "@/components/ShareRedirect";
 import { decodeTripToken } from "@/lib/share-trip";
+import { trustedRequestOrigin } from "@/lib/request-origin";
+import { strictSingleSearchParam, type SearchParamValue } from "@/lib/share-params";
 
 interface SearchParams {
   /** Encoded trip-share token. */
-  t?: string;
+  t?: SearchParamValue;
 }
 
 interface Props {
@@ -14,9 +16,7 @@ interface Props {
 
 async function originFromHeaders(): Promise<string> {
   const h = await headers();
-  const proto = h.get("x-forwarded-proto") || "https";
-  const host = h.get("host") || "";
-  return host ? `${proto}://${host}` : "";
+  return trustedRequestOrigin(h.get("host"));
 }
 
 function fmtRemaining(ms: number): string {
@@ -28,6 +28,10 @@ function fmtRemaining(ms: number): string {
   return m === 0 ? `~${h}h` : `~${h}h ${m}m`;
 }
 
+async function currentEpochMs(): Promise<number> {
+  return Date.now();
+}
+
 const MODE_VERB: Record<string, string> = {
   "foot-walking":   "walking",
   "cycling-regular": "biking",
@@ -36,8 +40,9 @@ const MODE_VERB: Record<string, string> = {
 
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
   const sp = await searchParams;
+  const token = strictSingleSearchParam(sp.t, 64_000);
   const origin = await originFromHeaders();
-  const decoded = sp.t ? decodeTripToken(sp.t) : null;
+  const decoded = token ? decodeTripToken(token) : null;
 
   const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
   const senderLabel = decoded?.name?.trim() || "Someone";
@@ -84,16 +89,17 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
  *  app decodes and renders as a tracking card + dashed cyan polyline. */
 export default async function SharedTripPage({ searchParams }: Props) {
   const sp = await searchParams;
-  const origin = await originFromHeaders();
-  const appUrl = sp.t
-    ? `${origin}/?trip=${encodeURIComponent(sp.t)}`
-    : `${origin}/`;
-  const decoded = sp.t ? decodeTripToken(sp.t) : null;
+  const token = strictSingleSearchParam(sp.t, 64_000);
+  const appUrl = token
+    ? `/?trip=${encodeURIComponent(token)}`
+    : "/";
+  const decoded = token ? decodeTripToken(token) : null;
   const senderLabel = decoded?.name?.trim() || "Someone";
-  const remaining = decoded ? fmtRemaining(decoded.etaEpochMs - Date.now()) : "";
+  const now = await currentEpochMs();
+  const remaining = decoded ? fmtRemaining(decoded.etaEpochMs - now) : "";
 
   return (
-    <div
+    <main
       style={{
         minHeight: "100vh",
         display: "flex",
@@ -123,6 +129,6 @@ export default async function SharedTripPage({ searchParams }: Props) {
           <a href={appUrl} style={{ color: "#3b82f6" }}>tap here</a>.
         </p>
       </div>
-    </div>
+    </main>
   );
 }

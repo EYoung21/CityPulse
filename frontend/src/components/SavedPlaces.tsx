@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   Star,
   Navigation,
@@ -30,6 +30,15 @@ import { useAuth } from "@/contexts/AuthContext";
 import { buildListShareUrl } from "@/lib/share-list";
 import { requestUndoableAction } from "@/lib/undo-toast";
 import { preferredSpeedUnit } from "@/hooks/useGpsSpeed";
+
+function activateSavedPlace(
+  event: ReactKeyboardEvent<HTMLButtonElement>,
+  activate: () => void,
+) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  activate();
+}
 
 interface Props {
   onFlyTo: (lat: number, lng: number) => void;
@@ -237,51 +246,57 @@ export default function SavedPlaces({ onFlyTo, onDirections, userPos }: Props) {
     return (
       <div
         key={dest.id}
-        className="relative flex items-center gap-2 px-3 py-2 rounded-lg transition-colors cursor-pointer group"
+        className="relative flex items-center rounded-lg transition-colors group"
         style={{ background: "var(--panel-input-bg)" }}
-        onClick={() => onFlyTo(dest.lat, dest.lng)}
         onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel-hover)")}
         onMouseLeave={(e) => (e.currentTarget.style.background = "var(--panel-input-bg)")}
       >
-        <Icon
-          className="w-3.5 h-3.5 shrink-0"
-          style={{ color: baseColor, fill: dest.category === "favorite" ? baseColor : "transparent" }}
-        />
-        <div className="flex-1 min-w-0">
-          <span
-            className="text-xs truncate block"
-            style={{ color: "var(--panel-text)" }}
-            title={dest.name}
-          >
-            {dest.name}
-          </span>
-          {distanceLabel && (
-            <span
-              className="text-[10px] tabular-nums block leading-tight"
-              style={{ color: "var(--panel-text-muted)" }}
-              aria-label={`${distanceLabel} from your location`}
-            >
-              {distanceLabel} away
-            </span>
-          )}
-        </div>
         <button
-          onClick={(e) => {
-            e.stopPropagation();
+          type="button"
+          className="min-w-0 flex-1 flex items-center gap-2 px-3 py-2 text-left"
+          onClick={() => onFlyTo(dest.lat, dest.lng)}
+          onKeyDown={(event) => activateSavedPlace(event, () => onFlyTo(dest.lat, dest.lng))}
+        >
+          <Icon
+            className="w-3.5 h-3.5 shrink-0"
+            style={{ color: baseColor, fill: dest.category === "favorite" ? baseColor : "transparent" }}
+          />
+          <span className="flex-1 min-w-0">
+            <span
+              className="text-xs truncate block"
+              style={{ color: "var(--panel-text)" }}
+              title={dest.name}
+            >
+              {dest.name}
+            </span>
+            {distanceLabel && (
+              <span
+                className="text-[10px] tabular-nums block leading-tight"
+                style={{ color: "var(--panel-text-muted)" }}
+                aria-label={`${distanceLabel} from your location`}
+              >
+                {distanceLabel} away
+              </span>
+            )}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
             onDirections(dest.name, { lat: dest.lat, lng: dest.lng });
           }}
-          className="opacity-0 group-hover:opacity-100 transition-opacity text-blue-500/50 hover:text-blue-500 shrink-0"
+          className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity text-blue-500/50 hover:text-blue-500 shrink-0"
           title="Get directions"
           aria-label={`Get directions to ${dest.name}`}
         >
           <Navigation className="w-3.5 h-3.5" />
         </button>
         <button
-          onClick={(e) => {
-            e.stopPropagation();
+          type="button"
+          onClick={() => {
             setOpenMenu(menuOpen ? null : dest.id);
           }}
-          className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+          className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shrink-0 mr-3"
           style={{ color: "var(--panel-text-muted)" }}
           title="More"
           aria-label="More options"
@@ -307,7 +322,7 @@ export default function SavedPlaces({ onFlyTo, onDirections, userPos }: Props) {
             {PINNED_ORDER.filter((c) => c !== dest.category).map((c) => {
               const ItemIcon = CATEGORY_ICON[c];
               return (
-                <button
+                <button type="button"
                   key={c}
                   onClick={() => {
                     void setCategory(dest.id, c);
@@ -336,7 +351,7 @@ export default function SavedPlaces({ onFlyTo, onDirections, userPos }: Props) {
                 >
                   Move to list
                 </p>
-                <button
+                <button type="button"
                   onClick={() => {
                     void setDestinationList(dest.id, null);
                     setOpenMenu(null);
@@ -353,7 +368,7 @@ export default function SavedPlaces({ onFlyTo, onDirections, userPos }: Props) {
                 {lists.map((l) => {
                   const isHere = dest.listId === l.id;
                   return (
-                    <button
+                    <button type="button"
                       key={l.id}
                       onClick={() => {
                         void setDestinationList(dest.id, l.id);
@@ -376,7 +391,7 @@ export default function SavedPlaces({ onFlyTo, onDirections, userPos }: Props) {
             )}
 
             <div className="my-1 mx-3 h-px" style={{ background: "var(--panel-border)" }} />
-            <button
+            <button type="button"
               onClick={() => {
                 void removeDestination(dest.id);
                 setOpenMenu(null);
@@ -422,6 +437,7 @@ export default function SavedPlaces({ onFlyTo, onDirections, userPos }: Props) {
           <Folder className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
           <input
             autoFocus
+            aria-label="New list name"
             value={createDraft}
             onChange={(e) => setCreateDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -433,7 +449,7 @@ export default function SavedPlaces({ onFlyTo, onDirections, userPos }: Props) {
             className="flex-1 bg-transparent outline-none text-xs"
             style={{ color: "var(--panel-text)" }}
           />
-          <button
+          <button type="button"
             onClick={() => void handleCreateList()}
             disabled={!createDraft.trim()}
             className="p-1 rounded text-blue-500 disabled:opacity-30 hover:bg-blue-500/10"
@@ -441,7 +457,7 @@ export default function SavedPlaces({ onFlyTo, onDirections, userPos }: Props) {
           >
             <Check className="w-3.5 h-3.5" />
           </button>
-          <button
+          <button type="button"
             onClick={() => { setShowCreateList(false); setCreateDraft(""); }}
             className="p-1 rounded transition-colors"
             style={{ color: "var(--panel-text-muted)" }}
@@ -496,27 +512,28 @@ export default function SavedPlaces({ onFlyTo, onDirections, userPos }: Props) {
                 >
                   {collapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                   <Folder className="w-3 h-3" style={{ color: accent }} />
-                  {isRenaming ? (
+                  {!isRenaming && <span>{list.name}</span>}
+                  {!isRenaming && <span style={{ color: "var(--panel-text-muted)" }}>· {items.length}</span>}
+                </button>
+                {isRenaming && (
+                  <>
                     <input
                       autoFocus
                       value={renameDraft}
-                      onClick={(e) => e.stopPropagation()}
                       onChange={(e) => setRenameDraft(e.target.value)}
                       onKeyDown={(e) => {
-                        e.stopPropagation();
                         if (e.key === "Enter") void handleRenameSubmit(list.id);
                         if (e.key === "Escape") { setRenamingListId(null); setRenameDraft(""); }
                       }}
                       onBlur={() => void handleRenameSubmit(list.id)}
                       maxLength={60}
-                      className="bg-transparent outline-none text-[10px] uppercase tracking-wider"
+                      aria-label={`Rename ${list.name}`}
+                      className="min-w-0 bg-transparent outline-none text-[10px] uppercase tracking-wider"
                       style={{ color: "var(--panel-text)", letterSpacing: "0.08em" }}
                     />
-                  ) : (
-                    <span>{list.name}</span>
-                  )}
-                  <span style={{ color: "var(--panel-text-muted)" }}>· {items.length}</span>
-                </button>
+                    <span className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>· {items.length}</span>
+                  </>
+                )}
                 <div className="flex-1" />
                 {!isRenaming && (
                   <>

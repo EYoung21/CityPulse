@@ -12,6 +12,8 @@ def _should_use_firestore() -> bool:
         return True
     if mode in ("sqlite", "false", "0", "no"):
         return False
+    if os.environ.get("FIRESTORE_EMULATOR_HOST"):
+        return True
     cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     json_str = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
     if json_str:
@@ -21,9 +23,14 @@ def _should_use_firestore() -> bool:
     return False
 
 
-if _should_use_firestore():
+USING_FIRESTORE = _should_use_firestore()
+
+
+if USING_FIRESTORE:
     from .firestore_store import (
         append_mention,
+        city_incident_count,
+        city_inhibitor_stats,
         count_city_incidents,
         count_city_incidents_filtered,
         delete_incident,
@@ -48,6 +55,8 @@ if _should_use_firestore():
 else:
     from .store import (
         append_mention,
+        city_incident_count,
+        city_inhibitor_stats,
         count_city_incidents,
         count_city_incidents_filtered,
         find_recent_duplicate,

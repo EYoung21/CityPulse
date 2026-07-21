@@ -1,5 +1,7 @@
 "use client";
 
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
+
 /** BART (Bay Area Rapid Transit) real-time helpers.
  *
  *  BART's "etd" (Estimated Time of Departure) endpoint is unauthen-
@@ -130,6 +132,37 @@ export interface BartArrivalsResponse {
   arrivals: BartArrival[];
 }
 
+function cleanBartText(value: unknown, maxLength = 200): string {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+export function normalizeBartArrivalsResponse(value: unknown): BartArrivalsResponse | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const data = value as Record<string, unknown>;
+  const arrivals = Array.isArray(data.arrivals)
+    ? data.arrivals.slice(0, 100).flatMap((value): BartArrival[] => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+        const row = value as Record<string, unknown>;
+        const destination = cleanBartText(row.destination);
+        const minutes = cleanBartText(row.minutes, 20);
+        if (!destination || !minutes) return [];
+        const color = cleanBartText(row.color, 16);
+        const platform = cleanBartText(row.platform, 20);
+        return [{
+          destination,
+          minutes,
+          color: /^#[0-9a-f]{6}$/i.test(color) ? color : "#888888",
+          ...(platform ? { platform } : {}),
+        }];
+      })
+    : [];
+  return {
+    station_name: cleanBartText(data.station_name),
+    fetched_label: cleanBartText(data.fetched_label, 100),
+    arrivals,
+  };
+}
+
 /** Fetch arrivals for a BART station via our /api/bart proxy. */
 export async function fetchBartArrivals(
   code: string,
@@ -138,6 +171,7 @@ export async function fetchBartArrivals(
   const params = new URLSearchParams({ op: "etd", station: code });
   const r = await fetch(`/api/bart?${params}`, { signal, cache: "no-store" });
   if (!r.ok) throw new Error(`BART proxy ${r.status}`);
-  return (await r.json()) as BartArrivalsResponse;
+  const data = normalizeBartArrivalsResponse(await readBoundedJsonResponse(r, 1024 * 1024));
+  if (!data) throw new Error("BART proxy returned a malformed response");
+  return data;
 }
-

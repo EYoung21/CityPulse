@@ -25,9 +25,9 @@ export default function MarketingPageShell({ children }: Props) {
         </div>
       </header>
 
-      <div className="flex-1" style={{ paddingTop: "100px", paddingBottom: "48px" }}>
+      <main className="flex-1" style={{ paddingTop: "100px", paddingBottom: "48px" }}>
         {children}
-      </div>
+      </main>
 
       <footer className="lp-cta" style={{ padding: "2rem 24px 3rem", marginTop: "auto" }}>
         <p className="lp-footer-note" style={{ margin: 0, textAlign: "center" }}>

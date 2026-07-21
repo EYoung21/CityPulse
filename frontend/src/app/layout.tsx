@@ -8,9 +8,9 @@ import NativeBoot from "@/components/NativeBoot";
 import DocumentTitleSync from "@/components/DocumentTitleSync";
 import {
   cityPageTitle,
-  citySiteName,
   getCityForRequestHost,
 } from "@/lib/pulse-cities";
+import { trustedRequestOrigin } from "@/lib/request-origin";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -24,28 +24,12 @@ const geistMono = Geist_Mono({
 });
 
 function metadataBaseFromHost(host: string | null): URL {
-  const fallback =
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    process.env.NEXT_PUBLIC_VERCEL_URL ||
-    "http://localhost:3000";
-  const origin = host
-    ? host.includes("localhost")
-      ? `http://${host}`
-      : `https://${host}`
-    : fallback.startsWith("http")
-      ? fallback
-      : `https://${fallback}`;
-  try {
-    return new URL(origin);
-  } catch {
-    return new URL("http://localhost:3000");
-  }
+  return new URL(trustedRequestOrigin(host));
 }
 
 export async function generateMetadata(): Promise<Metadata> {
   const host = (await headers()).get("host");
   const city = getCityForRequestHost(host);
-  const siteName = citySiteName(city);
   const title = cityPageTitle(city);
   const description = `CityPulse: Real-time AI-powered community safety for ${city.name}. Live police scanner transcription, incident mapping, and safe routing.`;
 

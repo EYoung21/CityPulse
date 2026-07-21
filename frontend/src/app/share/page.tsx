@@ -1,20 +1,26 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import ShareRedirect from "@/components/ShareRedirect";
+import { trustedRequestOrigin } from "@/lib/request-origin";
+import {
+  normalizeIncidentShareParams,
+  type NormalizedIncidentShareParams,
+  type SearchParamValue,
+} from "@/lib/share-params";
 
 interface SearchParams {
-  incident?: string;
-  lat?: string;
-  lng?: string;
-  zoom?: string;
+  incident?: SearchParamValue;
+  lat?: SearchParamValue;
+  lng?: SearchParamValue;
+  zoom?: SearchParamValue;
   /** Display title for the OG card. */
-  t?: string;
+  t?: SearchParamValue;
   /** Severity category slug; drives the accent color in the OG card. */
-  c?: string;
+  c?: SearchParamValue;
   /** Secondary line on the OG card (street, neighborhood). */
-  loc?: string;
+  loc?: SearchParamValue;
   /** ISO timestamp; rendered as "X min ago". */
-  time?: string;
+  time?: SearchParamValue;
 }
 
 interface Props {
@@ -23,12 +29,10 @@ interface Props {
 
 async function originFromHeaders(): Promise<string> {
   const h = await headers();
-  const proto = h.get("x-forwarded-proto") || "https";
-  const host = h.get("host") || "";
-  return host ? `${proto}://${host}` : "";
+  return trustedRequestOrigin(h.get("host"));
 }
 
-function buildOgUrl(origin: string, sp: SearchParams): string {
+function buildOgUrl(origin: string, sp: NormalizedIncidentShareParams): string {
   const params = new URLSearchParams();
   if (sp.t) params.set("title", sp.t);
   if (sp.c) params.set("category", sp.c);
@@ -37,17 +41,17 @@ function buildOgUrl(origin: string, sp: SearchParams): string {
   return `${origin}/api/og?${params.toString()}`;
 }
 
-function buildAppUrl(origin: string, sp: SearchParams): string {
+function buildAppUrl(sp: NormalizedIncidentShareParams): string {
   const params = new URLSearchParams();
   if (sp.incident) params.set("incident", sp.incident);
   if (sp.lat) params.set("lat", sp.lat);
   if (sp.lng) params.set("lng", sp.lng);
   if (sp.zoom) params.set("zoom", sp.zoom);
-  return `${origin}/?${params.toString()}`;
+  return `/?${params.toString()}`;
 }
 
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
-  const sp = await searchParams;
+  const sp = normalizeIncidentShareParams(await searchParams);
   const origin = await originFromHeaders();
   const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
   const title = sp.t
@@ -82,13 +86,12 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
  *  (with a per-incident OG image); real users get a near-instant client-side
  *  redirect to the full app at `/?incident=<id>` (or `?lat=&lng=`). */
 export default async function SharePage({ searchParams }: Props) {
-  const sp = await searchParams;
-  const origin = await originFromHeaders();
-  const appUrl = buildAppUrl(origin, sp) || "/";
+  const sp = normalizeIncidentShareParams(await searchParams);
+  const appUrl = buildAppUrl(sp);
   const title = sp.t || "PhillyPulse";
 
   return (
-    <div
+    <main
       style={{
         minHeight: "100vh",
         display: "flex",
@@ -111,6 +114,6 @@ export default async function SharePage({ searchParams }: Props) {
           <a href={appUrl} style={{ color: "#3b82f6" }}>tap here</a>.
         </p>
       </div>
-    </div>
+    </main>
   );
 }

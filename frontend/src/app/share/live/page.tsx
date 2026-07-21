@@ -1,9 +1,12 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import LiveTripView from "@/components/LiveTripView";
+import { isLiveShareId } from "@/lib/live-share-validation";
+import { strictSingleSearchParam, type SearchParamValue } from "@/lib/share-params";
 
 interface SearchParams {
   /** 12-char base32 share ID. */
-  id?: string;
+  id?: SearchParamValue;
 }
 
 interface Props {
@@ -16,9 +19,10 @@ interface Props {
  *  link is pasted into iMessage or Slack. */
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
   const sp = await searchParams;
+  const shareId = strictSingleSearchParam(sp.id, 64);
   const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
 
-  if (!sp.id) {
+  if (!isLiveShareId(shareId)) {
     return {
       title: `${cityName} Pulse · Live ETA`,
       description: `Watch a friend arrive in real time on the ${cityName} Pulse safety map.`,
@@ -55,23 +59,24 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
 
 export default async function SharedLivePage({ searchParams }: Props) {
   const sp = await searchParams;
+  const shareId = strictSingleSearchParam(sp.id, 64);
 
-  if (!sp.id) {
+  if (!isLiveShareId(shareId)) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-100 p-6">
+      <main className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-100 p-6">
         <div className="max-w-md text-center">
           <p className="text-xs uppercase tracking-widest text-slate-500">PhillyPulse</p>
-          <h1 className="text-2xl font-bold mt-2">No live share specified</h1>
+          <h1 className="text-2xl font-bold mt-2">Invalid live share</h1>
           <p className="text-sm text-slate-400 mt-3">
-            The link is missing the share ID. Ask the sender for a fresh link.
+            This link is missing a valid share ID or has expired. Ask the sender for a fresh link.
           </p>
-          <a href="/" className="inline-block mt-6 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold">
+          <Link href="/" className="inline-block mt-6 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold">
             Open PhillyPulse
-          </a>
+          </Link>
         </div>
-      </div>
+      </main>
     );
   }
 
-  return <LiveTripView shareId={sp.id} />;
+  return <LiveTripView shareId={shareId} />;
 }

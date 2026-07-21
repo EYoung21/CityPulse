@@ -37,7 +37,9 @@ export function useMobilePrimaryTabSwipe(opts: { enabled: boolean }) {
   const viewParam = searchParams.get("view");
 
   const enabledRef = useRef(opts.enabled);
-  enabledRef.current = opts.enabled;
+  useEffect(() => {
+    enabledRef.current = opts.enabled;
+  }, [opts.enabled]);
 
   const startRef = useRef<{
     x: number;

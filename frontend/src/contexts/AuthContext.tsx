@@ -27,8 +27,11 @@ import {
   updateProfile,
   type User,
 } from "firebase/auth";
-import { Timestamp, collection, deleteDoc, doc, getDocs, getFirestore, onSnapshot, serverTimestamp, setDoc, writeBatch } from "firebase/firestore";
+import { pulseTokenFromUrl, urlWithoutPulseToken } from "@/lib/pulse-auth-handoff";
+import { clearAccountLocalData } from "@/lib/account-local-data";
+import { Timestamp, collection, deleteDoc, doc, getDocs, getFirestore, onSnapshot, query, serverTimestamp, setDoc, where, writeBatch } from "firebase/firestore";
 import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
 
 const ADMIN_EMAILS = ["eliyoung4now@gmail.com", "kethansany@gmail.com", "rickywhy@gmail.com"];
 
@@ -85,14 +88,15 @@ const noop = async () => {};
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  // True while a cross-domain ?__pulse_token= sign-in is being exchanged. Folded
+  const [loading, setLoading] = useState(isFirebaseConfigured);
+  // True while a cross-domain __pulse_token handoff is being exchanged. Folded
   // into the exposed `loading` so the auth gate shows a spinner and waits for the
   // exchange instead of bouncing the arriving user to /landing first.
   const [crossDomainPending, setCrossDomainPending] = useState<boolean>(
     () =>
+      isFirebaseConfigured() &&
       typeof window !== "undefined" &&
-      new URLSearchParams(window.location.search).has("__pulse_token")
+      pulseTokenFromUrl(new URL(window.location.href)) != null
   );
   const [tier, setTier] = useState<UserTier>("free");
   // proUntil mirrors users/{uid}.proUntil from Firestore. It's set
@@ -102,10 +106,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // stomping the other on cancel/refund. Resolved into isPro via
   // an OR below.
   const [proUntil, setProUntil] = useState<Date | null>(null);
-  // Tick state purely so we can re-render on pass expiry without
-  // requiring a Firestore write. Bumped by a setTimeout scheduled
-  // to fire at the exact `proUntil` moment whenever it changes.
-  const [, setExpiryTick] = useState(0);
+  // Captured clock state lets the render stay pure while a timeout still
+  // re-evaluates access at the exact pass-expiry boundary.
+  const [expiryNow, setExpiryNow] = useState(Date.now);
   const [lastAuthError, setLastAuthError] = useState<string | null>(null);
 
   const clearLastAuthError = useCallback(() => setLastAuthError(null), []);
@@ -115,35 +118,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user]
   );
 
-  // Cross-domain auth: if we arrived with a __pulse_token param, exchange it
+  // Cross-domain auth: exchange the fragment handoff (or a legacy query
+  // handoff from an older deployment) for a destination-project token.
   useEffect(() => {
-    if (!isFirebaseConfigured()) return;
     if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const idToken = params.get("__pulse_token");
+    const arrivalUrl = new URL(window.location.href);
+    const idToken = pulseTokenFromUrl(arrivalUrl);
     if (!idToken) return;
 
-    // Remove token from URL immediately
-    params.delete("__pulse_token");
-    const clean = params.toString();
-    const newUrl = window.location.pathname + (clean ? `?${clean}` : "") + window.location.hash;
-    window.history.replaceState({}, "", newUrl);
+    // Remove the one-shot credential immediately. Fragment handoffs never
+    // reached the server; this also scrubs any legacy query-string token.
+    window.history.replaceState({}, "", urlWithoutPulseToken(arrivalUrl));
+    if (!isFirebaseConfigured()) return;
 
     // Safety net so a hung/failed exchange can't leave the gate spinning forever;
-    // on success, onAuthStateChanged sets `user` and the effect below clears it.
-    const safety = window.setTimeout(() => setCrossDomainPending(false), 8000);
+    // on success, onAuthStateChanged clears the pending state immediately.
+    const controller = new AbortController();
+    const safety = window.setTimeout(() => {
+      controller.abort();
+      setCrossDomainPending(false);
+    }, 8000);
     (async () => {
       try {
         const res = await fetch("/api/auth/exchange", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ idToken }),
+          signal: controller.signal,
         });
         if (!res.ok) {
           setCrossDomainPending(false);
           return;
         }
-        const { customToken } = await res.json();
+        const raw = await readBoundedJsonResponse(res, 64 * 1024);
+        const customToken = raw && typeof raw === "object" && !Array.isArray(raw)
+          ? (raw as Record<string, unknown>).customToken
+          : null;
+        if (typeof customToken !== "string" || !customToken || customToken.length > 8_192) {
+          setCrossDomainPending(false);
+          return;
+        }
         const auth = getAuth(getFirebaseApp());
         await fbSignInWithCustomToken(auth, customToken);
       } catch (e) {
@@ -151,19 +165,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setCrossDomainPending(false);
       }
     })();
-    return () => window.clearTimeout(safety);
+    return () => {
+      window.clearTimeout(safety);
+      controller.abort();
+    };
   }, []);
 
-  // Clear the cross-domain wait as soon as the exchanged user is signed in.
   useEffect(() => {
-    if (user) setCrossDomainPending(false);
-  }, [user]);
-
-  useEffect(() => {
-    if (!isFirebaseConfigured()) {
-      setLoading(false);
-      return;
-    }
+    if (!isFirebaseConfigured()) return;
     const auth = getAuth(getFirebaseApp());
 
     // Holds the Firestore subscription for the currently-signed-in
@@ -173,79 +182,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let userDocUnsub: (() => void) | null = null;
     let authUnsub: (() => void) | null = null;
     let cancelled = false;
+    const authSafety = window.setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 8000);
+
+    const handleAuthState = (u: User | null) => {
+      if (cancelled) return;
+      window.clearTimeout(authSafety);
+      if (u) setCrossDomainPending(false);
+      setUser(u);
+      if (u) setLastAuthError(null);
+
+      // Always clean up any previous user-doc listener before we either
+      // subscribe to the new one or settle into the signed-out state.
+      if (userDocUnsub) {
+        userDocUnsub();
+        userDocUnsub = null;
+      }
+
+      if (u && u.email) {
+        const db = getFirestore(getFirebaseApp());
+        userDocUnsub = onSnapshot(
+          doc(db, "users", u.uid),
+          (snap) => {
+            const data = snap.data();
+            if (data?.tier && ["free", "pro", "enterprise"].includes(data.tier)) {
+              setTier(data.tier as UserTier);
+            } else {
+              setTier("free");
+            }
+            const raw = data?.proUntil as Timestamp | undefined;
+            const next = raw && typeof raw.toDate === "function" ? raw.toDate() : null;
+            setProUntil(next);
+          },
+          () => {
+            setTier("free");
+            setProUntil(null);
+          }
+        );
+        setLoading(false);
+        if (!u.isAnonymous) void u.getIdToken().catch(() => {});
+      } else {
+        setTier("free");
+        setProUntil(null);
+        setLoading(false);
+      }
+    };
 
     // Finish Google (OAuth) sign-in when returning from `signInWithRedirect`.
-    // Runs once per load; no pending redirect is a normal outcome.
+    // Runs once per load; no pending redirect is a normal outcome. Register the
+    // auth-state observer immediately instead of waiting for this network-backed
+    // promise: redirect restoration can stall offline or behind privacy tooling,
+    // and it must never strand the entire app on its loading gate.
+    authUnsub = onAuthStateChanged(auth, handleAuthState);
     void getRedirectResult(auth)
       .catch((e) => {
         console.warn("getRedirectResult:", e);
         const msg = formatFirebaseAuthError(e);
         if (msg) setLastAuthError(msg);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        authUnsub = onAuthStateChanged(auth, (u) => {
-          setUser(u);
-          if (u) setLastAuthError(null);
-
-          // Always clean up any previous user-doc listener before we
-          // either subscribe to the new one or settle into the
-          // signed-out state. Otherwise an account switch (sign out →
-          // sign in as someone else) leaks the previous listener and
-          // briefly flashes the previous user's tier.
-          if (userDocUnsub) {
-            userDocUnsub();
-            userDocUnsub = null;
-          }
-
-          if (u && u.email) {
-            const db = getFirestore(getFirebaseApp());
-            // Real-time listener so a Stripe webhook write — either
-            // tier:'pro' on subscription or proUntil on a 3-day pass —
-            // reflects in the UI within a second of the webhook firing,
-            // with no page reload required.
-            userDocUnsub = onSnapshot(
-              doc(db, "users", u.uid),
-              (snap) => {
-                const data = snap.data();
-                if (data?.tier && ["free", "pro", "enterprise"].includes(data.tier)) {
-                  setTier(data.tier as UserTier);
-                } else {
-                  setTier("free");
-                }
-                // Firestore Timestamps round-trip as objects with .toDate;
-                // be defensive about the field being missing or wrong-typed
-                // (e.g. left over from a manual Firestore edit during
-                // testing) so a malformed doc doesn't crash the provider.
-                const raw = data?.proUntil as Timestamp | undefined;
-                const next = raw && typeof raw.toDate === "function" ? raw.toDate() : null;
-                setProUntil(next);
-              },
-              () => {
-                // Read denied or transient — fall back to free rather
-                // than gambling on a stale grant.
-                setTier("free");
-                setProUntil(null);
-              }
-            );
-            // Do not gate the whole app on the first `users/{uid}` snapshot.
-            // Waiting here delayed map mount + `/api/*` loads until Firestore
-            // connected (felt like "slow login"). Tier defaults to `free` until
-            // the snapshot updates it.
-            setLoading(false);
-            // Warm the ID token so the first parallel REST calls after mount
-            // avoid contending on the same refresh.
-            if (!u.isAnonymous) void u.getIdToken().catch(() => {});
-          } else {
-            setTier("free");
-            setProUntil(null);
-            setLoading(false);
-          }
-        });
       });
 
     return () => {
       cancelled = true;
+      window.clearTimeout(authSafety);
       authUnsub?.();
       if (userDocUnsub) userDocUnsub();
     };
@@ -266,7 +265,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (ms <= 0) return;
     const safe = Math.min(ms, 24 * 24 * 60 * 60 * 1000);
     const handle = window.setTimeout(() => {
-      setExpiryTick((n) => n + 1);
+      setExpiryNow(Date.now());
     }, safe);
     return () => window.clearTimeout(handle);
   }, [proUntil]);
@@ -381,66 +380,94 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const u = auth.currentUser;
     if (!u) return "cancelled";
 
-    // Best-effort wipe of user-owned Firestore data before account
-    // deletion. We deliberately don't fail the auth-deletion if a
-    // subcollection cleanup hits an error — the security rules will
-    // make orphaned data inaccessible to anyone else regardless.
+    // Firebase account deletion requires a recent login. Check that before
+    // touching any data; the old order wiped Firestore first, then left the
+    // account alive and empty when the user cancelled reauthentication.
+    const ensureRecentLogin = async (): Promise<"ready" | "requires-reauth" | "cancelled"> => {
+      const token = await u.getIdTokenResult();
+      const authTimeMs = Date.parse(token.authTime);
+      // Firebase currently accepts a roughly five-minute-old login. Keep a
+      // wide safety margin so cleanup cannot run across the server threshold.
+      if (Number.isFinite(authTimeMs) && Date.now() - authTimeMs < 2 * 60_000) {
+        return "ready";
+      }
+
+      const googleProvider = u.providerData.some((p) => p.providerId === "google.com");
+      if (!googleProvider) return "requires-reauth";
+      try {
+        await reauthenticateWithPopup(u, new GoogleAuthProvider());
+        return "ready";
+      } catch (reauthErr) {
+        const code = (reauthErr as { code?: string }).code;
+        if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+          return "cancelled";
+        }
+        return "requires-reauth";
+      }
+    };
+
+    const recentLogin = await ensureRecentLogin();
+    if (recentLogin !== "ready") return recentLogin;
+
+    // Best-effort wipe of user-owned Firestore data before account deletion.
+    // A single collection failure does not prevent the remaining cleanup.
     const wipeUserData = async () => {
       try {
         const db = getFirestore(getFirebaseApp());
+        const deleteDocs = async (docs: Array<{ ref: Parameters<ReturnType<typeof writeBatch>["delete"]>[0] }>) => {
+          let batch = writeBatch(db);
+          let count = 0;
+          for (const item of docs) {
+            batch.delete(item.ref);
+            count += 1;
+            if (count >= 400) {
+              await batch.commit();
+              batch = writeBatch(db);
+              count = 0;
+            }
+          }
+          if (count > 0) await batch.commit();
+        };
+
         // Wipe known per-user subcollections in batches of 400 (well
         // under Firestore's 500-write batch cap).
         for (const sub of ["savedDestinations", "savedLists", "userPrefs", "tripHistory"]) {
           try {
             const col = collection(db, "users", u.uid, sub);
             const snap = await getDocs(col);
-            let batch = writeBatch(db);
-            let count = 0;
-            for (const d of snap.docs) {
-              batch.delete(d.ref);
-              count++;
-              if (count >= 400) {
-                await batch.commit();
-                batch = writeBatch(db);
-                count = 0;
-              }
-            }
-            if (count > 0) await batch.commit();
+            await deleteDocs(snap.docs);
           } catch { /* sub-collection missing or rules blocked — skip */ }
+        }
+
+        // These records live in top-level collections rather than under the
+        // user document. Each rule permits an owner-constrained query/delete.
+        for (const [collectionName, ownerField] of [
+          ["pushSubscriptions", "uid"],
+          ["keywordWatches", "uid"],
+          ["commuteSchedules", "uid"],
+          ["liveTrips", "ownerUid"],
+        ] as const) {
+          try {
+            const owned = query(
+              collection(db, collectionName),
+              where(ownerField, "==", u.uid)
+            );
+            const snap = await getDocs(owned);
+            await deleteDocs(snap.docs);
+          } catch { /* unavailable collection/index — continue cleanup */ }
         }
         try { await deleteDoc(doc(db, "users", u.uid)); } catch { /* ignore */ }
       } catch { /* whole wipe blocked — proceed to auth deletion */ }
     };
 
-    const tryDelete = async () => {
+    try {
       await wipeUserData();
       await deleteUser(u);
-    };
-
-    try {
-      await tryDelete();
+      clearAccountLocalData();
       return "deleted";
     } catch (e) {
-      // Firebase requires a recent sign-in for account deletion. If
-      // that's why we failed and the user has a Google provider, try
-      // a reauth popup once and retry.
       const code = (e as { code?: string }).code;
-      if (code === "auth/requires-recent-login") {
-        const googleProvider = u.providerData.find((p) => p.providerId === "google.com");
-        if (!googleProvider) return "requires-reauth";
-        try {
-          await reauthenticateWithPopup(u, new GoogleAuthProvider());
-          await tryDelete();
-          return "deleted";
-        } catch (reauthErr) {
-          // popup-closed-by-user → user backed out
-          const rcode = (reauthErr as { code?: string }).code;
-          if (rcode === "auth/popup-closed-by-user" || rcode === "auth/cancelled-popup-request") {
-            return "cancelled";
-          }
-          return "requires-reauth";
-        }
-      }
+      if (code === "auth/requires-recent-login") return "requires-reauth";
       throw e;
     }
   }, []);
@@ -454,7 +481,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     tier === "pro" ||
     tier === "enterprise" ||
     isAdmin ||
-    (!!proUntil && proUntil.getTime() > Date.now());
+    (!!proUntil && proUntil.getTime() > expiryNow);
 
   const value = useMemo(
     () => ({

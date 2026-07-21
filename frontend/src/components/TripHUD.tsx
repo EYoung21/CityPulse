@@ -104,7 +104,7 @@ export default function TripHUD({
                 {shareState === "copied" ? "Link copied" : shareState === "sharing" ? "…" : "Share ETA"}
               </button>
             )}
-            <button
+            <button type="button"
               onClick={onResetTrip}
               className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs transition-colors"
               style={{
@@ -239,7 +239,7 @@ export default function TripHUD({
           .map((inc) => {
             const sev = getSeverity(inc.severity_category);
             return (
-              <button
+              <button type="button"
                 key={inc.id}
                 onClick={() => {
                   onSelectIncident(inc.id);

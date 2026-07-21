@@ -5,8 +5,8 @@
  * the old `?inbox=1` drawer overlay. The mobile bottom-nav Inbox tab
  * routes here so it behaves like Map/Feed/Ask/Analytics (its own page)
  * instead of opening a modal on top of whatever surface the user was
- * on. On desktop we leave the existing map-bell drawer alone and just
- * bounce visitors back to the map.
+ * on. Desktop preserves the destination by opening the map's existing
+ * bell-anchored inbox drawer.
  */
 
 import { useEffect, useState } from "react";
@@ -17,7 +17,7 @@ import MobileBottomNav from "@/components/MobileBottomNav";
 export default function InboxPage() {
   const router = useRouter();
   // Desktop users have the map's bell-anchored inbox — don't render a
-  // dedicated surface for them; bounce back home instead.
+  // duplicate surface, but preserve the deep-link intent when redirecting.
   const [isMobile, setIsMobile] = useState<boolean | null>(null);
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -33,13 +33,14 @@ export default function InboxPage() {
   }, []);
 
   useEffect(() => {
-    if (isMobile === false) router.replace("/?view=map");
+    if (isMobile === false) router.replace("/?view=map&inbox=list");
   }, [isMobile, router]);
 
   if (isMobile !== true) return null;
 
   return (
-    <div className="min-h-dvh" style={{ background: "var(--page-bg, #0b1120)" }}>
+    <main className="min-h-dvh" style={{ background: "var(--page-bg, #0b1120)" }}>
+      <h1 className="sr-only">Alerts inbox</h1>
       <AlertsInbox
         open
         placement="fullScreen"
@@ -50,6 +51,6 @@ export default function InboxPage() {
         }}
       />
       <MobileBottomNav />
-    </div>
+    </main>
   );
 }

@@ -41,6 +41,7 @@ sys.path.insert(0, str(REPO_ROOT))
 # pick up GOOGLE_APPLICATION_CREDENTIALS / FIREBASE_SERVICE_ACCOUNT_JSON
 # without duplicating the env-juggling logic.
 from philly_pulse.firestore_store import _ensure_client  # noqa: E402
+from google.cloud.firestore_v1.base_query import FieldFilter  # noqa: E402
 
 # Firestore caps a single batched commit at 500 operations. We delete
 # one parent doc + N votes per report; staying well under the cap with
@@ -59,7 +60,7 @@ def _iter_reports(db, *, city: str | None):
         # `city` was always written as the city slug (philly, sf, …).
         # The where filter keeps the round-trip cheap when an admin
         # only wants to wipe one city's data.
-        col = col.where("city", "==", city)
+        col = col.where(filter=FieldFilter("city", "==", city))
     return col.stream()
 
 

@@ -60,6 +60,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import yaml  # noqa: E402
 
 from philly_pulse.geocode import _is_too_vague  # noqa: E402
+from google.cloud.firestore_v1.base_query import FieldFilter  # noqa: E402
 
 # Per-city geocode suffix lookup — needed because `_is_too_vague` strips
 # the city/state suffix before testing. We don't have to re-geocode
@@ -112,7 +113,11 @@ def _scan_city(
     to_hide: list[tuple[str, object, dict]] = []
     examples: dict[str, list[str]] = defaultdict(list)
 
-    q = db.collection("incidents").where("city", "==", city).limit(sample_limit)
+    q = (
+        db.collection("incidents")
+        .where(filter=FieldFilter("city", "==", city))
+        .limit(sample_limit)
+    )
     for snap in q.stream():
         d = snap.to_dict() or {}
         counts["scanned"] += 1

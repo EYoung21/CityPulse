@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { isCoordinatePair } from "@/lib/geo-validation";
+import { readJsonBody, RequestBodyError } from "@/lib/server-body";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
 
 export const dynamic = "force-dynamic";
 
@@ -28,25 +31,108 @@ type Body = {
   departAt?: string; // ISO datetime
 };
 
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : null;
+}
+
+function boundedText(value: unknown, maxLength: number): string {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function nonNegativeNumber(value: unknown, fallback?: number): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+  return fallback ?? null;
+}
+
+function normalizeOtpItinerary(value: unknown, index: number) {
+  const itinerary = asRecord(value);
+  if (!itinerary) return null;
+  const duration = nonNegativeNumber(itinerary.duration);
+  const rawLegs = itinerary.legs;
+  if (duration === null || !Array.isArray(rawLegs) || rawLegs.length === 0 || rawLegs.length > 64) {
+    return null;
+  }
+
+  const legs = rawLegs.map((value) => {
+    const leg = asRecord(value);
+    const from = asRecord(leg?.from);
+    const to = asRecord(leg?.to);
+    if (
+      !leg ||
+      !from ||
+      !to ||
+      !isCoordinatePair([from.lat, from.lon]) ||
+      !isCoordinatePair([to.lat, to.lon])
+    ) {
+      return null;
+    }
+    const geometry = asRecord(leg.legGeometry);
+    return {
+      mode: boundedText(leg.mode, 32) || "TRANSIT",
+      from: {
+        name: boundedText(from.name, 200) || "Stop",
+        lat: from.lat,
+        lng: from.lon,
+      },
+      to: {
+        name: boundedText(to.name, 200) || "Stop",
+        lat: to.lat,
+        lng: to.lon,
+      },
+      startTime: nonNegativeNumber(leg.startTime, 0),
+      endTime: nonNegativeNumber(leg.endTime, 0),
+      durationMin: Math.round((nonNegativeNumber(leg.duration, 0) ?? 0) / 60),
+      distanceM: Math.round(nonNegativeNumber(leg.distance, 0) ?? 0),
+      route:
+        boundedText(leg.routeShortName, 80) ||
+        boundedText(leg.routeLongName, 160) ||
+        boundedText(leg.route, 160) ||
+        null,
+      agency: boundedText(leg.agencyName, 160) || null,
+      encodedPolyline: boundedText(geometry?.points, 500_000) || null,
+    };
+  });
+  if (legs.some((leg) => leg === null)) return null;
+
+  return {
+    id: `transit-${index}`,
+    durationMin: Math.round(duration / 60),
+    walkDistanceM: Math.round(nonNegativeNumber(itinerary.walkDistance, 0) ?? 0),
+    transitTimeMin: Math.round(
+      (nonNegativeNumber(itinerary.transitTime, duration) ?? duration) / 60,
+    ),
+    legs,
+  };
+}
+
 export async function POST(request: Request) {
   let body: Body;
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await readJsonBody<Body>(request, 64 * 1024);
+  } catch (err) {
+    const status = err instanceof RequestBodyError ? err.status : 400;
+    const message = err instanceof Error ? err.message : "Invalid JSON";
+    return NextResponse.json({ error: message }, { status });
   }
 
   const { origin, destination, mode = "TRANSIT", departAt } = body;
-  if (
-    !Array.isArray(origin) ||
-    origin.length !== 2 ||
-    !Array.isArray(destination) ||
-    destination.length !== 2
-  ) {
+  if (!isCoordinatePair(origin) || !isCoordinatePair(destination)) {
     return NextResponse.json(
       { error: "Need origin and destination as [lat, lng]" },
       { status: 400 }
     );
+  }
+
+  if (!new Set(["TRANSIT", "BUS", "RAIL", "SUBWAY"]).has(mode)) {
+    return NextResponse.json({ error: "Unsupported transit mode" }, { status: 400 });
+  }
+
+  if (departAt && !Number.isFinite(Date.parse(departAt))) {
+    return NextResponse.json({ error: "Invalid departure time" }, { status: 400 });
   }
 
   if (!OTP_URL) {
@@ -61,7 +147,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const now = departAt || new Date().toISOString();
+  const now = departAt ? new Date(departAt).toISOString() : new Date().toISOString();
   const dateStr = now.slice(0, 10); // YYYY-MM-DD
   const timeStr = now.slice(11, 16); // HH:MM
 
@@ -96,39 +182,25 @@ export async function POST(request: Request) {
       );
     }
 
-    const data = (await resp.json()) as {
-      plan?: {
-        itineraries?: Array<{
-          duration: number; // seconds
-          walkDistance: number; // meters
-          transitTime: number; // seconds
-          legs: Array<{
-            mode: string;
-            from: { name: string; lat: number; lon: number };
-            to: { name: string; lat: number; lon: number };
-            startTime: number;
-            endTime: number;
-            duration: number;
-            distance: number;
-            route?: string;
-            routeShortName?: string;
-            routeLongName?: string;
-            agencyName?: string;
-            legGeometry?: { points: string; length: number };
-          }>;
-        }>;
-      };
-      error?: { id: number; msg: string; message: string };
-    };
-
-    if (data.error) {
+    const data = asRecord(await readBoundedJsonResponse(resp, 4 * 1024 * 1024));
+    const upstreamError = asRecord(data?.error);
+    if (upstreamError) {
       return NextResponse.json(
-        { error: data.error.message || data.error.msg || "OTP error" },
+        {
+          error:
+            boundedText(upstreamError.message, 500) ||
+            boundedText(upstreamError.msg, 500) ||
+            "OTP error",
+        },
         { status: 404 }
       );
     }
 
-    const itineraries = data.plan?.itineraries ?? [];
+    const plan = asRecord(data?.plan);
+    const itineraries = plan?.itineraries;
+    if (!Array.isArray(itineraries)) {
+      return NextResponse.json({ error: "OTP returned an invalid payload" }, { status: 502 });
+    }
     if (itineraries.length === 0) {
       return NextResponse.json(
         { error: "No transit route found" },
@@ -137,24 +209,13 @@ export async function POST(request: Request) {
     }
 
     // Transform OTP itineraries into our standard format
-    const results = itineraries.map((itin, idx) => ({
-      id: `transit-${idx}`,
-      durationMin: Math.round(itin.duration / 60),
-      walkDistanceM: Math.round(itin.walkDistance),
-      transitTimeMin: Math.round(itin.transitTime / 60),
-      legs: itin.legs.map((leg) => ({
-        mode: leg.mode,
-        from: { name: leg.from.name, lat: leg.from.lat, lng: leg.from.lon },
-        to: { name: leg.to.name, lat: leg.to.lat, lng: leg.to.lon },
-        startTime: leg.startTime,
-        endTime: leg.endTime,
-        durationMin: Math.round(leg.duration / 60),
-        distanceM: Math.round(leg.distance),
-        route: leg.routeShortName || leg.routeLongName || leg.route || null,
-        agency: leg.agencyName || null,
-        encodedPolyline: leg.legGeometry?.points || null,
-      })),
-    }));
+    const results = itineraries
+      .slice(0, 3)
+      .map(normalizeOtpItinerary)
+      .filter((itinerary): itinerary is NonNullable<typeof itinerary> => itinerary !== null);
+    if (results.length === 0) {
+      return NextResponse.json({ error: "OTP returned invalid itineraries" }, { status: 502 });
+    }
 
     return NextResponse.json({ itineraries: results });
   } catch (err) {

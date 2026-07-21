@@ -29,6 +29,7 @@
  */
 
 import { setPref } from "@/lib/prefs-sync";
+import { isCoordinatePair } from "@/lib/geo-validation";
 
 const KEY = "pp:scheduled-reminders";
 const MAX_REMINDERS = 20;
@@ -82,21 +83,56 @@ function genId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
+function parseReminder(value: unknown): ScheduledReminder | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const coordinates = [row.destLat, row.destLng];
+  if (
+    typeof row.id !== "string" ||
+    !row.id ||
+    typeof row.fireAt !== "number" ||
+    !Number.isFinite(row.fireAt) ||
+    typeof row.departAt !== "number" ||
+    !Number.isFinite(row.departAt) ||
+    typeof row.leadMinutes !== "number" ||
+    !Number.isFinite(row.leadMinutes) ||
+    row.leadMinutes < 0 ||
+    typeof row.destLabel !== "string" ||
+    typeof row.mode !== "string" ||
+    !isCoordinatePair(coordinates)
+  ) return null;
+  const deliveredAt = typeof row.deliveredAt === "number" && Number.isFinite(row.deliveredAt)
+    ? row.deliveredAt
+    : undefined;
+  return {
+    id: row.id.slice(0, 500),
+    fireAt: row.fireAt,
+    departAt: row.departAt,
+    leadMinutes: Math.min(10_080, row.leadMinutes),
+    destLabel: row.destLabel.slice(0, 1_000),
+    destLat: coordinates[0],
+    destLng: coordinates[1],
+    mode: row.mode.slice(0, 100),
+    delivered: row.delivered === true,
+    deliveredAt,
+  };
+}
+
 export function loadReminders(): ScheduledReminder[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as ScheduledReminder[];
+    const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
     const cutoff = nowMs() - DELIVERED_TTL_MS;
     // Prune anything delivered & older than TTL so the list stays trim.
-    return parsed.filter((r) =>
-      r &&
-      typeof r.id === "string" &&
-      typeof r.fireAt === "number" &&
-      (!r.delivered || (r.deliveredAt ?? r.fireAt) >= cutoff)
-    );
+    return parsed
+      .slice(0, MAX_REMINDERS)
+      .map(parseReminder)
+      .filter((r): r is ScheduledReminder =>
+        r !== null && (!r.delivered || (r.deliveredAt ?? r.fireAt) >= cutoff)
+      );
   } catch {
     return [];
   }

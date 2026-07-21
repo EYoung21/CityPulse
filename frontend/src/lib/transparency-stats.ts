@@ -19,10 +19,9 @@ import {
   collection,
   getDocs,
   getFirestore,
-  query,
-  where,
 } from "firebase/firestore";
 import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
+import { fetchIncidentCount, getDocsWithDeadline } from "@/lib/firestore";
 import { getCurrentCity } from "@/lib/pulse-cities";
 
 const DAY_MS = 24 * 3600 * 1000;
@@ -35,14 +34,14 @@ export interface TransparencyStats {
   /** ms span of the window. */
   windowMs: number;
   /** Status updates moderators applied to feedback rows. */
-  feedbackTriaged: number;
+  feedbackTriaged: number | null;
   /** Total scanner-derived incidents in the window. The whole stream
    *  is scanner-derived now that crowdsourced reports are gone, so
    *  this is the headline number. */
-  scannerIncidents: number;
+  scannerIncidents: number | null;
   /** Stats for the moderation audit log itself — surfaces
    *  transparency about the moderators (not just the moderated). */
-  totalAuditEntries: number;
+  totalAuditEntries: number | null;
   /** Wall-clock timestamp the snapshot was assembled. Use this for
    *  the "last updated" footer instead of `Date.now()` so a stale
    *  cached page doesn't lie about freshness. */
@@ -53,9 +52,9 @@ const EMPTY_STATS = (city: string, windowMs: number): TransparencyStats => ({
   city,
   windowStartMs: Date.now() - windowMs,
   windowMs,
-  feedbackTriaged: 0,
-  scannerIncidents: 0,
-  totalAuditEntries: 0,
+  feedbackTriaged: null,
+  scannerIncidents: null,
+  totalAuditEntries: null,
   fetchedAtMs: Date.now(),
 });
 
@@ -75,13 +74,22 @@ export async function fetchTransparencyStats(
   const cutoffMs = now - windowMs;
   const stats = EMPTY_STATS(city, windowMs);
 
+  // The audit query is expected to fail for public visitors, while the
+  // incident aggregate is public. Run them concurrently so a slow Firestore
+  // permission/network failure cannot hold the public metric hostage.
+  const [auditResult, incidentResult] = await Promise.allSettled([
+    getDocsWithDeadline(getDocs(collection(db, "moderationAudit")), undefined, 5_000),
+    fetchIncidentCount({ hours: windowDays * 24 }),
+  ]);
+
   // ── Audit log ────────────────────────────────────────────────────
   // Audit entries require admin read — for an unauthenticated visitor
-  // this query will fail. We catch and swallow so the rest of the
-  // stats still render; the moderation counts simply stay at 0. The
-  // page surfaces this with a "available to admins only" footnote.
-  try {
-    const snap = await getDocs(collection(db, "moderationAudit"));
+  // this query will fail. Leave those metrics unavailable while still
+  // rendering the rest of the snapshot.
+  if (auditResult.status === "fulfilled") {
+    const snap = auditResult.value;
+    let totalAuditEntries = 0;
+    let feedbackTriaged = 0;
     snap.forEach((d) => {
       const data = d.data() as Record<string, unknown>;
       const createdAtRaw = data.createdAt as
@@ -95,39 +103,21 @@ export async function fetchTransparencyStats(
             ? createdAtRaw.toMillis()
             : 0;
       if (createdMs && createdMs < cutoffMs) return;
-      stats.totalAuditEntries += 1;
+      totalAuditEntries += 1;
       const kind = String(data.kind ?? "");
-      if (kind === "feedback.status") stats.feedbackTriaged += 1;
+      if (kind === "feedback.status") feedbackTriaged += 1;
     });
-  } catch {
-    /* unauthenticated; skip */
+    stats.totalAuditEntries = totalAuditEntries;
+    stats.feedbackTriaged = feedbackTriaged;
   }
 
   // ── Scanner incidents (context) ──────────────────────────────────
-  // Public-read. We sample without a date filter and post-filter on
-  // reported_at since the incidents collection schema doesn't always
-  // index by city; keeping it client-side avoids requiring new
-  // composite indexes for a transparency-only page.
-  try {
-    const snap = await getDocs(
-      query(collection(db, "incidents"), where("city", "==", city))
-    );
-    snap.forEach((d) => {
-      const data = d.data() as Record<string, unknown>;
-      const reportedAt = data.reported_at;
-      let reportedMs = 0;
-      if (typeof reportedAt === "string") {
-        const t = Date.parse(reportedAt);
-        if (!Number.isNaN(t)) reportedMs = t;
-      } else if (typeof reportedAt === "number") {
-        reportedMs = reportedAt;
-      }
-      if (!reportedMs || reportedMs < cutoffMs) return;
-      stats.scannerIncidents += 1;
-    });
-  } catch {
-    /* the collection may not be city-scoped on this deployment;
-       leaving the count at 0 is preferable to throwing. */
+  // Use the server-cached Firestore count aggregation. The old implementation
+  // downloaded every incident in the city into each visitor's browser merely
+  // to count the last 30 days, causing slow loads and runaway read costs.
+  if (incidentResult.status === "fulfilled") {
+    const count = incidentResult.value;
+    if (count >= 0) stats.scannerIncidents = count;
   }
 
   stats.fetchedAtMs = Date.now();

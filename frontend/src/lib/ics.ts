@@ -48,17 +48,32 @@ function esc(s: string): string {
     .replace(/;/g, "\\;");
 }
 
-/** RFC 5545 mandates lines wrap at 75 octets (~75 chars for ASCII).
- *  Continuation lines start with a single space. */
+const UTF8_ENCODER = new TextEncoder();
+
+function takeUtf8Prefix(value: string, maxBytes: number): [string, string] {
+  let byteCount = 0;
+  let codeUnitCount = 0;
+  for (const char of value) {
+    const charBytes = UTF8_ENCODER.encode(char).length;
+    if (byteCount + charBytes > maxBytes) break;
+    byteCount += charBytes;
+    codeUnitCount += char.length;
+  }
+  return [value.slice(0, codeUnitCount), value.slice(codeUnitCount)];
+}
+
+/** RFC 5545 mandates lines wrap at 75 UTF-8 octets. Continuation lines
+ *  start with one space, leaving 74 octets for their content. */
 function fold(line: string): string {
-  if (line.length <= 75) return line;
+  if (UTF8_ENCODER.encode(line).length <= 75) return line;
   const out: string[] = [];
   let rest = line;
-  out.push(rest.slice(0, 75));
-  rest = rest.slice(75);
+  let first = true;
   while (rest.length > 0) {
-    out.push(" " + rest.slice(0, 74));
-    rest = rest.slice(74);
+    const [chunk, remaining] = takeUtf8Prefix(rest, first ? 75 : 74);
+    out.push(first ? chunk : ` ${chunk}`);
+    rest = remaining;
+    first = false;
   }
   return out.join("\r\n");
 }

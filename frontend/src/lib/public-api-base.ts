@@ -1,4 +1,29 @@
 import { PULSE_CITIES } from "@/lib/pulse-cities";
+import { normalizeHttpUrl } from "@/lib/safe-url";
+import { normalizeWordTimings } from "@/lib/firestore-values";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
+
+function normalizeApiBase(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  try {
+    const url = new URL(trimmed);
+    if (
+      (url.protocol !== "http:" && url.protocol !== "https:") ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    ) {
+      return "";
+    }
+    const path = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
+    return `${url.origin}${path}`;
+  } catch {
+    return "";
+  }
+}
 
 /** Apex hostnames for Pulse marketing sites that share `api.phlpulse.com`.
  * Used so a Vercel 502 on same-origin `/api/*` can retry the public API
@@ -29,7 +54,7 @@ function getPulseMarketingApexHosts(): Set<string> {
  * Capacitor / Ionic builds have no Next proxy; keep the explicit URL.
  */
 export function getPublicApiBase(): string {
-  const explicit = (process.env.NEXT_PUBLIC_API_URL || "").trim().replace(/\/$/, "");
+  const explicit = normalizeApiBase(process.env.NEXT_PUBLIC_API_URL);
   if (typeof window === "undefined") return explicit;
   if (!explicit) return "";
   const proto = window.location.protocol;
@@ -38,13 +63,13 @@ export function getPublicApiBase(): string {
     if (new URL(explicit).origin === window.location.origin) return explicit;
     return "";
   } catch {
-    return explicit;
+    return "";
   }
 }
 
 /** The explicitly configured public API base (never same-origin rewritten). */
 export function getExplicitPublicApiBase(): string {
-  return (process.env.NEXT_PUBLIC_API_URL || "").trim().replace(/\/$/, "");
+  return normalizeApiBase(process.env.NEXT_PUBLIC_API_URL);
 }
 
 const SHARED_PROD_API = "https://api.phlpulse.com";
@@ -162,7 +187,7 @@ export function incidentAudioSources(inc: {
   const clip = inc.audio_clip?.trim();
   if (clip) appendClipProxyCandidates(out, clip);
 
-  const u = inc.audio_url?.trim();
+  const u = normalizeHttpUrl(inc.audio_url);
   if (u) {
     const fromStorage = storageAudioUrlToClipId(u);
     if (fromStorage && fromStorage !== clip?.toLowerCase()) {
@@ -275,12 +300,15 @@ export async function fetchIncidentWordTimings(
   try {
     const r = await fetchPublicApi(
       `/api/incidents/${encodeURIComponent(incidentId)}/timings`,
+      { signal: AbortSignal.timeout(10_000) },
     );
     if (!r.ok) return null;
-    const j = (await r.json()) as { word_timings?: unknown };
-    return Array.isArray(j.word_timings) && j.word_timings.length > 0
-      ? (j.word_timings as { word: string; start: number; end: number }[])
-      : null;
+    const j = await readBoundedJsonResponse(r, 4 * 1024 * 1024);
+    return normalizeWordTimings(
+      j && typeof j === "object" && !Array.isArray(j)
+        ? (j as Record<string, unknown>).word_timings
+        : null
+    );
   } catch {
     return null;
   }

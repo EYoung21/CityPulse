@@ -50,6 +50,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import yaml  # noqa: E402
+from google.cloud.firestore_v1.base_query import FieldFilter  # noqa: E402
 
 from philly_pulse import geocode  # noqa: E402
 
@@ -150,7 +151,11 @@ def _load_suspects(*, limit: int | None, force: bool) -> list[tuple]:
     pass)."""
     db = _get_db()
     rows: list[tuple] = []
-    for snap in db.collection("incidents").where("city", "==", "philly").stream():
+    for snap in (
+        db.collection("incidents")
+        .where(filter=FieldFilter("city", "==", "philly"))
+        .stream()
+    ):
         d = snap.to_dict() or {}
         feed_id = d.get("feed_id") or ""
         if feed_id not in FEED_TO_COUNTY:

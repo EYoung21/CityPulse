@@ -27,8 +27,24 @@
 import { getAuth } from "firebase/auth";
 import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
 import { getCurrentCity } from "@/lib/pulse-cities";
+import { isCoordinatePair } from "@/lib/geo-validation";
 
 import { fetchPublicApi } from "@/lib/public-api-base";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
+
+const MAX_PUSH_RESPONSE_BYTES = 1024 * 1024;
+
+function pushRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function finitePushNumber(value: unknown, fallback = 0, max = Number.MAX_SAFE_INTEGER): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max
+    ? value
+    : fallback;
+}
 
 export interface PushStatus {
   supported: boolean;
@@ -91,11 +107,17 @@ async function fetchPublicKey(force = false): Promise<{ key: string | null; conf
     return { key: VAPID_PUBLIC_KEY_CACHE.key, configured: VAPID_PUBLIC_KEY_CACHE.configured };
   }
   try {
-    const res = await fetchPublicApi("/api/push/public-key", { cache: "no-store" });
+    const res = await fetchPublicApi("/api/push/public-key", {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
     if (!res.ok) throw new Error(`status ${res.status}`);
-    const data = (await res.json()) as { publicKey?: string; configured?: boolean };
-    VAPID_PUBLIC_KEY_CACHE.key = data.publicKey || null;
-    VAPID_PUBLIC_KEY_CACHE.configured = data.configured === true && !!data.publicKey;
+    const data = pushRecord(await readBoundedJsonResponse(res, MAX_PUSH_RESPONSE_BYTES));
+    const key = typeof data?.publicKey === "string" && /^[A-Za-z0-9_-]{40,200}$/.test(data.publicKey)
+      ? data.publicKey
+      : null;
+    VAPID_PUBLIC_KEY_CACHE.key = key;
+    VAPID_PUBLIC_KEY_CACHE.configured = data?.configured === true && !!key;
     return {
       key: VAPID_PUBLIC_KEY_CACHE.key,
       configured: VAPID_PUBLIC_KEY_CACHE.configured,
@@ -197,24 +219,27 @@ export interface AlertArea {
 }
 
 const ALERT_AREA_STORAGE_KEY = "pp:push-alert-area";
-const DEFAULT_ALERT_RADIUS_KM = 3;
+
+function normalizeAlertArea(value: unknown): AlertArea | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const coordinates = [row.lat, row.lng];
+  if (!isCoordinatePair(coordinates) || typeof row.radiusKm !== "number" || !Number.isFinite(row.radiusKm)) {
+    return null;
+  }
+  return {
+    lat: coordinates[0],
+    lng: coordinates[1],
+    radiusKm: Math.max(0.5, Math.min(10, row.radiusKm)),
+  };
+}
 
 export function loadAlertArea(): AlertArea | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(ALERT_AREA_STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (
-      typeof parsed?.lat === "number" &&
-      typeof parsed?.lng === "number" &&
-      Number.isFinite(parsed.lat) &&
-      Number.isFinite(parsed.lng) &&
-      typeof parsed?.radiusKm === "number" &&
-      parsed.radiusKm > 0
-    ) {
-      return { lat: parsed.lat, lng: parsed.lng, radiusKm: parsed.radiusKm };
-    }
+    return normalizeAlertArea(JSON.parse(raw));
   } catch {
     /* corrupt storage; treat as no area */
   }
@@ -224,8 +249,9 @@ export function loadAlertArea(): AlertArea | null {
 export function saveAlertArea(area: AlertArea | null): void {
   if (typeof window === "undefined") return;
   try {
-    if (area === null) window.localStorage.removeItem(ALERT_AREA_STORAGE_KEY);
-    else window.localStorage.setItem(ALERT_AREA_STORAGE_KEY, JSON.stringify(area));
+    const clean = normalizeAlertArea(area);
+    if (clean === null) window.localStorage.removeItem(ALERT_AREA_STORAGE_KEY);
+    else window.localStorage.setItem(ALERT_AREA_STORAGE_KEY, JSON.stringify(clean));
   } catch {
     /* storage full / blocked — non-fatal */
   }
@@ -253,6 +279,7 @@ async function postSubscriptionToServer(
   try {
     const res = await fetchPublicApi("/api/push/subscribe", {
       method: "POST",
+      signal: AbortSignal.timeout(15_000),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${idToken}`,
@@ -269,6 +296,7 @@ async function deleteSubscriptionOnServer(endpoint: string, idToken: string): Pr
   try {
     await fetchPublicApi("/api/push/unsubscribe", {
       method: "POST",
+      signal: AbortSignal.timeout(15_000),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${idToken}`,
@@ -389,12 +417,14 @@ export async function subscribePush(area?: AlertArea | null): Promise<SubscribeR
  *  and re-POSTs the existing browser subscription to the backend
  *  so server state lines up. */
 export async function updateAlertArea(area: AlertArea | null): Promise<boolean> {
-  saveAlertArea(area);
+  const clean = area === null ? null : normalizeAlertArea(area);
+  if (area !== null && !clean) return false;
+  saveAlertArea(clean);
   const sub = await getCurrentSubscription();
   if (!sub) return true; // nothing to sync yet — saved locally for next subscribe
   const idToken = await getIdToken();
   if (!idToken) return false;
-  return postSubscriptionToServer(sub, idToken, area);
+  return postSubscriptionToServer(sub, idToken, clean);
 }
 
 // ── Newsroom alerts (city-wide newsworthy pings, opt-in) ────────────────────
@@ -478,17 +508,46 @@ export interface PushDevice {
   isThisDevice?: boolean;
 }
 
+export function normalizePushDevice(value: unknown): PushDevice | null {
+  const data = pushRecord(value);
+  const id = typeof data?.id === "string" ? data.id.trim().slice(0, 500) : "";
+  if (!data || !id) return null;
+  const pair = [data.notifyLat, data.notifyLng];
+  const hasPair = data.notifyLat != null || data.notifyLng != null;
+  const validPair = hasPair && isCoordinatePair(pair) ? pair : null;
+  return {
+    id,
+    userAgent: typeof data.userAgent === "string" ? data.userAgent.slice(0, 1_000) : "Unknown device",
+    city: typeof data.city === "string" ? data.city.slice(0, 100) : "",
+    createdAtMs: finitePushNumber(data.createdAtMs),
+    lastUsedMs: finitePushNumber(data.lastUsedMs),
+    lastNearbyPushMs: finitePushNumber(data.lastNearbyPushMs),
+    notifyLat: validPair?.[0] ?? null,
+    notifyLng: validPair?.[1] ?? null,
+    notifyRadiusKm: validPair && typeof data.notifyRadiusKm === "number" && Number.isFinite(data.notifyRadiusKm)
+      ? Math.max(0.1, Math.min(100, data.notifyRadiusKm))
+      : null,
+    endpointHint: typeof data.endpointHint === "string" ? data.endpointHint.slice(-64) : "",
+  };
+}
+
 export async function listPushDevices(): Promise<PushDevice[]> {
   const idToken = await getIdToken();
   if (!idToken) return [];
   try {
     const res = await fetchPublicApi("/api/push/devices", {
+      signal: AbortSignal.timeout(15_000),
       headers: { Authorization: `Bearer ${idToken}` },
       cache: "no-store",
     });
     if (!res.ok) return [];
-    const data = (await res.json()) as { devices?: PushDevice[] };
-    const devices = data.devices ?? [];
+    const data = pushRecord(await readBoundedJsonResponse(res, MAX_PUSH_RESPONSE_BYTES));
+    const devices = Array.isArray(data?.devices)
+      ? data.devices.flatMap((device) => {
+          const normalized = normalizePushDevice(device);
+          return normalized ? [normalized] : [];
+        }).slice(0, 100)
+      : [];
     // Mark the current device so the UI can render a "this device"
     // badge. We re-derive the doc id from the current subscription
     // endpoint via the same SHA-256 hash the backend uses.
@@ -511,6 +570,7 @@ export async function revokePushDevice(deviceId: string): Promise<boolean> {
   try {
     const res = await fetchPublicApi("/api/push/revoke-device", {
       method: "POST",
+      signal: AbortSignal.timeout(15_000),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${idToken}`,
@@ -565,9 +625,15 @@ export async function sendTestPush(): Promise<PushTestResult> {
   try {
     const res = await fetchPublicApi("/api/push/test", {
       method: "POST",
+      signal: AbortSignal.timeout(30_000),
       headers: { Authorization: `Bearer ${idToken}` },
     });
-    const data = (await res.json().catch(() => ({}))) as Partial<PushTestResult>;
+    let data: Record<string, unknown> = {};
+    try {
+      data = pushRecord(await readBoundedJsonResponse(res, MAX_PUSH_RESPONSE_BYTES)) ?? {};
+    } catch {
+      data = {};
+    }
     if (!res.ok) {
       return {
         ok: false,
@@ -576,17 +642,17 @@ export async function sendTestPush(): Promise<PushTestResult> {
         failed: 0,
         gone: 0,
         reason:
-          (data as { detail?: string }).detail ||
-          (data as PushTestResult).reason ||
+          (typeof data.detail === "string" ? data.detail.slice(0, 1_000) : "") ||
+          (typeof data.reason === "string" ? data.reason.slice(0, 1_000) : "") ||
           `Server returned ${res.status}.`,
       };
     }
     return {
       ok: data.status === "ok",
-      status: (data.status as PushTestResult["status"]) || "error",
-      sent: data.sent ?? 0,
-      failed: data.failed ?? 0,
-      gone: data.gone ?? 0,
+      status: data.status === "ok" || data.status === "no_devices" ? data.status : "error",
+      sent: Math.floor(finitePushNumber(data.sent, 0, 1_000_000)),
+      failed: Math.floor(finitePushNumber(data.failed, 0, 1_000_000)),
+      gone: Math.floor(finitePushNumber(data.gone, 0, 1_000_000)),
     };
   } catch (e) {
     return {

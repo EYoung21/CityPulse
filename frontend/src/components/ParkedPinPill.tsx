@@ -50,7 +50,6 @@ export default function ParkedPinPill({ userLocation, onLocate }: Props) {
   const [noteDraft, setNoteDraft] = useState("");
 
   useEffect(() => {
-    setPin(getParkedPin());
     return subscribeParkedPin(setPin);
   }, []);
 
@@ -137,6 +136,7 @@ export default function ParkedPinPill({ userLocation, onLocate }: Props) {
                 <div className="mt-1.5 flex items-center gap-1.5">
                   <input
                     autoFocus
+                    aria-label="Parking note"
                     value={noteDraft}
                     onChange={(e) => setNoteDraft(e.target.value)}
                     onKeyDown={(e) => {

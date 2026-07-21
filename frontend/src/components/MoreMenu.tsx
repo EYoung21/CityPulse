@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useRef, useEffect } from "react";
 import { 
   Settings, 
   Moon, 
@@ -77,7 +77,7 @@ export default function MoreMenu({
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
+  }, [setOpen]);
 
   const THEME_OPTIONS = [
     { id: "auto", label: "Auto", icon: Monitor },
@@ -88,7 +88,10 @@ export default function MoreMenu({
   return (
     <div className="relative" ref={ref}>
       <button
+        type="button"
         onClick={() => setOpen(!open)}
+        aria-label="Settings and more"
+        aria-expanded={open}
         className="w-12 h-12 flex items-center justify-center rounded-lg backdrop-blur-md shadow-lg transition-colors"
         style={{
           background: open ? "rgba(59,130,246,0.15)" : "var(--pill-bg)",
@@ -121,7 +124,7 @@ export default function MoreMenu({
                   const Icon = opt.icon;
                   const active = mode === opt.id;
                   return (
-                    <button
+                    <button type="button"
                       key={opt.id}
                       onClick={() => setMode(opt.id)}
                       className={`flex-1 flex flex-col items-center gap-1.5 py-2 rounded-md transition-all ${
@@ -134,7 +137,7 @@ export default function MoreMenu({
                   );
                 })}
               </div>
-              <button
+              <button type="button"
                 onClick={() => setColorBlindSafe(!colorBlindSafe)}
                 className="w-full flex items-center justify-between px-2 py-2 rounded-md transition-colors hover:bg-[var(--panel-input-bg)]"
               >
@@ -169,7 +172,7 @@ export default function MoreMenu({
                 ].map((layer) => {
                   const locked = layer.pro && !isPro;
                   return (
-                    <button
+                    <button type="button"
                       key={layer.label}
                       onClick={() => {
                         if (locked) { onShowUpgrade(layer.label); return; }
@@ -205,7 +208,7 @@ export default function MoreMenu({
             </div>
 
             <div className="p-1 bg-[var(--panel-input-bg)]/50 space-y-0.5">
-              <button
+              <button type="button"
                 onClick={() => { window.location.href = "/use-cases/api"; setOpen(false); }}
                 className="w-full flex items-center justify-between px-3 py-2.5 rounded-md transition-colors hover:bg-[var(--panel-input-bg)] group"
               >
@@ -215,7 +218,7 @@ export default function MoreMenu({
                 </div>
                 <ChevronRight className="w-4 h-4 text-[var(--panel-text-muted)] group-hover:translate-x-0.5 transition-transform" />
               </button>
-              <button
+              <button type="button"
                 onClick={() => { onShowAbout(); setOpen(false); }}
                 className="w-full flex items-center justify-between px-3 py-2.5 rounded-md transition-colors hover:bg-[var(--panel-input-bg)] group"
               >

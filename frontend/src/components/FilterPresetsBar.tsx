@@ -33,7 +33,7 @@ export default function FilterPresetsBar({
   timeFilterHours,
   onApply,
 }: Props) {
-  const [presets, setPresets] = useState<FilterPreset[]>([]);
+  const [presets, setPresets] = useState<FilterPreset[]>(loadPresets);
   const [open, setOpen] = useState(false);
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState("");
@@ -41,7 +41,6 @@ export default function FilterPresetsBar({
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    setPresets(loadPresets());
     return subscribePresets(setPresets);
   }, []);
 
@@ -202,6 +201,7 @@ export default function FilterPresetsBar({
               <input
                 ref={inputRef}
                 type="text"
+                aria-label="Preset name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 onKeyDown={(e) => {

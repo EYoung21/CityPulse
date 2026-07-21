@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import {
+  isActiveStripeSubscriptionStatus,
+  nextPassExpiryMillis,
+  stripeCustomerId,
+  stripePaymentIntentId,
+} from "@/lib/stripe-pass";
+import { readBodyText, RequestBodyError } from "@/lib/server-body";
 
 // Pass durations live here so changing the SKU window (e.g. adding a
 // 7-day pass) is a one-line edit rather than a hunt through the
@@ -45,15 +52,49 @@ async function updateUserTier(uid: string, tier: "free" | "pro") {
  *  pass before the first expired), we extend from the existing
  *  expiry rather than from now so they get the full duration they
  *  paid for. */
-async function grantPass(uid: string, durationHours: number) {
+async function grantPassOnce(
+  uid: string,
+  durationHours: number,
+  paymentIntentId: string,
+  sourceEventId: string
+) {
   const db = getAdminDb();
-  const ref = db.doc(`users/${uid}`);
-  const snap = await ref.get();
-  const existing = snap.data()?.proUntil as Timestamp | undefined;
+  const userRef = db.doc(`users/${uid}`);
+  const grantRef = db.doc(`stripePassGrants/${paymentIntentId}`);
   const now = Date.now();
-  const baseMs = existing && existing.toMillis() > now ? existing.toMillis() : now;
-  const proUntil = Timestamp.fromMillis(baseMs + durationHours * 60 * 60 * 1000);
-  await ref.set({ proUntil, passGrantedAt: new Date() }, { merge: true });
+
+  return db.runTransaction(async (transaction) => {
+    // Both webhook event families use the same PaymentIntent document. A
+    // Firestore transaction makes the check-and-grant atomic, so concurrent
+    // delivery and Stripe retries cannot extend the pass more than once.
+    const [grantSnap, userSnap] = await Promise.all([
+      transaction.get(grantRef),
+      transaction.get(userRef),
+    ]);
+    if (grantSnap.exists) return false;
+
+    const existing = userSnap.data()?.proUntil as Timestamp | undefined;
+    const existingMs = existing?.toMillis() ?? null;
+    const expiryMs = nextPassExpiryMillis(existingMs, now, durationHours);
+    const proUntil = Timestamp.fromMillis(expiryMs);
+    const grantedAt = Timestamp.fromMillis(now);
+
+    transaction.set(
+      userRef,
+      { proUntil, passGrantedAt: grantedAt },
+      { merge: true }
+    );
+    transaction.create(grantRef, {
+      uid,
+      paymentIntentId,
+      durationHours,
+      previousExpiry: existing ?? null,
+      proUntil,
+      grantedAt,
+      sourceEventId,
+    });
+    return true;
+  });
 }
 
 async function findUidByStripeCustomer(customerId: string): Promise<string | null> {
@@ -66,15 +107,53 @@ async function findUidByStripeCustomer(customerId: string): Promise<string | nul
   return snap.empty ? null : snap.docs[0].id;
 }
 
-export async function POST(req: NextRequest) {
-  const stripe = getStripe();
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!webhookSecret) {
-    return NextResponse.json({ error: "Webhook secret not configured" }, { status: 500 });
+export async function customerHasActiveSubscription(
+  stripe: Stripe,
+  customerId: string
+): Promise<boolean> {
+  // Stripe is the authoritative source here. Looking only at the event that
+  // happened to arrive is wrong when a customer has two subscriptions or
+  // when webhook delivery is out of order. Query entitled states directly;
+  // scanning the first 100 records with status="all" can miss an older active
+  // subscription behind a large canceled history.
+  for (const status of ["active", "trialing"] as const) {
+    const subscriptions = await stripe.subscriptions.list({
+      customer: customerId,
+      status,
+      limit: 1,
+    });
+    if (subscriptions.data.some((sub) =>
+      isActiveStripeSubscriptionStatus(sub.status)
+    )) {
+      return true;
+    }
   }
+  return false;
+}
 
-  const body = await req.text();
-  const sig = req.headers.get("stripe-signature")!;
+export async function POST(req: NextRequest) {
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!process.env.STRIPE_SECRET_KEY || !webhookSecret) {
+    return NextResponse.json(
+      { error: "Stripe webhook not configured" },
+      { status: 503 }
+    );
+  }
+  const stripe = getStripe();
+
+  let body: string;
+  try {
+    body = await readBodyText(req, 1024 * 1024);
+  } catch (err) {
+    if (err instanceof RequestBodyError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    throw err;
+  }
+  const sig = req.headers.get("stripe-signature");
+  if (!sig) {
+    return NextResponse.json({ error: "Missing signature" }, { status: 400 });
+  }
 
   let event: Stripe.Event;
   try {
@@ -89,6 +168,7 @@ export async function POST(req: NextRequest) {
       const session = event.data.object as Stripe.Checkout.Session;
       const uid = session.metadata?.firebaseUid;
       if (uid) {
+        const customerId = stripeCustomerId(session.customer);
         // Branch on Checkout mode: subscriptions flip the persistent
         // `tier` field; one-time pass payments instead grant a
         // finite `proUntil` window without touching `tier`. This
@@ -96,29 +176,42 @@ export async function POST(req: NextRequest) {
         // a 3-day pass while already subscribed (or vice versa)
         // doesn't get their access state corrupted on refund/cancel.
         if (session.mode === "subscription") {
-          await updateUserTier(uid, "pro");
+          if (customerId) {
+            const isActive = await customerHasActiveSubscription(stripe, customerId);
+            await updateUserTier(uid, isActive ? "pro" : "free");
+          } else {
+            console.warn(
+              "checkout.session.completed: subscription has no valid customer",
+              { sessionId: session.id }
+            );
+          }
         } else if (session.mode === "payment") {
           const passType = session.metadata?.passType;
           const hours = passType ? PASS_DURATIONS_HOURS[passType] : undefined;
-          if (hours) {
-            await grantPass(uid, hours);
+          const paymentIntentId = stripePaymentIntentId(session.payment_intent);
+          if (hours && session.payment_status === "paid" && paymentIntentId) {
+            await grantPassOnce(uid, hours, paymentIntentId, event.id);
           } else {
             console.warn(
-              "checkout.session.completed: payment mode with unknown/missing passType",
-              { passType, sessionId: session.id }
+              "checkout.session.completed: one-time pass not ready to grant",
+              {
+                passType,
+                paymentStatus: session.payment_status,
+                hasPaymentIntent: !!paymentIntentId,
+                sessionId: session.id,
+              }
             );
           }
         }
 
-        // Always mirror the Stripe customer ID so the
+        // Mirror the Stripe customer ID for subscriptions so legacy
         // customer.subscription.* handlers below can find the user
-        // doc by reverse lookup. Both subscription and one-time
-        // payment Checkout sessions populate `customer` when an
-        // email is provided (which our create-checkout route does).
-        if (session.customer) {
+        // doc by reverse lookup. One-time purchases may get a different
+        // Customer and must never overwrite this subscription mapping.
+        if (session.mode === "subscription" && customerId) {
           const db = getAdminDb();
           await db.doc(`users/${uid}`).set(
-            { stripeCustomerId: session.customer as string },
+            { stripeCustomerId: customerId },
             { merge: true }
           );
         }
@@ -127,16 +220,10 @@ export async function POST(req: NextRequest) {
     }
 
     case "payment_intent.succeeded": {
-      // Belt-and-suspenders for the 3-day pass flow. We subscribe to
-      // this event in addition to checkout.session.completed because
-      // checkout.session.completed occasionally fires before the
-      // payment is fully captured for cards that need 3DS or other
-      // post-auth flows. payment_intent.succeeded is the canonical
-      // "money is in the bank" event. We deliberately make the
-      // grantPass call idempotent-ish via the "extend from existing
-      // expiry" logic above, so processing the same pass twice
-      // doesn't double the duration — the second call sees the
-      // existing future proUntil and the extension math is the same.
+      // Belt-and-suspenders for the 3-day pass flow. Both this event and
+      // checkout.session.completed can arrive, in either order, and Stripe
+      // can retry either event. grantPassOnce keys both paths by the same
+      // PaymentIntent and atomically ignores every replay after the first.
       // Subscription invoices also fire payment_intent.succeeded
       // events; we ignore those by requiring the metadata.passType
       // marker that only one-time pass Checkout sessions carry.
@@ -145,7 +232,7 @@ export async function POST(req: NextRequest) {
       const passType = pi.metadata?.passType;
       const hours = passType ? PASS_DURATIONS_HOURS[passType] : undefined;
       if (uid && hours) {
-        await grantPass(uid, hours);
+        await grantPassOnce(uid, hours, pi.id, event.id);
       }
       break;
     }
@@ -153,9 +240,17 @@ export async function POST(req: NextRequest) {
     case "customer.subscription.deleted":
     case "customer.subscription.updated": {
       const sub = event.data.object as Stripe.Subscription;
-      const uid = await findUidByStripeCustomer(sub.customer as string);
+      // New Checkout Sessions put the Firebase uid directly on the
+      // Subscription, so delivery order and multiple Stripe Customers cannot
+      // disconnect cancellation from the correct account. Reverse lookup is
+      // retained for subscriptions created before this metadata was added.
+      const customerId = stripeCustomerId(sub.customer);
+      const uid = sub.metadata?.firebaseUid
+        || (customerId ? await findUidByStripeCustomer(customerId) : null);
       if (uid) {
-        const isActive = sub.status === "active" || sub.status === "trialing";
+        const isActive = customerId
+          ? await customerHasActiveSubscription(stripe, customerId)
+          : isActiveStripeSubscriptionStatus(sub.status);
         await updateUserTier(uid, isActive ? "pro" : "free");
       }
       break;

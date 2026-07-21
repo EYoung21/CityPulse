@@ -40,22 +40,84 @@ export interface TripHistoryEntry {
    *  `[lat, lng]` pairs — same shape as everywhere else in the app —
    *  and decimated to ~120 points to stay under the per-entry size
    *  budget while still tracing the route well enough for a GPX
-   *  export to look right when imported into Strava / Garmin. */
+ *  export to look right when imported into Strava / Garmin. */
   geometry?: [number, number][];
 }
 
+import { isCoordinatePair } from "@/lib/geo-validation";
+
 type Listener = (entries: TripHistoryEntry[]) => void;
 const listeners = new Set<Listener>();
+
+function parseTripLocation(value: unknown): NonNullable<TripHistoryEntry["origin"]> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const row = value as Record<string, unknown>;
+  const coordinates = [row.lat, row.lng];
+  if (typeof row.display_name !== "string" || !isCoordinatePair(coordinates)) return undefined;
+  return {
+    display_name: row.display_name.slice(0, 1_000),
+    lat: coordinates[0],
+    lng: coordinates[1],
+  };
+}
+
+function parseTripEntry(value: unknown): TripHistoryEntry | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const finiteNonNegative = (item: unknown): item is number =>
+    typeof item === "number" && Number.isFinite(item) && item >= 0;
+  if (
+    typeof row.id !== "string" ||
+    !row.id ||
+    typeof row.mode !== "string" ||
+    !row.mode ||
+    !finiteNonNegative(row.startedAt) ||
+    !finiteNonNegative(row.endedAt) ||
+    row.endedAt < row.startedAt ||
+    !finiteNonNegative(row.traveledKm) ||
+    !finiteNonNegative(row.totalDistanceKm) ||
+    !finiteNonNegative(row.nearbyIncidents) ||
+    typeof row.wasSafeRoute !== "boolean" ||
+    typeof row.completed !== "boolean"
+  ) return null;
+  const geometry = Array.isArray(row.geometry)
+    ? row.geometry.slice(0, 500).filter(isCoordinatePair)
+    : undefined;
+  const rating = typeof row.rating === "number" && Number.isInteger(row.rating) && row.rating >= 1 && row.rating <= 5
+    ? row.rating
+    : undefined;
+  return {
+    id: row.id.slice(0, 500),
+    startedAt: row.startedAt,
+    endedAt: row.endedAt,
+    traveledKm: row.traveledKm,
+    totalDistanceKm: row.totalDistanceKm,
+    mode: row.mode.slice(0, 100),
+    origin: parseTripLocation(row.origin),
+    dest: parseTripLocation(row.dest),
+    nearbyIncidents: Math.floor(row.nearbyIncidents),
+    wasSafeRoute: row.wasSafeRoute,
+    completed: row.completed,
+    rating,
+    notes: typeof row.notes === "string" ? row.notes.slice(0, 5_000) : undefined,
+    geometry,
+  };
+}
 
 function read(): TripHistoryEntry[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as TripHistoryEntry[];
+    const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
     const cutoff = Date.now() - TTL_MS;
-    return parsed.filter((e) => e && typeof e.startedAt === "number" && e.startedAt >= cutoff);
+    return parsed
+      .slice(0, MAX_ENTRIES)
+      .map(parseTripEntry)
+      .filter((entry): entry is TripHistoryEntry =>
+        entry !== null && entry.startedAt >= cutoff && entry.startedAt <= Date.now() + 5 * 60_000
+      );
   } catch {
     return [];
   }
@@ -90,7 +152,13 @@ export function recordTrip(entry: Omit<TripHistoryEntry, "id">): TripHistoryEntr
  *  card so star/comment changes flow through to history without
  *  requiring a re-record. */
 export function updateTrip(id: string, patch: Partial<Pick<TripHistoryEntry, "rating" | "notes">>): void {
-  const next = read().map((e) => (e.id === id ? { ...e, ...patch } : e));
+  const safePatch = {
+    ...(patch.rating === undefined
+      ? {}
+      : { rating: Number.isInteger(patch.rating) && patch.rating >= 1 && patch.rating <= 5 ? patch.rating : undefined }),
+    ...(patch.notes === undefined ? {} : { notes: patch.notes.slice(0, 5_000) }),
+  };
+  const next = read().map((e) => (e.id === id ? { ...e, ...safePatch } : e));
   write(next);
 }
 
@@ -104,10 +172,12 @@ export function deleteTrip(id: string): void {
  *  back in chronological order rather than at the top, since that
  *  matches where the user expects to see it. */
 export function restoreTrip(entry: TripHistoryEntry): void {
+  const clean = parseTripEntry(entry);
+  if (!clean) return;
   const existing = read();
   // Skip if the same id is somehow already present (double-undo race).
-  if (existing.some((e) => e.id === entry.id)) return;
-  const next = [...existing, entry].sort((a, b) => b.startedAt - a.startedAt);
+  if (existing.some((e) => e.id === clean.id)) return;
+  const next = [...existing, clean].sort((a, b) => b.startedAt - a.startedAt);
   write(next);
 }
 

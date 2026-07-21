@@ -37,6 +37,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from philly_pulse import geocode, ingest_location, inhibitor  # noqa: E402
 from philly_pulse.city_registry import CITY_REGISTRY, FEED_META, load_city_registry  # noqa: E402
+from google.cloud.firestore_v1.base_query import FieldFilter  # noqa: E402
 
 
 def _get_db():
@@ -59,9 +60,11 @@ def _geo_ctx(city: str | None) -> dict | None:
 
 def _load_blocked(*, city: str | None, limit: int | None, force: bool) -> list[tuple]:
     db = _get_db()
-    q = db.collection("incidents").where("inhibitor_status", "==", "blocked")
+    q = db.collection("incidents").where(
+        filter=FieldFilter("inhibitor_status", "==", "blocked")
+    )
     if city:
-        q = q.where("city", "==", city)
+        q = q.where(filter=FieldFilter("city", "==", city))
 
     rows: list[tuple] = []
     for snap in q.stream():

@@ -43,6 +43,7 @@ export default function ReminderRunner() {
   const timersRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
+    const timers = timersRef.current;
     const fire = (reminder: ScheduledReminder, missed: boolean) => {
       // Idempotency guard: an alarm and a tick can both want to fire
       // the same reminder. The store's delivered flag is the source
@@ -92,9 +93,9 @@ export default function ReminderRunner() {
       const now = Date.now();
       // Clear any timers whose reminders no longer exist (deleted /
       // delivered). We'll re-arm survivors below.
-      for (const [id, handle] of timersRef.current.entries()) {
+      for (const [id, handle] of timers.entries()) {
         window.clearTimeout(handle);
-        timersRef.current.delete(id);
+        timers.delete(id);
         void id;
       }
       const list = activeReminders();
@@ -116,7 +117,7 @@ export default function ReminderRunner() {
         // browsers throttle aggressively.
         if (delta < 12 * 60 * 60_000) {
           const handle = window.setTimeout(() => fire(r, false), delta);
-          timersRef.current.set(r.id, handle);
+          timers.set(r.id, handle);
         }
       }
     };
@@ -133,8 +134,8 @@ export default function ReminderRunner() {
       unsub();
       window.clearInterval(tick);
       document.removeEventListener("visibilitychange", onVis);
-      for (const handle of timersRef.current.values()) window.clearTimeout(handle);
-      timersRef.current.clear();
+      for (const handle of timers.values()) window.clearTimeout(handle);
+      timers.clear();
     };
   }, []);
 

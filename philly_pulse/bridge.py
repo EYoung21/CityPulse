@@ -20,10 +20,11 @@ RAW_CLIPS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "audio_
 BRIDGE_POST_TIMEOUT_SEC = float(os.environ.get("BRIDGE_POST_TIMEOUT_SEC", "180"))
 
 # By default the transcriber is self-cleaning: once a clip has been POSTed to
-# the ingest API (which uploads the map-worthy clip to GCS and discards the
-# rest), the local staging copy is redundant and is deleted so the box's disk
-# can't fill. Set BRIDGE_KEEP_RAW_CLIPS=1 to retain raw clips locally for
-# offline re-transcription (then bound them with the clip-prune timer).
+# the ingest API (which publishes map-worthy processed audio and privately
+# archives one source clip for every accepted extraction), the local staging
+# copy is redundant and is deleted so the box's disk can't fill. Set
+# BRIDGE_KEEP_RAW_CLIPS=1 to retain a second raw copy locally for offline
+# re-transcription (then bound it with the clip-prune timer).
 KEEP_RAW_CLIPS = os.environ.get("BRIDGE_KEEP_RAW_CLIPS", "0").strip().lower() in ("1", "true", "yes")
 
 
@@ -125,12 +126,16 @@ def post_transcript(
 
         body = json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"}
-        # Authenticate to the ingest endpoint when the shared secret is
-        # configured. Absent the env var we send no auth header, matching the
-        # server's allow-when-unset rollout behaviour.
+        # Ingest fails closed. If the machine secret is missing, retain local
+        # staging files instead of sending a request that cannot be accepted.
         ingest_secret = os.environ.get("PULSE_INGEST_SECRET")
-        if ingest_secret:
-            headers["Authorization"] = f"Bearer {ingest_secret}"
+        if not ingest_secret:
+            logger.error(
+                "PULSE_INGEST_SECRET is missing; retaining %d staged clips",
+                len(audio_data),
+            )
+            return
+        headers["Authorization"] = f"Bearer {ingest_secret}"
         req = Request(
             bridge_url,
             data=body,
@@ -141,11 +146,11 @@ def post_transcript(
             with urlopen(req, timeout=BRIDGE_POST_TIMEOUT_SEC) as resp:
                 logger.info("Bridge POST %d (%d clips): %s",
                             resp.status, len(audio_data), text[:60])
-                # Server has durably handled the audio now (map-worthy clip
-                # uploaded to GCS, rejected transcript discarded). The local
-                # staging copies are redundant — delete them on a clean 2xx so
-                # the transcriber disk can't fill. Failed POSTs keep the files
-                # for the backstop prune / manual resync.
+                # Server has durably handled the audio now (map-worthy
+                # processed clip published, source clip privately archived).
+                # The local staging copies are redundant — delete them on a
+                # clean 2xx so the transcriber disk can't fill. Failed POSTs
+                # keep the files for the backstop prune / manual resync.
                 if 200 <= resp.status < 300:
                     for cid in processed_clip_ids:
                         _delete_clip(cid, AUDIO_CLIPS_DIR)

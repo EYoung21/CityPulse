@@ -473,11 +473,11 @@ export default function LandingPage() {
     >
       {/* ═══ Header ═══ */}
       <header className="lp-header">
-        <a href="/" className="lp-header-brand" aria-label="CityPulse home">
+        <Link href="/" className="lp-header-brand" aria-label="CityPulse home">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="" className="lp-header-logo" />
           <span className="lp-header-wordmark">CityPulse</span>
-        </a>
+        </Link>
         <CitySwitcher current={city} />
         <div className="lp-header-actions">
           <Link href="/" className="lp-header-cta">
@@ -485,6 +485,8 @@ export default function LandingPage() {
           </Link>
         </div>
       </header>
+
+      <main>
 
       {/* ═══ Hero — real dark map + city skyline ribbon ═══ */}
       <section className="lp-hero">
@@ -728,6 +730,8 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
+
+      </main>
 
       {/* ═══ CTA ═══ */}
       <footer className="lp-cta">

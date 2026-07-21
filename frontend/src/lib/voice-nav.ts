@@ -40,6 +40,7 @@ export type VoiceNavPriority =
 
 const PREF_KEY = "pp:voice-nav-enabled";
 const recentlySpoken = new Map<string, number>();
+const RECENTLY_SPOKEN_MAX = 100;
 
 export function isVoiceNavEnabled(): boolean {
   if (typeof window === "undefined") return false;
@@ -83,9 +84,14 @@ export function speakNav(text: string, opts: SpeakOptions = {}): void {
     if (last && now - last < (opts.dedupeMs ?? 30_000)) return;
     recentlySpoken.set(opts.dedupeKey, now);
     // Trim the dedupe map periodically so it doesn't grow without bound.
-    if (recentlySpoken.size > 50) {
+    if (recentlySpoken.size > RECENTLY_SPOKEN_MAX) {
       for (const [k, t] of recentlySpoken) {
         if (now - t > 5 * 60_000) recentlySpoken.delete(k);
+      }
+      while (recentlySpoken.size > RECENTLY_SPOKEN_MAX) {
+        const oldest = recentlySpoken.keys().next().value as string | undefined;
+        if (!oldest) break;
+        recentlySpoken.delete(oldest);
       }
     }
   }

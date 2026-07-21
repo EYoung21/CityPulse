@@ -1,10 +1,33 @@
 "use client";
 
 import { Lock, Zap, X } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { normalizeHttpUrl } from "@/lib/safe-url";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
 
 const CHECKOUT_URL = "/api/create-checkout";
+
+export function normalizeCheckoutResponse(value: unknown): { url: string | null; error: string } {
+  const data = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  const normalizedUrl = normalizeHttpUrl(data?.url);
+  let url: string | null = null;
+  if (normalizedUrl) {
+    const parsed = new URL(normalizedUrl);
+    if (
+      parsed.protocol === "https:" &&
+      (parsed.hostname === "stripe.com" || parsed.hostname.endsWith(".stripe.com"))
+    ) {
+      url = normalizedUrl;
+    }
+  }
+  return {
+    url,
+    error: typeof data?.error === "string" ? data.error.trim().slice(0, 500) : "",
+  };
+}
 
 interface UpgradePromptProps {
   feature: string;
@@ -15,6 +38,8 @@ interface UpgradePromptProps {
 
 export default function UpgradePrompt({ feature, description, inline, onClose }: UpgradePromptProps) {
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inlineErrorId = useId();
   const { user, signInWithGoogle } = useAuth();
 
   async function handleUpgrade(plan: "monthly" | "annual" | "3day") {
@@ -31,6 +56,7 @@ export default function UpgradePrompt({ feature, description, inline, onClose }:
       return;
     }
     setLoading(true);
+    setError(null);
     try {
       const idToken = await user.getIdToken();
       const res = await fetch(CHECKOUT_URL, {
@@ -40,13 +66,24 @@ export default function UpgradePrompt({ feature, description, inline, onClose }:
           Authorization: `Bearer ${idToken}`,
         },
         body: JSON.stringify({ plan }),
+        signal: AbortSignal.timeout(15_000),
       });
-      const data = await res.json();
-      if (data.url) {
-        window.location.href = data.url;
+      const data = normalizeCheckoutResponse(
+        await readBoundedJsonResponse(res, 64 * 1024).catch(() => null),
+      );
+      if (!res.ok || !data.url) {
+        throw new Error(data.error || "Checkout is temporarily unavailable.");
       }
-    } catch {
-      console.error("Failed to create checkout session");
+      window.location.href = data.url;
+    } catch (err) {
+      const message =
+        err instanceof DOMException && err.name === "TimeoutError"
+          ? "Checkout timed out. Please try again."
+          : err instanceof Error
+            ? err.message
+            : "Checkout is temporarily unavailable.";
+      setError(message);
+      console.error("Failed to create checkout session", err);
     } finally {
       setLoading(false);
     }
@@ -54,27 +91,37 @@ export default function UpgradePrompt({ feature, description, inline, onClose }:
 
   if (inline) {
     return (
-      <button
-        onClick={() => handleUpgrade("monthly")}
-        disabled={loading}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: "4px",
-          padding: "2px 8px",
-          fontSize: "10px",
-          fontWeight: 600,
-          borderRadius: "4px",
-          background: "rgba(139,92,246,0.15)",
-          color: "#a78bfa",
-          border: "1px solid rgba(139,92,246,0.25)",
-          cursor: "pointer",
-          transition: "all 0.15s ease",
-        }}
-      >
-        <Lock size={10} />
-        PRO
-      </button>
+      <span style={{ display: "inline-flex", alignItems: "center" }}>
+        <button
+          type="button"
+          aria-label={`Upgrade to unlock ${feature}`}
+          aria-describedby={error ? inlineErrorId : undefined}
+          onClick={() => handleUpgrade("monthly")}
+          disabled={loading}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+            padding: "2px 8px",
+            fontSize: "10px",
+            fontWeight: 600,
+            borderRadius: "4px",
+            background: error ? "rgba(239,68,68,0.15)" : "rgba(139,92,246,0.15)",
+            color: error ? "#fca5a5" : "#a78bfa",
+            border: `1px solid ${error ? "rgba(239,68,68,0.3)" : "rgba(139,92,246,0.25)"}`,
+            cursor: "pointer",
+            transition: "all 0.15s ease",
+          }}
+        >
+          <Lock size={10} />
+          {error ? "TRY AGAIN" : "PRO"}
+        </button>
+        {error && (
+          <span id={inlineErrorId} role="alert" className="sr-only">
+            {error}
+          </span>
+        )}
+      </span>
     );
   }
 
@@ -94,6 +141,8 @@ export default function UpgradePrompt({ feature, description, inline, onClose }:
     >
       {onClose && (
         <button
+          type="button"
+          aria-label="Close upgrade prompt"
           onClick={onClose}
           style={{
             position: "absolute",
@@ -144,6 +193,7 @@ export default function UpgradePrompt({ feature, description, inline, onClose }:
 
       <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
         <button
+          type="button"
           onClick={() => handleUpgrade("monthly")}
           disabled={loading}
           style={{
@@ -162,6 +212,7 @@ export default function UpgradePrompt({ feature, description, inline, onClose }:
           Upgrade — $7.99/mo
         </button>
         <button
+          type="button"
           onClick={() => handleUpgrade("annual")}
           disabled={loading}
           style={{
@@ -201,6 +252,7 @@ export default function UpgradePrompt({ feature, description, inline, onClose }:
          *  is the #1 reason people don't tap upgrade modals, and a
          *  one-time pass with that promise neutralizes that fear. */}
         <button
+          type="button"
           onClick={() => handleUpgrade("3day")}
           disabled={loading}
           style={{
@@ -231,6 +283,14 @@ export default function UpgradePrompt({ feature, description, inline, onClose }:
           </span>
         </button>
       </div>
+      {error && (
+        <p
+          role="alert"
+          style={{ margin: "12px 0 0", color: "#fca5a5", fontSize: "12px", textAlign: "center" }}
+        >
+          {error}
+        </p>
+      )}
     </div>
   );
 }

@@ -19,6 +19,16 @@ const PUBLIC_ROUTES = ["/landing", "/login", "/teams", "/use-cases"];
 /** Path prefixes that skip the auth gate (for dynamic segments). */
 const PUBLIC_ROUTE_PREFIXES = ["/use-cases/"];
 
+type AdminMode = "launcher" | "dashboard" | "admin" | "moderation";
+
+function readInitialAdminMode(): AdminMode {
+  if (typeof window === "undefined") return "launcher";
+  const saved = window.sessionStorage.getItem("pulse_admin_mode");
+  return saved === "dashboard" || saved === "admin" || saved === "moderation"
+    ? saved
+    : "launcher";
+}
+
 function isPublicRoute(pathname: string): boolean {
   if (PUBLIC_ROUTES.includes(pathname)) return true;
   return PUBLIC_ROUTE_PREFIXES.some((prefix) => pathname.startsWith(prefix));
@@ -64,8 +74,7 @@ function AuthGate({ children }: { children: ReactNode }) {
   // basemap, POI overlays, avoidance prefs, etc.) to/from Firestore so
   // they roam across the user's devices.
   usePrefsSync();
-  const [adminMode, setAdminMode] = useState<"launcher" | "dashboard" | "admin" | "moderation" | null>(null);
-  const [adminModeInitialized, setAdminModeInitialized] = useState(false);
+  const [adminMode, setAdminMode] = useState<AdminMode>(readInitialAdminMode);
 
   // ── Auto-guest ────────────────────────────────────────────────────
   // Rather than gate the whole app behind a login wall, drop signed-out
@@ -101,24 +110,29 @@ function AuthGate({ children }: { children: ReactNode }) {
     }
     if (guestingRef.current) return;
     guestingRef.current = true;
-    // setGuestFailed only ever runs inside this async catch (never
-    // synchronously in the effect body), so it can't cascade renders.
-    continueAsGuest().catch(() => setGuestFailed(true));
+    // Firebase can leave signInAnonymously pending indefinitely during a
+    // partial outage. Give the gate a deadline so a visitor gets the manual
+    // login fallback instead of an endless spinner.
+    let active = true;
+    const timeout = window.setTimeout(() => {
+      if (active) setGuestFailed(true);
+    }, 8000);
+    continueAsGuest()
+      .then(() => {
+        window.clearTimeout(timeout);
+        if (active) setGuestFailed(false);
+      })
+      .catch(() => {
+        window.clearTimeout(timeout);
+        if (active) setGuestFailed(true);
+      });
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
   }, [needsGuest, continueAsGuest]);
 
-  useEffect(() => {
-    if (!isAdmin) {
-      setAdminModeInitialized(true);
-      return;
-    }
-    const saved = sessionStorage.getItem("pulse_admin_mode");
-    if (saved) {
-      setAdminMode(saved as any);
-    }
-    setAdminModeInitialized(true);
-  }, [isAdmin]);
-
-  const changeAdminMode = (mode: "launcher" | "dashboard" | "admin" | "moderation") => {
+  const changeAdminMode = (mode: AdminMode) => {
     setAdminMode(mode);
     if (mode === "launcher") {
       sessionStorage.removeItem("pulse_admin_mode");
@@ -157,9 +171,7 @@ function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (isAdmin) {
-    if (!adminModeInitialized) return null;
-
-    if (!adminMode || adminMode === "launcher") {
+    if (adminMode === "launcher") {
       return (
         <AdminLauncher
           onChoose={(mode) => changeAdminMode(mode)}

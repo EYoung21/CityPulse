@@ -5,6 +5,7 @@ import {
   haversineMeters,
   magnitudeToLevel,
   minDistToPathMeters,
+  POST,
   selectCrashAvoidanceAreas,
 } from "@/app/api/route-directions/route";
 
@@ -52,5 +53,26 @@ describe("route-directions crash helpers", () => {
     const selected = selectCrashAvoidanceAreas(candidates, candidates);
     expect(selected.onRoute).toHaveLength(10);
     expect(selected.rects).toHaveLength(10);
+  });
+
+  it("rejects out-of-range waypoints before contacting a provider", async () => {
+    const response = await POST(new Request("http://localhost/api/route-directions", {
+      method: "POST",
+      body: JSON.stringify({ waypoints: [[91, -75], [39.95, -75.16]] }),
+    }));
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "Invalid waypoint" });
+  });
+
+  it("rejects unknown travel modes before contacting a provider", async () => {
+    const response = await POST(new Request("http://localhost/api/route-directions", {
+      method: "POST",
+      body: JSON.stringify({
+        waypoints: [[39.95, -75.17], [39.96, -75.16]],
+        mode: "teleport",
+      }),
+    }));
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "Unsupported travel mode" });
   });
 });

@@ -47,10 +47,26 @@ def compute_w_eff(
     except (ValueError, TypeError):
         return 0.0
 
+    try:
+        safe_s_base = float(s_base)
+    except (TypeError, ValueError, OverflowError):
+        safe_s_base = 0.5
+    if not math.isfinite(safe_s_base):
+        safe_s_base = 0.5
+    safe_s_base = max(0.0, min(safe_s_base, 1.0))
+
+    try:
+        safe_confidence = float(confidence)
+    except (TypeError, ValueError, OverflowError):
+        safe_confidence = 1.0
+    if not math.isfinite(safe_confidence):
+        safe_confidence = 1.0
+
     delta_hours = max((now - reported).total_seconds() / 3600.0, 0.0)
-    c = max(0.3, min(confidence, 1.0))
-    time_decay = math.exp(-delta_hours / TAU_HOURS)
-    return s_base * time_decay * c
+    c = max(0.3, min(safe_confidence, 1.0))
+    tau_hours = TAU_HOURS if math.isfinite(TAU_HOURS) and TAU_HOURS > 0 else 12.0
+    time_decay = math.exp(-delta_hours / tau_hours)
+    return safe_s_base * time_decay * c
 
 
 def enrich_incidents(incidents: list[dict]) -> list[dict]:

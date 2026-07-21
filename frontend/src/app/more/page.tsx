@@ -5,8 +5,8 @@
  * hours / mutes / push / commute) that replaces the old
  * `?inbox=settings` drawer overlay. Reuses `AlertsInbox` with
  * `defaultPanel="settings"` so all settings stay in one component.
- * Desktop visitors get bounced back to the map (the same settings are
- * reachable from the map's bell-anchored drawer).
+ * Desktop visitors keep the destination by opening the settings panel in
+ * the map's existing bell-anchored drawer.
  */
 
 import { useEffect, useState } from "react";
@@ -31,13 +31,14 @@ export default function MorePage() {
   }, []);
 
   useEffect(() => {
-    if (isMobile === false) router.replace("/?view=map");
+    if (isMobile === false) router.replace("/?view=map&inbox=settings");
   }, [isMobile, router]);
 
   if (isMobile !== true) return null;
 
   return (
-    <div className="min-h-dvh" style={{ background: "var(--page-bg, #0b1120)" }}>
+    <main className="min-h-dvh" style={{ background: "var(--page-bg, #0b1120)" }}>
+      <h1 className="sr-only">Settings and more</h1>
       <AlertsInbox
         open
         placement="fullScreen"
@@ -48,6 +49,6 @@ export default function MorePage() {
         }}
       />
       <MobileBottomNav />
-    </div>
+    </main>
   );
 }

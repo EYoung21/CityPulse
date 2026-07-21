@@ -65,6 +65,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from philly_pulse import prefilter  # noqa: E402
 from philly_pulse.firestore_store import _ensure_client  # noqa: E402
+from google.cloud.firestore_v1.base_query import FieldFilter  # noqa: E402
 
 DEFAULT_COST_PER_CALL_USD = 0.00027
 DEFAULT_DAYS = 7
@@ -118,7 +119,7 @@ def _iter_extractions(days: int, page_size: int = 2000) -> Iterable[dict]:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     base = (
         db.collection("extractions")
-        .where("reported_at", ">=", cutoff)
+        .where(filter=FieldFilter("reported_at", ">=", cutoff))
         .order_by("reported_at")
         .limit(page_size)
     )
@@ -147,8 +148,8 @@ def _iter_extractions_for_city(city: str, days: int, page_size: int = 2000) -> I
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     base = (
         db.collection("extractions")
-        .where("city", "==", city)
-        .where("reported_at", ">=", cutoff)
+        .where(filter=FieldFilter("city", "==", city))
+        .where(filter=FieldFilter("reported_at", ">=", cutoff))
         .order_by("reported_at")
         .limit(page_size)
     )

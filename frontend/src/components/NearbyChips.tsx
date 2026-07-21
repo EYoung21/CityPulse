@@ -89,6 +89,11 @@ export default function NearbyChips({ userPos, onFlyTo, onDirections, onPlaceSel
     if (abortRef.current) abortRef.current.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      ctrl.abort();
+    }, 15_000);
     setActive(key);
     setResults([]);
     setErr(null);
@@ -101,10 +106,15 @@ export default function NearbyChips({ userPos, onFlyTo, onDirections, onPlaceSel
       });
       if (!ctrl.signal.aborted) setResults(r);
     } catch (e) {
-      if (ctrl.signal.aborted) return;
-      setErr(e instanceof Error ? e.message : "search failed");
+      if (abortRef.current !== ctrl) return;
+      setErr(
+        timedOut
+          ? "Nearby search timed out"
+          : e instanceof Error ? e.message : "search failed"
+      );
     } finally {
-      if (!ctrl.signal.aborted) setLoading(false);
+      window.clearTimeout(timeout);
+      if (abortRef.current === ctrl) setLoading(false);
     }
   };
 

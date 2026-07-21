@@ -66,8 +66,8 @@ export default function IncidentThumbnail({
     if (!node || typeof IntersectionObserver === "undefined") {
       // Without IO support we just give up on lazy loading — better
       // to show the thumbnail than to silently never show it.
-      setVisible(true);
-      return;
+      const timer = window.setTimeout(() => setVisible(true), 0);
+      return () => window.clearTimeout(timer);
     }
     const obs = new IntersectionObserver(
       (entries) => {
@@ -136,6 +136,9 @@ export default function IncidentThumbnail({
           }}
         >
           {plan.tiles.map((t) => (
+            // Raw 256px map tiles must keep their provider URL and exact mosaic
+            // geometry; routing them through image optimization breaks both.
+            // eslint-disable-next-line @next/next/no-img-element
             <img
               key={`${t.gx}-${t.gy}-${t.url}`}
               src={t.url}

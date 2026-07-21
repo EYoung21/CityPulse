@@ -27,10 +27,10 @@ export function useGpsSpeed(enabled: boolean): SpeedSample {
 
   useEffect(() => {
     if (!enabled || typeof navigator === "undefined" || !navigator.geolocation) {
-      setMps(null);
       lastRef.current = null;
       smoothedRef.current = null;
-      return;
+      const resetTimer = window.setTimeout(() => setMps(null), 0);
+      return () => window.clearTimeout(resetTimer);
     }
 
     const watchId = navigator.geolocation.watchPosition(

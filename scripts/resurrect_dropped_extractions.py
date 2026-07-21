@@ -52,6 +52,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from philly_pulse import geocode  # noqa: E402
 from philly_pulse import persistence as store  # noqa: E402
 from philly_pulse.city_registry import CITY_REGISTRY, load_city_registry  # noqa: E402
+from google.cloud.firestore_v1.base_query import FieldFilter  # noqa: E402
 
 
 def _geo_ctx(city: str | None) -> dict | None:
@@ -103,8 +104,8 @@ def _load_dropped_extractions(
         try:
             q = (
                 db.collection("extractions")
-                .where("reported_at", ">=", cur_iso)
-                .where("reported_at", "<", nxt_iso)
+                .where(filter=FieldFilter("reported_at", ">=", cur_iso))
+                .where(filter=FieldFilter("reported_at", "<", nxt_iso))
             )
             chunk = list(q.get())  # snapshot read; bounded by single-RPC deadline
         except DeadlineExceeded:

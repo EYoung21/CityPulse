@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
+import { readBoundedResponseBytes } from "@/lib/upstream-response";
 
 export const dynamic = "force-dynamic";
 
 const TOMTOM_KEY = process.env.TOMTOM_API_KEY || "";
 const TOMTOM_TRAFFIC_TILE = "https://api.tomtom.com/traffic/map/4/tile";
+const MAX_TRAFFIC_TILE_BYTES = 2 * 1024 * 1024;
 
 type Params = Promise<{
   kind: string;
@@ -50,12 +52,13 @@ export async function GET(_request: Request, context: { params: Params }) {
     const upstream = await fetch(url, {
       next: { revalidate: 60 },
       headers: { Accept: "image/png" },
+      signal: AbortSignal.timeout(8_000),
     });
     if (!upstream.ok) {
       return new Response(null, { status: upstream.status === 404 ? 404 : 502 });
     }
-    const body = await upstream.arrayBuffer();
-    return new Response(body, {
+    const body = await readBoundedResponseBytes(upstream, MAX_TRAFFIC_TILE_BYTES);
+    return new Response(new Uint8Array(body).buffer, {
       headers: {
         "Content-Type": upstream.headers.get("content-type") || "image/png",
         "Cache-Control": "public, max-age=60, stale-while-revalidate=120",

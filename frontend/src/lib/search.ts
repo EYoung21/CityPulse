@@ -1,5 +1,9 @@
 import type { Incident } from "./api";
+import { isCoordinatePair } from "./geo-validation";
 import { getCurrentCity } from "./pulse-cities";
+import { readBoundedJsonResponse } from "./upstream-response";
+
+const MAX_PLACE_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
@@ -41,9 +45,10 @@ export async function reverseGeocode(
     });
     const res = await fetch(`${NOMINATIM_REVERSE_URL}?${params}`, {
       headers: { "User-Agent": "PHLPulse/0.1" },
+      signal: AbortSignal.timeout(8_000),
     });
     if (!res.ok) return null;
-    const data = (await res.json()) as {
+    const data = (await readBoundedJsonResponse(res, MAX_PLACE_RESPONSE_BYTES)) as {
       display_name?: string;
       address?: Record<string, string | undefined>;
     };
@@ -90,10 +95,15 @@ export async function geocodePhilly(
     try {
       const res = await fetch(`/api/place-search?${params}`, {
         cache: "no-store",
+        signal: AbortSignal.timeout(10_000),
       });
       if (res.ok) {
-        const data = (await res.json()) as { results?: GeoResult[] };
-        if (Array.isArray(data.results)) return data.results;
+        const data = (await readBoundedJsonResponse(res, MAX_PLACE_RESPONSE_BYTES)) as { results?: GeoResult[] };
+        if (Array.isArray(data.results)) {
+          return data.results.filter((result) =>
+            isCoordinatePair([result?.lat, result?.lng])
+          );
+        }
       }
     } catch {
       // Fall through to the direct Nominatim path below. This keeps
@@ -112,25 +122,40 @@ export async function geocodePhilly(
     bounded: "1",
   });
 
-  const res = await fetch(`${NOMINATIM_URL}?${params}`, {
-    headers: { "User-Agent": "PHLPulse/0.1" },
-  });
-  if (!res.ok) return [];
+  try {
+    const res = await fetch(`${NOMINATIM_URL}?${params}`, {
+      headers: { "User-Agent": "PHLPulse/0.1" },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return [];
 
-  const data = await res.json();
-  return data.map((r: { display_name: string; lat: string; lon: string; type?: string }) => {
-    const parts = r.display_name.split(",").map((p) => p.trim()).filter(Boolean);
-    return {
-      display_name: r.display_name,
-      name: parts[0],
-      address: parts.slice(1, 4).join(", ") || undefined,
-      lat: parseFloat(r.lat),
-      lng: parseFloat(r.lon),
-      source: "nominatim" as const,
-      provider: "nominatim" as const,
-      type: r.type,
-    };
-  });
+    const data = (await readBoundedJsonResponse(res, MAX_PLACE_RESPONSE_BYTES)) as Array<{
+      display_name: string;
+      lat: string;
+      lon: string;
+      type?: string;
+    }>;
+    return data.flatMap((r) => {
+      const lat = Number(r.lat);
+      const lng = Number(r.lon);
+      if (!isCoordinatePair([lat, lng]) || typeof r.display_name !== "string") {
+        return [];
+      }
+      const parts = r.display_name.split(",").map((p) => p.trim()).filter(Boolean);
+      return [{
+        display_name: r.display_name,
+        name: parts[0],
+        address: parts.slice(1, 4).join(", ") || undefined,
+        lat,
+        lng,
+        source: "nominatim" as const,
+        provider: "nominatim" as const,
+        type: r.type,
+      }];
+    });
+  } catch {
+    return [];
+  }
 }
 
 function haversineKm(

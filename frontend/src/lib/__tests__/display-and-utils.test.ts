@@ -3,7 +3,7 @@ import type { Incident } from "@/lib/api";
 import { incidentHeadline, incidentLocationLabel } from "@/lib/incident-display";
 import { sanitizeScannerTranscriptForDisplay, hasScannerTranscriptArtifacts } from "@/lib/sanitize-scanner-transcript";
 import { getSeverity, severityBucket, heatmapWeight } from "@/lib/severity";
-import { coordKey, formatEtaShort } from "@/hooks/useModeETAs";
+import { coordKey, formatEtaShort, normalizeModeEtaResponse } from "@/hooks/useModeETAs";
 
 function inc(overrides: Partial<Incident>): Incident {
   return {
@@ -81,5 +81,12 @@ describe("ETA formatting helpers", () => {
     expect(coordKey(null)).toBe("");
     expect(coordKey({ lat: 39.95049, lng: -75.16049 })).toBe("39.950,-75.160");
     expect(coordKey({ lat: 39.95051, lng: -75.16051 })).toBe("39.951,-75.161");
+  });
+
+  it("rejects malformed mode ETA responses", () => {
+    expect(normalizeModeEtaResponse({ durationMin: Number.NaN, distanceKm: 1 })).toBeNull();
+    expect(normalizeModeEtaResponse({ durationMin: -1 })).toBeNull();
+    expect(normalizeModeEtaResponse({ durationMin: 12, distanceKm: Number.POSITIVE_INFINITY }))
+      .toEqual({ durationMin: 12, distanceKm: undefined });
   });
 });

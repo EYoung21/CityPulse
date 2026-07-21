@@ -72,7 +72,7 @@ function loadDismiss(): DismissState {
     if (obj.kind === "never") return "never";
     if (obj.kind === "snoozed" && typeof obj.at === "number") {
       const ageMs = Date.now() - obj.at;
-      if (ageMs < SNOOZE_DAYS * 24 * 60 * 60 * 1000) return "snoozed";
+      if (ageMs >= 0 && ageMs < SNOOZE_DAYS * 24 * 60 * 60 * 1000) return "snoozed";
       return null;
     }
   } catch { /* ignore */ }
@@ -288,7 +288,7 @@ export default function InstallPrompt() {
                 </p>
               )}
             </div>
-            <button
+            <button type="button"
               onClick={handleSnooze}
               className="p-1 rounded-md hover:bg-white/10 transition-colors shrink-0"
               aria-label="Dismiss for now"
@@ -299,14 +299,14 @@ export default function InstallPrompt() {
           </div>
           {deferred && (
             <div className="px-4 pb-3 flex items-center gap-2">
-              <button
+              <button type="button"
                 onClick={handleInstall}
                 className="flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-colors"
                 style={{ background: "#3b82f6", color: "white" }}
               >
                 Install
               </button>
-              <button
+              <button type="button"
                 onClick={handleSnooze}
                 className="px-3 py-2 rounded-lg text-xs font-medium transition-colors"
                 style={{
@@ -316,7 +316,7 @@ export default function InstallPrompt() {
               >
                 Not now
               </button>
-              <button
+              <button type="button"
                 onClick={handleNever}
                 className="px-2.5 py-2 rounded-lg text-xs font-medium transition-colors"
                 style={{ color: "var(--panel-text-muted)" }}
@@ -328,7 +328,7 @@ export default function InstallPrompt() {
           )}
           {!deferred && iosHint && (
             <div className="px-4 pb-3 flex items-center justify-end gap-2">
-              <button
+              <button type="button"
                 onClick={handleSnooze}
                 className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
                 style={{
@@ -338,7 +338,7 @@ export default function InstallPrompt() {
               >
                 Got it
               </button>
-              <button
+              <button type="button"
                 onClick={handleNever}
                 className="px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors"
                 style={{ color: "var(--panel-text-muted)" }}

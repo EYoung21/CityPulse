@@ -9,6 +9,8 @@
 const KEY = "pp:parked-pin-v1";
 const TTL_MS = 24 * 60 * 60 * 1000;
 
+import { isCoordinatePair } from "@/lib/geo-validation";
+
 export interface ParkedPin {
   lat: number;
   lng: number;
@@ -28,14 +30,31 @@ function read(): ParkedPin | null {
   try {
     const raw = window.localStorage.getItem(KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as ParkedPin;
-    if (!parsed || typeof parsed.lat !== "number" || typeof parsed.lng !== "number") return null;
+    const parsed = JSON.parse(raw) as Partial<ParkedPin> | null;
+    const coordinates = [parsed?.lat, parsed?.lng];
+    if (
+      !parsed ||
+      !isCoordinatePair(coordinates) ||
+      typeof parsed.ts !== "number" ||
+      !Number.isFinite(parsed.ts) ||
+      parsed.ts <= 0 ||
+      parsed.ts > Date.now() + 5 * 60_000
+    ) {
+      window.localStorage.removeItem(KEY);
+      return null;
+    }
     if (Date.now() - parsed.ts > TTL_MS) {
       // Expired — clear it so subsequent reads stay consistent.
       window.localStorage.removeItem(KEY);
       return null;
     }
-    return parsed;
+    return {
+      lat: coordinates[0],
+      lng: coordinates[1],
+      ts: parsed.ts,
+      note: typeof parsed.note === "string" ? parsed.note.slice(0, 500) : undefined,
+      label: typeof parsed.label === "string" ? parsed.label.slice(0, 500) : undefined,
+    };
   } catch {
     return null;
   }
@@ -60,7 +79,15 @@ export function getParkedPin(): ParkedPin | null {
 
 export function setParkedPin(pin: Omit<ParkedPin, "ts"> | null): ParkedPin | null {
   if (!pin) { write(null); return null; }
-  const next: ParkedPin = { ...pin, ts: Date.now() };
+  const coordinates = [pin.lat, pin.lng];
+  if (!isCoordinatePair(coordinates)) return null;
+  const next: ParkedPin = {
+    lat: coordinates[0],
+    lng: coordinates[1],
+    label: typeof pin.label === "string" ? pin.label.slice(0, 500) : undefined,
+    note: typeof pin.note === "string" ? pin.note.slice(0, 500) : undefined,
+    ts: Date.now(),
+  };
   write(next);
   return next;
 }
@@ -68,7 +95,7 @@ export function setParkedPin(pin: Omit<ParkedPin, "ts"> | null): ParkedPin | nul
 export function updateParkedNote(note: string): void {
   const cur = read();
   if (!cur) return;
-  write({ ...cur, note });
+  write({ ...cur, note: note.slice(0, 500) });
 }
 
 export function clearParkedPin(): void {

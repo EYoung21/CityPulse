@@ -23,10 +23,9 @@ interface Props {
  *  and a delete button. We deliberately don't try to be a full picker
  *  here — adding new areas happens via the dropped-pin sticky card. */
 export default function AvoidAreasManager({ onJump }: Props) {
-  const [areas, setAreas] = useState<AvoidArea[]>([]);
+  const [areas, setAreas] = useState<AvoidArea[]>(loadAvoidAreas);
 
   useEffect(() => {
-    setAreas(loadAvoidAreas());
     return subscribeAvoidAreas(setAreas);
   }, []);
 

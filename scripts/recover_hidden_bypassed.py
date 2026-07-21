@@ -43,6 +43,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from philly_pulse import geocode  # noqa: E402
 from philly_pulse.city_registry import CITY_REGISTRY, load_city_registry  # noqa: E402
+from google.cloud.firestore_v1.base_query import FieldFilter  # noqa: E402
 
 _LLM_RECOVERY_STATUSES = frozenset({
     "hidden_city_center_cluster",
@@ -91,11 +92,11 @@ def _load_hidden_bypassed(
     db = _get_db()
     q = (
         db.collection("incidents")
-        .where("inhibitor_status", "==", "bypassed")
-        .where("hidden", "==", True)
+        .where(filter=FieldFilter("inhibitor_status", "==", "bypassed"))
+        .where(filter=FieldFilter("hidden", "==", True))
     )
     if city:
-        q = q.where("city", "==", city)
+        q = q.where(filter=FieldFilter("city", "==", city))
 
     rows: list[tuple] = []
     for snap in q.stream():

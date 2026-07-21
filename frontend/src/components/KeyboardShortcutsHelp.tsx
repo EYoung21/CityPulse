@@ -124,7 +124,7 @@ export default function KeyboardShortcutsHelp() {
               Keyboard shortcuts
             </h2>
           </div>
-          <button
+          <button type="button"
             onClick={() => setOpen(false)}
             className="p-1 rounded-md hover:bg-white/10 transition-colors"
             aria-label="Close shortcuts"

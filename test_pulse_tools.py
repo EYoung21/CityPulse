@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
-from philly_pulse import auto_verify, firestore_store, geocode, prefilter, server
+from philly_pulse import (
+    auto_verify,
+    firestore_store,
+    geocode,
+    persistence,
+    prefilter,
+    server,
+    store as sqlite_store,
+    weights,
+)
 
 
 class FakeDoc:
@@ -21,7 +31,14 @@ class FakeQuery:
         self.rows = rows
         self.calls: list[tuple] = []
 
-    def where(self, *args):
+    def where(self, *args, **kwargs):
+        if "filter" in kwargs:
+            field_filter = kwargs["filter"]
+            args = (
+                field_filter.field_path,
+                field_filter.op_string,
+                field_filter.value,
+            )
         self.calls.append(("where", args))
         return self
 
@@ -44,6 +61,72 @@ class FakeDb:
     def collection(self, name: str):
         assert name == "incidents"
         return self.query
+
+
+def test_firestore_rows_replace_nested_non_finite_numbers() -> None:
+    row = firestore_store._doc_to_row(
+        "incident-1",
+        {
+            "lat": float("nan"),
+            "mentions": [{"confidence": float("inf")}],
+        },
+    )
+
+    assert row == {
+        "id": "incident-1",
+        "lat": None,
+        "mentions": [{"confidence": None}],
+    }
+
+
+def test_firestore_timestamps_use_one_sortable_utc_representation() -> None:
+    assert firestore_store._canonical_utc_iso(
+        "2026-07-20T06:30:00-04:00"
+    ) == "2026-07-20T10:30:00+00:00"
+    assert firestore_store._canonical_utc_iso(
+        "2026-07-20T10:30:00Z"
+    ) == "2026-07-20T10:30:00+00:00"
+    with pytest.raises(ValueError):
+        firestore_store._canonical_utc_iso("not-a-timestamp")
+
+
+def test_weight_calculation_survives_malformed_numeric_fields() -> None:
+    reported_at = "2026-01-01T00:00:00+00:00"
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    assert weights.compute_w_eff("bad", reported_at, float("nan"), now=now) == 0.5
+    assert weights.compute_w_eff(float("inf"), reported_at, "bad", now=now) == 0.5
+
+
+def test_sqlite_city_adapter_does_not_query_a_missing_city_column(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(sqlite_store, "DB_PATH", str(tmp_path / "citypulse.sqlite"))
+    monkeypatch.setattr(sqlite_store, "_conn", None)
+    sqlite_store.insert_incident(
+        incident_id="sqlite-city-row",
+        raw_text="test",
+        severity_category="medical_other",
+        s_base=0.5,
+        confidence=0.8,
+        reported_at="2099-01-01T00:00:00+00:00",
+    )
+
+    rows = sqlite_store.list_incidents_for_city("philly", limit=20)
+
+    assert [row["id"] for row in rows] == ["sqlite-city-row"]
+    assert sqlite_store._conn is not None
+    sqlite_store._conn.close()
+    sqlite_store._conn = None
+
+
+def test_auto_store_selection_honors_firestore_emulator(monkeypatch) -> None:
+    monkeypatch.delenv("PHILLY_PULSE_STORE", raising=False)
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.delenv("FIREBASE_SERVICE_ACCOUNT_JSON", raising=False)
+    monkeypatch.setenv("FIRESTORE_EMULATOR_HOST", "127.0.0.1:8080")
+
+    assert persistence._should_use_firestore() is True
 
 
 def test_firestore_find_latest_city_incidents_filters_and_queries(monkeypatch):
@@ -70,6 +153,43 @@ def test_firestore_find_latest_city_incidents_filters_and_queries(monkeypatch):
     assert ("where", ("reported_at", ">=", "2026-01-01T00:00:00Z")) in query.calls
     assert ("where", ("reported_at", "<", "2026-02-01T00:00:00Z")) in query.calls
     assert ("limit", 5) in query.calls
+
+
+def test_firestore_city_page_filters_before_limit_and_fills_visible_rows(monkeypatch):
+    query = FakeQuery(
+        [
+            FakeDoc("blocked", {"inhibitor_status": "blocked", "severity_category": "shots_heard"}),
+            FakeDoc("hidden", {"hidden": True, "severity_category": "shots_heard"}),
+            FakeDoc("visible-2", {"severity_category": "shots_heard", "reported_at": "2026-01-02"}),
+            FakeDoc("visible-1", {"severity_category": "shots_heard", "reported_at": "2026-01-01"}),
+        ]
+    )
+    monkeypatch.setattr(firestore_store, "_ensure_client", lambda: FakeDb(query))
+
+    rows = firestore_store.list_incidents_for_city(
+        "philly", category="shots_heard", limit=2
+    )
+
+    assert [row["id"] for row in rows] == ["visible-2", "visible-1"]
+    category_call = ("where", ("severity_category", "==", "shots_heard"))
+    assert category_call in query.calls
+    assert query.calls.index(category_call) < next(
+        i for i, call in enumerate(query.calls) if call[0] == "limit"
+    )
+
+
+def test_firestore_public_read_failure_propagates(monkeypatch):
+    class FailingQuery(FakeQuery):
+        def stream(self):
+            raise RuntimeError("database unavailable")
+
+    query = FailingQuery([])
+    monkeypatch.setattr(firestore_store, "_ensure_client", lambda: FakeDb(query))
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        firestore_store.list_incidents(
+            since="2026-01-01T00:00:00+00:00", category="shots_heard"
+        )
 
 
 def test_pulse_find_latest_tool_overfetches_and_keyword_filters(monkeypatch):
@@ -100,7 +220,7 @@ def test_pulse_find_latest_tool_overfetches_and_keyword_filters(monkeypatch):
         "city_slug": "philly",
         "severity_category": "violent_weapon",
         "since_iso": "2026-01-01T00:00:00Z",
-        "before_iso": "2026-02-01T00:00:00Z",
+        "before_iso": "2026-02-01T00:00:00+00:00",
         "limit": 60,
     }
     assert out["match_count"] == 1
@@ -150,8 +270,8 @@ def test_pulse_count_tool_clamps_to_user_window(monkeypatch):
     assert out["clamped_to_user_window"] is True
     assert captured == {
         "city_slug": "philly",
-        "since_iso": "2026-01-02T00:00:00Z",
-        "until_iso": "2026-01-03T00:00:00Z",
+        "since_iso": "2026-01-02T00:00:00+00:00",
+        "until_iso": "2026-01-03T00:00:00+00:00",
         "severity_category": "traffic_crash_injury",
     }
 

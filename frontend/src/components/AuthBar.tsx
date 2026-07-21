@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { isFirebaseConfigured } from "@/lib/firebase";
+import { normalizeHttpUrl } from "@/lib/safe-url";
 import {
   LogOut,
   LogIn,
@@ -61,6 +62,7 @@ export default function AuthBar() {
   const label = user.isAnonymous
     ? "Guest"
     : user.displayName || user.email || "Signed in";
+  const safePhotoUrl = normalizeHttpUrl(user.photoURL);
 
   const handleExport = () => {
     const exp = buildAccountExport({
@@ -129,6 +131,9 @@ export default function AuthBar() {
   const handleImportFile = async (file: File) => {
     setImportStatus({ kind: "running" });
     try {
+      if (file.size > 2 * 1024 * 1024) {
+        throw new Error("Import file is too large (maximum 2 MB).");
+      }
       const text = await file.text();
       const exp = parseAccountExport(text);
       const result = await applyAccountImport(exp, {
@@ -169,6 +174,10 @@ export default function AuthBar() {
   return (
     <div className="relative">
       <button
+        type="button"
+        aria-label="Account menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={() => setOpen(!open)}
         className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 backdrop-blur-md shadow-lg transition-colors hover:brightness-110"
         style={{
@@ -176,9 +185,12 @@ export default function AuthBar() {
           border: "1px solid var(--pill-border, rgba(255,255,255,0.1))",
         }}
       >
-        {user.photoURL ? (
+        {safePhotoUrl ? (
+          // Firebase profile photos can come from arbitrary identity-provider
+          // hosts, so they intentionally bypass Next's fixed remote allowlist.
+          // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={user.photoURL}
+            src={safePhotoUrl}
             alt=""
             className="w-5 h-5 rounded-full"
             referrerPolicy="no-referrer"
@@ -212,6 +224,7 @@ export default function AuthBar() {
                   <input
                     autoFocus
                     type="text"
+                    aria-label="Display name"
                     value={nameDraft}
                     onChange={(e) => setNameDraft(e.target.value)}
                     onKeyDown={(e) => {
@@ -284,7 +297,7 @@ export default function AuthBar() {
               )}
             </div>
             {user.isAnonymous && (
-              <button
+              <button type="button"
                 onClick={() => { setOpen(false); router.push("/login"); }}
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-semibold transition-colors bg-blue-500/10 hover:bg-blue-500/20"
                 style={{
@@ -296,7 +309,7 @@ export default function AuthBar() {
                 Sign in / Create account
               </button>
             )}
-            <button
+            <button type="button"
               onClick={handleExport}
               className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium transition-colors hover:bg-white/5"
               style={{ color: "var(--panel-text)" }}
@@ -305,7 +318,7 @@ export default function AuthBar() {
               <Download className="w-4 h-4" style={{ color: "var(--panel-text-muted)" }} />
               Export my data
             </button>
-            <button
+            <button type="button"
               onClick={handleImportClick}
               disabled={importStatus.kind === "running"}
               className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium transition-colors hover:bg-white/5 disabled:opacity-50"
@@ -368,7 +381,7 @@ export default function AuthBar() {
                     This permanently wipes your saved places, lists, trip history, and preferences. Tap again to confirm.
                   </div>
                 )}
-                <button
+                <button type="button"
                   onClick={() => void handleDeleteClick()}
                   disabled={deleteStatus.kind === "running"}
                   className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium transition-colors text-red-400 hover:bg-red-500/10 disabled:opacity-50"
@@ -392,7 +405,7 @@ export default function AuthBar() {
                 only meaningful for a real account. Guests upgrade via the
                 "Sign in / Create account" CTA above instead. */}
             {!user.isAnonymous && (
-              <button
+              <button type="button"
                 onClick={() => { setOpen(false); void signOutUser(); }}
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium transition-colors text-red-400 hover:bg-red-500/10"
               >
@@ -407,6 +420,7 @@ export default function AuthBar() {
           <input
             ref={fileInputRef}
             type="file"
+            aria-label="Import CityPulse settings file"
             accept="application/json,.json"
             className="hidden"
             onChange={(e) => {

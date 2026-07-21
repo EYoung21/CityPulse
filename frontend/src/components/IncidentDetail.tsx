@@ -33,6 +33,9 @@ import {
   subscribeFeedAudio,
   getFeedAudioState,
 } from "./FeedAudioMiniPlayer";
+import { readBoundedResponseBytes } from "@/lib/upstream-response";
+
+const MAX_WAVEFORM_AUDIO_BYTES = 32 * 1024 * 1024;
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -141,6 +144,7 @@ function WaveformPlayer({
     const candidates = (Array.isArray(src) ? src : [src]).filter(Boolean);
     let cancelled = false;
     let candidateIdx = 0;
+    const waveformAbort = new AbortController();
 
     audio.addEventListener("loadedmetadata", () => setDuration(audio.duration));
     audio.addEventListener("ended", () => {
@@ -189,12 +193,17 @@ function WaveformPlayer({
         if (cancelled) return;
         let ctx: AudioContext | null = null;
         try {
-          const r = await fetchUrlWithPublicApiFallback(url);
+          const r = await fetchUrlWithPublicApiFallback(url, {
+            signal: AbortSignal.any([
+              waveformAbort.signal,
+              AbortSignal.timeout(15_000),
+            ]),
+          });
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          const buf = await r.arrayBuffer();
+          const bytes = await readBoundedResponseBytes(r, MAX_WAVEFORM_AUDIO_BYTES);
           if (cancelled) return;
           ctx = new AudioContext();
-          const decoded = await ctx.decodeAudioData(buf.slice(0));
+          const decoded = await ctx.decodeAudioData(new Uint8Array(bytes).buffer);
           if (cancelled) return;
           const raw = decoded.getChannelData(0);
           const bars = 60;
@@ -211,6 +220,7 @@ function WaveformPlayer({
           setWaveformData(samples.map((s) => s / max));
           return;
         } catch (err) {
+          if (cancelled) return;
           const msg = err instanceof Error ? err.message : "network error";
           console.warn("[WaveformPlayer] waveform candidate failed", { url, error: msg });
         } finally {
@@ -225,6 +235,7 @@ function WaveformPlayer({
 
     return () => {
       cancelled = true;
+      waveformAbort.abort();
       playIntentRef.current = false;
       audio.pause();
       audio.src = "";
@@ -311,12 +322,34 @@ function WaveformPlayer({
     drawWaveform();
   };
 
+  const seekTo = (seconds: number) => {
+    if (!audioRef.current || !duration) return;
+    audioRef.current.currentTime = Math.max(0, Math.min(duration, seconds));
+    drawWaveform();
+  };
+
   const seek = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!audioRef.current || !duration) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const pct = (e.clientX - rect.left) / rect.width;
-    audioRef.current.currentTime = pct * duration;
-    drawWaveform();
+    seekTo(pct * duration);
+  };
+
+  const seekWithKeyboard = (e: React.KeyboardEvent<HTMLCanvasElement>) => {
+    if (!duration) return;
+    if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+      e.preventDefault();
+      seekTo(currentTime - 5);
+    } else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+      e.preventDefault();
+      seekTo(currentTime + 5);
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      seekTo(0);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      seekTo(duration);
+    }
   };
 
   const currentWordIdx = (() => {
@@ -342,12 +375,19 @@ function WaveformPlayer({
     return `${m}:${sec.toString().padStart(2, "0")}`;
   };
 
+  const seekToWord = (idx: number) => {
+    if (!effectiveHasTimings || !wordTimings?.[idx]) return;
+    seekTo(wordTimings[idx].start);
+  };
+
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         <button
+          type="button"
           onClick={restart}
           disabled={!!loadError}
+          aria-label="Restart audio"
           className="p-1.5 rounded-full transition-colors disabled:opacity-40"
           style={{ color: "var(--panel-text-muted)" }}
           title="Restart"
@@ -355,8 +395,10 @@ function WaveformPlayer({
           <RotateCcw className="w-3.5 h-3.5" />
         </button>
         <button
+          type="button"
           onClick={togglePlay}
           disabled={!!loadError}
+          aria-label={playing ? "Pause audio" : "Play audio"}
           className={`p-2 rounded-full transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
             playing ? "bg-blue-500 text-white" : "bg-blue-500/15 text-blue-400 hover:bg-blue-500/25"
           }`}
@@ -367,6 +409,14 @@ function WaveformPlayer({
         <canvas
           ref={canvasRef}
           onClick={seek}
+          onKeyDown={seekWithKeyboard}
+          role="slider"
+          tabIndex={0}
+          aria-label="Audio position"
+          aria-valuemin={0}
+          aria-valuemax={Math.max(0, Math.round(duration))}
+          aria-valuenow={Math.max(0, Math.round(currentTime))}
+          aria-valuetext={`${fmtTime(currentTime)} of ${fmtTime(duration)}`}
           className="flex-1 h-10 cursor-pointer rounded"
         />
         <span className="text-[10px] font-mono shrink-0" style={{ color: "var(--panel-text-muted)" }}>
@@ -398,6 +448,13 @@ function WaveformPlayer({
             <span
               key={idx}
               className="transition-colors duration-150"
+              role={effectiveHasTimings ? "button" : undefined}
+              tabIndex={effectiveHasTimings ? 0 : undefined}
+              aria-label={
+                effectiveHasTimings && wordTimings?.[idx]
+                  ? `Seek to ${fmtTime(wordTimings[idx].start)} at ${word}`
+                  : undefined
+              }
               style={{
                 backgroundColor:
                   idx === currentWordIdx && playing ? "rgba(59,130,246,0.3)" : "transparent",
@@ -405,11 +462,11 @@ function WaveformPlayer({
                 padding: idx === currentWordIdx && playing ? "0 2px" : "0",
                 cursor: effectiveHasTimings ? "pointer" : "default",
               }}
-              onClick={() => {
-                if (effectiveHasTimings && audioRef.current && wordTimings) {
-                  audioRef.current.currentTime = wordTimings[idx].start;
-                  drawWaveform();
-                }
+              onClick={() => seekToWord(idx)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                seekToWord(idx);
               }}
             >
               {word}
@@ -540,7 +597,9 @@ export default function IncidentDetail({ incident, onClose, inFeed = false }: Pr
               </p>
             </div>
             <button
+              type="button"
               onClick={onClose}
+              aria-label="Close incident details"
               className="transition-colors p-1.5 -m-1.5"
               style={{ color: "var(--panel-text-muted)" }}
             >

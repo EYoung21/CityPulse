@@ -22,7 +22,7 @@
  *   {type:"CLEAR_TILE_CACHE"}                     // empties just the tiles
  */
 
-const CACHE_VERSION = "pp-v5";
+const CACHE_VERSION = "pp-v6";
 const SHELL_CACHE   = `${CACHE_VERSION}-shell`;
 const TILE_CACHE    = `${CACHE_VERSION}-tiles`;
 const ASSET_CACHE   = `${CACHE_VERSION}-assets`;
@@ -32,6 +32,7 @@ const ASSET_CACHE   = `${CACHE_VERSION}-assets`;
  * within mobile-Safari's quotas while being plenty for offline use of
  * a city-sized area at multiple zoom levels. */
 const MAX_TILE_ENTRIES = 4000;
+const MAX_ASSET_ENTRIES = 500;
 
 const SHELL_URLS = [
   "/",
@@ -44,27 +45,30 @@ const SHELL_URLS = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_URLS).catch(() => {}))
-  );
-  self.skipWaiting();
+  event.waitUntil((async () => {
+    const cache = await caches.open(SHELL_CACHE);
+    // addAll is atomic: one missing optional icon would otherwise discard the
+    // successfully fetched root shell too. Cache each entry independently.
+    await Promise.allSettled(SHELL_URLS.map((url) => cache.add(url)));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys
-          .filter((k) => !k.startsWith(CACHE_VERSION))
-          .map((k) => caches.delete(k))
-      )
-    )
-  );
-  self.clients.claim();
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(
+      keys
+        .filter((k) => !k.startsWith(CACHE_VERSION))
+        .map((k) => caches.delete(k))
+    );
+    await self.clients.claim();
+  })());
 });
 
 function isTileRequest(url) {
-  return /basemaps\.cartocdn\.com|tile\.openstreetmap\.org/.test(url.hostname);
+  const host = url.hostname.toLowerCase();
+  return host === "tile.openstreetmap.org" || host.endsWith(".basemaps.cartocdn.com");
 }
 
 function isAssetRequest(url, req) {
@@ -96,11 +100,29 @@ async function trimTileCache(cache) {
   }
 }
 
+async function trimAssetCache(cache) {
+  try {
+    const keys = await cache.keys();
+    const overflow = keys.length - MAX_ASSET_ENTRIES;
+    if (overflow > 0) {
+      await Promise.all(keys.slice(0, overflow).map((key) => cache.delete(key)));
+    }
+  } catch {
+    /* quota enforcement is best-effort */
+  }
+}
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
   let url;
   try { url = new URL(req.url); } catch { return; }
+
+  // Legacy cross-city auth links placed a Firebase credential in the query
+  // string. Never let those navigation URLs enter Cache Storage; the page
+  // removes the parameter immediately, but the service worker sees the request
+  // first. Fragment-based handoffs do not reach this code.
+  if (url.searchParams.has("__pulse_token")) return;
 
   // Never cache live data sources — safety-critical, always fresh.
   if (isApiRequest(url)) return;
@@ -113,7 +135,10 @@ self.addEventListener("fetch", (event) => {
         try {
           const fresh = await fetch(req);
           if (fresh.ok) {
-            cache.put(req, fresh.clone()).then(() => trimTileCache(cache));
+            try {
+              await cache.put(req, fresh.clone());
+              await trimTileCache(cache);
+            } catch { /* quota/cache failure must not hide the network tile */ }
           }
           return fresh;
         } catch {
@@ -129,11 +154,17 @@ self.addEventListener("fetch", (event) => {
       caches.open(ASSET_CACHE).then(async (cache) => {
         const cached = await cache.match(req);
         const fresh = fetch(req)
-          .then((r) => {
-            if (r.ok) cache.put(req, r.clone());
+          .then(async (r) => {
+            if (r.ok) {
+              try {
+                await cache.put(req, r.clone());
+                await trimAssetCache(cache);
+              } catch { /* return the network asset even if caching fails */ }
+            }
             return r;
           })
           .catch(() => cached || Response.error());
+        if (cached) event.waitUntil(fresh.then(() => undefined));
         return cached || fresh;
       })
     );
@@ -141,22 +172,34 @@ self.addEventListener("fetch", (event) => {
   }
 
   // App shell (HTML / JS / CSS): network-first.
-  event.respondWith(
-    fetch(req)
-      .then((r) => {
-        if (r.ok && (req.destination === "document" || req.destination === "")) {
-          const clone = r.clone();
-          caches.open(SHELL_CACHE).then((c) => c.put(req, clone)).catch(() => {});
+  event.respondWith((async () => {
+    try {
+      const r = await fetch(req);
+        if (
+          r.ok &&
+          !url.search &&
+          url.origin === self.location.origin &&
+          (req.destination === "document" || req.destination === "")
+        ) {
+          try {
+            const cache = await caches.open(SHELL_CACHE);
+            await cache.put(req, r.clone());
+          } catch { /* online response remains usable */ }
         }
         return r;
-      })
-      .catch(() => caches.match(req).then((c) => c || caches.match("/")))
-  );
+    } catch {
+      return (await caches.match(req)) || (await caches.match("/")) || Response.error();
+    }
+  })());
 });
 
 /* Page-driven tile management. Replies on the same MessageChannel port
  * the page provides so callers can `await` the response. */
-self.addEventListener("message", async (event) => {
+self.addEventListener("message", (event) => {
+  event.waitUntil(handleMessage(event));
+});
+
+async function handleMessage(event) {
   const data = event.data;
   if (!data || typeof data !== "object") return;
   const reply = (payload) => {
@@ -170,19 +213,26 @@ self.addEventListener("message", async (event) => {
     let alreadyCached = 0;
     /* Throttle to ~12 concurrent requests so we don't hammer CARTO's
      * subdomain rotation or the user's bandwidth too aggressively. */
-    const queue = data.urls.slice();
+    const queue = data.urls.slice(0, MAX_TILE_ENTRIES);
     const concurrency = Math.min(12, queue.length);
+    failCount += Math.max(0, data.urls.length - MAX_TILE_ENTRIES);
     await Promise.all(
       Array.from({ length: concurrency }, async () => {
         while (queue.length > 0) {
           const u = queue.shift();
           if (!u) break;
           try {
-            const existing = await cache.match(u);
+            const tileUrl = new URL(u, self.location.origin);
+            if (!isTileRequest(tileUrl)) { failCount++; continue; }
+            const existing = await cache.match(tileUrl.href);
             if (existing) { alreadyCached++; continue; }
-            const r = await fetch(u, { mode: "cors", cache: "no-cache" });
+            const r = await fetch(tileUrl.href, {
+              mode: "cors",
+              cache: "no-cache",
+              signal: AbortSignal.timeout(15_000),
+            });
             if (r.ok) {
-              await cache.put(u, r.clone());
+              await cache.put(tileUrl.href, r.clone());
               okCount++;
             } else {
               failCount++;
@@ -218,7 +268,7 @@ self.addEventListener("message", async (event) => {
     }
     return;
   }
-});
+}
 
 /* ── Web Push (VAPID) ─────────────────────────────────────────────
  *
@@ -241,9 +291,9 @@ self.addEventListener("push", (event) => {
       catch { payload = {}; }
     }
   }
-  const title = String(payload.title || "PhillyPulse alert");
-  const body  = String(payload.body  || "");
-  const tag   = payload.tag ? String(payload.tag) : undefined;
+  const title = String(payload.title || "PhillyPulse alert").slice(0, 120);
+  const body  = String(payload.body  || "").slice(0, 500);
+  const tag   = payload.tag ? String(payload.tag).slice(0, 120) : undefined;
   const url   = typeof payload.url === "string" ? payload.url : "/";
   // `requireInteraction` keeps high-severity alerts on screen until
   // the user dismisses them. We default to false (auto-dismiss) and
@@ -267,7 +317,13 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const target = (event.notification.data && event.notification.data.url) || "/";
-  const absolute = new URL(target, self.location.origin).href;
+  let absolute = self.location.origin + "/";
+  try {
+    const candidate = new URL(target, self.location.origin);
+    // Push payloads are server-generated, but a notification must never become
+    // an open redirect if that pipeline is misconfigured or compromised.
+    if (candidate.origin === self.location.origin) absolute = candidate.href;
+  } catch { /* malformed click target falls back to the app root */ }
 
   /* Reuse an existing PhillyPulse tab if there is one (so a click
      doesn't spawn a fresh tab on top of the user's current map

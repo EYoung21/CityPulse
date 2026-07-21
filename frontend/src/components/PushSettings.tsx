@@ -20,7 +20,7 @@
  *      think the feature is broken in production builds.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bell,
   BellOff,
@@ -118,7 +118,7 @@ function geoErrorMessage(e: GeolocationPositionError): string {
 }
 
 export default function PushSettings() {
-  const { user } = useAuth();
+  const { user, isPro } = useAuth();
   const [status, setStatus] = useState<PushStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -152,7 +152,7 @@ export default function PushSettings() {
     setDevices(await listPushDevices());
   };
 
-  const refreshSchedules = async () => {
+  const refreshSchedules = useCallback(async () => {
     if (!user || user.isAnonymous) {
       setSchedules([]);
       return;
@@ -162,17 +162,27 @@ export default function PushSettings() {
     } catch {
       setSchedules([]);
     }
-  };
+  }, [user]);
 
   useEffect(() => {
     void refresh();
     setArea(loadAlertArea());
-    setNewsroom(loadNewsroomAlerts());
-    setNewsroomEmail(loadNewsroomEmail());
+    const storedNewsroom = loadNewsroomAlerts();
+    const storedNewsroomEmail = loadNewsroomEmail();
+    setNewsroom(isPro && storedNewsroom);
+    setNewsroomEmail(isPro && storedNewsroom && storedNewsroomEmail);
+    if (!isPro && (storedNewsroom || storedNewsroomEmail)) {
+      // A downgrade must not leave stale local toggles that silently reactivate
+      // on the next upgrade. The server also checks entitlement at send time.
+      void Promise.all([
+        updateNewsroomAlerts(false),
+        updateNewsroomEmail(false),
+      ]);
+    }
     setSnooze(loadPushSnooze());
     // Re-check when the auth state changes — flipping from
     // anonymous → signed in unlocks the subscribe affordance.
-  }, [user?.uid, user?.isAnonymous]);
+  }, [user?.uid, user?.isAnonymous, isPro]);
 
   useEffect(() => {
     if (showDevices) void refreshDevices();
@@ -180,7 +190,7 @@ export default function PushSettings() {
 
   useEffect(() => {
     if (showSchedules) void refreshSchedules();
-  }, [showSchedules, user?.uid]);
+  }, [showSchedules, refreshSchedules]);
 
   // Recompute the snooze countdown every minute so the "47 min left"
   // pill stays honest without forcing the user to refresh.
@@ -350,6 +360,10 @@ export default function PushSettings() {
   };
 
   const onToggleNewsroom = async (next: boolean) => {
+    if (next && !isPro) {
+      setError("CityPulse Pro is required for newsroom alerts.");
+      return;
+    }
     setNewsroomBusy(true);
     setError(null);
     setInfo(null);
@@ -372,6 +386,10 @@ export default function PushSettings() {
   };
 
   const onToggleNewsroomEmail = async (next: boolean) => {
+    if (next && !isPro) {
+      setError("CityPulse Pro is required for newsroom email alerts.");
+      return;
+    }
     setNewsroomBusy(true);
     setError(null);
     setInfo(null);
@@ -497,7 +515,7 @@ export default function PushSettings() {
           <button
             type="button"
             onClick={() => void onToggleNewsroom(!newsroom)}
-            disabled={newsroomBusy}
+            disabled={newsroomBusy || (!isPro && !newsroom)}
             aria-pressed={newsroom}
             className="mt-2 w-full flex items-center justify-between gap-2 p-2 rounded-md disabled:opacity-50"
             style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)" }}
@@ -509,7 +527,9 @@ export default function PushSettings() {
                   Newsroom alerts
                 </span>
                 <span className="block text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
-                  Get pinged on newsworthy incidents in this city
+                  {isPro
+                    ? "Get pinged on newsworthy incidents in this city"
+                    : "CityPulse Pro required"}
                 </span>
               </span>
             </span>
@@ -535,8 +555,9 @@ export default function PushSettings() {
               <button
                 type="button"
                 onClick={() => void onToggleNewsroomEmail(!newsroomEmail)}
-                disabled={newsroomBusy}
+                disabled={newsroomBusy || (!isPro && !newsroomEmail)}
                 aria-pressed={newsroomEmail}
+                aria-label={newsroomEmail ? "Disable newsroom email" : "Enable newsroom email"}
                 className="relative w-8 h-4 rounded-full shrink-0 transition-colors disabled:opacity-50"
                 style={{ background: newsroomEmail ? "#3b82f6" : "var(--panel-border)" }}
               >

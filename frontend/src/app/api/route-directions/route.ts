@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { isCoordinatePair } from "@/lib/geo-validation";
+import { readJsonBody, RequestBodyError } from "@/lib/server-body";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
 
 export const dynamic = "force-dynamic";
 
@@ -66,6 +69,8 @@ const DISTANCE_FACTORS: Record<string, number> = {
   "transit-subway": 1.3,
   "driving-car": 1.28,
 };
+
+const SUPPORTED_MODES = new Set(Object.keys(ESTIMATED_SPEED_KMH));
 
 type TransitStation = {
   lat: number;
@@ -648,7 +653,7 @@ async function tryTomTom(
     }
     const resp = await fetch(url, init);
     if (!resp.ok) return null;
-    const data = (await resp.json()) as { routes?: TomTomRoute[] };
+    const data = (await readBoundedJsonResponse(resp, 8 * 1024 * 1024)) as { routes?: TomTomRoute[] };
     const routes = data.routes ?? [];
     if (routes.length === 0) return null;
 
@@ -758,7 +763,7 @@ async function tryValhalla(
       }),
     });
     if (!resp.ok) return null;
-    const data = (await resp.json()) as {
+    const data = (await readBoundedJsonResponse(resp, 8 * 1024 * 1024)) as {
       trip?: {
         status?: number;
         legs?: Array<{ shape: string; summary: { time: number; length: number } }>;
@@ -812,7 +817,7 @@ async function tryOsrmService(
       signal,
     });
     if (!resp.ok) return null;
-    const data = (await resp.json()) as {
+    const data = (await readBoundedJsonResponse(resp, 8 * 1024 * 1024)) as {
       code?: string;
       routes?: Array<{
         distance: number;
@@ -909,7 +914,7 @@ async function tryOtpTransit(
       signal,
     });
     if (!resp.ok) return null;
-    const data = (await resp.json()) as {
+    const data = (await readBoundedJsonResponse(resp, 8 * 1024 * 1024)) as {
       plan?: {
         itineraries?: Array<{
           duration: number;
@@ -986,9 +991,11 @@ async function tryTransitFallback(
 export async function POST(request: Request) {
   let body: Body;
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    body = await readJsonBody<Body>(request, 64 * 1024);
+  } catch (err) {
+    const status = err instanceof RequestBodyError ? err.status : 400;
+    const message = err instanceof Error ? err.message : "Invalid JSON";
+    return NextResponse.json({ error: message }, { status });
   }
 
   const { waypoints, mode = "driving-car" } = body;
@@ -1006,13 +1013,12 @@ export async function POST(request: Request) {
     );
   }
 
+  if (!SUPPORTED_MODES.has(mode)) {
+    return NextResponse.json({ error: "Unsupported travel mode" }, { status: 400 });
+  }
+
   for (const w of waypoints) {
-    if (
-      !Array.isArray(w) ||
-      w.length !== 2 ||
-      typeof w[0] !== "number" ||
-      typeof w[1] !== "number"
-    ) {
+    if (!isCoordinatePair(w)) {
       return NextResponse.json({ error: "Invalid waypoint" }, { status: 400 });
     }
   }
@@ -1027,11 +1033,7 @@ export async function POST(request: Request) {
   const crashAvoid: [number, number][] = Array.isArray(body.crashAvoid)
     ? (body.crashAvoid as unknown[])
         .filter(
-          (c): c is [number, number] =>
-            Array.isArray(c) &&
-            c.length === 2 &&
-            typeof c[0] === "number" &&
-            typeof c[1] === "number"
+          (c): c is [number, number] => isCoordinatePair(c)
         )
         .slice(0, 20)
     : [];

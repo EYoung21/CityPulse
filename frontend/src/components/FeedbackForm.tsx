@@ -172,6 +172,7 @@ export default function FeedbackForm() {
                 </p>
                 <textarea
                   autoFocus
+                  aria-label="Feedback details"
                   value={message}
                   onChange={(e) => setMessage(e.target.value.slice(0, 1000))}
                   rows={5}
@@ -207,6 +208,7 @@ export default function FeedbackForm() {
                 </p>
                 <input
                   type="email"
+                  aria-label="Contact email"
                   value={contactEmail}
                   onChange={(e) => setContactEmail(e.target.value)}
                   placeholder={user?.email && !user.isAnonymous ? user.email : "you@example.com"}

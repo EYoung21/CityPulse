@@ -49,6 +49,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from google.cloud.firestore_v1.base_query import FieldFilter  # noqa: E402
+
 
 def _get_db():
     from philly_pulse.firestore_store import _ensure_client
@@ -64,7 +66,11 @@ def _scan_clusters(db, city: str, *, sample_limit: int) -> tuple[Counter, dict]:
     counts: Counter = Counter()
     refs: dict[tuple, list[tuple[str, object, dict]]] = defaultdict(list)
 
-    q = db.collection("incidents").where("city", "==", city).limit(sample_limit)
+    q = (
+        db.collection("incidents")
+        .where(filter=FieldFilter("city", "==", city))
+        .limit(sample_limit)
+    )
     for snap in q.stream():
         d = snap.to_dict() or {}
         if d.get("hidden") is True:

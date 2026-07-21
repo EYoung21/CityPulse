@@ -1,4 +1,5 @@
 import { isCategoryMuted } from "@/lib/alert-mutes";
+import { isCoordinatePair } from "@/lib/geo-validation";
 
 /** localStorage-backed log of alert surfaces (off-screen incidents,
  *  incident-ahead, etc.) so the user has a persistent inbox to scroll
@@ -60,15 +61,49 @@ export interface InboxAlert {
 type Listener = (alerts: InboxAlert[]) => void;
 const listeners = new Set<Listener>();
 
+function parseAlert(value: unknown): InboxAlert | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const coordinates = [row.lat, row.lng];
+  if (
+    typeof row.id !== "string" ||
+    typeof row.incidentId !== "string" ||
+    (row.kind !== "offscreen" && row.kind !== "ahead" && row.kind !== "background") ||
+    typeof row.title !== "string" ||
+    typeof row.body !== "string" ||
+    typeof row.category !== "string" ||
+    !isCoordinatePair(coordinates) ||
+    typeof row.ts !== "number" ||
+    !Number.isFinite(row.ts) ||
+    row.ts <= 0 ||
+    row.ts > Date.now() + 5 * 60_000
+  ) return null;
+  return {
+    id: row.id.slice(0, 500),
+    incidentId: row.incidentId.slice(0, 500),
+    kind: row.kind,
+    title: row.title.slice(0, 1_000),
+    body: row.body.slice(0, 5_000),
+    category: row.category.slice(0, 100),
+    lat: coordinates[0],
+    lng: coordinates[1],
+    ts: row.ts,
+    read: row.read === true,
+  };
+}
+
 function read(): InboxAlert[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as InboxAlert[];
+    const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
     const cutoff = Date.now() - ttlForCurrentTier();
-    return parsed.filter((a) => a && typeof a.ts === "number" && a.ts >= cutoff);
+    return parsed
+      .slice(0, MAX_ENTRIES)
+      .map(parseAlert)
+      .filter((a): a is InboxAlert => a !== null && a.ts >= cutoff);
   } catch {
     return [];
   }
@@ -98,11 +133,13 @@ export function recordAlert(a: Omit<InboxAlert, "ts" | "read">): void {
   // dismiss noise they already opted out of.
   if (isCategoryMuted(a.category)) return;
 
+  const nextAlert = parseAlert({ ...a, ts: Date.now(), read: false });
+  if (!nextAlert) return;
   const existing = read();
   // Dedupe — if we already have this exact id within the TTL, just bump
   // its timestamp so it floats to the top instead of stacking duplicates.
   const filtered = existing.filter((x) => x.id !== a.id);
-  filtered.unshift({ ...a, ts: Date.now(), read: false });
+  filtered.unshift(nextAlert);
   write(filtered);
 }
 

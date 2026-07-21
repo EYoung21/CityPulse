@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { isCoordinatePair } from "@/lib/geo-validation";
+import { readBoundedJsonResponse } from "@/lib/upstream-response";
 
 /** Looks up the OSM `maxspeed` tag for the road segment closest to the
  *  user's current location and returns it in the user's preferred unit
@@ -38,7 +40,6 @@ interface CacheEntry {
 }
 
 const cache = new Map<string, CacheEntry>();
-let inFlight: Promise<unknown> | null = null;
 
 function cellKey(lat: number, lng: number): string {
   const la = Math.round(lat / CELL_SIZE_DEG) * CELL_SIZE_DEG;
@@ -98,6 +99,32 @@ interface OverpassWay {
   geometry?: Array<{ lat: number; lon: number }>;
 }
 
+function normalizeOverpassWays(value: unknown): OverpassWay[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const elements = (value as Record<string, unknown>).elements;
+  if (!Array.isArray(elements)) return [];
+  return elements.slice(0, 200).flatMap((element): OverpassWay[] => {
+    if (!element || typeof element !== "object" || Array.isArray(element)) return [];
+    const row = element as Record<string, unknown>;
+    if (row.type !== "way") return [];
+    const tags = row.tags && typeof row.tags === "object" && !Array.isArray(row.tags)
+      ? row.tags as Record<string, unknown>
+      : null;
+    const maxspeed = typeof tags?.maxspeed === "string" ? tags.maxspeed.slice(0, 100) : undefined;
+    const geometry = Array.isArray(row.geometry)
+      ? row.geometry.slice(0, 10_000).flatMap((point) => {
+          if (!point || typeof point !== "object" || Array.isArray(point)) return [];
+          const candidate = point as Record<string, unknown>;
+          const coordinates = [candidate.lat, candidate.lon];
+          return isCoordinatePair(coordinates)
+            ? [{ lat: coordinates[0], lon: coordinates[1] }]
+            : [];
+        })
+      : [];
+    return [{ type: "way", tags: maxspeed ? { maxspeed } : {}, geometry }];
+  });
+}
+
 async function fetchSnap(lat: number, lng: number): Promise<number | null> {
   // 50m radius — wide enough to tolerate consumer-grade GPS noise,
   // narrow enough to not pick up the next street over.
@@ -114,10 +141,10 @@ async function fetchSnap(lat: number, lng: number): Promise<number | null> {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: "data=" + encodeURIComponent(q),
+    signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) throw new Error(`overpass ${res.status}`);
-  const data = (await res.json()) as { elements?: OverpassWay[] };
-  const ways = data.elements ?? [];
+  const ways = normalizeOverpassWays(await readBoundedJsonResponse(res, 4 * 1024 * 1024));
   if (ways.length === 0) return null;
 
   // Pick the way whose closest geometry segment is nearest the point.
@@ -157,33 +184,34 @@ export function useSpeedLimit(
     loading: false,
   });
   const lastCellRef = useRef<string | null>(null);
+  const lat = loc?.lat;
+  const lng = loc?.lng;
 
   useEffect(() => {
-    if (!enabled || !loc) {
-      setReading({ limitKmh: undefined, loading: false });
-      lastCellRef.current = null;
-      return;
-    }
-
-    const key = cellKey(loc.lat, loc.lng);
-    if (key === lastCellRef.current) return;
-    lastCellRef.current = key;
-
-    const cached = cache.get(key);
-    const now = Date.now();
-    if (cached && now - cached.ts < CACHE_TTL_MS) {
-      setReading({ limitKmh: cached.limitKmh, loading: false });
-      return;
-    }
-
     let cancelled = false;
-    setReading((prev) => ({ limitKmh: prev.limitKmh, loading: true }));
+    void (async () => {
+      if (!enabled || lat == null || lng == null) {
+        lastCellRef.current = null;
+        if (!cancelled) setReading({ limitKmh: undefined, loading: false });
+        return;
+      }
 
-    // Coalesce rapid cell changes — only the latest survives, since
-    // earlier in-flight queries are about to be irrelevant.
-    inFlight = (async () => {
+      const key = cellKey(lat, lng);
+      if (key === lastCellRef.current) return;
+      lastCellRef.current = key;
+
+      const cached = cache.get(key);
+      const now = Date.now();
+      if (cached && now - cached.ts < CACHE_TTL_MS) {
+        if (!cancelled) setReading({ limitKmh: cached.limitKmh, loading: false });
+        return;
+      }
+
+      if (!cancelled) {
+        setReading((prev) => ({ limitKmh: prev.limitKmh, loading: true }));
+      }
       try {
-        const limit = await fetchSnap(loc.lat, loc.lng);
+        const limit = await fetchSnap(lat, lng);
         cache.set(key, { limitKmh: limit, ts: Date.now() });
         if (cache.size > CACHE_MAX) {
           // Drop the oldest entry — Map preserves insertion order.
@@ -193,13 +221,11 @@ export function useSpeedLimit(
         if (!cancelled) setReading({ limitKmh: limit, loading: false });
       } catch {
         if (!cancelled) setReading((prev) => ({ limitKmh: prev.limitKmh, loading: false }));
-      } finally {
-        inFlight = null;
       }
     })();
 
     return () => { cancelled = true; };
-  }, [enabled, loc?.lat, loc?.lng]);
+  }, [enabled, lat, lng]);
 
   return reading;
 }

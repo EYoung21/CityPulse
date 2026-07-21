@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle, Radio, X as XIcon } from "lucide-react";
 import type { Incident } from "@/lib/api";
@@ -11,42 +11,57 @@ interface Props {
 }
 
 export default function AlertToast({ incidents }: Props) {
-  const [prevIds, setPrevIds] = useState<Set<string>>(new Set());
+  const prevIdsRef = useRef<Set<string>>(new Set());
+  const dismissTimerRef = useRef<number | null>(null);
   const [toast, setToast] = useState<Incident | null>(null);
 
   useEffect(() => {
     if (incidents.length === 0) {
-      setPrevIds(new Set());
+      prevIdsRef.current = new Set();
       return;
     }
 
     const currentIds = new Set(incidents.map((i) => i.id));
+    const previousIds = prevIdsRef.current;
+    let showTimer: number | null = null;
 
-    if (prevIds.size > 0) {
-      const newInc = incidents.find((i) => !prevIds.has(i.id));
+    if (previousIds.size > 0) {
+      const newInc = incidents.find((i) => !previousIds.has(i.id));
       if (newInc) {
-        setToast(newInc);
-        try {
-          const ctx = new AudioContext();
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.frequency.value = 880;
-          osc.type = "sine";
-          gain.gain.value = 0.08;
-          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-          osc.start();
-          osc.stop(ctx.currentTime + 0.3);
-        } catch {
-          // Audio not available
-        }
-        setTimeout(() => setToast(null), 4000);
+        showTimer = window.setTimeout(() => {
+          setToast(newInc);
+          try {
+            const ctx = new AudioContext();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.frequency.value = 880;
+            osc.type = "sine";
+            gain.gain.value = 0.08;
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.3);
+          } catch {
+            // Audio not available
+          }
+          if (dismissTimerRef.current != null) {
+            window.clearTimeout(dismissTimerRef.current);
+          }
+          dismissTimerRef.current = window.setTimeout(() => setToast(null), 4000);
+        }, 0);
       }
     }
 
-    setPrevIds(currentIds);
-  }, [incidents]); // eslint-disable-line react-hooks/exhaustive-deps
+    prevIdsRef.current = currentIds;
+    return () => {
+      if (showTimer != null) window.clearTimeout(showTimer);
+    };
+  }, [incidents]);
+
+  useEffect(() => () => {
+    if (dismissTimerRef.current != null) window.clearTimeout(dismissTimerRef.current);
+  }, []);
 
   return (
     <AnimatePresence>

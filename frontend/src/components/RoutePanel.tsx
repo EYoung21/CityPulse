@@ -130,7 +130,9 @@ export default function RoutePanel({ incidents, onRoutesChange }: Props) {
   if (!open) {
     return (
       <button
+        type="button"
         onClick={() => setOpen(true)}
+        aria-label="Open safe route planner"
         className="fixed bottom-4 right-4 z-[1000] bg-blue-600 hover:bg-blue-500 text-white rounded-full p-3 shadow-lg transition-all hover:scale-105"
       >
         <Navigation className="w-5 h-5" />
@@ -148,7 +150,7 @@ export default function RoutePanel({ incidents, onRoutesChange }: Props) {
         </div>
         <div className="flex gap-1">
           {routeData && (
-            <button
+            <button type="button"
               onClick={clearRoutes}
               className="text-xs text-muted-foreground hover:text-foreground px-2"
             >
@@ -156,7 +158,9 @@ export default function RoutePanel({ incidents, onRoutesChange }: Props) {
             </button>
           )}
           <button
+            type="button"
             onClick={() => setOpen(false)}
+            aria-label="Close safe route planner"
             className="text-muted-foreground hover:text-foreground"
           >
             <X className="w-4 h-4" />
@@ -170,7 +174,7 @@ export default function RoutePanel({ incidents, onRoutesChange }: Props) {
           {MODES.map((m) => {
             const Icon = m.icon;
             return (
-              <button
+              <button type="button"
                 key={m.id}
                 onClick={() => setMode(m.id)}
                 className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
@@ -192,6 +196,7 @@ export default function RoutePanel({ incidents, onRoutesChange }: Props) {
             <div className="w-2 h-2 rounded-full bg-green-400" />
             <input
               type="text"
+              aria-label="Starting point"
               value={origin}
               onChange={(e) => setOrigin(e.target.value)}
               placeholder="Starting point..."
@@ -202,6 +207,7 @@ export default function RoutePanel({ incidents, onRoutesChange }: Props) {
             <div className="w-2 h-2 rounded-full bg-red-400" />
             <input
               type="text"
+              aria-label="Destination"
               value={destination}
               onChange={(e) => setDestination(e.target.value)}
               placeholder="Destination..."

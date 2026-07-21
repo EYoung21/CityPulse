@@ -1,6 +1,7 @@
 "use client";
 
 import { Map, Settings, ChevronRight, Users } from "lucide-react";
+import Image from "next/image";
 import { getCurrentCity } from "@/lib/pulse-cities";
 import "./login.css";
 
@@ -61,7 +62,7 @@ export default function AdminLauncher({ onChoose }: Props) {
         <div className="lp-login-card relative">
           <div className="lp-login-card-inner">
             <div className="lp-login-brand">
-              <img src="/logo.png" alt="CityPulse" className="w-12 h-12" />
+              <Image src="/logo.png" alt="CityPulse" width={48} height={48} className="w-12 h-12" />
               <span className="lp-login-wordmark">CityPulse</span>
             </div>
             <div className="lp-login-subhead">

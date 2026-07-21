@@ -37,26 +37,32 @@ export default function SafetyEscapePanel({ userLocation, onClose }: Props) {
   const seqRef = useRef(0);
 
   useEffect(() => {
-    if (!userLocation) {
-      setPlaces([]);
-      setError("Need your current location to find help nearby.");
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    setPlaces(null);
     const seq = ++seqRef.current;
-    findSafeSpacesNear(userLocation)
-      .then((rows) => {
+    void Promise.resolve().then(async () => {
+      if (!userLocation) {
+        if (seq !== seqRef.current) return;
+        setPlaces([]);
+        setError("Need your current location to find help nearby.");
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      setPlaces(null);
+      try {
+        const rows = await findSafeSpacesNear(userLocation);
         if (seq !== seqRef.current) return;
         setPlaces(rows);
         setLoading(false);
-      })
-      .catch((err) => {
+      } catch (err) {
         if (seq !== seqRef.current) return;
         setError(err instanceof Error ? err.message : "Search failed");
         setLoading(false);
-      });
+      }
+    });
+    return () => {
+      if (seq === seqRef.current) seqRef.current += 1;
+    };
   }, [userLocation]);
 
   // Esc to dismiss — matches every other overlay panel.

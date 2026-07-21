@@ -219,7 +219,6 @@ export default function TripRecapCard({ recap, onClose, historyId }: Props) {
                     onClick={() => handleRate(n)}
                     className="p-1 transition-transform hover:scale-110"
                     aria-label={`${n} star${n === 1 ? "" : "s"}`}
-                    aria-pressed={rating >= n}
                     role="radio"
                     aria-checked={rating === n}
                   >
@@ -245,6 +244,7 @@ export default function TripRecapCard({ recap, onClose, historyId }: Props) {
             {notesOpen && (
               <textarea
                 value={notes}
+                aria-label="Trip notes"
                 onChange={(e) => { cancelAutoDismiss(); setNotes(e.target.value); }}
                 placeholder="What stood out? (saved automatically)"
                 rows={2}

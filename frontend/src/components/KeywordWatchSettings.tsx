@@ -171,6 +171,7 @@ export default function KeywordWatchSettings() {
       <div className="flex items-stretch gap-1.5">
         <input
           type="text"
+          aria-label="Scanner keyword alert"
           value={newKeyword}
           onChange={(e) => setNewKeyword(e.target.value)}
           onKeyDown={(e) => {

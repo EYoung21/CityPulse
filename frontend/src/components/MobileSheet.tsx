@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Drawer } from "vaul";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, X } from "lucide-react";
 
 interface Props {
   open: boolean;
@@ -60,7 +60,7 @@ export default function MobileSheet({
   const isFullscreen = snap === FULLSCREEN;
   const contentRef = useRef<HTMLDivElement | null>(null);
   const visibleHeight = snapToVisibleHeight(snap);
-  const sheetChromeHeight = isFullscreen ? "44px" : "28px";
+  const sheetChromeHeight = isFullscreen ? "44px" : "48px";
 
   useEffect(() => {
     if (!expandKey) return;
@@ -143,13 +143,12 @@ export default function MobileSheet({
         active.blur();
       }
     }
-    // Reset snap so the next time the sheet opens, it's at half (not
-    // stuck at fullscreen from the last session).
-    setSnap(HALF);
     // Google Maps' back arrow returns to the map view, not to a
-    // half-open sheet. Fully dismiss; the parent's "open menu" FAB
-    // brings the sheet back when the user wants it.
-    onOpenChange(false);
+    // half-open sheet. Reset the controlled snap first, then dismiss
+    // on the next task. Vaul otherwise batches both updates as a
+    // fullscreen-to-half transition and leaves the drawer open.
+    setSnap(HALF);
+    window.setTimeout(() => onOpenChange(false), 0);
   };
 
   /** When focus leaves an input and nothing else inside the sheet is
@@ -229,6 +228,13 @@ export default function MobileSheet({
             <div className="flex items-center shrink-0 px-1.5 py-1.5">
               <button
                 type="button"
+                onPointerDown={(event) => {
+                  // Keep the focused search input from blurring before
+                  // this button receives its click. Otherwise the blur
+                  // handler swaps out the fullscreen header between
+                  // pointer-down and click, and the dismissal is lost.
+                  event.preventDefault();
+                }}
                 onClick={exitFullscreen}
                 aria-label="Close search"
                 className="p-2 rounded-full"
@@ -238,16 +244,25 @@ export default function MobileSheet({
               </button>
             </div>
           ) : (
-            // Standard drag handle. The sheet itself remains draggable;
-            // avoiding data-vaul-handle here prevents Vaul's default
-            // handle bar from stacking with our custom hit area.
+            // Standard sheet chrome. Keep the close control inside the
+            // drawer content so Vaul does not aria-hide it along with the
+            // background page while the sheet is open.
             <div
-              className="flex flex-col items-center justify-center shrink-0 cursor-grab active:cursor-grabbing"
-              aria-hidden="true"
-              style={{ minHeight: 30, paddingTop: 12, paddingBottom: 7 }}
+              className="relative flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing"
+              style={{ minHeight: 48 }}
             >
+              <button
+                type="button"
+                onClick={() => onOpenChange(false)}
+                aria-label="Close search and map tools"
+                className="absolute left-2 top-1 p-2 rounded-full cursor-pointer"
+                style={{ color: "var(--panel-text)" }}
+              >
+                <X className="w-5 h-5" />
+              </button>
               <div
                 className="w-11 h-1.5 rounded-full"
+                aria-hidden="true"
                 style={{ background: "var(--panel-text-muted)", opacity: 0.42 }}
               />
             </div>

@@ -59,8 +59,8 @@ export function useWakeLock(enabled: boolean): WakeLockState {
         s.release().catch(() => {});
       }
       sentinelRef.current = null;
-      setActive(false);
-      return;
+      const resetTimer = window.setTimeout(() => setActive(false), 0);
+      return () => window.clearTimeout(resetTimer);
     }
 
     let cancelled = false;
@@ -106,7 +106,6 @@ export function useWakeLock(enabled: boolean): WakeLockState {
         s.release().catch(() => {});
       }
       sentinelRef.current = null;
-      setActive(false);
     };
   }, [supported, enabled]);
 

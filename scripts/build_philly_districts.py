@@ -118,7 +118,7 @@ def build(geojson_path: str | None = None) -> None:
             raw = json.load(f)
     else:
         print(f"Downloading {SOURCE_URL} …")
-        with urllib.request.urlopen(SOURCE_URL) as resp:
+        with urllib.request.urlopen(SOURCE_URL, timeout=30) as resp:
             raw = json.load(resp)
 
     feat_by_name = {f["properties"]["name"]: f for f in raw["features"]}

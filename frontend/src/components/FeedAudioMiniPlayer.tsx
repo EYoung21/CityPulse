@@ -47,10 +47,19 @@ export function toggleFeedAudio(inc: Incident, label: string) {
       state = { ...state, playing: false };
       emit();
     } else {
-      void audio.play().then(() => {
-        state = { ...state, playing: true };
-        emit();
-      });
+      const current = audio;
+      void current.play().then(
+        () => {
+          if (audio !== current) return;
+          state = { ...state, playing: true };
+          emit();
+        },
+        () => {
+          if (audio !== current) return;
+          state = { ...state, playing: false };
+          emit();
+        }
+      );
     }
     return;
   }
@@ -59,12 +68,23 @@ export function toggleFeedAudio(inc: Incident, label: string) {
   const next = new Audio(sources[0]);
   audio = next;
   state = { incidentId: inc.id, label, playing: false };
-  next.addEventListener("ended", () => stopFeedAudio());
-  next.addEventListener("error", () => stopFeedAudio());
-  void next.play().then(() => {
-    state = { ...state, playing: true };
-    emit();
-  });
+  const stopIfCurrent = () => {
+    if (audio === next) stopFeedAudio();
+  };
+  next.addEventListener("ended", stopIfCurrent);
+  next.addEventListener("error", stopIfCurrent);
+  void next.play().then(
+    () => {
+      if (audio !== next) return;
+      state = { ...state, playing: true };
+      emit();
+    },
+    () => {
+      if (audio !== next) return;
+      state = { ...state, playing: false };
+      emit();
+    }
+  );
 }
 
 export default function FeedAudioMiniPlayer() {
@@ -92,10 +112,19 @@ export default function FeedAudioMiniPlayer() {
             audio.pause();
             state = { ...state, playing: false };
           } else {
-            void audio.play().then(() => {
-              state = { ...state, playing: true };
-              emit();
-            });
+            const current = audio;
+            void current.play().then(
+              () => {
+                if (audio !== current) return;
+                state = { ...state, playing: true };
+                emit();
+              },
+              () => {
+                if (audio !== current) return;
+                state = { ...state, playing: false };
+                emit();
+              }
+            );
           }
           setSnap({ ...state });
         }}

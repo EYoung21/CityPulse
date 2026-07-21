@@ -17,6 +17,7 @@
  */
 
 import { setPref } from "@/lib/prefs-sync";
+import { normalizeTimeFilterHours } from "@/lib/time-filters";
 
 export interface FilterPreset {
   /** Stable random id — used for delete + dedupe. */
@@ -54,15 +55,27 @@ export function loadPresets(): FilterPreset[] {
     if (!raw) return [];
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return [];
-    return arr.filter(
-      (p): p is FilterPreset =>
-        p &&
-        typeof p.id === "string" &&
-        typeof p.name === "string" &&
-        Array.isArray(p.cats) &&
-        typeof p.timeFilterHours === "number" &&
-        typeof p.createdAt === "number"
-    );
+    return arr.slice(0, MAX_PRESETS).flatMap((value): FilterPreset[] => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+      const p = value as Record<string, unknown>;
+      if (
+        typeof p.id !== "string" ||
+        !p.id ||
+        typeof p.name !== "string" ||
+        !Array.isArray(p.cats) ||
+        typeof p.timeFilterHours !== "number" ||
+        typeof p.createdAt !== "number" ||
+        !Number.isFinite(p.createdAt) ||
+        p.createdAt <= 0
+      ) return [];
+      return [{
+        id: p.id.slice(0, 500),
+        name: p.name.trim().slice(0, 32) || "Untitled",
+        cats: [...new Set(p.cats.filter((cat): cat is string => typeof cat === "string").map((cat) => cat.slice(0, 100)))].slice(0, 100),
+        timeFilterHours: normalizeTimeFilterHours(p.timeFilterHours),
+        createdAt: p.createdAt,
+      }];
+    });
   } catch {
     return [];
   }
@@ -83,8 +96,8 @@ export function addPreset(input: {
   const entry: FilterPreset = {
     id: genId(),
     name: trimmed,
-    cats: [...new Set(input.cats)],
-    timeFilterHours: input.timeFilterHours,
+    cats: [...new Set(input.cats.filter((cat) => typeof cat === "string").map((cat) => cat.slice(0, 100)))].slice(0, 100),
+    timeFilterHours: normalizeTimeFilterHours(input.timeFilterHours),
     createdAt: Date.now(),
   };
   let next = [entry, ...loadPresets()];

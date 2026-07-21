@@ -163,7 +163,7 @@ export default function LiveSharePill({
 
   return (
     <div className="relative pointer-events-auto">
-      <button
+      <button type="button"
         onClick={() => {
           if (sharing) {
             setOpen((v) => !v);
@@ -216,7 +216,7 @@ export default function LiveSharePill({
                   </p>
                 </div>
                 <div className="p-1.5 flex items-center gap-1">
-                  <button
+                  <button type="button"
                     onClick={handleCopy}
                     className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg text-xs font-medium hover:bg-white/5 transition-colors"
                     style={{ color: "var(--panel-text)" }}
@@ -228,7 +228,7 @@ export default function LiveSharePill({
                     )}
                   </button>
                   {typeof navigator !== "undefined" && navigator.share && (
-                    <button
+                    <button type="button"
                       onClick={() => {
                         navigator.share?.({
                           title: `Live ETA${dest ? ` · heading to ${dest.name}` : ""}`,
@@ -243,7 +243,7 @@ export default function LiveSharePill({
                       <Share2 className="w-3.5 h-3.5" />
                     </button>
                   )}
-                  <button
+                  <button type="button"
                     onClick={handleStop}
                     disabled={busy}
                     className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
@@ -264,7 +264,7 @@ export default function LiveSharePill({
                 <p className="text-xs" style={{ color: "var(--panel-text)" }}>
                   {error || "Sign in to share your live ETA."}
                 </p>
-                <button
+                <button type="button"
                   onClick={() => { setError(null); setOpen(false); }}
                   className="mt-2 px-2.5 py-1 rounded-lg text-[10px] font-medium hover:bg-white/5 transition-colors"
                   style={{ color: "var(--panel-text-muted)" }}

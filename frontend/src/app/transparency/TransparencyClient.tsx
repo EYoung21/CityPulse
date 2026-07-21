@@ -84,7 +84,7 @@ export default function TransparencyClient() {
   }, []);
 
   return (
-    <div
+    <main
       className="min-h-screen px-6 py-10"
       style={{ background: "var(--map-bg, #0a0a14)", color: "var(--panel-text, #e5e7eb)" }}
     >
@@ -140,14 +140,16 @@ export default function TransparencyClient() {
             <section className="grid sm:grid-cols-3 gap-3">
               <StatCard
                 label="Scanner incidents"
-                value={fmtNumber(stats.scannerIncidents)}
+                value={stats.scannerIncidents === null ? "—" : fmtNumber(stats.scannerIncidents)}
                 tone="ok"
-                hint={`Incidents the AI pipeline shipped in the last ${WINDOW_DAYS} d.`}
+                hint={stats.scannerIncidents === null
+                  ? "The incident aggregate is temporarily unavailable."
+                  : `Incidents the AI pipeline shipped in the last ${WINDOW_DAYS} d.`}
                 Icon={Radio}
               />
               <StatCard
                 label="Feedback triaged"
-                value={fmtNumber(stats.feedbackTriaged)}
+                value={stats.feedbackTriaged === null ? "—" : fmtNumber(stats.feedbackTriaged)}
                 tone="neutral"
                 hint="Status changes moderators applied to bug reports / feedback."
                 Icon={ClipboardCheck}
@@ -155,7 +157,7 @@ export default function TransparencyClient() {
               />
               <StatCard
                 label="Audit-log entries"
-                value={fmtNumber(stats.totalAuditEntries)}
+                value={stats.totalAuditEntries === null ? "—" : fmtNumber(stats.totalAuditEntries)}
                 tone="neutral"
                 hint="Every moderator action is appendable, never edited."
                 Icon={ScrollText}
@@ -225,7 +227,7 @@ export default function TransparencyClient() {
           </>
         )}
       </div>
-    </div>
+    </main>
   );
 }
 
