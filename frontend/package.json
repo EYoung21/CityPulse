@@ -32,7 +32,7 @@
     "leaflet.markercluster": "^1.5.3",
     "lucide-react": "^1.8.0",
     "maplibre-gl": "^5.23.0",
-    "next": "16.2.10",
+    "next": "16.2.12",
     "open-location-code": "^1.0.3",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -54,17 +54,18 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^9",
+    "eslint": "9.39.4",
     "eslint-config-next": "16.2.10",
     "jsdom": "^29.1.1",
-    "shadcn": "^4.2.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vite-tsconfig-paths": "^6.1.1",
     "vitest": "^4.1.9"
   },
   "overrides": {
+    "eslint-plugin-react-hooks": "7.0.1",
     "postcss": "^8.5.10",
+    "sharp": "0.35.3",
     "uuid": "^11.1.1"
   }
 }

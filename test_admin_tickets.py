@@ -521,21 +521,42 @@ def test_best_effort_token_cache_hashes_and_honors_expiry(monkeypatch) -> None:
     assert cache_until <= first["exp"]
 
 
-def test_push_endpoint_rejects_local_and_non_https_destinations(monkeypatch) -> None:
+def test_push_endpoint_requires_an_approved_provider_and_public_dns(monkeypatch) -> None:
     from philly_pulse import push
 
     assert not push.is_safe_push_endpoint("http://push.example/path", resolve_dns=False)
     assert not push.is_safe_push_endpoint("https://127.0.0.1/push", resolve_dns=False)
     assert not push.is_safe_push_endpoint("https://[::1]/push", resolve_dns=False)
     assert not push.is_safe_push_endpoint("https://metadata.internal/push", resolve_dns=False)
+    assert not push.is_safe_push_endpoint("https://push.example/path", resolve_dns=False)
+    assert not push.is_safe_push_endpoint(
+        "https://fcm.googleapis.com.evil.example/fcm/send/id",
+        resolve_dns=False,
+    )
+    assert not push.is_safe_push_endpoint(
+        "https://evilnotify.windows.com/w/?token=id",
+        resolve_dns=False,
+    )
     assert push.is_safe_push_endpoint("https://fcm.googleapis.com/fcm/send/id", resolve_dns=False)
+    assert push.is_safe_push_endpoint(
+        "https://updates.push.services.mozilla.com/wpush/v2/id",
+        resolve_dns=False,
+    )
+    assert push.is_safe_push_endpoint("https://web.push.apple.com/Q-id", resolve_dns=False)
+    assert push.is_safe_push_endpoint(
+        "https://wns2-sg2p.notify.windows.com/w/?token=id",
+        resolve_dns=False,
+    )
 
     monkeypatch.setattr(
         push.socket,
         "getaddrinfo",
         lambda *_args, **_kwargs: [(2, 1, 6, "", ("10.0.0.5", 443))],
     )
-    assert not push.is_safe_push_endpoint("https://rebound.example/push", resolve_dns=True)
+    assert not push.is_safe_push_endpoint(
+        "https://fcm.googleapis.com/fcm/send/rebound",
+        resolve_dns=True,
+    )
 
 
 def test_audio_decoder_checks_encoded_size_and_document_ids() -> None:
@@ -620,6 +641,12 @@ def test_collection_mode_durably_saves_private_source_audio(monkeypatch, tmp_pat
     raw_dir.mkdir()
     monkeypatch.setattr(server, "_RAW_CLIPS_DIR", raw_dir)
     monkeypatch.setattr(server, "_PULSE_INGEST_SECRET", "scanner-secret")
+    monkeypatch.setattr(server, "LEGACY_AUDIO_INGEST_ENABLED", True)
+    monkeypatch.setattr(
+        server,
+        "TRANSCRIPT_POLICY_ACCEPTED_VERSION",
+        server.TRANSCRIPT_POLICY_VERSION,
+    )
     monkeypatch.setattr(server, "LLM_AUTO_ENABLED", False)
     writes: list[dict] = []
     monkeypatch.setattr(
@@ -659,6 +686,12 @@ def test_prefiltered_ingest_durably_saves_private_source_audio(monkeypatch, tmp_
     raw_dir.mkdir()
     monkeypatch.setattr(server, "_RAW_CLIPS_DIR", raw_dir)
     monkeypatch.setattr(server, "_PULSE_INGEST_SECRET", "scanner-secret")
+    monkeypatch.setattr(server, "LEGACY_AUDIO_INGEST_ENABLED", True)
+    monkeypatch.setattr(
+        server,
+        "TRANSCRIPT_POLICY_ACCEPTED_VERSION",
+        server.TRANSCRIPT_POLICY_VERSION,
+    )
     monkeypatch.setattr(server, "LLM_AUTO_ENABLED", True)
     monkeypatch.setattr(
         server.prefilter, "is_dispatch_likely", lambda *_args, **_kwargs: (False, "noise")
@@ -755,6 +788,12 @@ def test_retranscribe_rejects_invalid_archived_wav(monkeypatch, tmp_path) -> Non
 
 def test_ingest_rejects_invalid_machine_payload_before_writes(monkeypatch) -> None:
     monkeypatch.setattr(server, "_PULSE_INGEST_SECRET", "scanner-secret")
+    monkeypatch.setattr(server, "LEGACY_AUDIO_INGEST_ENABLED", True)
+    monkeypatch.setattr(
+        server,
+        "TRANSCRIPT_POLICY_ACCEPTED_VERSION",
+        server.TRANSCRIPT_POLICY_VERSION,
+    )
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
             server.ingest(
@@ -774,6 +813,37 @@ def test_ingest_rejects_invalid_machine_payload_before_writes(monkeypatch) -> No
             )
         )
     assert exc.value.status_code == 400
+
+
+def test_legacy_audio_ingest_requires_enable_and_policy_acknowledgement(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(server, "_PULSE_INGEST_SECRET", "scanner-secret")
+    monkeypatch.setattr(server, "LEGACY_AUDIO_INGEST_ENABLED", False)
+
+    with pytest.raises(HTTPException) as retired:
+        asyncio.run(
+            server.ingest(
+                server.IngestRequest(text="test", city="philly"),
+                background_tasks=BackgroundTasks(),
+                authorization="Bearer scanner-secret",
+            )
+        )
+    assert retired.value.status_code == 503
+    assert "retired" in str(retired.value.detail).lower()
+
+    monkeypatch.setattr(server, "LEGACY_AUDIO_INGEST_ENABLED", True)
+    monkeypatch.setattr(server, "TRANSCRIPT_POLICY_ACCEPTED_VERSION", "")
+    with pytest.raises(HTTPException) as unacknowledged:
+        asyncio.run(
+            server.ingest(
+                server.IngestRequest(text="test", city="philly"),
+                background_tasks=BackgroundTasks(),
+                authorization="Bearer scanner-secret",
+            )
+        )
+    assert unacknowledged.value.status_code == 503
+    assert "policy" in str(unacknowledged.value.detail).lower()
 
 
 def test_incident_reads_reject_invalid_filters_before_store_access() -> None:
