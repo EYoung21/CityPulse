@@ -109,7 +109,8 @@ import type { ManeuverStep } from "@/lib/routing";
 import type { MapHandle, WaypointPin, BasemapStyle } from "@/components/IncidentMap";
 import { useVectorTiles } from "@/lib/vector-basemap";
 import {
-  fetchIncidents,
+  fetchIncidentPage,
+  fetchIncidentWindow,
   fetchSummary,
   fetchStats,
   type Incident,
@@ -123,15 +124,9 @@ import {
   sinceIsoForTimeFilterHours,
   timeFilterNeedsExtendedFetch,
 } from "@/lib/time-filters";
-import { EXTENDED_HISTORY_PAGE_SIZE } from "@/lib/firestore";
 import { useTheme } from "@/lib/theme";
 import AuthBar from "@/components/AuthBar";
-import { isFirebaseConfigured } from "@/lib/firebase";
-import {
-  fetchExtendedHistoryPage,
-  fetchIncidentCount,
-  subscribeIncidents,
-} from "@/lib/firestore";
+import { fetchIncidentCount } from "@/lib/firestore";
 import { enrichIncidents } from "@/lib/incident-weights";
 import { loadCachedIncidents, saveCachedIncidents } from "@/lib/incident-snapshot-cache";
 import { fetchPublicApi } from "@/lib/public-api-base";
@@ -285,8 +280,6 @@ function MapHome() {
   const { mode, resolved, setMode, colorBlindSafe, setColorBlindSafe } = useTheme();
   const { destinations: savedDestinations, lists: savedLists } = useSavedDestinations();
   const isDark = resolved === "dark";
-  const [firestoreAvailable, setFirestoreAvailable] = useState(() => isFirebaseConfigured());
-  const useFirestoreData = firestoreAvailable;
   const { isPro, loading: authLoading } = useAuth();
 
   const [cityDisplayName, setCityDisplayName] = useState(() => {
@@ -1251,11 +1244,24 @@ function MapHome() {
   }, [basemapStyle, recenterCity]);
 
   const loadFromApi = useCallback(async () => {
-    // API-only mode: the REST endpoint owns pins. Summary/stats have their own
-    // single poll below; fetching them here as well doubled every request.
-    await fetchIncidents()
-      .then((rows) => {
-        setIncidents(rows);
+    // Incident reads stay behind the entitlement-aware API. Merge the newest
+    // page into the current slice so a lightweight poll does not discard the
+    // cached/history pages already painted on the map.
+    await fetchIncidentPage({ limit: 50 })
+      .then((page) => {
+        setIncidents((previous) => {
+          const cutoff = Date.now() - LARGEST_FREE_TIME_FILTER_HOURS * 3600_000;
+          const merged = new Map<string, Incident>();
+          for (const incident of page.incidents) merged.set(incident.id, incident);
+          for (const incident of previous) {
+            if (!merged.has(incident.id) && Date.parse(incident.reported_at) >= cutoff) {
+              merged.set(incident.id, incident);
+            }
+          }
+          return [...merged.values()]
+            .sort((a, b) => Date.parse(b.reported_at) - Date.parse(a.reported_at))
+            .slice(0, 1_200);
+        });
       })
       .catch((reason) => {
         console.error("Failed to load incidents:", reason);
@@ -1271,30 +1277,10 @@ function MapHome() {
   }, []);
 
   useEffect(() => {
-    if (useFirestoreData) {
-      // Initial pins come from localStorage (see ``useState`` above) and the
-      // first ``onSnapshot`` tick. Avoid a duplicate full-query ``getDocs`` —
-      // it billed the same ~MAP_SYNC_LIMIT document reads twice per cold load.
-      const unsub = subscribeIncidents(
-        (next) => setIncidents(next),
-        (e) => {
-          console.error("Firestore incidents:", e);
-          // Missing/building composite index or other precondition: do NOT
-          // flip to API-only — BACKEND may be 502 and we'd paint an empty map.
-          const code = (e as { code?: string }).code;
-          if (code === "failed-precondition") {
-            return;
-          }
-          // Bad key, permission, etc.: fall back to REST polling.
-          setFirestoreAvailable(false);
-        }
-      );
-      return unsub;
-    }
     void loadFromApi();
     const timer = setInterval(loadFromApi, POLL_INTERVAL);
     return () => clearInterval(timer);
-  }, [useFirestoreData, loadFromApi]);
+  }, [loadFromApi]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -1333,16 +1319,11 @@ function MapHome() {
     };
   }, [mapBounds]);
 
-  /** When the selected chip is wider than the live listener window, page
-   *  through Firestore until the whole timeframe is loaded (or the user
-   *  changes chips). Sub-hour chips rely on the listener only. */
+  /** When the selected chip is wider than the newest API page, page through
+   *  the entitlement-aware endpoint until the timeframe is loaded (or the
+   *  user changes chips). Sub-hour chips rely on the lightweight poll only. */
   useEffect(() => {
-    if (!useFirestoreData) {
-      setExtendedIncidents([]);
-      setExtendedTotal(null);
-      setExtendedLoading(false);
-      return;
-    }
+    if (authLoading) return;
     if (!timeFilterNeedsExtendedFetch(timeFilter)) {
       setExtendedIncidents([]);
       setExtendedTotal(null);
@@ -1350,6 +1331,7 @@ function MapHome() {
       return;
     }
 
+    const controller = new AbortController();
     let cancelled = false;
     const sinceISO = sinceIsoForTimeFilterHours(timeFilter);
 
@@ -1368,34 +1350,28 @@ function MapHome() {
         if (!cancelled) setExtendedTotal(-1);
       });
 
-    // Stream pages until exhausted or cancelled. We append to state
-    // each page so the user can start interacting with partial data.
-    (async () => {
-      let cursor: string | null = null;
-      try {
-        do {
-          const { rows, nextCursor } = await fetchExtendedHistoryPage({
-            sinceISO,
-            cursor,
-            pageSize: EXTENDED_HISTORY_PAGE_SIZE,
-          });
-          if (cancelled) return;
-          if (rows.length > 0) {
-            setExtendedIncidents((prev) => prev.concat(rows));
-          }
-          cursor = nextCursor;
-        } while (cursor && !cancelled);
-      } catch (e) {
-        console.warn("Extended history paged fetch failed", e);
-      } finally {
+    fetchIncidentWindow({
+      since: sinceISO ?? undefined,
+      maxRows: 10_000,
+      signal: controller.signal,
+      onPage: (rows) => {
+        if (!cancelled) setExtendedIncidents(rows);
+      },
+    })
+      .catch((e) => {
+        if ((e as { name?: string })?.name !== "AbortError") {
+          console.warn("Extended history paged fetch failed", e);
+        }
+      })
+      .finally(() => {
         if (!cancelled) setExtendedLoading(false);
-      }
-    })();
+      });
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [timeFilter, useFirestoreData]);
+  }, [authLoading, isPro, timeFilter]);
 
   // Off-screen incident detection. The first time we receive an incident
   // batch we silently seed `seenIncidentIdsRef` so the user isn't bombed

@@ -12,6 +12,7 @@ import {
   ChevronLeft,
 } from "lucide-react";
 import type { Incident } from "@/lib/api";
+import { fetchIncidentWindow } from "@/lib/api";
 import { withAlpha } from "@/lib/colors";
 import {
   getNeighborhoodBySlug,
@@ -28,8 +29,6 @@ import { getSeverity } from "@/lib/severity";
 import Sparkline from "@/components/charts/Sparkline";
 import DonutChart from "@/components/charts/DonutChart";
 import HourClock from "@/components/charts/HourClock";
-import { subscribeIncidents } from "@/lib/firestore";
-import { isFirebaseConfigured } from "@/lib/firebase";
 import { incidentAudioSrc } from "@/lib/public-api-base";
 import { useCityNeighborhoods } from "@/hooks/useCityNeighborhoods";
 import FeedAudioMiniPlayer, {
@@ -48,12 +47,19 @@ export default function NeighborhoodProfile({ slug }: Props) {
   const hood = getNeighborhoodBySlug(slug);
 
   useEffect(() => {
-    if (!isFirebaseConfigured()) return;
-    const unsub = subscribeIncidents(
-      (rows) => setAllIncidents(rows),
-      (e) => console.error("Firestore:", e)
-    );
-    return () => unsub();
+    const controller = new AbortController();
+    const since = new Date(Date.now() - 30 * 24 * 3600_000).toISOString();
+    fetchIncidentWindow({
+      since,
+      maxRows: 1_200,
+      signal: controller.signal,
+      onPage: setAllIncidents,
+    }).catch((error) => {
+      if ((error as { name?: string })?.name !== "AbortError") {
+        console.error("Incident history:", error);
+      }
+    });
+    return () => controller.abort();
   }, []);
 
   if (!ready) {
