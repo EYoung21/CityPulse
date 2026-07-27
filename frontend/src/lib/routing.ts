@@ -687,7 +687,6 @@ export interface RouteRequestOptions {
  * fall back to foot-walking via ORS.
  */
 async function tryTransitRoute(
-  apiKey: string,
   origin: [number, number],
   dest: [number, number],
   mode: TransportMode
@@ -705,56 +704,10 @@ async function tryTransitRoute(
       signal: AbortSignal.timeout(20_000),
     });
     
-    // If we get a 501 (Not Implemented / OTP not deployed), build a mock route
-    // that routes the user to the nearest station via walking, then draws a 
-    // straight line to the destination's nearest station, then walks to destination.
-    // This provides a graceful "navigate to the train station" UX without OTP.
-    if (res.status === 501) {
-      const getNearestStation = async (lat: number, lng: number) => {
-        const query = `[out:json][timeout:5];(node["railway"~"station"](around:2500,${lat},${lng});way["railway"~"station"](around:2500,${lat},${lng});node["station"~"subway|light_rail|train"](around:2500,${lat},${lng}););out center 1;`;
-        try {
-          const overpassRes = await fetch("https://overpass-api.de/api/interpreter", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: `data=${encodeURIComponent(query)}`,
-            signal: AbortSignal.timeout(8_000),
-          });
-          const data = await readBoundedJsonResponse(overpassRes, 2 * 1024 * 1024) as {
-            elements?: Array<{ lat?: number; lon?: number; center?: { lat?: number; lon?: number } }>;
-          };
-          const el = data.elements?.[0];
-          if (!el) return null;
-          return [el.lat ?? el.center?.lat, el.lon ?? el.center?.lon] as [number, number];
-        } catch {
-          return null;
-        }
-      };
-
-      const [startStation, endStation] = await Promise.all([
-        getNearestStation(origin[0], origin[1]),
-        getNearestStation(dest[0], dest[1])
-      ]);
-
-      if (startStation && endStation) {
-        // Get walking route to the start station
-        const walkToStation = await getMultiRouteVariants(apiKey, "foot-walking", [origin, startStation]);
-        // Get walking route from end station to destination
-        const walkFromStation = await getMultiRouteVariants(apiKey, "foot-walking", [endStation, dest]);
-        
-        const w1 = walkToStation[0];
-        const w2 = walkFromStation[0];
-        
-        if (w1 && w2) {
-          return {
-            geometry: [...w1.geometry, endStation, ...w2.geometry],
-            distanceKm: w1.distanceKm + w2.distanceKm + 5.0, // rough 5km estimate for transit line
-            durationMin: w1.durationMin + w2.durationMin + 20, // rough 20m transit ride
-            isSafe: false
-          };
-        }
-      }
-      return null;
-    }
+    // The browser cannot build a trustworthy transit itinerary without OTP.
+    // Fall through to the same-origin route proxy, which owns the bounded
+    // provider chain and clearly marks its station-aware result as estimated.
+    if (res.status === 501) return null;
 
     if (!res.ok) return null;
     const data = (await readBoundedJsonResponse(res, MAX_ROUTE_RESPONSE_BYTES)) as {
@@ -817,7 +770,7 @@ export async function getMultiStopRoute(
   // For transit modes, try the OTP backend first. Only works for
   // simple origin→dest (no intermediate stops via OTP).
   if (isTransitMode(mode) && waypoints.length === 2) {
-    const transitResult = await tryTransitRoute(apiKey, waypoints[0], waypoints[1], mode);
+    const transitResult = await tryTransitRoute(waypoints[0], waypoints[1], mode);
     if (transitResult) return transitResult;
     // OTP/Fallback not available — fall through to foot-walking via ORS
   }

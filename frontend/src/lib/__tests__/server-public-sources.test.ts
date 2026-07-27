@@ -14,6 +14,8 @@ describe("server public-source privacy", () => {
       "17TH ST & SHOTWELL ST",
     );
     expect(publicCoordinates(35.09736, -85.219751)).toEqual([35.097, -85.22]);
+    expect(publicCoordinates(null, null)).toEqual([null, null]);
+    expect(publicCoordinates("", "")).toEqual([null, null]);
   });
 
   it("suppresses sensitive calls and classifies no-weapon fights correctly", () => {

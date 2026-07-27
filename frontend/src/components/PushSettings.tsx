@@ -455,13 +455,13 @@ export default function PushSettings() {
             Closed-tab alerts
           </p>
           <p className="text-[10px] leading-snug mt-0.5" style={{ color: "var(--panel-text-muted)" }}>
-            Server-sent push that fires even when PhillyPulse isn&rsquo;t open.
+            Server-sent push that fires even when {brand} isn&rsquo;t open.
             Quiet hours and category mutes still apply.
           </p>
           {!status.serverConfigured && (
             <p className="text-[10px] mt-1" style={{ color: "#f59e0b" }}>
-              The server isn&rsquo;t configured for push yet. Subscribe anyway to be ready
-              when it&rsquo;s rolled out.
+              Closed-tab push is temporarily paused while its retired backend
+              is replaced. In-app alerts still work while CityPulse is open.
             </p>
           )}
           {!user && (

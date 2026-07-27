@@ -22,6 +22,18 @@ describe("server incident fallback", () => {
     });
   });
 
+  it("enforces the free floor without upselling harmless request skew", () => {
+    const now = Date.parse("2026-07-27T05:00:00Z");
+    expect(effectiveSince("2026-07-24T04:59:59Z", false, now)).toEqual({
+      since: "2026-07-24T05:00:00.000+00:00",
+      clamped: false,
+    });
+    expect(effectiveSince("2026-07-24T04:54:59Z", false, now)).toEqual({
+      since: "2026-07-24T05:00:00.000+00:00",
+      clamped: true,
+    });
+  });
+
   it("validates compound cursors", () => {
     expect(parseCursor(`2026-07-27T04:00:00Z${CURSOR_SEPARATOR}abc_123`)).toEqual({
       timestamp: "2026-07-27T04:00:00.000+00:00",
@@ -50,12 +62,16 @@ describe("server incident fallback", () => {
       publicIncidentData({
         reported_at: "2026-07-27T04:00:00Z",
         raw_text: "Public description",
+        location_text: "2917 Kings Point Rd Apt 4B",
+        lat: 35.09736,
+        lng: -85.219751,
         internal_source_payload: { victim: "must never escape" },
         ingestion_debug: "private",
         mentions: [
           {
             at: "2026-07-27T04:01:00Z",
             raw_text: "Public update",
+            location_text: "987 Main St Unit 2",
             private_operator_note: "must never escape",
           },
         ],
@@ -71,10 +87,14 @@ describe("server incident fallback", () => {
     ).toEqual({
       reported_at: "2026-07-27T04:00:00Z",
       raw_text: "Public description",
+      location_text: "2900 block Kings Point Rd",
+      lat: 35.097,
+      lng: -85.22,
       mentions: [
         {
           at: "2026-07-27T04:01:00Z",
           raw_text: "Public update",
+          location_text: "900 block Main St",
         },
       ],
       word_timings: [{ word: "Public", start: 0, end: 0.5 }],
