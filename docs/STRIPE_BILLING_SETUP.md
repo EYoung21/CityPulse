@@ -74,6 +74,8 @@ In Stripe Dashboard:
    - Test/dev example: local tunnel URL (see section 6)
 3. Subscribe to events:
    - `checkout.session.completed`
+   - `payment_intent.succeeded`
+   - `charge.refunded`
    - `customer.subscription.updated`
    - `customer.subscription.deleted`
 4. Copy the webhook signing secret (`whsec_...`) into `STRIPE_WEBHOOK_SECRET`.
@@ -134,7 +136,7 @@ stripe listen --forward-to localhost:3000/api/stripe-webhook
 - [ ] `STRIPE_SECRET_KEY` set (live) in Vercel
 - [ ] `STRIPE_PRICE_MONTHLY` and `STRIPE_PRICE_ANNUAL` set in Vercel
 - [ ] Webhook endpoint created and `STRIPE_WEBHOOK_SECRET` set in Vercel
-- [ ] Webhook events include the 3 required subscription events
+- [ ] Webhook events include all five checkout, pass, refund, and subscription events
 - [ ] Firestore user doc updates verified for a live test customer
 - [ ] Successful redirect works (`/?upgraded=1`)
 - [ ] Cancellation path tested (`customer.subscription.deleted`)
@@ -149,4 +151,3 @@ stripe listen --forward-to localhost:3000/api/stripe-webhook
   - `firebaseUid` metadata exists on session
   - Firestore credentials (`FIREBASE_ADMIN_KEY`) are valid
 - If you need self-serve cancellation/plan management, add Stripe Customer Portal next (not implemented yet in this repo).
-

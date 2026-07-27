@@ -134,8 +134,9 @@ service cloud.firestore {
       allow read: if request.auth != null && request.auth.uid == userId;
       // The client only ever writes profile-sync fields to the user
       // ROOT doc. Tier/billing fields (tier, proUntil, passGrantedAt,
-      // stripeCustomerId, tierUpdatedAt) are written exclusively by the
-      // backend via the Admin SDK (which bypasses these rules), so the
+      // passRevokedAt, stripeCustomerId, tierUpdatedAt) are written
+      // exclusively by the backend via the Admin SDK (which bypasses these
+      // rules), so the
       // client must never be able to set them — otherwise a signed-in
       // user could grant themselves Pro by writing tier:'pro'.
       allow create: if request.auth != null
