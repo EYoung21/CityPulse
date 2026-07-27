@@ -8,8 +8,17 @@ import {
   type QuerySnapshot,
   getFirestore,
 } from "firebase-admin/firestore";
+import {
+  publicCoordinates,
+  publicLocation,
+} from "@/lib/public-incident-privacy";
 
 export const FREE_WINDOW_SECONDS = 72 * 60 * 60;
+// A client computing "now - 72h" necessarily sends a timestamp a little older
+// than the server's floor by the time the request arrives. Keep enforcing the
+// server floor, but do not advertise that harmless clock/network skew as a
+// paywall clamp.
+export const FREE_WINDOW_CLAMP_GRACE_SECONDS = 5 * 60;
 export const CURSOR_SEPARATOR = "\x1f";
 export const CITY_RE = /^[a-z][a-z0-9-]{0,40}$/;
 export const INCIDENT_CATEGORIES = new Set([
@@ -123,7 +132,15 @@ export function effectiveSince(
     return { since: parsed || floor, clamped: false };
   }
   if (!parsed || parsed < floor) {
-    return { since: floor, clamped: !!requested };
+    const graceFloor = new Date(
+      now - (FREE_WINDOW_SECONDS + FREE_WINDOW_CLAMP_GRACE_SECONDS) * 1_000,
+    )
+      .toISOString()
+      .replace(/Z$/, "+00:00");
+    return {
+      since: floor,
+      clamped: parsed !== null && parsed < graceFloor,
+    };
   }
   return { since: parsed, clamped: false };
 }
@@ -208,6 +225,10 @@ export function publicIncidentData(data: DocumentData): Record<string, unknown> 
       row[field] = jsonSafe(data[field]);
     }
   }
+  const [lat, lng] = publicCoordinates(data.lat, data.lng);
+  row.lat = lat;
+  row.lng = lng;
+  row.location_text = publicLocation(data.location_text);
 
   if (Array.isArray(data.word_timings)) {
     row.word_timings = data.word_timings.slice(0, 5_000).flatMap((value) => {
@@ -231,6 +252,7 @@ export function publicIncidentData(data: DocumentData): Record<string, unknown> 
           projected[field] = jsonSafe(mention[field]);
         }
       }
+      projected.location_text = publicLocation(mention.location_text);
       return [projected];
     });
   }

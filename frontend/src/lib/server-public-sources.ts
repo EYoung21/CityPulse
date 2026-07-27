@@ -5,6 +5,12 @@ import {
   getFirestore,
 } from "firebase-admin/firestore";
 import { ensureAdmin } from "@/lib/server-incidents";
+import {
+  publicCoordinates,
+  publicLocation,
+} from "@/lib/public-incident-privacy";
+
+export { publicCoordinates, publicLocation } from "@/lib/public-incident-privacy";
 
 type PublicIncident = {
   sourceId: string;
@@ -48,53 +54,6 @@ function htmlText(value: string): string {
     .replace(/&gt;/gi, ">")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function finiteNumber(value: unknown): number | null {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-export function publicCoordinates(
-  latValue: unknown,
-  lngValue: unknown,
-): [number | null, number | null] {
-  const lat = finiteNumber(latValue);
-  const lng = finiteNumber(lngValue);
-  if (
-    lat === null ||
-    lng === null ||
-    lat < -90 ||
-    lat > 90 ||
-    lng < -180 ||
-    lng > 180
-  ) {
-    return [null, null];
-  }
-  return [Math.round(lat * 1_000) / 1_000, Math.round(lng * 1_000) / 1_000];
-}
-
-export function publicLocation(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  let text = value
-    .replace(/\\/g, " & ")
-    .replace(/\//g, " & ")
-    .replace(/\s+/g, " ")
-    .trim();
-  text = text.replace(
-    /\s+(?:APT|APARTMENT|UNIT|SUITE|RM|ROOM|#)\s*[A-Z0-9-]+\b.*$/i,
-    "",
-  );
-  if (!text || /^not available$/i.test(text)) return null;
-  if (!/^\d+\s+BLOCK\b/i.test(text)) {
-    const match = /^(\d{1,6})\s+(.+)$/.exec(text);
-    if (match) {
-      const number = Number(match[1]);
-      const block = number < 100 ? "unit block" : `${Math.floor(number / 100) * 100} block`;
-      text = `${block} ${match[2]}`;
-    }
-  }
-  return text.slice(0, 180);
 }
 
 export function classifyPublicEvent(value: string): string | null {
