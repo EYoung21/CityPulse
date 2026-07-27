@@ -2364,7 +2364,7 @@ function MapHome() {
         >
           <div className="flex flex-col items-stretch gap-2.5 md:gap-3 min-w-0 pointer-events-auto">
             <div
-              className="relative flex items-center rounded-full shadow-lg backdrop-blur-md overflow-visible min-w-0 w-full"
+              className="relative z-10 flex items-center rounded-full shadow-lg backdrop-blur-md overflow-visible min-w-0 w-full"
               style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)" }}
             >
               <Clock className="w-4 h-4 ml-3 md:ml-4 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
@@ -3516,7 +3516,7 @@ function MapHome() {
                 )}
               </div>
               <div
-                className="relative flex items-center rounded-full overflow-visible"
+                className="relative z-10 flex items-center rounded-full overflow-visible"
                 style={{ background: "var(--panel-input-bg)", border: "1px solid var(--panel-border)" }}
               >
                 <Clock className="w-3.5 h-3.5 ml-2.5 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
