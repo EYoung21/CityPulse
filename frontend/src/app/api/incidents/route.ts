@@ -7,8 +7,10 @@ import {
   readIncidentWindow,
   resolveEntitlement,
 } from "@/lib/server-incidents";
+import { refreshPublicSources } from "@/lib/server-public-sources";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
   const city = (request.nextUrl.searchParams.get("city") || "").trim().toLowerCase();
@@ -26,6 +28,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const entitlement = await resolveEntitlement(request);
+    await refreshPublicSources(city);
     const { since, clamped } = effectiveSince(requestedSince, entitlement.isPro);
     const incidents = await readIncidentWindow({
       city,
