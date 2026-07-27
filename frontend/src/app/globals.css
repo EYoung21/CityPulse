@@ -460,7 +460,10 @@
 
   .pp-map-floating-panel {
     bottom: 4rem;
-    max-height: calc(100% - 5rem);
+    /* SearchInput occupies the top map lane (16px padding + 42px pill).
+       Cap every map card below that lane; tall incident cards previously
+       expanded upward until they covered the search field. */
+    max-height: calc(100% - 8.75rem);
   }
 }
 
