@@ -400,7 +400,23 @@ function MapHome() {
   const [timeFilter, setTimeFilter] = useState<number>(DEFAULT_TIME_FILTER_HOURS);
   const [activeCats, setActiveCats] = useState<Set<string>>(() => new Set());
   const [mapTimeMenuOpen, setMapTimeMenuOpen] = useState(false);
+  const mapTimeMenuRef = useRef<HTMLDivElement>(null);
+  const [mapTimeMenuHeight, setMapTimeMenuHeight] = useState(0);
   const [feedTimeMenuOpen, setFeedTimeMenuOpen] = useState(false);
+
+  useLayoutEffect(() => {
+    if (!mapTimeMenuOpen) {
+      setMapTimeMenuHeight(0);
+      return;
+    }
+    const el = mapTimeMenuRef.current;
+    if (!el) return;
+    const update = () => setMapTimeMenuHeight(Math.ceil(el.getBoundingClientRect().height));
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [mapTimeMenuOpen]);
 
   /** Restore after SSR so we do not clobber sessionStorage in the persist effect before this runs. */
   useLayoutEffect(() => {
@@ -2376,7 +2392,14 @@ function MapHome() {
           <div className="flex flex-col items-stretch gap-2.5 md:gap-3 min-w-0 pointer-events-auto">
             <div
               className="relative z-10 flex items-center rounded-full shadow-lg backdrop-blur-md overflow-visible min-w-0 w-full"
-              style={{ background: "var(--pill-bg)", border: "1px solid var(--pill-border)" }}
+              style={{
+                background: "var(--pill-bg)",
+                border: "1px solid var(--pill-border)",
+                // The menu is absolutely positioned so it can stay aligned to
+                // the time pill. Reserve its measured height in the flex flow
+                // so the category row starts below it instead of underneath it.
+                marginBottom: mapTimeMenuOpen ? mapTimeMenuHeight + 6 : 0,
+              }}
             >
               <Clock className="w-4 h-4 ml-3 md:ml-4 shrink-0" style={{ color: "var(--panel-text-muted)" }} />
               {primaryTimeFilters.map((tf) => {
@@ -2414,6 +2437,7 @@ function MapHome() {
               </button>
               {mapTimeMenuOpen && (
                 <div
+                  ref={mapTimeMenuRef}
                   className="absolute top-full left-0 mt-1.5 w-72 max-w-[calc(100vw-1.5rem)] rounded-xl shadow-2xl backdrop-blur-xl p-2"
                   style={{
                     background: "var(--panel-bg)",
