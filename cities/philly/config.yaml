@@ -68,21 +68,10 @@ vad_and_silence:
 # loaded by pulse-live@philly2.service. Both services emit `city: "philly"`
 # so ingest lands in the same Firestore bucket; city_registry.py merges
 # their feed lists when surfacing the per-city Broadcastify inventory.
-feeds:
-  - feed_id: "4603"
-    label: "PPD Citywide"
-    jurisdiction_hint: "Philadelphia Police citywide dispatch; prefer Philadelphia streets over suburban counties unless units name DelCo/MontCo towns."
-  - { feed_id: "17310", label: "PPD Central" }
-  - { feed_id: "21297", label: "PPD East" }
-  - { feed_id: "45495", label: "PPD Northeast" }
-  - { feed_id: "18836", label: "PPD Northwest" }
-  - { feed_id: "15102", label: "PPD South" }
-  - { feed_id: "15195", label: "PPD Southwest/West" }
-  - { feed_id: "34250", label: "PFD South Fire/Medics" }
-  - { feed_id: "15747", label: "PFD North Fire" }
-  # 44308 SEPTA Transit Police — DEAD on the legacy stream (404 as of 2026-06-24), removed.
-  - { feed_id: "36323", label: "Delaware Co Police Dispatch" }
-  - { feed_id: "46438", label: "DelCo Fire/EMS - Countywide Ops" }
+public_sources:
+  - { source_id: "phl-police", label: "Philadelphia Police Incidents" }
+  - { source_id: "montco-cad", label: "Montgomery County Live CAD" }
+  - { source_id: "chesco-cad", label: "Chester County Live CAD" }
 
 tuning:
   # Whisper "initial_prompt": biases the acoustic model toward names it

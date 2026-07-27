@@ -165,52 +165,9 @@ def test_raw_audio_ticket_is_bound_to_one_clip() -> None:
     assert not server._consume_admin_ticket(ticket, "raw_audio", "abcdef123456")
 
 
-def test_admin_stream_keeps_credentials_out_of_url_and_process_args(monkeypatch) -> None:
-    feed_id = server.FEEDS[0]["feed_id"]
-    ticket = server._mint_admin_ticket({"uid": "admin-1"}, "stream", feed_id)
-    monkeypatch.setattr(server, "_bf_username", "user:name")
-    monkeypatch.setattr(server, "_bf_password", "secret/password")
-    captured: dict = {}
-
-    class FakeUpstream:
-        status_code = 200
-        headers = {"content-type": "audio/mpeg"}
-
-        async def aiter_bytes(self, _size):
-            yield b"mp3-data"
-
-        async def aclose(self):
-            captured["upstream_closed"] = True
-
-    class FakeClient:
-        def __init__(self, **kwargs):
-            captured["auth"] = kwargs.get("auth")
-
-        def build_request(self, method, url):
-            captured["method"] = method
-            captured["url"] = url
-            return object()
-
-        async def send(self, _request, *, stream):
-            captured["stream"] = stream
-            return FakeUpstream()
-
-        async def aclose(self):
-            captured["client_closed"] = True
-
-    monkeypatch.setattr(server.httpx, "AsyncClient", FakeClient)
-
-    response = asyncio.run(server.admin_stream(feed_id, ticket))
-
-    async def consume() -> bytes:
-        return b"".join([chunk async for chunk in response.body_iterator])
-
-    assert asyncio.run(consume()) == b"mp3-data"
-    assert captured["auth"] == ("user:name", "secret/password")
-    assert captured["url"] == f"https://audio.broadcastify.com/{feed_id}.mp3"
-    assert "secret" not in captured["url"]
-    assert captured["upstream_closed"] is True
-    assert captured["client_closed"] is True
+def test_provider_audio_stream_route_is_retired() -> None:
+    paths = {getattr(route, "path", "") for route in server.app.routes}
+    assert "/api/admin/stream/{feed_id}" not in paths
 
 
 def test_admin_verification_checks_revocation(monkeypatch) -> None:

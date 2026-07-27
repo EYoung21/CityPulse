@@ -26,21 +26,39 @@ systemctl restart philly-pulse-api
 sleep 2
 systemctl is-active philly-pulse-api
 
-# Hetzner-side backfill is retired. Backfill is Lambda-only now.
-for legacy in pulse-backfill.timer pulse-backfill.service; do
+# Broadcastify audio and Lambda GPU ingestion are retired. Stop every known
+# unit before starting the structured public-source poller so a stale machine
+# cannot reconnect to the blocked provider or a future Lambda instance.
+for legacy in \
+  pulse-backfill.timer \
+  pulse-backfill.service \
+  citypulse-downloader.service \
+  citypulse-backfill.service \
+  citypulse-backfill.timer \
+  citypulse-audio-regen.service \
+  citypulse-audio-regen.timer \
+  lambda-ollama-tunnel.service \
+  citypulse-ollama-watchdog.service \
+  citypulse-ollama-watchdog.timer \
+  pulse-live@philly.service \
+  pulse-live@philly2.service \
+  pulse-live@sf.service \
+  pulse-live@nyc.service \
+  pulse-live@chattanooga.service; do
   if systemctl list-unit-files "$legacy" >/dev/null 2>&1; then
-    echo "Removing legacy unit: $legacy"
+    echo "Disabling retired unit: $legacy"
     systemctl stop "$legacy" 2>/dev/null || true
     systemctl disable "$legacy" 2>/dev/null || true
-    rm -f "/etc/systemd/system/${legacy}"
   fi
 done
-systemctl daemon-reload
 
-# Live transcribers run on Lambda — sync multi_transcriber + cities/ so
-# per-city VAD/tuning changes ship with every API deploy.
-if [ -x /root/PhillyPulse/scripts/sync_lambda_live_transcribers.sh ]; then
-  bash /root/PhillyPulse/scripts/sync_lambda_live_transcribers.sh || echo "WARNING: Lambda transcriber sync failed (non-fatal for API)"
-fi
+install -m 0644 \
+  /root/PhillyPulse/systemd/citypulse-public-sources.service \
+  /etc/systemd/system/citypulse-public-sources.service
+systemctl daemon-reload
+systemctl enable citypulse-public-sources.service
+systemctl restart citypulse-public-sources.service
+sleep 3
+systemctl is-active citypulse-public-sources.service
 
 echo "Deploy complete at $(date)"

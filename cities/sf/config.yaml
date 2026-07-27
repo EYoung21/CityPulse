@@ -14,23 +14,9 @@ vad_and_silence:
 transcriber:
   num_workers: 5
 
-feeds:
-  - { feed_id: "46180", label: "SFPD Police" }
-  - { feed_id: "6336",  label: "SFFD Fire/EMS" }
-  # ── Peninsula corridor (SF → Stanford) ─────────────────────────────
-  # Adds the 35-mile US-101/I-280 corridor between San Francisco and
-  # Stanford. PAPD/Stanford DPS voice is unreachable (encrypted SVRCS
-  # P25 trunked system, same situation as Lower Merion PD on the East
-  # Coast), so we capture fire + EMS for those towns plus PD for the
-  # towns that still run on clear frequencies (Menlo Park, Atherton,
-  # San Mateo County Sheriff coverage area).
-  - { feed_id: "45035", label: "San Mateo County Sheriff" }            # SMC SO PatPri 1+2 (unincorporated SMC + contract cities)
-  - { feed_id: "45051", label: "San Mateo County EMS Dispatch" }       # peninsula-wide medical
-  - { feed_id: "46578", label: "San Mateo County Fire South" }         # SMCFD South Dispatch (Belmont→Menlo Park)
-  - { feed_id: "45521", label: "San Mateo County Fire / CalFire CZU" } # SMC fire + CalFire countywide
-  - { feed_id: "45860", label: "Menlo Park & Atherton Police Dispatch" }
-  # 34259 Palo Alto Fire — DEAD on the legacy stream (404 as of 2026-06-24), removed.
-  - { feed_id: "17718", label: "Stanford Fire" }                       # Stanford campus fire/EMS
+public_sources:
+  - { source_id: "datasf-police", label: "DataSF Police CAD" }
+  - { source_id: "datasf-fire", label: "San Francisco Fire Department Calls" }
 
 geocode:
   # Wider bounding box covering San Francisco proper plus the entire

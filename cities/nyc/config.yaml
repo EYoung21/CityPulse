@@ -20,59 +20,11 @@ map:
   center_lng: -74.0060
   default_zoom: 11
 
-# Live audio sources (Broadcastify feed IDs).
-# VERIFIED LIVE 2026-06-24 by probing audio.broadcastify.com/<id>.mp3 with the
-# premium account — only feeds returning HTTP 200 are listed here.
-#
-# NYPD context (2026): precinct dispatch has been progressively ENCRYPTED on
-# the UHF/T-Band system (Brooklyn → Bronx → Queens → Manhattan since 2023).
-# The NYPD Citywide channels still stream but are mostly silent to the public;
-# kept as a fallback for citywide events broadcast in the clear.
-#
-# FDNY context (2026): the standalone FDNY borough fire-dispatch feeds —
-# Bronx 8534, Queens 8585, Brooklyn 8586, Staten Island 8749, the combined
-# 9358, and the old Manhattan 46122/9466/8535 — are ALL OFFLINE on the legacy
-# live stream (every one returns 404). FDNY dispatch migrated to a TRUNKED
-# system now carried on Broadcastify *Calls* / OpenMHz
-# (https://www.openmhz.com/system/fdnyfire), which this pipeline does NOT yet
-# ingest. The one surviving legacy FDNY live feed is Manhattan Dispatch (46554).
-# Restoring full borough fire/EMS coverage requires a Calls/OpenMHz ingestion
-# path — that's a feature build, not a config change.
-feeds:
-  # NYPD — mostly encrypted; kept as a fallback only.
-  - feed_id: "40184"
-    label: "NYPD Citywide 1"
-  - feed_id: "40185"
-    label: "NYPD Citywide 2"
-  - feed_id: "40186"
-    label: "NYPD Citywide 3"
-  - feed_id: "1189"
-    label: "NYPD Bronx/Manhattan Transit"
-
-  # FDNY — only the Manhattan dispatch feed survives on the legacy live stream.
-  - feed_id: "46554"
-    label: "FDNY Manhattan Dispatch"
-    jurisdiction_hint: "FDNY Manhattan fire dispatch; box assignments in Manhattan unless another borough is explicit."
-    borough: "Manhattan"
-
-  # Brooklyn fire alarms + Hatzolah EMS dispatch (largest volunteer EMS,
-  # covering southern Brooklyn — Boro Park, Flatbush, Crown Heights, etc.).
-  - feed_id: "7392"
-    label: "Brooklyn Fire & Hatzolah EMS"
-
-  # Small Queens community volunteer fire dispatch (Howard Beach area) — the
-  # only live Queens fire feed left on the legacy stream now that FDNY Queens
-  # (8585) is dead. Low volume, but it's some Queens coverage.
-  - feed_id: "39740"
-    label: "West Hamilton Beach Fire Dispatch"
-    borough: "Queens"
-
-  # DEAD on the legacy live stream (404 as of 2026-06-24) — FDNY moved these
-  # to the trunked Calls/OpenMHz system. Do NOT re-add as live feeds; they
-  # return no audio. Recover via a Broadcastify Calls / OpenMHz integration.
-  #   8534 FDNY Bronx · 8585 FDNY Queens · 8586 FDNY Brooklyn
-  #   8749 FDNY Staten Island · 9358 FDNY combined · 8535/9466/46122 Manhattan
-  #   46895 Bronx North EMS · 34682 EMS Manhattan
+# Notify NYC is the only free, official near-real-time citywide source. It
+# covers confirmed significant events, not every 911 call. Routine NYPD radio
+# is encrypted and the public NYPD/FDNY call datasets are delayed.
+public_sources:
+  - { source_id: "notify-nyc", label: "Notify NYC" }
 
 geocode:
   viewbox: "-74.26,40.49,-73.70,40.92"

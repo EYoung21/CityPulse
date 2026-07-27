@@ -22,16 +22,8 @@ geocode:
     lng_max: -85.08
   suffix: ", Chattanooga, TN"
 
-feeds:
-  - { feed_id: "45708", label: "Chattanooga Police Department" }
-  - { feed_id: "34716", label: "Chattanooga Fire Department" }
-  - { feed_id: "45709", label: "Chattanooga Public Safety" }
-  - { feed_id: "45707", label: "Hamilton County Sheriff" }
-  - { feed_id: "44571", label: "Hamilton County Public Safety" }
-  - { feed_id: "21572", label: "Hamilton County Fire Departments" }
-  - { feed_id: "45601", label: "East Ridge Public Safety" }
-  - { feed_id: "45706", label: "Soddy Daisy Police/Fire" }
-  - { feed_id: "29255", label: "TN Highway Patrol Dist 2 - Chattanooga" }
+public_sources:
+  - { source_id: "hc911", label: "Hamilton County 911 CAD" }
 
 tuning:
   initial_prompt: >-
