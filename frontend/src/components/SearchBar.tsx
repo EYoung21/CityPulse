@@ -794,7 +794,7 @@ export default function SearchBar({
               })}
               {recentIncidents.length === 0 && (
                 <div className="px-4 py-8 text-center text-xs" style={{ color: "var(--panel-text-muted)" }}>
-                  No incidents yet. Listening for scanner activity...
+                  No public incident reports are available in this window yet.
                 </div>
               )}
             </div>

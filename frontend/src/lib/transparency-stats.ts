@@ -35,10 +35,8 @@ export interface TransparencyStats {
   windowMs: number;
   /** Status updates moderators applied to feedback rows. */
   feedbackTriaged: number | null;
-  /** Total scanner-derived incidents in the window. The whole stream
-   *  is scanner-derived now that crowdsourced reports are gone, so
-   *  this is the headline number. */
-  scannerIncidents: number | null;
+  /** Total published public-source incidents in the window. */
+  publicIncidents: number | null;
   /** Stats for the moderation audit log itself — surfaces
    *  transparency about the moderators (not just the moderated). */
   totalAuditEntries: number | null;
@@ -53,7 +51,7 @@ const EMPTY_STATS = (city: string, windowMs: number): TransparencyStats => ({
   windowStartMs: Date.now() - windowMs,
   windowMs,
   feedbackTriaged: null,
-  scannerIncidents: null,
+  publicIncidents: null,
   totalAuditEntries: null,
   fetchedAtMs: Date.now(),
 });
@@ -111,13 +109,13 @@ export async function fetchTransparencyStats(
     stats.feedbackTriaged = feedbackTriaged;
   }
 
-  // ── Scanner incidents (context) ──────────────────────────────────
+  // ── Public-source incidents (context) ────────────────────────────
   // Use the server-cached Firestore count aggregation. The old implementation
   // downloaded every incident in the city into each visitor's browser merely
   // to count the last 30 days, causing slow loads and runaway read costs.
   if (incidentResult.status === "fulfilled") {
     const count = incidentResult.value;
-    if (count >= 0) stats.scannerIncidents = count;
+    if (count >= 0) stats.publicIncidents = count;
   }
 
   stats.fetchedAtMs = Date.now();

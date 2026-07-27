@@ -31,7 +31,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const host = (await headers()).get("host");
   const city = getCityForRequestHost(host);
   const title = cityPageTitle(city);
-  const description = `CityPulse: Real-time AI-powered community safety for ${city.name}. Live police scanner transcription, incident mapping, and safe routing.`;
+  const description = `CityPulse: Community safety awareness for ${city.name} using public incident sources, approximate mapping, and safer routing.`;
 
   return {
     metadataBase: metadataBaseFromHost(host),
@@ -54,7 +54,7 @@ export async function generateMetadata(): Promise<Metadata> {
     formatDetection: { telephone: false },
     openGraph: {
       title,
-      description: `Real-time AI-powered community safety map for ${city.name}.`,
+      description: `Public-source community safety map for ${city.name}.`,
       type: "website",
       siteName: "CityPulse",
       images: [{ url: "/api/og", width: 1200, height: 630, alt: "CityPulse · live safety map" }],
@@ -62,7 +62,7 @@ export async function generateMetadata(): Promise<Metadata> {
     twitter: {
       card: "summary_large_image",
       title,
-      description: `Real-time AI-powered community safety map for ${city.name}.`,
+      description: `Public-source community safety map for ${city.name}.`,
       images: ["/api/og"],
     },
   };

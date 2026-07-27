@@ -102,8 +102,8 @@ export function NewsroomSection({ city }: Props) {
           <p className="lp-route-section-sub">
             Set a watch for the phrases you care about &mdash; &ldquo;shots
             fired&rdquo;, &ldquo;structure fire&rdquo;, &ldquo;officer
-            down&rdquo;. When a scanner transcript matches, you get a push
-            alert with the snippet and a deep link to the map.
+            down&rdquo;. When a public incident report matches, you get a push
+            alert with a summary and a deep link to the map.
           </p>
         </header>
 

@@ -4,7 +4,7 @@ const CITYPULSE_TIPS = [
   "The colored map clusters show severity at a glance.",
   "Turn on Avoid traffic to prefer the route that keeps moving.",
   "Use the five avoidance toggles to choose which incident types routes should avoid.",
-  "Crash reports from scanner traffic can reroute you before congestion sensors catch up.",
+  "Fresh public crash reports can reroute you before congestion sensors catch up.",
   "Tap a district to see recent safety context for that area.",
   "Search an address, then pick the Safer route before you go.",
 ];

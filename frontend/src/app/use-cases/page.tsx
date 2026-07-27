@@ -7,7 +7,7 @@ const siteName = process.env.NEXT_PUBLIC_SITE_NAME || "PHLPulse";
 
 export const metadata: Metadata = {
   title: `Use cases and campaign pages | ${siteName}`,
-  description: `Shareable URLs for logistics routing, newsroom keyword alerts, venue awareness, research, and pilot API access on ${siteName}. Each page links into the live product.`,
+  description: `Shareable URLs for logistics routing, newsroom incident review, venue awareness, research, and pilot API access on ${siteName}. Each page links into the live product.`,
   openGraph: {
     title: `Use cases | ${siteName}`,
     description: `Campaign pages that open the map, feed, alerts, and sign-in.`,

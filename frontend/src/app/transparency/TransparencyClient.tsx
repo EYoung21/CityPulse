@@ -3,7 +3,7 @@
 /** Public transparency page.
  *
  *  Shows aggregate moderation health for the active pulse city:
- *  how many scanner-derived incidents the AI pipeline shipped in the
+ *  how many public-source incidents the privacy pipeline shipped in the
  *  trailing 30-day window, how much moderator activity the audit log
  *  recorded, and how many feedback rows admins triaged.
  *
@@ -29,7 +29,7 @@ import {
   ArrowLeft,
   Loader2,
   AlertTriangle,
-  Radio,
+  Database,
   ClipboardCheck,
   ScrollText,
   RefreshCw,
@@ -106,9 +106,10 @@ export default function TransparencyClient() {
             className="mt-2 text-sm leading-relaxed"
             style={{ color: "var(--panel-text-secondary)" }}
           >
-            {cityName} Pulse is built from public-safety scanner audio
-            transcribed and structured by an AI pipeline. These numbers
-            cover the trailing <strong>{WINDOW_DAYS} days</strong>.
+            {cityName} Pulse imports structured public incident reports,
+            reduces their location precision, and suppresses sensitive calls
+            before publication. These numbers cover the trailing{" "}
+            <strong>{WINDOW_DAYS} days</strong>.
           </p>
         </header>
 
@@ -139,13 +140,13 @@ export default function TransparencyClient() {
           <>
             <section className="grid sm:grid-cols-3 gap-3">
               <StatCard
-                label="Scanner incidents"
-                value={stats.scannerIncidents === null ? "—" : fmtNumber(stats.scannerIncidents)}
+                label="Public incidents"
+                value={stats.publicIncidents === null ? "—" : fmtNumber(stats.publicIncidents)}
                 tone="ok"
-                hint={stats.scannerIncidents === null
+                hint={stats.publicIncidents === null
                   ? "The incident aggregate is temporarily unavailable."
-                  : `Incidents the AI pipeline shipped in the last ${WINDOW_DAYS} d.`}
-                Icon={Radio}
+                  : `Privacy-reduced public incidents published in the last ${WINDOW_DAYS} d.`}
+                Icon={Database}
               />
               <StatCard
                 label="Feedback triaged"
@@ -174,21 +175,17 @@ export default function TransparencyClient() {
                 How the pipeline works here
               </h2>
               <p>
-                Public-safety radio is transcribed by a local Whisper
-                instance, filtered for noise (acknowledgements, beeps,
-                cascades), then passed through a structured-extraction LLM
-                that pulls incident type, location, and severity. An
-                ethical guardrail layer scrubs PII before anything is
-                written to the public collection.
+                Official public feeds are normalized into a common incident
+                schema. Exact street numbers are converted to block-level
+                locations, coordinates are rounded, medical descriptions are
+                generalized, and records involving minors or sensitive personal
+                circumstances are kept off the public map.
               </p>
               <p>
-                Every signed-in viewer can mark an incident as{" "}
-                <strong>still happening</strong> or{" "}
-                <strong>cleared</strong>. The math is plain: net
-                community votes drive a fade so users can spot scenes
-                that have already wrapped up. Vote streams are
-                anti-spam protected via per-voter document IDs (one
-                vote per user per item).
+                Browsers cannot read the Firestore incident collection
+                directly. Entitlement-aware server endpoints enforce the
+                three-day public history window, filter hidden records, and
+                return only the fields used by the map.
               </p>
               <p>
                 Moderators can update the status of feedback rows.{" "}

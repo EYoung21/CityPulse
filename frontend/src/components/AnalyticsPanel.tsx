@@ -628,7 +628,7 @@ function Overview({
           value={activeNow}
           accent={activeNow > 0 ? "#22c55e" : undefined}
           icon={<Activity className="w-3.5 h-3.5" />}
-          hint="live scanner threads"
+          hint="active public incident sources"
         />
         <Stat
           label="Heating up"
@@ -1248,7 +1248,7 @@ function QualityTab({
         )}
       </Section>
 
-      <Section title="Scanner feed contribution" icon={<Radio className="w-3.5 h-3.5" />}>
+      <Section title="Public source contribution" icon={<Radio className="w-3.5 h-3.5" />}>
         {feeds.length === 0 ? (
           <p className="text-[11px]" style={{ color: "var(--panel-text-muted)" }}>
             No feed_id metadata in this slice.

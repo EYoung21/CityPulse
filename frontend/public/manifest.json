@@ -1,7 +1,7 @@
 {
   "name": "CityPulse",
   "short_name": "CityPulse",
-  "description": "Real-time AI-powered community safety map. Live police-scanner incidents, safety scoring, and safe routing.",
+  "description": "Community safety map powered by public incident sources, safety scoring, and safer routing.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -6,12 +6,11 @@
  * Routing model — every tab is a first-class route, no overlays:
  *   - Map      → `/?view=map`
  *   - Feed     → `/feed`
- *   - Ask      → `/?view=ask`
  *   - Inbox    → `/inbox`   (dedicated full-screen mobile page)
  *   - More     → `/more`    (dedicated full-screen settings page)
  *
  * `persistTabIntent` only stores the sticky home-view preference for
- * the primary surfaces (map/feed/ask) — Inbox/More are
+ * the primary surfaces (map/feed) — Inbox/More are
  * dedicated routes and shouldn't overwrite which view a bare `/` opens.
  *
  * The bar is only rendered when the viewport is ≤767px — desktop keeps
@@ -29,13 +28,13 @@ import {
   type PointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { Map as MapIcon, List, Bell, Settings as SettingsIcon, Lock, MessageCircle } from "lucide-react";
+import { Map as MapIcon, List, Bell, Settings as SettingsIcon, Lock } from "lucide-react";
 import { subscribeAlerts, unreadCount } from "@/lib/alerts-inbox";
 import { useAuth } from "@/contexts/AuthContext";
 
 // Analytics and API Docs intentionally live behind More so the first-level
 // mobile nav stays focused on the map/search/directions loop.
-type TabId = "map" | "feed" | "ask" | "analytics" | "inbox" | "settings";
+type TabId = "map" | "feed" | "analytics" | "inbox" | "settings";
 
 interface Tab {
   id: TabId;
@@ -48,7 +47,6 @@ interface Tab {
 const TABS: Tab[] = [
   { id: "map",       label: "Map",       href: "/?view=map",                Icon: MapIcon },
   { id: "feed",      label: "Feed",      href: "/feed",                     Icon: List },
-  { id: "ask",       label: "Ask",       href: "/?view=ask",                Icon: MessageCircle, pro: true },
   { id: "inbox",     label: "Inbox",     href: "/inbox",                    Icon: Bell },
   { id: "settings",  label: "More",      href: "/more",                     Icon: SettingsIcon },
 ];
@@ -71,7 +69,7 @@ function readSessionViewTab(): TabId | null {
   if (typeof window === "undefined") return null;
   try {
     const saved = sessionStorage.getItem(SESSION_VIEW_KEY);
-    if (saved === "feed" || saved === "analytics" || saved === "map" || saved === "ask") return saved;
+    if (saved === "feed" || saved === "analytics" || saved === "map") return saved;
   } catch {
     /* non-fatal */
   }
@@ -94,7 +92,6 @@ function persistTabIntent(tab: Tab) {
     let sessionKey = "map";
     if (tab.id === "analytics") sessionKey = "analytics";
     else if (tab.id === "feed") sessionKey = "feed";
-    else if (tab.id === "ask") sessionKey = "ask";
     sessionStorage.setItem(SESSION_VIEW_KEY, sessionKey);
   } catch {
     /* non-fatal */
@@ -174,11 +171,10 @@ function MobileBottomNavInner() {
   else if (onFeed) activeId = "feed";
   else if (viewParam === "feed") activeId = "feed";
   else if (viewParam === "analytics") activeId = "settings";
-  else if (viewParam === "ask") activeId = "ask";
+  else if (viewParam === "ask") activeId = "map";
   else if (viewParam === "map") activeId = "map";
   else if (sessionTab === "feed") activeId = "feed";
   else if (sessionTab === "analytics") activeId = "settings";
-  else if (sessionTab === "ask") activeId = "ask";
 
   const handleTabActivate = (tab: Tab) => {
     persistTabIntent(tab);

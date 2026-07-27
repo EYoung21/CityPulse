@@ -151,8 +151,13 @@ import UpgradePrompt from "@/components/UpgradePrompt";
 import UpgradeModal from "@/components/UpgradeModal";
 import { onUpgradeRequested } from "@/lib/upgrade";
 import { useCityNeighborhoods } from "@/hooks/useCityNeighborhoods";
+import { ASK_PULSE_AVAILABLE } from "@/lib/feature-availability";
 
 const WEIGHT_REFRESH_MS = 15000;
+type ViewTab = "map" | "feed" | "analytics" | "ask";
+const PRIMARY_VIEW_TABS: readonly ViewTab[] = ASK_PULSE_AVAILABLE
+  ? ["map", "feed", "analytics", "ask"]
+  : ["map", "feed", "analytics"];
 
 function formatTripDuration(min: number): string {
   const rounded = Math.max(0, Math.ceil(min));
@@ -328,14 +333,24 @@ function MapHome() {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [routes, setRoutes] = useState<RouteData | null>(null);
   /** Top-level view tab: "map", "feed", "analytics", "ask". Developer API docs live at `/use-cases/api`. */
-  const [viewTab, setViewTab] = useState<"map" | "feed" | "analytics" | "ask">(() => {
+  const [viewTab, setViewTab] = useState<ViewTab>(() => {
     if (typeof window === "undefined") return "map";
     const viewHint = new URLSearchParams(window.location.search).get("view");
-    if (viewHint === "map" || viewHint === "feed" || viewHint === "analytics" || viewHint === "ask") {
+    if (
+      viewHint === "map" ||
+      viewHint === "feed" ||
+      viewHint === "analytics" ||
+      (ASK_PULSE_AVAILABLE && viewHint === "ask")
+    ) {
       return viewHint;
     }
     const saved = sessionStorage.getItem("pulse_view_tab");
-    if (saved === "map" || saved === "feed" || saved === "analytics" || saved === "ask") {
+    if (
+      saved === "map" ||
+      saved === "feed" ||
+      saved === "analytics" ||
+      (ASK_PULSE_AVAILABLE && saved === "ask")
+    ) {
       return saved;
     }
     return "map";
@@ -348,11 +363,21 @@ function MapHome() {
       return;
     }
     const viewHint = new URLSearchParams(window.location.search).get("view");
-    if (viewHint === "map" || viewHint === "feed" || viewHint === "analytics" || viewHint === "ask") {
+    if (
+      viewHint === "map" ||
+      viewHint === "feed" ||
+      viewHint === "analytics" ||
+      (ASK_PULSE_AVAILABLE && viewHint === "ask")
+    ) {
       setViewTab(viewHint);
       return;
     }
-    if (saved === "map" || saved === "feed" || saved === "analytics" || saved === "ask") {
+    if (
+      saved === "map" ||
+      saved === "feed" ||
+      saved === "analytics" ||
+      (ASK_PULSE_AVAILABLE && saved === "ask")
+    ) {
       setViewTab(saved);
     }
   }, []);
@@ -363,7 +388,12 @@ function MapHome() {
 
   useEffect(() => {
     const v = searchParams.get("view");
-    if (v === "map" || v === "feed" || v === "analytics" || v === "ask") {
+    if (
+      v === "map" ||
+      v === "feed" ||
+      v === "analytics" ||
+      (ASK_PULSE_AVAILABLE && v === "ask")
+    ) {
       setViewTab(v);
     }
   }, [searchParams]);
@@ -774,13 +804,14 @@ function MapHome() {
   // Keep the URL-sync callback stable. Passing an inline function makes the
   // child effect re-run after every local tab change and re-apply the stale
   // `?view=` value, effectively trapping deep-linked users on that surface.
-  const handleViewUrlChange = useCallback((view: "map" | "feed" | "analytics" | "ask" | null) => {
-    if (view) setViewTab(view);
+  const handleViewUrlChange = useCallback((view: ViewTab | null) => {
+    if (view && (ASK_PULSE_AVAILABLE || view !== "ask")) setViewTab(view);
   }, []);
   // User-driven view changes must update the bookmarkable URL as well as the
   // local panel. Otherwise a deep link such as `?view=map` remains stale after
   // switching to Feed and a reload silently sends the user back to Map.
-  const selectViewTab = useCallback((view: "map" | "feed" | "analytics" | "ask") => {
+  const selectViewTab = useCallback((view: ViewTab) => {
+    if (!ASK_PULSE_AVAILABLE && view === "ask") view = "map";
     setViewTab(view);
     if (typeof window === "undefined" || window.location.pathname !== "/") return;
     const url = new URL(window.location.href);
@@ -883,6 +914,10 @@ function MapHome() {
 
   useEffect(() => {
     function onOpenAsk() {
+      if (!ASK_PULSE_AVAILABLE) {
+        selectViewTab("map");
+        return;
+      }
       if (!isPro) {
         setShowUpgrade("Ask Pulse");
         return;
@@ -1893,7 +1928,7 @@ function MapHome() {
           boxShadow: "0 2px 12px var(--panel-shadow, rgba(0,0,0,0.25))",
         }}
       >
-        {(["map", "feed", "analytics", "ask"] as const).map((tab) => {
+        {PRIMARY_VIEW_TABS.map((tab) => {
           const active = viewTab === tab;
           return (
             <button
@@ -3075,7 +3110,7 @@ function MapHome() {
               >
                 <Radio className="w-3 h-3" />
                 <span className="w-1 h-1 rounded-full bg-green-500" />
-                {activeFeeds.length} feed{activeFeeds.length === 1 ? "" : "s"} live
+                {activeFeeds.length} public source{activeFeeds.length === 1 ? "" : "s"} active
               </div>
             )}
             <span className="text-[10px] hidden sm:inline" style={{ color: "var(--panel-text-muted)" }}>
@@ -3130,15 +3165,15 @@ function MapHome() {
                 </button>
               </div>
             <p className="text-xs leading-relaxed" style={{ color: "var(--panel-text-secondary)" }}>
-              {cityDisplayName} Pulse uses AI at every layer: speech-to-text (Whisper)
-              converts police scanner audio, an LLM extracts structured incident
-              data, and geocoding places it on this map.
+              {cityDisplayName} Pulse imports structured public incident reports,
+              normalizes their categories and timestamps, and places privacy-reduced
+              locations on this map.
             </p>
             <p className="text-xs leading-relaxed" style={{ color: "var(--panel-text-secondary)" }}>
-              Before display, each incident runs through a{" "}
-              <strong className="text-blue-500">built-in guardrail</strong>{" "}
-              (pattern checks for obvious PII and similar sensitive content in the transcript).
-              Anything that fails that pass is kept off the public map.
+              Before display, a <strong className="text-blue-500">privacy filter</strong>{" "}
+              removes exact street numbers, rounds coordinates, generalizes medical
+              descriptions, and suppresses calls involving minors or sensitive
+              personal circumstances.
             </p>
             {stats && (
               <div className="text-xs space-y-1.5 rounded-lg p-3" style={{ background: "var(--panel-input-bg)" }}>
@@ -3167,8 +3202,9 @@ function MapHome() {
               className="text-[10px] leading-relaxed pt-3"
               style={{ borderTop: "1px solid var(--panel-border)", color: "var(--panel-text-muted)" }}
             >
-              Scanner feeds are public and machine-processed. Pins are for general awareness, not
-              verified facts, dispatch records, or emergency decision-making.
+              Source records are public and machine-processed. Pins are approximate
+              and intended for general awareness—not verified facts, dispatch
+              records, or emergency decision-making.
             </p>
 
             {/* Feedback shortcut at the bottom of About; form is a global modal. */}
@@ -3696,7 +3732,7 @@ function MapHome() {
 
       {/* Always mounted (even when another tab is active) so an in-flight Ask
           Pulse generation isn't lost when the user switches tabs and back. */}
-      <motion.div
+      {ASK_PULSE_AVAILABLE && <motion.div
         className="absolute inset-x-0 top-0 bottom-[calc(64px+env(safe-area-inset-bottom,0px))] md:bottom-0 flex flex-col min-h-0 overflow-hidden"
         style={{
           background: "var(--panel-bg)",
@@ -3722,7 +3758,7 @@ function MapHome() {
             });
           }}
         />
-      </motion.div>
+      </motion.div>}
 
       </motion.main>{/* end content area wrapper */}
 
@@ -3741,8 +3777,8 @@ function MapHome() {
           feature={showUpgrade}
           description={
             showUpgrade === "Ask Pulse"
-              ? "Unlock Ask Pulse for AI answers grounded in scanner-sourced incidents, plus extended history, analytics, and more."
-              : "Get extended history, analytics, safe routing, audio clips, and multi-city access."
+              ? "Unlock Ask Pulse for AI answers grounded in public incident reports, plus extended history, analytics, and more."
+              : "Get extended history, analytics, safe routing, and multi-city access."
           }
           onClose={() => setShowUpgrade(null)}
         />

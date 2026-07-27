@@ -6,6 +6,7 @@ import {
   enrichIncident,
   haversineKm,
   parseCursor,
+  publicIncidentData,
 } from "@/lib/server-incidents";
 
 describe("server incident fallback", () => {
@@ -42,5 +43,41 @@ describe("server incident fallback", () => {
     );
     expect(row.w_eff).toBeCloseTo(Math.exp(-1 / 12), 4);
     expect(haversineKm(39.9526, -75.1652, 39.9526, -75.1652)).toBe(0);
+  });
+
+  it("projects Firestore documents onto an explicit public contract", () => {
+    expect(
+      publicIncidentData({
+        reported_at: "2026-07-27T04:00:00Z",
+        raw_text: "Public description",
+        internal_source_payload: { victim: "must never escape" },
+        ingestion_debug: "private",
+        mentions: [
+          {
+            at: "2026-07-27T04:01:00Z",
+            raw_text: "Public update",
+            private_operator_note: "must never escape",
+          },
+        ],
+        word_timings: [
+          {
+            word: "Public",
+            start: 0,
+            end: 0.5,
+            speaker_identity: "must never escape",
+          },
+        ],
+      }),
+    ).toEqual({
+      reported_at: "2026-07-27T04:00:00Z",
+      raw_text: "Public description",
+      mentions: [
+        {
+          at: "2026-07-27T04:01:00Z",
+          raw_text: "Public update",
+        },
+      ],
+      word_timings: [{ word: "Public", start: 0, end: 0.5 }],
+    });
   });
 });

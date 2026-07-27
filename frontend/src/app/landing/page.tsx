@@ -14,7 +14,6 @@ import { CitySkylineSvg } from "./CitySkylineSvg";
 import { CitySwitcher } from "./CitySwitcher";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { SafeRouteSection } from "./SafeRouteSection";
-import { NewsroomSection } from "./NewsroomSection";
 import { SecuritySection } from "./SecuritySection";
 import { ResearchSection } from "./ResearchSection";
 import { ApiSection } from "./ApiSection";
@@ -30,7 +29,7 @@ type LandingCity = PulseCity & {
   population: string;
   areaSqMi: number;
   neighborhoods: string[];
-  scannerFeeds: number;
+  publicSources: number;
   routeDemoPairs: NonNullable<PulseCity["routeDemoPairs"]>;
   heroIncidents: NonNullable<PulseCity["heroIncidents"]>;
 };
@@ -45,7 +44,7 @@ function toLandingCity(city: PulseCity): LandingCity {
     population: city.population ?? "N/A",
     areaSqMi: city.areaSqMi ?? 0,
     neighborhoods: city.neighborhoods ?? [],
-    scannerFeeds: city.scannerFeeds ?? 0,
+    publicSources: city.publicSources ?? 0,
     routeDemoPairs: city.routeDemoPairs ?? [],
     heroIncidents: city.heroIncidents ?? [],
   };
@@ -329,7 +328,7 @@ function SisterCityCard({ city, i }: { city: LandingCity; i: number }) {
       <div className="lp-card-meta">
         <span>{city.population} residents</span>
         <span>·</span>
-        <span>{city.scannerFeeds} feeds</span>
+        <span>{city.publicSources} public sources</span>
       </div>
       <div className="lp-card-go">
         <span>Visit {city.brand}</span>
@@ -355,16 +354,16 @@ function StatsStrip({ city }: { city: LandingCity }) {
   // Prefer live numbers when available (>= 0); otherwise fall back to
   // the hardcoded defaults from PULSE_CITIES. The backend returns -1
   // when data is unavailable (e.g. SQLite dev store).
-  const scannerFeeds =
-    live && live.scannerFeeds >= 0 ? live.scannerFeeds : city.scannerFeeds;
+  const publicSources =
+    live && live.publicSources >= 0 ? live.publicSources : city.publicSources;
   const incidents24h = live && live.incidents24h >= 0 ? live.incidents24h : null;
 
   const cells: StatCell[] = [
     {
       kind: "numeric",
-      label: "Scanner feeds",
-      value: scannerFeeds,
-      live: !!(live && live.scannerFeeds >= 0),
+      label: "Public sources",
+      value: publicSources,
+      live: !!(live && live.publicSources >= 0),
     },
   ];
   if (incidents24h !== null) {
@@ -448,7 +447,7 @@ export default function LandingPage() {
   });
 
   const headlineWords =
-    `We listen to every police scanner in ${city.name}. That\u2019s how we know which routes to avoid.`.split(" ");
+    `We combine privacy-reduced public incident sources in ${city.name}. That\u2019s how we identify routes around recently reported hazards.`.split(" ");
 
   const liveCities = PULSE_CITIES.filter((c) => !c.previewOnly);
   const liveCount = liveCities.length;
@@ -511,11 +510,11 @@ export default function LandingPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
             role="status"
-            aria-label={`Live scanner feed for ${city.name}`}
+            aria-label={`Active public incident sources for ${city.name}`}
           >
             <span className="lp-hero-channel__pulse" aria-hidden="true" />
             <div className="lp-hero-channel__body">
-              <p className="lp-hero-channel__line">Open channel · {city.name}</p>
+              <p className="lp-hero-channel__line">Public sources active · {city.name}</p>
               <p className="lp-hero-channel__domain">{city.domain}</p>
             </div>
           </motion.div>
@@ -566,11 +565,6 @@ export default function LandingPage() {
               <span className="lp-hero-persona-icon" aria-hidden="true">⟶</span>
               <span>Logistics</span>
             </a>
-            <a href="#newsroom" className="lp-hero-persona-pill">
-              <span className="lp-hero-persona-icon" aria-hidden="true">◉</span>
-              <span>Newsroom</span>
-              <span className="lp-hero-persona-pro">Pro</span>
-            </a>
             <a href="#security" className="lp-hero-persona-pill">
               <span className="lp-hero-persona-icon" aria-hidden="true">▣</span>
               <span>Security</span>
@@ -594,7 +588,6 @@ export default function LandingPage() {
 
       {/* ═══ Persona deep-dives — co-equal, anchored from hero pills ═══ */}
       <SafeRouteSection city={city} />
-      <NewsroomSection city={city} />
       <SecuritySection city={city} />
       <ResearchSection city={city} />
       <ApiSection city={city} />
@@ -616,7 +609,7 @@ export default function LandingPage() {
         <div className="lp-usecases-inner">
           <div className="lp-usecases-foot" style={{ flexDirection: "column", gap: "14px" }}>
             <span className="lp-usecases-note">
-              Data is scanner-derived and not verified as fact&mdash;see <strong>About</strong> on the map for the full disclaimer. Without signing in, incident reads cover the <strong>last 3 days</strong>; <strong>Pro</strong> adds the <strong>Analytics tab</strong> (hotspots, categories, timing), <strong>Ask Pulse</strong> (LLM Q&amp;A with grounded counts), deeper history, <strong>keyword push alerts</strong>, and <strong>programmatic access</strong>.{" "}
+              Data comes from public incident sources and is not verified as fact&mdash;see <strong>About</strong> on the map for the full disclaimer. Public locations are intentionally approximate. Without signing in, incident reads cover the <strong>last 3 days</strong>; <strong>Pro</strong> adds the <strong>Analytics tab</strong> (hotspots, categories, timing), deeper history, and <strong>programmatic access</strong>. Ask Pulse and keyword push alerts are temporarily paused while their retired backend is replaced.{" "}
               <Link
                 href="/teams"
                 className="lp-usecases-teams-link"
@@ -735,8 +728,8 @@ export default function LandingPage() {
 
       {/* ═══ CTA ═══ */}
       <footer className="lp-cta">
-        <h2 className="lp-cta-title">Listen to {city.name}.</h2>
-        <p className="lp-cta-sub">Unverified scanner audio · AI transcription · Open data</p>
+        <h2 className="lp-cta-title">See the pulse of {city.name}.</h2>
+        <p className="lp-cta-sub">Unverified public reports · Privacy-reduced locations · Open data</p>
         <div className="lp-cta-row">
           <Link href="/" className="lp-hero-cta" style={{ marginTop: 0 }}>
             View the live map
@@ -767,7 +760,7 @@ export default function LandingPage() {
           })}
         </div>
         <div className="lp-footer-note">
-          © {new Date().getFullYear()} {city.brand} · Real-time scanner transcription
+          © {new Date().getFullYear()} {city.brand} · Public-source safety awareness
         </div>
       </footer>
     </div>

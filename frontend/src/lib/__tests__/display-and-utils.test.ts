@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Incident } from "@/lib/api";
-import { incidentHeadline, incidentLocationLabel } from "@/lib/incident-display";
+import {
+  incidentHeadline,
+  incidentLocationLabel,
+  isStructuredPublicIncident,
+  structuredPublicSourceLabel,
+} from "@/lib/incident-display";
 import { sanitizeScannerTranscriptForDisplay, hasScannerTranscriptArtifacts } from "@/lib/sanitize-scanner-transcript";
 import { getSeverity, severityBucket, heatmapWeight } from "@/lib/severity";
 import { coordKey, formatEtaShort, normalizeModeEtaResponse } from "@/hooks/useModeETAs";
@@ -66,6 +71,14 @@ describe("incident display labels", () => {
   it("uses a safe location fallback", () => {
     expect(incidentLocationLabel(inc({ location_text: "Broad and Pine" }))).toBe("Broad and Pine");
     expect(incidentLocationLabel(inc({ location_text: "   " }))).toBe("Unknown location");
+  });
+
+  it("distinguishes structured public sources from legacy audio feeds", () => {
+    expect(
+      structuredPublicSourceLabel(inc({ feed_id: "datasf-police" })),
+    ).toBe("DataSF Police");
+    expect(isStructuredPublicIncident(inc({ feed_id: "notify-nyc" }))).toBe(true);
+    expect(isStructuredPublicIncident(inc({ feed_id: "legacy-audio" }))).toBe(false);
   });
 });
 

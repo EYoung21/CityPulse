@@ -114,7 +114,7 @@ export default function ApiDocsSection() {
         HTTP JSON API
       </h2>
       <SubNote>
-        CityPulse is a FastAPI service with public read endpoints and an optional
+        CityPulse exposes public HTTP read endpoints and an optional
         Firebase <code style={INLINE_CODE_STYLE}>Authorization: Bearer</code> header
         that unlocks deeper history for Pro users. Same endpoints the web app calls.
       </SubNote>
@@ -122,10 +122,10 @@ export default function ApiDocsSection() {
       {/* ── Base URL ─────────────────────────────────────────── */}
       <h3 style={H3_STYLE}>Base URL</h3>
       <SubNote>
-        Direct origin: <code style={INLINE_CODE_STYLE}>https://api.phlpulse.com</code>
-        . Same-origin proxy (from any CityPulse deployment):{" "}
-        <code style={INLINE_CODE_STYLE}>https://www.phlpulse.com/api/*</code> — Vercel
-        rewrites forward <code style={INLINE_CODE_STYLE}>/api/*</code> to the FastAPI host.
+        Production base:{" "}
+        <code style={INLINE_CODE_STYLE}>https://www.phlpulse.com</code>.
+        Use same-origin <code style={INLINE_CODE_STYLE}>/api/*</code> paths from
+        CityPulse web clients.
       </SubNote>
 
       {/* ── Authentication ───────────────────────────────────── */}
@@ -136,7 +136,7 @@ export default function ApiDocsSection() {
       </SubNote>
       <pre style={CODE_BLOCK_STYLE}>
 {`curl -H "Authorization: Bearer $FIREBASE_ID_TOKEN" \\
-  "https://api.phlpulse.com/api/incidents?city=philly"`}
+  "https://www.phlpulse.com/api/incidents?city=philly"`}
       </pre>
       <SubNote>
         Without a valid Pro token, the server clamps results to the last{" "}
@@ -168,7 +168,7 @@ export default function ApiDocsSection() {
           Liveness + configuration introspection. No auth required.
         </SubNote>
         <pre style={CODE_BLOCK_STYLE}>
-{`curl https://api.phlpulse.com/api/health`}
+{`curl https://www.phlpulse.com/api/health`}
         </pre>
       </div>
 
@@ -185,7 +185,7 @@ export default function ApiDocsSection() {
         </ul>
         <pre style={CODE_BLOCK_STYLE}>
 {`curl -H "Authorization: Bearer $FIREBASE_ID_TOKEN" \\
-  "https://api.phlpulse.com/api/incidents?city=philly&since=2026-04-24T00:00:00Z"`}
+  "https://www.phlpulse.com/api/incidents?city=philly&since=2026-04-24T00:00:00Z"`}
         </pre>
       </div>
 
@@ -202,7 +202,7 @@ export default function ApiDocsSection() {
           <li><code style={INLINE_CODE_STYLE}>near_lat</code>, <code style={INLINE_CODE_STYLE}>near_lng</code> — proximity mode.</li>
         </ul>
         <pre style={CODE_BLOCK_STYLE}>
-{`curl "https://api.phlpulse.com/api/incidents/page?limit=20&city=philly"`}
+{`curl "https://www.phlpulse.com/api/incidents/page?limit=20&city=philly"`}
         </pre>
       </div>
 
@@ -216,14 +216,14 @@ export default function ApiDocsSection() {
         </SubNote>
         <pre style={CODE_BLOCK_STYLE}>
 {`curl -H "Authorization: Bearer $FIREBASE_ID_TOKEN" \\
-  "https://api.phlpulse.com/api/incidents/search?city=philly&q=shots%20fired&limit=50"`}
+  "https://www.phlpulse.com/api/incidents/search?city=philly&q=shots%20fired&limit=50"`}
         </pre>
       </div>
 
       <div style={{ marginTop: 18 }}>
         <Endpoint verb="GET" path="/api/summary" />
         <SubNote>
-          2–3 sentence LLM summary of recent activity. Body includes{" "}
+          Short deterministic summary of recent activity. Body includes{" "}
           <code style={INLINE_CODE_STYLE}>summary</code>,{" "}
           <code style={INLINE_CODE_STYLE}>incident_count</code>, and the usual{" "}
           <code style={INLINE_CODE_STYLE}>meta</code> object. Pass a registered city
@@ -252,19 +252,11 @@ export default function ApiDocsSection() {
 
       <h3 style={H3_STYLE}>Data quality &amp; legal</h3>
       <SubNote>
-        Responses reflect scanner audio and automated extraction—treat as unverified
-        intelligence, not a dispatch feed or emergency system. Commercial / high-stakes use may
-        require a legal review of jurisdiction-specific scanner retransmission
-        rules and the terms of the underlying audio provider (for example,{" "}
-        <a
-          href="https://www.broadcastify.com/terms/"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ color: "rgb(var(--accent-rgb))", textDecoration: "underline", textUnderlineOffset: 3 }}
-        >
-          Broadcastify terms
-        </a>
-        ). Do not surface victim PII downstream without your own redaction review.
+        Responses combine structured public incident sources and automated
+        normalization. Treat them as unverified awareness data, not a dispatch
+        feed or emergency system. Locations are intentionally reduced to block
+        level and rounded coordinates. Downstream users must preserve these
+        privacy limits and review each source&apos;s applicable terms.
       </SubNote>
 
       {/* ── Next steps ───────────────────────────────────────── */}

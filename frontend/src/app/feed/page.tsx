@@ -161,7 +161,7 @@ export default function FeedPage() {
   const headerSubtitle = useMemo(() => {
     if (lastUpdatedLabel) return lastUpdatedLabel;
     if (mode === "near" && userLoc) return "Closest incidents to you";
-    return `Latest scanner activity in ${city.name}`;
+    return `Latest public incident reports in ${city.name}`;
   }, [mode, userLoc, city.name, lastUpdatedLabel]);
 
   const downloadCsv = useCallback(() => {

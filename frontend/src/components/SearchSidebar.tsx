@@ -62,6 +62,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { publishRouteState } from "@/lib/route-state";
 import { openAskPulseTab } from "@/lib/open-ask-pulse";
 import { speakNav } from "@/lib/voice-nav";
+import { ASK_PULSE_AVAILABLE } from "@/lib/feature-availability";
 
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
@@ -1389,7 +1390,9 @@ export default function SearchSidebar({
   };
 
   const railItems: { id: Exclude<DesktopPanel, null>; label: string; Icon: LucideIcon }[] = [
-    { id: "menu", label: "Ask Pulse", Icon: Sparkles },
+    ...(ASK_PULSE_AVAILABLE
+      ? [{ id: "menu" as const, label: "Ask Pulse", Icon: Sparkles }]
+      : []),
     { id: "saved", label: "Saved", Icon: Bookmark },
     { id: "recents", label: "Recents", Icon: History },
     { id: "feed", label: "Live feed", Icon: Radio },
@@ -1618,7 +1621,7 @@ export default function SearchSidebar({
         <div className="px-5 py-4" style={{ borderBottom: "1px solid var(--panel-border)" }}>
           <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--panel-text-muted)" }}>Navigation</p>
         </div>
-        {menuRow(Sparkles, "Ask Pulse", () => {
+        {ASK_PULSE_AVAILABLE && menuRow(Sparkles, "Ask Pulse", () => {
           closeDesktopDrawer();
           openAskPulseTab();
         })}
@@ -1741,7 +1744,7 @@ export default function SearchSidebar({
                 <p className="text-base font-semibold truncate" style={{ color: "var(--panel-text)" }}>{drawerTitle}</p>
                 {view === "search" && (
                   <p className="text-[11px] truncate" style={{ color: "var(--panel-text-muted)" }}>
-                    {activeDesktopPanel === "feed" ? "Scanner incidents and map pins" : "Map tools and saved places"}
+                    {activeDesktopPanel === "feed" ? "Public incident reports and map pins" : "Map tools and saved places"}
                   </p>
                 )}
               </div>

@@ -547,8 +547,8 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
             void submitSearch();
           }}
           onFocus={() => setOpen(true)}
-          aria-label={mode === "incidents" ? "Search scanner incidents" : "Search CityPulse"}
-          placeholder={voiceActive ? "Listening…" : mode === "incidents" ? "Search scanner feed" : "Search CityPulse"}
+          aria-label={mode === "incidents" ? "Search public incidents" : "Search CityPulse"}
+          placeholder={voiceActive ? "Listening…" : mode === "incidents" ? "Search incident reports" : "Search CityPulse"}
           className="flex-1 bg-transparent text-sm outline-none"
           style={{ color: "var(--panel-text)" }}
         />
@@ -1267,7 +1267,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
             style={{ color: "var(--panel-text-muted)", borderBottom: "1px solid var(--panel-border)" }}
           >
             <span className="flex items-center gap-1.5">
-              <Radio className="w-3 h-3" /> Scanner — last {incidentWindowLabel}
+              <Radio className="w-3 h-3" /> Public reports — last {incidentWindowLabel}
             </span>
             {!incidentLoading && (
               <span style={{ color: "var(--panel-text-muted)" }}>
@@ -1292,7 +1292,7 @@ export default function SearchInput({ onFlyTo, onDirections, timeFilterHours = 2
             <div className="px-4 py-3 flex items-center gap-3">
               <Loader2 className="w-4 h-4 animate-spin" style={{ color: "var(--panel-text-muted)" }} />
               <span className="text-xs" style={{ color: "var(--panel-text-muted)" }}>
-                Searching scanner feed…
+                Searching incident reports…
               </span>
             </div>
           )}
