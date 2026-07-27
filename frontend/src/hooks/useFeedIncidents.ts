@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fetchIncidentPage, type Incident } from "@/lib/api";
-import { fetchIncidentPageFromFirestore, subscribeIncidents } from "@/lib/firestore";
+import { fetchIncidentPage, fetchIncidentWindow, type Incident } from "@/lib/api";
 import { loadCachedIncidents } from "@/lib/incident-snapshot-cache";
 import { getCurrentPosition } from "@/lib/native";
 
@@ -24,12 +23,7 @@ async function loadIncidentPage(opts: {
   since?: string;
   signal?: AbortSignal;
 }) {
-  try {
-    return await fetchIncidentPageFromFirestore(opts);
-  } catch (firestoreErr) {
-    console.warn("[feed] Firestore page failed, falling back to API", firestoreErr);
-    return fetchIncidentPage(opts);
-  }
+  return fetchIncidentPage(opts);
 }
 
 function mergeUnique(prev: Incident[], incoming: Incident[]): Incident[] {
@@ -166,19 +160,25 @@ export function useFeedIncidents({
     }, 25_000);
 
     try {
-      const page = await loadIncidentPage({
-        limit:
-          mode === "newsroom"
-            ? NEWSROOM_FIRST_PAGE
-            : mode === "near"
-              ? Math.max(pageSize, 40)
-              : pageSize,
-        city: citySlug,
-        nearLat: mode === "near" ? userLoc?.lat ?? null : null,
-        nearLng: mode === "near" ? userLoc?.lng ?? null : null,
-        since: sinceIso,
-        signal: ctrl.signal,
-      });
+      const page = mode === "newsroom"
+        ? {
+            incidents: await fetchIncidentWindow({
+              city: citySlug,
+              since: sinceIso,
+              maxRows: NEWSROOM_FIRST_PAGE,
+              signal: ctrl.signal,
+            }),
+            next_cursor: null,
+            mode: "recent" as const,
+          }
+        : await loadIncidentPage({
+            limit: mode === "near" ? Math.max(pageSize, 40) : pageSize,
+            city: citySlug,
+            nearLat: mode === "near" ? userLoc?.lat ?? null : null,
+            nearLng: mode === "near" ? userLoc?.lng ?? null : null,
+            since: sinceIso,
+            signal: ctrl.signal,
+          });
       if (!ctrl.signal.aborted) {
         setIncidents(page.incidents);
         markKnown(page.incidents);
@@ -270,27 +270,46 @@ export function useFeedIncidents({
 
   useEffect(() => {
     if (!enableLive || mode === "near") return;
-    const unsub = subscribeIncidents((liveRows) => {
-      const fresh = liveRows.filter((inc) => {
-        if (knownIdsRef.current.has(inc.id)) return false;
-        if (sinceIso && inc.reported_at < sinceIso) return false;
-        const t = Date.parse(inc.reported_at);
-        return Number.isFinite(t) && t >= newestAtRef.current;
-      });
-      if (fresh.length === 0) return;
-      fresh.sort((a, b) => Date.parse(b.reported_at) - Date.parse(a.reported_at));
-      markKnown(fresh);
-      if (userScrolledDownRef.current) {
-        pendingBufferRef.current = prependUnique(pendingBufferRef.current, fresh);
-        setPendingNewCount(pendingBufferRef.current.length);
-      } else {
-        setIncidents((prev) => prependUnique(prev, fresh));
-        setLastUpdatedAt(Date.now());
-        highlightNew(fresh);
+    const controller = new AbortController();
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const page = await fetchIncidentPage({
+          city: citySlug,
+          since: sinceIso,
+          limit: 50,
+          signal: controller.signal,
+        });
+        if (cancelled) return;
+        const fresh = page.incidents.filter((inc) => {
+          if (knownIdsRef.current.has(inc.id)) return false;
+          const t = Date.parse(inc.reported_at);
+          return Number.isFinite(t) && t >= newestAtRef.current;
+        });
+        if (fresh.length === 0) return;
+        fresh.sort((a, b) => Date.parse(b.reported_at) - Date.parse(a.reported_at));
+        markKnown(fresh);
+        if (userScrolledDownRef.current) {
+          pendingBufferRef.current = prependUnique(pendingBufferRef.current, fresh);
+          setPendingNewCount(pendingBufferRef.current.length);
+        } else {
+          setIncidents((prev) => prependUnique(prev, fresh));
+          setLastUpdatedAt(Date.now());
+          highlightNew(fresh);
+        }
+      } catch (error) {
+        if (!cancelled && (error as { name?: string })?.name !== "AbortError") {
+          console.warn("[feed] Live poll failed", error);
+        }
       }
-    });
-    return unsub;
-  }, [enableLive, highlightNew, markKnown, mode, sinceIso]);
+    };
+    const timer = window.setInterval(poll, 12_000);
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [citySlug, enableLive, highlightNew, markKnown, mode, pageSize, sinceIso]);
 
   const lastUpdatedLabel = useMemo(() => {
     if (!lastUpdatedAt) return null;

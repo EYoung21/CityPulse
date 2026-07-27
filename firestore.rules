@@ -115,7 +115,12 @@ service cloud.firestore {
     }
 
     match /incidents/{incidentId} {
-      allow read: if true;
+      // Incident history is served only through the API, where the caller's
+      // Firebase token is verified and free accounts are clamped to the
+      // three-day window. A public Firestore read bypassed that entitlement
+      // check and exposed the entire retained history to any SDK/REST caller.
+      // The backend uses the Admin SDK and is unaffected by client rules.
+      allow read: if false;
       allow write: if false;
     }
     match /extractions/{extractionId} {

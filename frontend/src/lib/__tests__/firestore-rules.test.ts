@@ -43,7 +43,7 @@ rulesSuite("Firestore security rules", () => {
     await environment?.cleanup();
   });
 
-  it("keeps incidents public while protecting incident writes and extractions", async () => {
+  it("keeps incident history and extractions off direct public Firestore reads", async () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       await setDoc(doc(context.firestore(), "incidents", "incident-1"), {
         raw_text: "scanner text",
@@ -69,7 +69,9 @@ rulesSuite("Firestore security rules", () => {
       })
       .firestore();
 
-    await assertSucceeds(getDoc(doc(anonymous, "incidents", "incident-1")));
+    await assertFails(getDoc(doc(anonymous, "incidents", "incident-1")));
+    await assertFails(getDoc(doc(ordinary, "incidents", "incident-1")));
+    await assertFails(getDoc(doc(admin, "incidents", "incident-1")));
     await assertFails(setDoc(doc(ordinary, "incidents", "incident-2"), {}));
     await assertFails(getDoc(doc(ordinary, "extractions", "extraction-1")));
     await assertSucceeds(getDoc(doc(admin, "extractions", "extraction-1")));

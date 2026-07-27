@@ -386,6 +386,52 @@ export async function fetchIncidentPage(opts: {
   };
 }
 
+/**
+ * Page through the entitlement-aware incident API until a requested window is
+ * exhausted. Firestore incident documents are intentionally not client-readable:
+ * the API verifies Pro and clamps free callers to the public three-day window.
+ */
+export async function fetchIncidentWindow(opts: {
+  since?: string;
+  city?: string;
+  maxRows?: number;
+  signal?: AbortSignal;
+  onPage?: (rows: Incident[]) => void;
+} = {}): Promise<Incident[]> {
+  const maxRows = Math.max(1, Math.min(opts.maxRows ?? 1_200, 10_000));
+  const rows: Incident[] = [];
+  const seen = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | null = null;
+
+  do {
+    if (opts.signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+    const page = await fetchIncidentPage({
+      city: opts.city,
+      since: opts.since,
+      cursor,
+      limit: Math.min(50, maxRows - rows.length),
+      signal: opts.signal,
+    });
+    for (const incident of page.incidents) {
+      if (seen.has(incident.id)) continue;
+      seen.add(incident.id);
+      rows.push(incident);
+      if (rows.length >= maxRows) break;
+    }
+    opts.onPage?.(rows.slice());
+
+    const next = page.next_cursor;
+    if (!next || seenCursors.has(next)) break;
+    seenCursors.add(next);
+    cursor = next;
+  } while (rows.length < maxRows);
+
+  return rows;
+}
+
 /** Free-text search over the scanner feed. Honors the same time
  *  window the user already set on the map (caller passes `since`),
  *  so search results stay consistent with what's drawn. */
