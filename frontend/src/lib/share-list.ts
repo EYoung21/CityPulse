@@ -3,7 +3,7 @@
  *  Encodes a snapshot of a user's saved-list (name, optional accent
  *  color, sender name, and the list's destinations) into a URL-safe
  *  base64 string. The recipient's browser decodes the token client-side
- *  on `/share/list?t=…` and either previews the markers on a read-only
+ *  on `/share/list#t=…` and either previews the markers on a read-only
  *  map or imports them into the recipient's own account.
  *
  *  Trade-offs vs. a Firestore-backed share:
@@ -26,6 +26,8 @@
  *  10-30 places × ~50 bytes each, comfortably under 4KB before
  *  base64 padding inflates by ~33%.
  */
+
+import { buildFragmentShareUrl } from "./share-fragment";
 
 export const LIST_TOKEN_VERSION = 1;
 const MAX_LIST_TOKEN_CHARS = 32_000;
@@ -153,6 +155,5 @@ export function decodeListToken(token: string): DecodedListToken | null {
 
 export function buildListShareUrl(snap: SharedListSnapshot, base?: string): string {
   const token = encodeListToken(snap);
-  const origin = base || (typeof window !== "undefined" ? window.location.origin : "");
-  return `${origin}/share/list?t=${token}`;
+  return buildFragmentShareUrl("/share/list", "t", token, base);
 }

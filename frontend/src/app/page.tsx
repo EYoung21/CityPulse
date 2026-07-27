@@ -1023,8 +1023,9 @@ function MapHome() {
   /** Deep-link bootstrap (read once on mount):
    *   ?incident=<id>            → select that incident when it arrives in the feed
    *   ?lat=&lng=&zoom=16        → drop a SafetyScoreCard at that point + fly to it
+   *   #trip=<token>             → open a browser-only shared trip snapshot
    *   #zoom/lat/lng (handled by IncidentMap) → set initial map view
-   * After applying we strip the query string so a refresh doesn't re-trigger. */
+   * After applying we strip one-shot values so a refresh doesn't re-trigger. */
   const pendingDeepIncidentRef = useRef<string | null>(null);
   const [sharedTrip, setSharedTrip] = useState<DecodedTripToken | null>(null);
   useEffect(() => {
@@ -1034,7 +1035,14 @@ function MapHome() {
     const latParam = params.get("lat");
     const lngParam = params.get("lng");
     const zoomParam = params.get("zoom");
-    const tripParam = params.get("trip");
+    const hashParams = new URLSearchParams(window.location.hash.slice(1));
+    const hashTripValues = hashParams.getAll("trip");
+    const legacyTripValues = params.getAll("trip");
+    const tripParam = hashTripValues.length === 1
+      ? hashTripValues[0]
+      : hashTripValues.length === 0 && legacyTripValues.length === 1
+        ? legacyTripValues[0]
+        : null;
     const sourceParam = params.get("source");
 
     // PWA app-shortcut entries land here as ?source=shortcut-* . Each
@@ -1066,8 +1074,8 @@ function MapHome() {
     }
 
     if (tripParam) {
-      // ?trip=<token> → recipient view of a "Share my live ETA" link. The
-      // token is fully self-contained — no backend roundtrip needed.
+      // #trip=<token> → recipient view of a shared trip snapshot. Legacy
+      // query links still work, but every newly generated link is fragment-only.
       const decoded = decodeTripToken(tripParam);
       if (decoded) setSharedTrip(decoded);
     }
@@ -1090,6 +1098,11 @@ function MapHome() {
     if (incidentParam || latParam || lngParam || zoomParam || tripParam || sourceParam) {
       const cleaned = new URL(window.location.href);
       ["incident", "lat", "lng", "zoom", "trip", "source"].forEach((k) => cleaned.searchParams.delete(k));
+      const cleanedHashParams = new URLSearchParams(cleaned.hash.slice(1));
+      if (cleanedHashParams.has("trip")) {
+        cleanedHashParams.delete("trip");
+        cleaned.hash = cleanedHashParams.toString();
+      }
       window.history.replaceState({}, "", cleaned.toString());
     }
   }, []);
@@ -2541,7 +2554,7 @@ function MapHome() {
         </div>
       )}
 
-      {/* Recipient view of a "Share my live ETA" link (?trip=<token>). */}
+      {/* Recipient view of a shared trip link (#trip=<token>). */}
       {sharedTrip && (
         <SharedTripCard trip={sharedTrip} onClose={() => setSharedTrip(null)} />
       )}

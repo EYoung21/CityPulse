@@ -4,7 +4,7 @@
  *
  *  Sender publishes their position, destination, ETA, and progress to
  *  a public Firestore document at `liveTrips/{shareId}`. Recipients
- *  open a `/share/live?id={shareId}` URL and watch the sender move on
+ *  open a `/share/live#id={shareId}` URL and watch the sender move on
  *  a map until they arrive (or until the share expires after 4h).
  *
  *  Why Firestore (and not, say, a websocket service):
@@ -39,6 +39,7 @@ import {
   type FieldValue,
 } from "firebase/firestore";
 import { getFirebaseApp, isFirebaseConfigured } from "@/lib/firebase";
+import { buildFragmentShareUrl } from "@/lib/share-fragment";
 
 export interface LiveTripDestination {
   lat: number;
@@ -137,6 +138,10 @@ export interface LiveShareHandle {
   stop: () => Promise<void>;
 }
 
+export function buildLiveShareUrl(shareId: string, base?: string): string {
+  return buildFragmentShareUrl("/share/live", "id", shareId, base);
+}
+
 /** Begin publishing a live trip. The caller owns the snapshot — wire
  *  it to whatever per-tick state the trip view holds, and call
  *  `update()` whenever the user's position / ETA changes. */
@@ -195,9 +200,7 @@ export async function startLiveShare(initial: LiveShareSnapshot): Promise<LiveSh
     intervalId = window.setInterval(() => { void flush(); }, UPDATE_INTERVAL_MS);
   }
 
-  const url = typeof window !== "undefined"
-    ? `${window.location.origin}/share/live?id=${encodeURIComponent(shareId)}`
-    : `/share/live?id=${encodeURIComponent(shareId)}`;
+  const url = buildLiveShareUrl(shareId);
 
   return {
     shareId,

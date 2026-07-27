@@ -1,6 +1,6 @@
 "use client";
 
-/** Recipient-side view for `/share/live?id=<shareId>`. Subscribes to
+/** Recipient-side view for `/share/live#id=<shareId>`. Subscribes to
  *  the Firestore `liveTrips/{shareId}` doc and renders a Leaflet map
  *  with the sender's pulsing position marker, destination flag, and
  *  a banner showing the live ETA.

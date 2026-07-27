@@ -33,7 +33,7 @@ function fmtClock(epochMs: number): string {
 }
 
 /** Read-only "live ETA" tracker shown to a recipient who opened a
- *  /?trip=<token> link. The route polyline itself is rendered on the map
+ *  /#trip=<token> link. The route polyline itself is rendered on the map
  *  by `IncidentMap` (via the `previewWaypoints` channel); this component
  *  is the tracking pill / detail card sitting above it. */
 export default function SharedTripCard({ trip, onClose }: Props) {

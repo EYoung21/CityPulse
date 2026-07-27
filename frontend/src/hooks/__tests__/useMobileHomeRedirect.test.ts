@@ -64,4 +64,10 @@ describe("mobile home redirect decisions", () => {
     window.history.replaceState({}, "", "/?lat=39.95&lng=-75.16");
     expect(decideHomeRedirect()).toBe("stay");
   });
+
+  it("keeps fragment-only shared trips on the map", () => {
+    window.localStorage.setItem("cp:home-view", "feed");
+    window.history.replaceState({}, "", "/#trip=private-token");
+    expect(decideHomeRedirect(true)).toBe("stay");
+  });
 });
