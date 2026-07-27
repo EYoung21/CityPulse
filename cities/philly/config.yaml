@@ -36,9 +36,9 @@ geocode:
     lng_max: -74.85
   suffix: ", PA"
 
-# Whisper worker pool. NYC/SF use 5 workers for ~9 feeds; Philly handles
-# the city-core feeds here and the suburbs in cities/philly2/config.yaml
-# under the same slug, so each service stays around the NYC/SF density.
+# Dormant legacy audio tuning retained only so historical transcriber tooling
+# can still be run manually against user-owned audio. Production ingestion uses
+# the `public_sources` list below and does not start a transcriber.
 #
 # max_queue + max_segment_lag_sec are the backstop in case audio rate ever
 # again outstrips drain rate (Philly's pre-split incident: queue=2847,
@@ -50,24 +50,13 @@ transcriber:
   max_queue: 300
   max_segment_lag_sec: 180
 
-# Tighter VAD than the root default (1 / 1.5s / 3.0s). Philly metro's
-# 24 simultaneous Broadcastify feeds carry a lot of dead-air + carrier
-# noise; aggressiveness=2 is stricter about what counts as speech, and
-# the 2.2s silence_limit closes the segment sooner so the queue stays
-# shallow even during the dispatch lulls. Mirror any changes here in
-# cities/philly2/config.yaml.
+# Legacy voice-activity settings are unused by production ingestion.
 vad_and_silence:
   vad_aggressiveness: 2
   min_speech_seconds: 1.5
   silence_limit: 2.2
 
-# ── PHILLY CORE FEEDS (city of Philadelphia + the high-volume DelCo
-#    countywide trunks) ──────────────────────────────────────────────
-# This file is the primary Philly transcriber. The DelCo per-sector
-# trunks + MontCo/Chester suburban feeds live in cities/philly2/config.yaml,
-# loaded by pulse-live@philly2.service. Both services emit `city: "philly"`
-# so ingest lands in the same Firestore bucket; city_registry.py merges
-# their feed lists when surfacing the per-city Broadcastify inventory.
+# ── ACTIVE PUBLIC SOURCES ───────────────────────────────────────────
 public_sources:
   - { source_id: "phl-police", label: "Philadelphia Police Incidents" }
   - { source_id: "montco-cad", label: "Montgomery County Live CAD" }

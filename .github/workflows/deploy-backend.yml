@@ -6,13 +6,10 @@ on:
     branches: [main]
     paths:
       - "philly_pulse/**"
-      - "radiotranscriber.py"
-      - "multi_transcriber.py"
       - "config.yaml"
       - "cities/**"
       - "requirements-philly-pulse.txt"
       - "scripts/deploy-backend-hetzner.sh"
-      - "scripts/sync_lambda_live_transcribers.sh"
       - "scripts/setup-multi-city.sh"
       - "systemd/**"
       - ".github/workflows/deploy-backend.yml"

@@ -1,8 +1,15 @@
-# PhillyPulse
+# CityPulse
 
 **Google Maps tells you the fastest way. PhillyPulse tells you the safest.**
 
-PhillyPulse is a real-time safety-aware navigation tool for Philadelphia. It streams live police scanner audio, transcribes it with AI, plots incidents on an interactive map, and routes you around danger — walk, bike, or drive.
+CityPulse is a safety-aware navigation tool for Philadelphia, New York City,
+San Francisco, and Chattanooga. It imports free public incident data, applies
+privacy filters, plots incidents on an interactive map, and routes users around
+recent hazards while walking, biking, or driving.
+
+The former Broadcastify audio and Lambda GPU pipeline is retired. The old
+transcriber and archive utilities remain in the repository only as historical
+reference and are not started by the production deployment.
 
 **Live demo:** [https://phlpulse.com](https://phlpulse.com)
 
@@ -21,30 +28,23 @@ PhillyPulse is a real-time safety-aware navigation tool for Philadelphia. It str
 
 ## How It Works
 
-```
-Broadcastify Live Audio
-        ↓
-  faster-whisper (transcription)
-        ↓
-  GPT-4o-mini (extraction: type, location, severity, confidence)
-        ↓
-  Applied AI Studio Inhibitor API (ethical guardrail — blocks PII, hallucinations, harmful content)
-        ↓
-  Geocoding (Nominatim → LLM fallback)
-        ↓
-  Firebase / Map Display
-        ↓
-  Safe Routing (OpenRouteService with dynamic avoid zones)
-```
-
-1. **Ingest** — `radiotranscriber.py` streams Philadelphia police scanner audio from Broadcastify and transcribes it with faster-whisper.
-2. **Extract** — `philly_pulse/llm.py` sends transcripts to GPT-4o-mini to extract structured incident data (type, location, severity, confidence).
-3. **Guard** — `philly_pulse/inhibitor.py` runs every extraction through the Applied AI Studio Inhibitor API. Content with PII, hallucinations, or potential for public harm is blocked before it ever reaches the map.
-4. **Geocode** — `philly_pulse/geocode.py` resolves location text to lat/lng via Nominatim with an LLM-powered fallback for ambiguous addresses.
-5. **Store** — Incidents are persisted to Firebase Firestore (or SQLite locally) with full audit trail.
-6. **Display** — The Next.js frontend renders incidents on a Leaflet map with severity-coded markers, heatmap overlays, time decay, category filters, and a live ticker.
-7. **Route** — Users enter a destination, and the app builds avoid zones around active high-severity incidents, then queries OpenRouteService for both direct and safe routes. It shows the tradeoff: *"Safe route is +3 min longer but avoids 2 incident zones."*
-8. **Score** — Tap anywhere on the map to get a 0–100 safety score for that location based on nearby incident density and severity.
+1. **Import** — Official public-data adapters poll each city's incident or
+   alert source. Vercel refreshes a source on demand under a Firestore lease;
+   the optional `citypulse-public-sources` systemd service can poll continuously.
+2. **Protect** — The importer removes exact street numbers, rounds public
+   coordinates, and suppresses calls involving minors or sensitive personal
+   circumstances.
+3. **Classify** — Source-specific adapters normalize categories, severity,
+   time, and location into one CityPulse incident schema.
+4. **Store** — Incidents are persisted to Firebase Firestore. Browser access to
+   incident documents is denied; entitlement-aware server APIs enforce the
+   free-history window.
+5. **Display** — The Next.js frontend renders incidents on a Leaflet map with
+   severity-coded markers, heatmaps, time decay, category filters, and a ticker.
+6. **Route** — OpenRouteService builds direct and safer route alternatives
+   around active high-severity incidents.
+7. **Score** — Users can tap the map for a location safety score based on
+   nearby incident density and severity.
 
 Every pin on the map is labeled **UNVERIFIED**. PhillyPulse is a situational awareness tool, not a source of truth.
 
@@ -52,11 +52,8 @@ Every pin on the map is labeled **UNVERIFIED**. PhillyPulse is a situational awa
 
 | Layer | Tech |
 |-------|------|
-| Audio capture | Broadcastify stream + ffmpeg |
-| Transcription | faster-whisper (Whisper base, INT8) |
-| LLM extraction | OpenAI GPT-4o-mini |
-| Ethical guardrail | Applied AI Studio Inhibitor API |
-| Geocoding | Nominatim + LLM fallback |
+| Incident sources | Hamilton County 911, DataSF, Philadelphia/Montgomery/Chester County open data, Notify NYC |
+| Privacy processing | Source-specific suppression, block-level addresses, rounded public coordinates |
 | Backend API | Python, FastAPI, uvicorn |
 | Database | Firebase Firestore (prod) / SQLite (dev) |
 | Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS 4 |
@@ -71,9 +68,8 @@ Every pin on the map is labeled **UNVERIFIED**. PhillyPulse is a situational awa
 
 - Python 3.10+
 - Node.js 18+
-- ffmpeg in PATH
-- A Broadcastify premium account
-- API keys: OpenAI, Applied AI Studio Inhibitor, OpenRouteService
+- Firebase service-account credentials
+- API keys for the optional AI features and OpenRouteService
 
 ### Backend
 
@@ -85,20 +81,16 @@ python -m venv venv
 source venv/bin/activate
 
 pip install -r requirements-philly-pulse.txt
-pip install numpy scipy faster-whisper webrtcvad pyyaml
-
 # Configure environment
 cp .env.example .env
-# Edit .env with your OPENAI_API_KEY and INHIBITOR_API_KEY
-
-# Configure feed settings
-# Edit config.yaml with your Broadcastify credentials and feed number
+# Edit .env with Firebase and optional feature credentials
 
 # Start the API server
 python -m uvicorn philly_pulse.server:app --host 0.0.0.0 --port 8000
 
-# In a separate terminal, start the transcriber
-python radiotranscriber.py
+# Optional: continuously refresh the public sources. The frontend API also
+# refreshes them on demand, so this is not required for local UI development.
+python -m philly_pulse.public_sources
 ```
 
 ### Frontend

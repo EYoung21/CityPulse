@@ -11,7 +11,8 @@ vad_and_silence:
   min_speech_seconds: 1.15
   silence_limit: 2.2
 
-# Extra Whisper worker threads on Lambda help drain the queue after bursts.
+# Dormant legacy audio tuning. No Lambda or transcriber consumes this in
+# production; active ingestion is declared under `public_sources`.
 transcriber:
   num_workers: 5
 
