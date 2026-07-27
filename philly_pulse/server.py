@@ -28,7 +28,7 @@ import numpy as np
 import yaml
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from google.cloud.firestore_v1.base_query import FieldFilter
 from starlette.concurrency import run_in_threadpool
@@ -271,31 +271,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load Broadcastify config for audio proxy
+# Load the legacy transcription tuning only for the dormant raw-audio
+# retranscription tool. Production ingestion now uses structured public data.
 _config_path = Path(__file__).resolve().parent.parent / "config.yaml"
-_bf_username = ""
-_bf_password = ""
-_bf_config: dict = {}
-
-_DEFAULT_FEEDS = [
-    {"feed_id": "4603",  "label": "PPD Citywide"},
-    {"feed_id": "17310", "label": "PPD Central"},
-    {"feed_id": "21297", "label": "PPD East"},
-    {"feed_id": "45495", "label": "PPD Northeast"},
-    {"feed_id": "18836", "label": "PPD Northwest"},
-    {"feed_id": "15102", "label": "PPD South"},
-    {"feed_id": "15195", "label": "PPD Southwest/West"},
-    {"feed_id": "34250", "label": "PFD South Fire/Medics"},
-    {"feed_id": "15747", "label": "PFD North Fire"},
+_transcriber_config: dict = {}
+FEEDS = [
+    {
+        "feed_id": str(source.get("source_id")),
+        "label": str(source.get("label")),
+        "supports_audio": False,
+    }
+    for source in (_city_config.get("public_sources") or [])
+    if source.get("source_id") and source.get("label")
 ]
-FEEDS = _city_config.get("feeds", _DEFAULT_FEEDS)
 if _config_path.exists():
     try:
         with open(_config_path, "r") as f:
-            _cfg = yaml.safe_load(f)
-        _bf_username = _cfg.get("credentials", {}).get("username", "")
-        _bf_password = _cfg.get("credentials", {}).get("password", "")
-        _bf_config = _cfg
+            _transcriber_config = yaml.safe_load(f) or {}
     except Exception:
         pass
 
@@ -3362,7 +3354,7 @@ def city_stats(slug: str):
         logger.warning("Failed to read city config %s: %s", cfg_path, e)
         cfg = {}
 
-    feeds = cfg.get("feeds", []) or []
+    feeds = cfg.get("public_sources", []) or []
     city_name = cfg.get("city", {}).get("name", slug)
 
     # Cache the whole response: this endpoint is polled every ~30s by
@@ -3477,11 +3469,6 @@ async def admin_ticket(
         if req.feed_id is not None or req.clip_id is not None:
             raise HTTPException(status_code=400, detail="Resource is not valid for ws tickets")
         resource = None
-    elif req.purpose == "stream":
-        valid_ids = {feed["feed_id"] for feed in FEEDS}
-        if req.clip_id is not None or not req.feed_id or req.feed_id not in valid_ids:
-            raise HTTPException(status_code=400, detail="Valid feed_id required")
-        resource = req.feed_id
     elif req.purpose == "raw_audio":
         if req.feed_id is not None or not req.clip_id or not re.fullmatch(r"[a-f0-9]{12}", req.clip_id):
             raise HTTPException(status_code=400, detail="Valid clip_id required")
@@ -3525,10 +3512,10 @@ def admin_feeds(
         description="Pulse city slug (e.g. nyc, philly). Defaults from Host header, then server FEEDS.",
     ),
 ):
-    """List of Broadcastify feeds — scoped per city when known.
+    """List of structured public sources — scoped per city when known.
 
-    Intentionally PUBLIC (no auth). It returns only non-sensitive Broadcastify
-    feed IDs + human-readable labels, which the public map page consumes to
+    Intentionally PUBLIC (no auth). It returns only non-sensitive source IDs
+    and human-readable labels, which the public map page consumes to
     label incident sources (frontend/src/app/page.tsx). The admin panel also
     calls this (with a token), which is simply ignored here — unlike the other
     /api/admin/* routes, this one exposes no sensitive data or mutating action."""
@@ -3791,23 +3778,23 @@ def _retranscribe_sync(req: RetranscribeRequest) -> dict[str, Any]:
         from faster_whisper import WhisperModel as _WM
 
         model_size = (
-            _bf_config.get("tuning", {}).get("model_size", "base")
-            if _bf_config
+            _transcriber_config.get("tuning", {}).get("model_size", "base")
+            if _transcriber_config
             else "base"
         )
         language = (
-            _bf_config.get("tuning", {}).get("language", "en")
-            if _bf_config
+            _transcriber_config.get("tuning", {}).get("language", "en")
+            if _transcriber_config
             else "en"
         )
         initial_prompt = (
-            _bf_config.get("tuning", {}).get("initial_prompt", "")
-            if _bf_config
+            _transcriber_config.get("tuning", {}).get("initial_prompt", "")
+            if _transcriber_config
             else ""
         )
         no_speech_threshold = (
-            _bf_config.get("tuning", {}).get("no_speech_threshold", 0.6)
-            if _bf_config
+            _transcriber_config.get("tuning", {}).get("no_speech_threshold", 0.6)
+            if _transcriber_config
             else 0.6
         )
 
@@ -3898,67 +3885,6 @@ async def admin_retranscribe(
     _require_document_id(req.extraction_id, "extraction ID")
     new_variant = await run_in_threadpool(_retranscribe_sync, req)
     return {"status": "ok", "variant": new_variant}
-
-
-@app.get("/api/admin/stream/{feed_id}")
-async def admin_stream(feed_id: str, ticket: str = Query("")):
-    """Proxy a Broadcastify MP3 stream for the admin audio player.
-
-    Played via an <audio> element, which can't set request headers. The URL
-    carries a one-shot ticket scoped to this exact feed instead of a reusable
-    Firebase administrator credential.
-    """
-    if not _consume_admin_ticket(ticket, "stream", feed_id):
-        raise HTTPException(status_code=401, detail="Invalid or expired stream ticket")
-    if not _bf_username or not _bf_password:
-        raise HTTPException(status_code=503, detail="Broadcastify credentials not configured")
-
-    valid_ids = {f["feed_id"] for f in FEEDS}
-    if feed_id not in valid_ids:
-        raise HTTPException(status_code=404, detail=f"Unknown feed_id: {feed_id}")
-
-    # Proxy the source stream directly over TLS. The previous ffmpeg command
-    # embedded Broadcastify credentials in both a plaintext HTTP URL and the
-    # child process argv, exposing them to network observers and local process
-    # listings while needlessly transcoding an already-MP3 stream.
-    upstream_client = httpx.AsyncClient(
-        auth=(_bf_username, _bf_password),
-        timeout=httpx.Timeout(connect=15.0, read=None, write=15.0, pool=15.0),
-        follow_redirects=True,
-        headers={"User-Agent": "CityPulse/1.0", "Icy-MetaData": "0"},
-    )
-    try:
-        upstream = await upstream_client.send(
-            upstream_client.build_request(
-                "GET", f"https://audio.broadcastify.com/{feed_id}.mp3"
-            ),
-            stream=True,
-        )
-    except httpx.RequestError as e:
-        await upstream_client.aclose()
-        logger.warning("Broadcastify stream connection failed: %s", e)
-        raise HTTPException(status_code=502, detail="Scanner stream unreachable") from e
-    if upstream.status_code != 200:
-        status = upstream.status_code
-        await upstream.aclose()
-        await upstream_client.aclose()
-        raise HTTPException(
-            status_code=502, detail=f"Scanner stream returned HTTP {status}"
-        )
-
-    async def stream_audio():
-        try:
-            async for chunk in upstream.aiter_bytes(16 * 1024):
-                yield chunk
-        finally:
-            await upstream.aclose()
-            await upstream_client.aclose()
-
-    return StreamingResponse(
-        stream_audio(),
-        media_type=(upstream.headers.get("content-type") or "audio/mpeg"),
-        headers={"Cache-Control": "private, no-store"},
-    )
 
 
 # ── Web Push (VAPID) ────────────────────────────────────────────────

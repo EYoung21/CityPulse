@@ -30,7 +30,13 @@ jobs:
           envs: GITHUB_TOKEN
           script: |
             /root/deploy.sh
-            # Keep /root/deploy.sh in sync with the repo copy
-            cp /root/PhillyPulse/scripts/deploy-backend-hetzner.sh /root/deploy.sh
+            # Keep /root/deploy.sh in sync. If this push changed the deploy
+            # script, run the new copy once immediately; otherwise a deploy
+            # change would not take effect until the following push.
+            if ! cmp -s /root/PhillyPulse/scripts/deploy-backend-hetzner.sh /root/deploy.sh; then
+              cp /root/PhillyPulse/scripts/deploy-backend-hetzner.sh /root/deploy.sh
+              chmod 700 /root/deploy.sh
+              /root/deploy.sh
+            fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

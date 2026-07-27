@@ -1370,6 +1370,7 @@ function AllFeedsSidebarItem({
   isActive: boolean;
   onClick: () => void;
 }) {
+  const audioFeeds = feeds.filter((feed) => feed.supports_audio);
   const [playing, setPlaying] = useState(false);
   const audiosRef = useRef<HTMLAudioElement[]>([]);
 
@@ -1382,7 +1383,7 @@ function AllFeedsSidebarItem({
     } else {
       audiosRef.current.forEach((a) => a.pause());
       const ticketRows = await Promise.all(
-        feeds.map(async (feed) => ({
+        audioFeeds.map(async (feed) => ({
           feed,
           ticket: await requestAdminTicket("stream", feed.feed_id),
         }))
@@ -1435,19 +1436,21 @@ function AllFeedsSidebarItem({
           All Feeds
         </span>
       </button>
-      <button
-        type="button"
-        onClick={togglePlayAll}
-        className={`shrink-0 p-1 rounded transition-all ${
-          playing
-            ? "bg-red-500 text-white"
-            : "bg-white/5 hover:bg-white/10 text-gray-500 hover:text-gray-300"
-        }`}
-        title={playing ? "Stop all streams" : "Play ALL streams simultaneously"}
-        aria-label={playing ? "Stop all streams" : "Play all streams simultaneously"}
-      >
-        {playing ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
-      </button>
+      {audioFeeds.length > 0 && (
+        <button
+          type="button"
+          onClick={togglePlayAll}
+          className={`shrink-0 p-1 rounded transition-all ${
+            playing
+              ? "bg-red-500 text-white"
+              : "bg-white/5 hover:bg-white/10 text-gray-500 hover:text-gray-300"
+          }`}
+          title={playing ? "Stop all streams" : "Play ALL streams simultaneously"}
+          aria-label={playing ? "Stop all streams" : "Play all streams simultaneously"}
+        >
+          {playing ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+        </button>
+      )}
     </div>
   );
 }
@@ -1531,21 +1534,23 @@ function SidebarFeedItem({
           {feed.label}
         </span>
       </button>
-      <button
-        type="button"
-        onClick={togglePlay}
-        className={`shrink-0 p-1 rounded transition-all ${
-          streamError
-            ? "bg-red-500/20 text-red-400"
-            : playing
-              ? "bg-blue-500 text-white"
-              : "bg-white/5 hover:bg-white/10 text-gray-500 hover:text-gray-300"
-        }`}
-        title={streamError ? "Stream unavailable" : playing ? "Pause live stream" : "Play live stream"}
-        aria-label={streamError ? `${feed.label} stream unavailable` : playing ? `Pause ${feed.label} live stream` : `Play ${feed.label} live stream`}
-      >
-        {streamError ? <WifiOff className="w-3 h-3" /> : playing ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-      </button>
+      {feed.supports_audio && (
+        <button
+          type="button"
+          onClick={togglePlay}
+          className={`shrink-0 p-1 rounded transition-all ${
+            streamError
+              ? "bg-red-500/20 text-red-400"
+              : playing
+                ? "bg-blue-500 text-white"
+                : "bg-white/5 hover:bg-white/10 text-gray-500 hover:text-gray-300"
+          }`}
+          title={streamError ? "Stream unavailable" : playing ? "Pause live stream" : "Play live stream"}
+          aria-label={streamError ? `${feed.label} stream unavailable` : playing ? `Pause ${feed.label} live stream` : `Play ${feed.label} live stream`}
+        >
+          {streamError ? <WifiOff className="w-3 h-3" /> : playing ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+        </button>
+      )}
     </div>
   );
 }

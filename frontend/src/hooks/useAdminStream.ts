@@ -20,6 +20,7 @@ export interface AdminEvent {
 export interface FeedInfo {
   feed_id: string;
   label: string;
+  supports_audio: boolean;
 }
 
 function cleanStreamText(value: unknown, maxLength = 500): string {
@@ -49,7 +50,9 @@ function normalizeFeeds(value: unknown): FeedInfo[] {
     const row = value as Record<string, unknown>;
     const feedId = cleanStreamText(row.feed_id, 200);
     const label = cleanStreamText(row.label, 200);
-    return feedId && label ? [{ feed_id: feedId, label }] : [];
+    return feedId && label
+      ? [{ feed_id: feedId, label, supports_audio: row.supports_audio === true }]
+      : [];
   });
 }
 

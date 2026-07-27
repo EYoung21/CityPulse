@@ -60,26 +60,10 @@ vad_and_silence:
 # DelCo per-sector trunks: cleaner-than-countywide audio that lets
 # the LLM bias geocoding to the right cluster of municipalities. See
 # cities/philly/config.yaml for the full per-sector geographic key.
-feeds:
-  - { feed_id: "46436", label: "DelCo PD Sector 1 (Brookhaven/Aston/Chichester/Marcus Hook)" }
-  - feed_id: "46437"
-    label: "DelCo PD Sector 2 (Swarthmore/Media/Springfield/Marple/Newtown)"
-    jurisdiction_hint: "Delaware County Sector 2 (Swarthmore, Media, Springfield, Marple, Nether Providence, Newtown Twp)."
-    geocode_bounds: "-75.45,39.86,-75.30,39.98"
-  - { feed_id: "46444", label: "DelCo PD Sector 3 (Chester City)" }
-  - { feed_id: "46443", label: "DelCo PD Sector 4 (Lansdowne/Yeadon/Sharon Hill/Folcroft/Darby)" }
-  - { feed_id: "46442", label: "DelCo PD Sector 5 (Ridley/Eddystone/Glenolden/Prospect Park/Norwood/Tinicum)" }
-  - { feed_id: "46441", label: "DelCo PD Sector 6 (Upper Darby/Millbourne)" }
-  - { feed_id: "46440", label: "DelCo PD Sector 7 (Haverford/Radnor/Main Line)" }
-  - { feed_id: "46435", label: "DelCo Fire East (Upper Darby/Lansdowne corridor)" }
-  - { feed_id: "24104", label: "Chester Co Law Enforcement Dispatch" }
-  - { feed_id: "10489", label: "MontCo Fire and EMS - East" }
-  - { feed_id: "25767", label: "MontCo Police, Fire and EMS - Region 3" }
-  # MontCo 18335 broadcasts the entire county Fire/EMS trunk — countywide
-  # dispatch + all regions + Event channels. Lower Merion PD itself is
-  # fully encrypted, so this is the only way we hear anything from
-  # Bryn Mawr / Ardmore / Wynnewood / Bala Cynwyd / Narberth.
-  - { feed_id: "18335", label: "MontCo Fire/EMS All-Regions (Lower Merion/Bryn Mawr/Main Line)" }
+# Retired audio-transcriber shard. The primary Philly config now owns all
+# structured public sources; keeping this explicitly empty prevents legacy
+# feed fallback if an old deployment still scans this config directory.
+public_sources: []
 
 tuning:
   # Identical Whisper biasing as the primary config — the acoustic

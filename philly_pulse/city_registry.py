@@ -1,4 +1,4 @@
-"""Load multi-city LLM/geocode registry and global Broadcastify feed_id → label map.
+"""Load multi-city metadata and public-source ID → label mappings.
 
 Used by the FastAPI server and offline scripts so feed labels and city metadata
 stay in sync without importing server (avoids circular imports).
@@ -19,14 +19,15 @@ _PHILLY_BOUNDS = {"lat_min": 39.85, "lat_max": 40.15, "lng_min": -75.30, "lng_ma
 # slug → keys: city_name, geocode_suffix, center_lat, center_lng, bounds, viewbox, llm_local_context
 CITY_REGISTRY: dict[str, dict] = {}
 
-# Broadcastify feed_id (str) → human label; merged across all cities/*.yaml
+# Source ID (str) → human label; merged across all cities/*.yaml.
+# The legacy FEED_* names remain as an API-compatibility layer for the frontend.
 FEED_LABELS: dict[str, str] = {}
 
 # feed_id → optional jurisdiction_hint / geocode_bounds / borough
 FEED_META: dict[str, dict[str, Any]] = {}
 
-# slug → [{"feed_id": "...", "label": "..."}, …] for admin UI / per-city streams
-CITY_FEEDS: dict[str, list[dict[str, str]]] = {}
+# slug → [{"feed_id": "...", "label": "...", "supports_audio": False}, …]
+CITY_FEEDS: dict[str, list[dict[str, Any]]] = {}
 
 # production hostname (no www) → slug — from each city's config `city.domain`
 DOMAIN_TO_SLUG: dict[str, str] = {}
@@ -101,18 +102,29 @@ def load_city_registry() -> None:
                     "viewbox": geo.get("viewbox", ""),
                     "llm_local_context": llm_local.strip(),
                 }
-            feeds_list: list[dict[str, str]] = []
-            for feed in cfg.get("feeds") or []:
+            feeds_list: list[dict[str, Any]] = []
+            configured_sources = cfg.get("public_sources")
+            if configured_sources is None:
+                # Compatibility for dormant/unmigrated city configs. The four
+                # production cities use public_sources exclusively.
+                configured_sources = cfg.get("feeds") or []
+            for feed in configured_sources:
                 if not isinstance(feed, dict):
                     continue
-                fid = feed.get("feed_id")
+                fid = feed.get("source_id") or feed.get("feed_id")
                 lab = feed.get("label")
                 if fid is None or not lab:
                     continue
                 k = str(fid).strip()
                 if not k:
                     continue
-                feeds_list.append({"feed_id": k, "label": str(lab).strip()})
+                feeds_list.append(
+                    {
+                        "feed_id": k,
+                        "label": str(lab).strip(),
+                        "supports_audio": False,
+                    }
+                )
                 meta: dict[str, Any] = {}
                 jh = feed.get("jurisdiction_hint")
                 if isinstance(jh, str) and jh.strip():

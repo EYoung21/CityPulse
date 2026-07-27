@@ -1,0 +1,24 @@
+[Unit]
+Description=CityPulse structured public incident sources
+After=network-online.target philly-pulse-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/PhillyPulse
+EnvironmentFile=/etc/philly-pulse.env
+Environment=PHILLY_PULSE_STORE=firestore
+Environment=GOOGLE_APPLICATION_CREDENTIALS=/root/PhillyPulse/.secrets/firebase-service-account.json
+Environment=CITYPULSE_PUBLIC_SOURCE_STATE=/var/lib/citypulse-public-sources/state.json
+ExecStart=/root/PhillyPulse/venv/bin/python3 -m philly_pulse.public_sources
+Restart=always
+RestartSec=15
+StateDirectory=citypulse-public-sources
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
