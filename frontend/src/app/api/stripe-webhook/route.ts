@@ -5,8 +5,10 @@ import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import {
   isActiveStripeSubscriptionStatus,
   nextPassExpiryMillis,
+  passExpiryAfterRefundMillis,
   stripeCustomerId,
   stripePaymentIntentId,
+  type StripePassGrantWindow,
 } from "@/lib/stripe-pass";
 import { readBodyText, RequestBodyError } from "@/lib/server-body";
 
@@ -92,6 +94,101 @@ async function grantPassOnce(
       proUntil,
       grantedAt,
       sourceEventId,
+    });
+    return true;
+  });
+}
+
+function timestampMillis(value: unknown): number | null {
+  if (
+    value
+    && typeof value === "object"
+    && "toMillis" in value
+    && typeof (value as { toMillis?: unknown }).toMillis === "function"
+  ) {
+    const millis = (value as { toMillis: () => number }).toMillis();
+    return Number.isFinite(millis) ? millis : null;
+  }
+  return null;
+}
+
+/** Revoke exactly one fully refunded pass without disturbing an active
+ * subscription, unrelated manual entitlement, or another stacked pass. */
+async function revokeRefundedPass(
+  paymentIntentId: string,
+  refundedChargeId: string,
+  sourceEventId: string
+): Promise<boolean> {
+  const db = getAdminDb();
+  const grantRef = db.doc(`stripePassGrants/${paymentIntentId}`);
+  const now = Date.now();
+
+  return db.runTransaction(async (transaction) => {
+    const grantSnap = await transaction.get(grantRef);
+    if (!grantSnap.exists) {
+      console.warn("charge.refunded: no matching pass grant", {
+        paymentIntentId,
+        refundedChargeId,
+      });
+      return false;
+    }
+
+    const grantData = grantSnap.data();
+    if (!grantData) {
+      console.error("charge.refunded: pass grant has no data", {
+        paymentIntentId,
+        refundedChargeId,
+      });
+      return false;
+    }
+    if (grantData.revokedAt) return false;
+    const uid = typeof grantData.uid === "string" ? grantData.uid.trim() : "";
+    if (!uid) {
+      console.error("charge.refunded: pass grant has no uid", {
+        paymentIntentId,
+        refundedChargeId,
+      });
+      return false;
+    }
+
+    const userRef = db.doc(`users/${uid}`);
+    const grantsQuery = db.collection("stripePassGrants").where("uid", "==", uid);
+    const [userSnap, grantsSnap] = await Promise.all([
+      transaction.get(userRef),
+      transaction.get(grantsQuery),
+    ]);
+
+    const grants: StripePassGrantWindow[] = grantsSnap.docs.map((docSnap) => {
+      const data = docSnap.data();
+      return {
+        paymentIntentId: docSnap.id,
+        grantedAtMillis: timestampMillis(data.grantedAt) ?? Number.NaN,
+        previousExpiryMillis: timestampMillis(data.previousExpiry),
+        proUntilMillis: timestampMillis(data.proUntil) ?? Number.NaN,
+        revoked: !!data.revokedAt,
+      };
+    });
+    const currentExpiryMillis = timestampMillis(userSnap.data()?.proUntil);
+    const nextExpiryMillis = passExpiryAfterRefundMillis(
+      grants,
+      paymentIntentId,
+      currentExpiryMillis,
+      now
+    );
+    const revokedAt = Timestamp.fromMillis(now);
+
+    transaction.set(
+      userRef,
+      {
+        proUntil: Timestamp.fromMillis(nextExpiryMillis),
+        passRevokedAt: revokedAt,
+      },
+      { merge: true }
+    );
+    transaction.update(grantRef, {
+      revokedAt,
+      refundedChargeId,
+      refundSourceEventId: sourceEventId,
     });
     return true;
   });
@@ -233,6 +330,24 @@ export async function POST(req: NextRequest) {
       const hours = passType ? PASS_DURATIONS_HOURS[passType] : undefined;
       if (uid && hours) {
         await grantPassOnce(uid, hours, pi.id, event.id);
+      }
+      break;
+    }
+
+    case "charge.refunded": {
+      const charge = event.data.object as Stripe.Charge;
+      // Stripe can emit this event for partial refunds too. Only the final,
+      // fully-refunded state revokes access.
+      if (!charge.refunded || charge.amount_refunded < charge.amount) {
+        break;
+      }
+      const paymentIntentId = stripePaymentIntentId(charge.payment_intent);
+      if (paymentIntentId) {
+        await revokeRefundedPass(paymentIntentId, charge.id, event.id);
+      } else {
+        console.warn("charge.refunded: no valid PaymentIntent", {
+          chargeId: charge.id,
+        });
       }
       break;
     }

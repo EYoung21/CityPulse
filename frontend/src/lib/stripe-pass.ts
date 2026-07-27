@@ -50,3 +50,67 @@ export function nextPassExpiryMillis(
       : nowMillis;
   return base + durationHours * 60 * 60 * 1000;
 }
+
+export interface StripePassGrantWindow {
+  paymentIntentId: string;
+  grantedAtMillis: number;
+  previousExpiryMillis: number | null;
+  proUntilMillis: number;
+  revoked: boolean;
+}
+
+/** Remaining duration contributed by pass grants at `nowMillis`.
+ *
+ * A pass bought while another is active starts at the previous expiry. When
+ * an earlier pass is refunded, later untouched passes move forward and keep
+ * their full unused duration instead of being revoked accidentally. */
+export function remainingPassEntitlementMillis(
+  grants: readonly StripePassGrantWindow[],
+  nowMillis: number
+): number {
+  return grants.reduce((total, grant) => {
+    if (grant.revoked) return total;
+    if (
+      !Number.isFinite(grant.grantedAtMillis)
+      || !Number.isFinite(grant.proUntilMillis)
+      || grant.proUntilMillis <= nowMillis
+    ) {
+      return total;
+    }
+
+    const previous = grant.previousExpiryMillis;
+    const startMillis = Math.max(
+      grant.grantedAtMillis,
+      previous != null && Number.isFinite(previous)
+        ? previous
+        : grant.grantedAtMillis
+    );
+    return total + Math.max(
+      0,
+      grant.proUntilMillis - Math.max(nowMillis, startMillis)
+    );
+  }, 0);
+}
+
+/** Recalculate a user's finite pass expiry after one confirmed refund.
+ *
+ * The result can only shorten (never extend) the current entitlement. Time
+ * from unrelated/manual grants is preserved, as are unused durations from
+ * other paid passes. */
+export function passExpiryAfterRefundMillis(
+  grants: readonly StripePassGrantWindow[],
+  refundedPaymentIntentId: string,
+  currentExpiryMillis: number | null,
+  nowMillis: number
+): number {
+  const currentEndMillis = Math.max(nowMillis, currentExpiryMillis ?? nowMillis);
+  const recordedBefore = remainingPassEntitlementMillis(grants, nowMillis);
+  const recordedAfter = remainingPassEntitlementMillis(
+    grants.filter((grant) => grant.paymentIntentId !== refundedPaymentIntentId),
+    nowMillis
+  );
+  const currentRemaining = currentEndMillis - nowMillis;
+  const untrackedRemaining = Math.max(0, currentRemaining - recordedBefore);
+  const recalculatedEnd = nowMillis + untrackedRemaining + recordedAfter;
+  return Math.min(currentEndMillis, recalculatedEnd);
+}
