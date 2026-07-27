@@ -3,7 +3,12 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import type { Incident, IncidentMention } from "@/lib/api";
 import { getSeverity } from "@/lib/severity";
-import { incidentHeadline, incidentLocationLabel } from "@/lib/incident-display";
+import {
+  incidentHeadline,
+  incidentLocationLabel,
+  isStructuredPublicIncident,
+  structuredPublicSourceLabel,
+} from "@/lib/incident-display";
 import { withAlpha } from "@/lib/colors";
 import {
   MapPin,
@@ -16,6 +21,7 @@ import {
   Play,
   RotateCcw,
   Volume2,
+  Database,
 } from "lucide-react";
 import PlaceActions from "@/components/PlaceActions";
 import {
@@ -495,6 +501,8 @@ export default function IncidentDetail({ incident, onClose, inFeed = false }: Pr
   const summaryIsRedundant =
     inFeed && (incident.description ?? "").trim() === incidentHeadline(incident).trim();
   const confidencePct = Math.round(incident.confidence * 100);
+  const structuredSource = isStructuredPublicIncident(incident);
+  const sourceLabel = structuredPublicSourceLabel(incident);
   // Memoize the candidate list so a parent re-render doesn't hand the
   // player a fresh array reference and trigger a re-fetch on every tick.
   const audioSources = useMemo(
@@ -623,8 +631,7 @@ export default function IncidentDetail({ incident, onClose, inFeed = false }: Pr
           </span>
         </div>
 
-        {/* Responder status (units dispatched / on scene / cleared), extracted
-            from the scanner audio. Only present on newer incidents. */}
+        {/* Source-reported responder status, when the upstream record includes it. */}
         {incident.unit_status && (() => {
           const cfg = {
             dispatched: { label: "Units dispatched", color: "#f59e0b" },
@@ -645,16 +652,23 @@ export default function IncidentDetail({ incident, onClose, inFeed = false }: Pr
           );
         })()}
 
-        {/* Honesty/liability affordance: every incident is AI-extracted from
-            scanner audio and not confirmed. `context` location_confidence means
-            the spot is approximate, not exact. */}
+        {/* Honesty/liability affordance. Public-source locations are deliberately
+            approximate; legacy audio-derived rows retain their original label. */}
         <p
           className="flex items-center gap-1.5 text-[10px] md:text-[11px] leading-snug"
           style={{ color: "var(--panel-text-muted)" }}
         >
-          <Radio className="w-3 h-3 shrink-0" />
-          AI-summarized from scanner audio · unverified
-          {incident.location_confidence === "context" && " · approximate location"}
+          {structuredSource ? (
+            <Database className="w-3 h-3 shrink-0" />
+          ) : (
+            <Radio className="w-3 h-3 shrink-0" />
+          )}
+          {structuredSource
+            ? `${sourceLabel} public report · unverified · approximate location`
+            : "AI-summarized from archived audio · unverified"}
+          {!structuredSource &&
+            incident.location_confidence === "context" &&
+            " · approximate location"}
         </p>
 
         <div className="h-px" style={{ background: "var(--panel-border)" }} />
@@ -675,7 +689,12 @@ export default function IncidentDetail({ incident, onClose, inFeed = false }: Pr
 
         <div className="rounded-lg p-2.5 md:p-3.5" style={{ background: "var(--panel-input-bg)" }}>
           <p className="text-[10px] md:text-[11px] text-blue-500 font-mono font-medium flex items-center gap-1 mb-1.5 md:mb-2">
-            <Radio className="w-3 h-3 md:w-3.5 md:h-3.5" /> SCANNER TRANSCRIPT
+            {structuredSource ? (
+              <Database className="w-3 h-3 md:w-3.5 md:h-3.5" />
+            ) : (
+              <Radio className="w-3 h-3 md:w-3.5 md:h-3.5" />
+            )}{" "}
+            {structuredSource ? "SOURCE REPORT" : "ARCHIVED TRANSCRIPT"}
           </p>
 
           {hasAudio ? (
@@ -689,11 +708,15 @@ export default function IncidentDetail({ incident, onClose, inFeed = false }: Pr
               className="text-[13px] md:text-sm leading-snug md:leading-relaxed italic line-clamp-4 md:line-clamp-none"
               style={{ color: "var(--panel-text-secondary)" }}
             >
-              &ldquo;{sanitizeScannerTranscriptForDisplay(incident.raw_text)}&rdquo;
+              {structuredSource ? (
+                sanitizeScannerTranscriptForDisplay(incident.raw_text)
+              ) : (
+                <>&ldquo;{sanitizeScannerTranscriptForDisplay(incident.raw_text)}&rdquo;</>
+              )}
             </p>
           )}
 
-          {!hasAudio && (
+          {!hasAudio && !structuredSource && (
             <div className="mt-2 flex items-center gap-1.5 text-[11px]" style={{ color: "var(--panel-text-muted)" }}>
               <Volume2 className="w-3.5 h-3.5" />
               Audio not available
@@ -704,8 +727,8 @@ export default function IncidentDetail({ incident, onClose, inFeed = false }: Pr
         <div className="flex gap-2 md:gap-3">
           {[
             {
-              label: "CONFIDENCE",
-              value: `${confidencePct}%`,
+              label: structuredSource ? "SOURCE" : "CONFIDENCE",
+              value: structuredSource ? "PUBLIC" : `${confidencePct}%`,
               color:
                 confidencePct >= 80
                   ? "#22c55e"
@@ -827,7 +850,11 @@ export default function IncidentDetail({ incident, onClose, inFeed = false }: Pr
           style={{ color: "var(--panel-text-muted)" }}
         >
           <Brain className="w-3 h-3" />
-          <span>Processed by AI pipeline with ethical guardrails</span>
+          <span>
+            {structuredSource
+              ? "Privacy-reduced and normalized before publication"
+              : "Processed by AI pipeline with ethical guardrails"}
+          </span>
           {incident.inhibitor_status === "passed" && (
             <Shield className="w-3 h-3 text-green-500/50" />
           )}

@@ -24,7 +24,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const name = hood?.name ?? "Unknown";
   return {
     title: `${name} Safety Profile | CityPulse`,
-    description: `Real-time safety data for ${name}. Crime trends, peak hours, and incident history powered by AI scanner analysis.`,
+    description: `Public-source safety data for ${name}. Incident trends, peak hours, and privacy-reduced history.`,
     openGraph: {
       title: `${name} · CityPulse Safety Profile`,
       description: `Live safety analytics for ${name}, Philadelphia.`,

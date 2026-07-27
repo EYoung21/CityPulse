@@ -7,7 +7,7 @@ const cityName = process.env.NEXT_PUBLIC_CITY_NAME?.trim() || "Philadelphia";
 
 export const metadata: Metadata = {
   title: `Teams & partners · ${siteName}`,
-  description: `How organizations use ${siteName} for delivery routing, keyword alerts, situational awareness, and pilot API access. One live map, not separate persona apps.`,
+  description: `How organizations use ${siteName} for delivery routing, situational awareness, and pilot API access. One live map, not separate persona apps.`,
   openGraph: {
     title: `Teams & partners · ${siteName}`,
     description: `Deep links into the map, alert settings, and product scope for ${cityName} Pulse.`,
@@ -69,16 +69,16 @@ export default function TeamsPage() {
 
             <div className="lp-usecase-card">
               <div className="lp-usecase-top">
-                <div className="lp-usecase-name">Press / keyword alerts</div>
-                <span className="lp-usecase-badge">Pro</span>
+                <div className="lp-usecase-name">Press / incident desk</div>
               </div>
               <p className="lp-usecase-body" style={{ margin: 0 }}>
-                Keyword watches and push are managed next to <strong>notification settings</strong> (alerts
-                drawer). Sign in, then open the bell menu on the <strong>settings</strong> tab to add keywords.
+                Browse and search the full-screen incident feed for public-source
+                reports. Keyword push alerts are temporarily paused while their
+                retired backend is replaced.
               </p>
               <p className="lp-teams-cta" style={{ margin: "12px 0 0" }}>
-                <Link href="/?inbox=settings" className="lp-hero-cta" style={{ display: "inline-block", marginTop: 0 }}>
-                  Map → alert &amp; keyword settings
+                <Link href="/feed" className="lp-hero-cta" style={{ display: "inline-block", marginTop: 0 }}>
+                  Browse the incident feed
                 </Link>
               </p>
             </div>
@@ -106,7 +106,7 @@ export default function TeamsPage() {
               </div>
               <p className="lp-usecase-body" style={{ margin: 0 }}>
                 <strong>Search</strong> and <strong>pagination</strong> in the app mirror public HTTP
-                endpoints. Unauthenticated and free reads are clamped to about the <strong>last hour</strong> of
+                endpoints. Unauthenticated and free reads are clamped to the <strong>last three days</strong> of
                 incidents. Pro can query deeper history. Treat programmatic access as a <strong>limited
                 pilot</strong>. Check with us before you hard-code a production data dependency.
               </p>
@@ -134,8 +134,8 @@ export default function TeamsPage() {
           </div>
 
           <p className="lp-usecases-note" style={{ marginTop: 28, textAlign: "center", maxWidth: 640, margin: "28px auto 0" }}>
-            Scanner-sourced intelligence for awareness only—not dispatch or an emergency
-            system. See the{" "}
+            Public-source incident reports for awareness only—not dispatch or an
+            emergency system. Locations are approximate. See the{" "}
             <Link href="/" className="underline underline-offset-4" style={{ color: "rgb(var(--accent-rgb))" }}>
               landing page
             </Link>

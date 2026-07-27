@@ -30,6 +30,7 @@ import {
   updateKeywordWatch,
   type KeywordWatch,
 } from "@/lib/api";
+import { KEYWORD_PUSH_AVAILABLE } from "@/lib/feature-availability";
 
 async function getToken(): Promise<string | null> {
   if (!isFirebaseConfigured()) return null;
@@ -42,7 +43,7 @@ async function getToken(): Promise<string | null> {
   }
 }
 
-export default function KeywordWatchSettings() {
+function EnabledKeywordWatchSettings() {
   const { user, isPro } = useAuth();
   const [watches, setWatches] = useState<KeywordWatch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -130,7 +131,7 @@ export default function KeywordWatchSettings() {
   if (!user || user.isAnonymous) {
     return (
       <div className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
-        Sign in to set up keyword scanner alerts.
+        Sign in to set up keyword incident alerts.
       </div>
     );
   }
@@ -144,7 +145,7 @@ export default function KeywordWatchSettings() {
           className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider"
           style={{ color: "var(--panel-text)" }}
         >
-          <Radio className="w-3.5 h-3.5" /> Keyword scanner alerts
+          <Radio className="w-3.5 h-3.5" /> Keyword incident alerts
           {!isPro && (
             <span
               className="ml-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] normal-case tracking-normal"
@@ -164,14 +165,15 @@ export default function KeywordWatchSettings() {
       </div>
 
       <p className="text-[10px]" style={{ color: "var(--panel-text-muted)" }}>
-        Get a push the moment a phrase shows up on the scanner. Use plain words for
-        substring match, or wrap in quotes for an exact phrase: <code>&quot;shots fired&quot;</code>.
+        Get a push when a phrase appears in a new public incident report. Use
+        plain words for substring match, or wrap an exact phrase in quotes:{" "}
+        <code>&quot;shots fired&quot;</code>.
       </p>
 
       <div className="flex items-stretch gap-1.5">
         <input
           type="text"
-          aria-label="Scanner keyword alert"
+          aria-label="Incident keyword alert"
           value={newKeyword}
           onChange={(e) => setNewKeyword(e.target.value)}
           onKeyDown={(e) => {
@@ -291,4 +293,21 @@ export default function KeywordWatchSettings() {
       )}
     </div>
   );
+}
+
+export default function KeywordWatchSettings() {
+  if (!KEYWORD_PUSH_AVAILABLE) {
+    return (
+      <div
+        className="flex items-start gap-2 rounded-lg p-2.5 text-[10px]"
+        style={{ color: "var(--panel-text-muted)", background: "var(--panel-input-bg)" }}
+      >
+        <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+        Keyword push alerts are temporarily paused while the retired ingestion
+        backend is replaced.
+      </div>
+    );
+  }
+
+  return <EnabledKeywordWatchSettings />;
 }

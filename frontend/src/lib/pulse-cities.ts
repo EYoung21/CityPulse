@@ -32,7 +32,7 @@ export type LngLat = [number, number];
 export type LandingBlipKind = "gun" | "knife";
 
 /**
- * One pulsing scanner-incident shown in the hero map background. We
+ * One pulsing incident shown in the hero map background. We
  * intentionally hand-pick (lng, lat) per city so they always sit on
  * land near the camera center and match the in-app marker symbology.
  */
@@ -115,8 +115,8 @@ export interface PulseCity {
   gridStyle?: GridStyle;
   /** Characteristic water features (rivers, bays). */
   water?: WaterFeature[];
-  /** Number of police-radio / scanner feeds we listen to here. */
-  scannerFeeds?: number;
+  /** Number of active structured public-data sources for this city. */
+  publicSources?: number;
   /** Example origin→destination pairs cycled through the landing-page
    *  SafeRouteSection to demo the safer-routing pitch. 2–3 per city. */
   routeDemoPairs?: RouteDemoPair[];
@@ -168,7 +168,7 @@ export const PULSE_CITIES: PulseCity[] = [
         ],
       },
     ],
-    scannerFeeds: 14,
+    publicSources: 2,
     routeDemoPairs: [
       {
         from: "Mission",
@@ -285,7 +285,7 @@ export const PULSE_CITIES: PulseCity[] = [
         width: 0.035,
       },
     ],
-    scannerFeeds: 42,
+    publicSources: 1,
     routeDemoPairs: [
       {
         from: "Williamsburg",
@@ -406,7 +406,7 @@ export const PULSE_CITIES: PulseCity[] = [
         width: 0.035,
       },
     ],
-    scannerFeeds: 18,
+    publicSources: 3,
     routeDemoPairs: [
       {
         from: "Fishtown",
@@ -516,7 +516,7 @@ export const PULSE_CITIES: PulseCity[] = [
         width: 0.05,
       },
     ],
-    scannerFeeds: 6,
+    publicSources: 1,
     routeDemoPairs: [
       {
         from: "Southside",

@@ -157,12 +157,93 @@ function jsonSafe(value: unknown): unknown {
   return value;
 }
 
+const PUBLIC_INCIDENT_FIELDS = [
+  "reported_at",
+  "raw_text",
+  "severity_category",
+  "s_base",
+  "location_text",
+  "lat",
+  "lng",
+  "confidence",
+  "geocode_status",
+  "location_confidence",
+  "inhibitor_status",
+  "inhibitor_reason",
+  "audio_clip",
+  "audio_url",
+  "feed_id",
+  "description",
+  "unit_status",
+  "has_word_timings",
+  "mention_count",
+  "last_mention_at",
+  "lifecycle_status",
+  "lifecycle_last_vote_ms",
+] as const;
+
+const PUBLIC_MENTION_FIELDS = [
+  "at",
+  "raw_text",
+  "audio_clip",
+  "audio_url",
+  "feed_id",
+  "location_text",
+  "location_confidence",
+  "confidence",
+  "severity_category",
+  "s_base",
+  "description",
+] as const;
+
+/**
+ * Firestore documents may acquire private ingestion/debug fields over time.
+ * API responses are fail-closed: only the reviewed public contract is copied
+ * out, including explicit projections for nested arrays.
+ */
+export function publicIncidentData(data: DocumentData): Record<string, unknown> {
+  const row: Record<string, unknown> = {};
+  for (const field of PUBLIC_INCIDENT_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(data, field)) {
+      row[field] = jsonSafe(data[field]);
+    }
+  }
+
+  if (Array.isArray(data.word_timings)) {
+    row.word_timings = data.word_timings.slice(0, 5_000).flatMap((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+      const timing = value as Record<string, unknown>;
+      return [{
+        word: jsonSafe(timing.word),
+        start: jsonSafe(timing.start),
+        end: jsonSafe(timing.end),
+      }];
+    });
+  }
+
+  if (Array.isArray(data.mentions)) {
+    row.mentions = data.mentions.slice(0, 500).flatMap((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+      const mention = value as Record<string, unknown>;
+      const projected: Record<string, unknown> = {};
+      for (const field of PUBLIC_MENTION_FIELDS) {
+        if (Object.prototype.hasOwnProperty.call(mention, field)) {
+          projected[field] = jsonSafe(mention[field]);
+        }
+      }
+      return [projected];
+    });
+  }
+
+  return row;
+}
+
 export function enrichIncident(
   id: string,
   data: DocumentData,
   now = Date.now(),
 ): IncidentRow {
-  const row = jsonSafe(data) as Record<string, unknown>;
+  const row = publicIncidentData(data);
   const reportedAt =
     typeof row.reported_at === "string" ? Date.parse(row.reported_at) : Number.NaN;
   const sBase =

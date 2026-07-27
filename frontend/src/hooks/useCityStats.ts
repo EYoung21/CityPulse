@@ -20,8 +20,8 @@ import { readBoundedJsonResponse } from "@/lib/upstream-response";
 export interface CityStats {
   slug: string;
   cityName: string;
-  /** Number of scanner feeds we listen to for this city. */
-  scannerFeeds: number;
+  /** Number of active structured public-data sources for this city. */
+  publicSources: number;
   /** Incidents in the last 24h (-1 if unavailable, e.g. SQLite dev). */
   incidents24h: number;
   /** All-time incidents for this city (-1 if unavailable). */
@@ -32,7 +32,7 @@ export interface CityStats {
 interface ApiPayload {
   slug: string;
   city_name: string;
-  scanner_feeds: number;
+  public_sources: number;
   incidents_24h: number;
   incidents_total: number;
   generated_at: string;
@@ -42,7 +42,7 @@ function mapPayload(p: ApiPayload): CityStats {
   return {
     slug: p.slug,
     cityName: p.city_name,
-    scannerFeeds: p.scanner_feeds,
+    publicSources: p.public_sources,
     incidents24h: p.incidents_24h,
     incidentsTotal: p.incidents_total,
     generatedAt: p.generated_at,
@@ -59,19 +59,19 @@ export function normalizeCityStatsPayload(value: unknown): ApiPayload | null {
   const generatedAt = clean(row.generated_at, 100);
   const count = (field: unknown, min: number) =>
     typeof field === "number" && Number.isSafeInteger(field) && field >= min ? field : null;
-  const scannerFeeds = count(row.scanner_feeds, 0);
+  const publicSources = count(row.public_sources ?? row.scanner_feeds, 0);
   const incidents24h = count(row.incidents_24h, -1);
   const incidentsTotal = count(row.incidents_total, -1);
   if (
     !slug || !cityName || !generatedAt || !Number.isFinite(Date.parse(generatedAt)) ||
-    scannerFeeds === null || incidents24h === null || incidentsTotal === null
+    publicSources === null || incidents24h === null || incidentsTotal === null
   ) {
     return null;
   }
   return {
     slug,
     city_name: cityName,
-    scanner_feeds: scannerFeeds,
+    public_sources: publicSources,
     incidents_24h: incidents24h,
     incidents_total: incidentsTotal,
     generated_at: generatedAt,

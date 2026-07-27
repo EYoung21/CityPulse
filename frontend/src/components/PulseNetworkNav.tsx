@@ -232,7 +232,7 @@ export default function PulseNetworkNav() {
                 textAlign: "center",
               }}
             >
-              Real-time safety • Unverified scanner audio
+              Public-source safety • Approximate, unverified reports
             </div>
           </div>
         </>,
@@ -350,7 +350,7 @@ export default function PulseNetworkNav() {
               textAlign: "center",
             }}
           >
-            Real-time safety • Unverified scanner audio
+            Public-source safety • Approximate, unverified reports
           </div>
         </div>
       )}

@@ -546,7 +546,7 @@ export default function AskPulsePanel({
           Ask Pulse is a Pro feature
         </h2>
         <p className="text-sm" style={{ color: "var(--panel-text-secondary)" }}>
-          Chat with an AI assistant grounded in scanner-sourced incidents for your city. Upgrade to unlock.
+          Chat with an AI assistant grounded in public incident reports for your city. Upgrade to unlock.
         </p>
         <button
           type="button"
@@ -575,7 +575,7 @@ export default function AskPulsePanel({
           </h1>
           <p className="text-[11px] truncate" style={{ color: "var(--panel-text-muted)" }}>
             Context: newest incidents for {citySlug} (LLM sees a capped sample — not full history or official stats)
-            · UNVERIFIED scanner data
+            · UNVERIFIED public-source data
           </p>
         </div>
         <button

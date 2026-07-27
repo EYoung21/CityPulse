@@ -45,6 +45,7 @@ import { evaluateOpeningHours, formatOpeningBadge } from "@/lib/opening-hours";
 import { getRoute } from "@/lib/routing";
 import { openAskPulseTab } from "@/lib/open-ask-pulse";
 import { readBoundedJsonResponse } from "@/lib/upstream-response";
+import { ASK_PULSE_AVAILABLE } from "@/lib/feature-availability";
 
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
@@ -538,7 +539,7 @@ export default function SearchedPlaceCard({
             </button>
           )}
 
-          <button
+          {ASK_PULSE_AVAILABLE && <button
             type="button"
             onClick={() => {
               // Open Ask Pulse and seed it with this place. The Ask
@@ -567,7 +568,7 @@ export default function SearchedPlaceCard({
           >
             <Sparkles className="w-4 h-4" />
             Ask
-          </button>
+          </button>}
 
           {websiteUrl ? (
             <a

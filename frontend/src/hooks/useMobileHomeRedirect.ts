@@ -11,8 +11,8 @@ import { useRouter } from "next/navigation";
  * Override hierarchy (highest wins):
  *   1. `?view=map`  ........ explicit URL hint; sticks for future visits
  *   2. `?view=feed` ........ explicit URL hint; sticks for future visits
- *   3. `?view=analytics` /
- *      `?view=ask` ......... home tabs; never redirect
+ *   3. `?view=analytics` ... home tab; never redirect
+ *      `?view=ask` ......... retired tab; stay on the map
  *   4. `?incident=…` /
  *      `?lat=&lng=`  ....... share-link / deep-link; never redirect
  *   5. localStorage
