@@ -1,19 +1,23 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import Link from "next/link";
 import MarketingPageShell from "@/components/MarketingPageShell";
 import { USE_CASE_SLUGS, USE_CASE_CAMPAIGNS } from "@/lib/use-case-campaigns";
+import { citySiteName, getCityForRequestHost } from "@/lib/pulse-cities";
 
-const siteName = process.env.NEXT_PUBLIC_SITE_NAME || "PHLPulse";
-
-export const metadata: Metadata = {
-  title: `Use cases and campaign pages | ${siteName}`,
-  description: `Shareable URLs for logistics routing, newsroom incident review, venue awareness, research, and pilot API access on ${siteName}. Each page links into the live product.`,
-  openGraph: {
-    title: `Use cases | ${siteName}`,
-    description: `Campaign pages that open the map, feed, alerts, and sign-in.`,
-    type: "website",
-  },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const h = await headers();
+  const brand = citySiteName(getCityForRequestHost(h.get("host")));
+  return {
+    title: `Use cases and campaign pages | ${brand}`,
+    description: `Shareable URLs for logistics routing, newsroom incident review, venue awareness, research, and pilot API access on ${brand}. Each page links into the live product.`,
+    openGraph: {
+      title: `Use cases | ${brand}`,
+      description: `Campaign pages that open the map, feed, alerts, and sign-in.`,
+      type: "website",
+    },
+  };
+}
 
 export default function UseCasesIndexPage() {
   return (

@@ -2,11 +2,9 @@
 
 import { Map, Settings, ChevronRight, Users } from "lucide-react";
 import Image from "next/image";
-import { getCurrentCity } from "@/lib/pulse-cities";
+import { citySiteName, getCurrentCity } from "@/lib/pulse-cities";
+import { LEGACY_ADMIN_PIPELINE_AVAILABLE } from "@/lib/feature-availability";
 import "./login.css";
-
-const siteName = process.env.NEXT_PUBLIC_SITE_NAME || "PHLPulse";
-const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
 
 interface Props {
   onChoose: (mode: "dashboard" | "admin" | "moderation") => void;
@@ -14,6 +12,8 @@ interface Props {
 
 export default function AdminLauncher({ onChoose }: Props) {
   const city = getCurrentCity();
+  const siteName = citySiteName(city);
+  const cityName = city.name;
   const accentRgb = city.accentRgb ?? "171, 255, 2";
   const accentRgb2 = city.accentRgb2 ?? "224, 255, 160";
 
@@ -27,15 +27,17 @@ export default function AdminLauncher({ onChoose }: Props) {
       bg: `rgba(${accentRgb}, 0.12)`,
       border: `rgba(${accentRgb}, 0.26)`,
     },
-    {
-      mode: "admin" as const,
-      title: "Admin Panel",
-      description: "Live audio, transcripts, LLM pipeline",
-      Icon: Settings,
-      color: "#c084fc",
-      bg: "rgba(192,132,252,0.12)",
-      border: "rgba(192,132,252,0.24)",
-    },
+    ...(LEGACY_ADMIN_PIPELINE_AVAILABLE
+      ? [{
+          mode: "admin" as const,
+          title: "Admin Panel",
+          description: "Live audio, transcripts, LLM pipeline",
+          Icon: Settings,
+          color: "#c084fc",
+          bg: "rgba(192,132,252,0.12)",
+          border: "rgba(192,132,252,0.24)",
+        }]
+      : []),
     {
       mode: "moderation" as const,
       title: "Moderation",

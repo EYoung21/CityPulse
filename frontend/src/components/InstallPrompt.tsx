@@ -9,11 +9,9 @@
  *      conversion materially.
  *    - We get to choose *when* to ask — well after the user has shown
  *      intent, not on first paint where it'd feel spammy.
- *    - On iOS specifically, install is the *only* way to receive Web
- *      Push notifications (Apple gates push behind PWA installation).
- *      So this isn't just a nice-to-have on iOS — it's the unlock for
- *      keyword scanner alerts, commute predictions, and off-screen
- *      pings. The copy on iOS leads with that.
+ *    - On iOS, installation provides the app-style launch surface and
+ *      offline shell. Closed-tab push is currently paused, so the prompt
+ *      must not advertise notification capabilities that are unavailable.
  *
  *  Behavior:
  *    - Wait for `beforeinstallprompt` (Chromium browsers fire it once
@@ -272,17 +270,17 @@ export default function InstallPrompt() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold" style={{ color: "var(--panel-text)" }}>
-                {iosHint && !deferred ? "Get safety alerts on iOS" : `Install ${brand}`}
+                {iosHint && !deferred ? `Install ${brand} on iOS` : `Install ${brand}`}
               </p>
               {deferred ? (
                 <p className="text-[11px] mt-0.5 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
-                  Get instant launches, an app icon, offline support, and
-                  push alerts when {brand} is not open.
+                  Get faster launches, an app icon, and offline support for
+                  brief network interruptions.
                 </p>
               ) : (
                 <p className="text-[11px] mt-0.5 leading-snug" style={{ color: "var(--panel-text-muted)" }}>
-                  Apple requires installing {brand} to your home screen
-                  before it can send alerts. Tap{" "}
+                  Add {brand} to your home screen for app-style launches and
+                  offline support. Tap{" "}
                   <Share2 className="inline w-3 h-3 align-text-top mx-0.5" />{" "}
                   Share, then <span className="font-medium">&ldquo;Add to Home Screen&rdquo;</span>.
                 </p>

@@ -8,6 +8,7 @@ import { useSavedDestinations } from "@/hooks/useSavedDestinations";
 
 interface Props {
   snapshot: DecodedListToken;
+  brand: string;
 }
 
 type ImportState = "idle" | "importing" | "done" | "error";
@@ -18,13 +19,13 @@ type ImportState = "idle" | "importing" | "done" | "error";
  *    - "Add to my account" — creates a new SavedList in their Firestore
  *      and copies all destinations into it (auth required, anonymous
  *      users get prompted to sign in)
- *    - "Open in PhillyPulse" — bounces to the main app with the first
+ *    - "Open in CityPulse" — bounces to the main app with the first
  *      item as a focus point (no account changes)
  *
  *  We deliberately don't render an embedded Leaflet map here — that
  *  would balloon the share-page bundle and these previews are usually
  *  10-30 items, perfectly readable as a list. */
-export default function SharedListPreview({ snapshot }: Props) {
+export default function SharedListPreview({ snapshot, brand }: Props) {
   const { user, signInWithGoogle, lastAuthError } = useAuth();
   const { canSave, lists, createList, addDestination } = useSavedDestinations();
   const [state, setState] = useState<ImportState>("idle");
@@ -116,7 +117,7 @@ export default function SharedListPreview({ snapshot }: Props) {
       <div className="w-full max-w-md">
         <div className="text-center mb-6">
           <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
-            PhillyPulse · Shared list
+            {brand} · Shared list
           </p>
           <div className="flex items-center justify-center gap-2 mt-3">
             <span
@@ -216,7 +217,7 @@ export default function SharedListPreview({ snapshot }: Props) {
                 className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium border border-white/15 text-slate-200 hover:bg-white/5"
               >
                 <MapPin className="w-4 h-4" />
-                Open in PhillyPulse
+                Open in {brand}
               </button>
             </>
           )}
@@ -235,7 +236,7 @@ export default function SharedListPreview({ snapshot }: Props) {
 
         <p className="text-[10px] text-slate-600 text-center mt-6 leading-relaxed">
           Shared lists are encoded directly in this link — nothing is uploaded
-          to PhillyPulse&apos;s servers. The sender can&apos;t see who opens it.
+          to {brand}&apos;s servers. The sender can&apos;t see who opens it.
         </p>
       </div>
     </main>

@@ -82,7 +82,7 @@ export function buildIcs(event: IcsEvent): string {
   const lines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//PhillyPulse//Trip planner//EN",
+    "PRODID:-//CityPulse//Trip planner//EN",
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
     "BEGIN:VEVENT",
@@ -114,7 +114,7 @@ export function buildIcs(event: IcsEvent): string {
 
 /** Trigger a download of the .ics file in the browser. Falls back to a
  *  data URL on older browsers that block blob downloads. */
-export function downloadIcs(event: IcsEvent, filename = "phillypulse-trip.ics"): void {
+export function downloadIcs(event: IcsEvent, filename = "citypulse-trip.ics"): void {
   if (typeof window === "undefined") return;
   const ics = buildIcs(event);
   try {

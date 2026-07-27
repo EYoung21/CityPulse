@@ -1,19 +1,25 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import TransparencyClient from "./TransparencyClient";
+import { citySiteName, getCityForRequestHost } from "@/lib/pulse-cities";
 
-const cityName =
-  process.env.NEXT_PUBLIC_CITY_NAME?.trim() || "Philadelphia";
+export async function generateMetadata(): Promise<Metadata> {
+  const h = await headers();
+  const city = getCityForRequestHost(h.get("host"));
+  const brand = citySiteName(city);
+  return {
+    title: `Community moderation transparency · ${brand}`,
+    description: `How crowdsourced reports are validated, voted on, and moderated on ${brand} over the last 30 days.`,
+    openGraph: {
+      title: `${brand} · Community moderation transparency`,
+      description: `Open numbers on report verification, auto-hiding, and moderator activity.`,
+      type: "website",
+    },
+  };
+}
 
-export const metadata: Metadata = {
-  title: `Community moderation transparency · ${cityName} Pulse`,
-  description: `How crowdsourced reports are validated, voted on, and moderated on ${cityName} Pulse over the last 30 days.`,
-  openGraph: {
-    title: `${cityName} Pulse · Community moderation transparency`,
-    description: `Open numbers on report verification, auto-hiding, and moderator activity.`,
-    type: "website",
-  },
-};
-
-export default function TransparencyPage() {
-  return <TransparencyClient />;
+export default async function TransparencyPage() {
+  const h = await headers();
+  const city = getCityForRequestHost(h.get("host"));
+  return <TransparencyClient brand={citySiteName(city)} />;
 }

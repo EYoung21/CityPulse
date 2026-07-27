@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Camera, Loader2, Check, AlertCircle } from "lucide-react";
 import { captureMapSnapshot, shareSnapshot } from "@/lib/map-snapshot";
+import { citySiteName, getCurrentCity } from "@/lib/pulse-cities";
 
 interface Props {
   /** Resolves the DOM element to rasterize. We pass a getter (not a
@@ -28,6 +29,7 @@ export default function MapSnapshotButton({
   variant = "icon",
   className = "",
 }: Props) {
+  const brand = citySiteName(getCurrentCity());
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<"ok" | "warn" | "err" | null>(null);
 
@@ -43,13 +45,13 @@ export default function MapSnapshotButton({
     try {
       const result = await captureMapSnapshot({
         element: el,
-        caption: caption ?? "PhillyPulse · safe routes",
+        caption: caption ?? `${brand} · safe routes`,
       });
       const stamp = new Date()
         .toISOString()
         .replace(/[:.]/g, "-")
         .slice(0, 19);
-      await shareSnapshot(result.blob, `phillypulse-${stamp}.png`);
+      await shareSnapshot(result.blob, `${brand.toLowerCase()}-${stamp}.png`);
       setStatus(result.tilesMissing ? "warn" : "ok");
     } catch {
       setStatus("err");

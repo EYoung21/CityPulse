@@ -1,25 +1,31 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import Link from "next/link";
 import "../landing/landing.css";
+import { citySiteName, getCityForRequestHost } from "@/lib/pulse-cities";
 
-const siteName = process.env.NEXT_PUBLIC_SITE_NAME || "PHLPulse";
-const cityName = process.env.NEXT_PUBLIC_CITY_NAME?.trim() || "Philadelphia";
-
-export const metadata: Metadata = {
-  title: `Teams & partners · ${siteName}`,
-  description: `How organizations use ${siteName} for delivery routing, situational awareness, and pilot API access. One live map, not separate persona apps.`,
-  openGraph: {
-    title: `Teams & partners · ${siteName}`,
-    description: `Deep links into the map, alert settings, and product scope for ${cityName} Pulse.`,
-    type: "website",
-  },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const h = await headers();
+  const city = getCityForRequestHost(h.get("host"));
+  const brand = citySiteName(city);
+  return {
+    title: `Teams & partners · ${brand}`,
+    description: `How organizations use ${brand} for delivery routing, situational awareness, and pilot API access. One live map, not separate persona apps.`,
+    openGraph: {
+      title: `Teams & partners · ${brand}`,
+      description: `Deep links into the map, alert settings, and product scope for ${brand}.`,
+      type: "website",
+    },
+  };
+}
 
 /**
  * Marketing hub for B2B-style use cases. The product is intentionally one
  * map and shared APIs, not parallel in-app “modes” per persona.
  */
-export default function TeamsPage() {
+export default async function TeamsPage() {
+  const h = await headers();
+  const siteName = citySiteName(getCityForRequestHost(h.get("host")));
   return (
     <div className="landing-page min-h-screen">
       <header className="lp-header">

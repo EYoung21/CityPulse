@@ -609,7 +609,7 @@ export default function LandingPage() {
         <div className="lp-usecases-inner">
           <div className="lp-usecases-foot" style={{ flexDirection: "column", gap: "14px" }}>
             <span className="lp-usecases-note">
-              Data comes from public incident sources and is not verified as fact&mdash;see <strong>About</strong> on the map for the full disclaimer. Public locations are intentionally approximate. Without signing in, incident reads cover the <strong>last 3 days</strong>; <strong>Pro</strong> adds the <strong>Analytics tab</strong> (hotspots, categories, timing), deeper history, and <strong>programmatic access</strong>. Ask Pulse and keyword push alerts are temporarily paused while their retired backend is replaced.{" "}
+              Data comes from public incident sources and is not verified as fact&mdash;see <strong>About</strong> on the map for the full disclaimer. Public locations are intentionally approximate. Without signing in, incident and API reads cover the <strong>last 3 days</strong>; <strong>Pro</strong> adds the <strong>Analytics tab</strong> (hotspots, categories, timing), deeper history, and authenticated extended API access. Ask Pulse and keyword push alerts are temporarily paused while their retired backend is replaced.{" "}
               <Link
                 href="/teams"
                 className="lp-usecases-teams-link"

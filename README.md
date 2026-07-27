@@ -22,6 +22,11 @@ reference and are not started by the production deployment.
 
 ## Challenges Implemented
 
+The challenge descriptions below document the original scanner-era submission.
+The current production importer uses the structured-source privacy pipeline
+described in **How It Works** and does not claim that every new source row is an
+LLM/Inhibitor extraction.
+
 - **Challenge 1 — Trust Accelerator Campaign:** PhillyPulse itself is a public-facing demonstration of Inhibitor in production. Every incident on the map passed through Inhibitor's guardrails, and the app surfaces full transparency stats (processed / passed / blocked counts) so users can see the trust layer working in real time.
 - **Challenge 2 — Inhibitor Innovation (Track A — Build with Inhibitor):** PhillyPulse is an original agent-powered system where Inhibitor serves as the critical safety gate between AI-extracted scanner data and public-facing map pins. Every LLM extraction is validated through Inhibitor before it can appear on the map — blocking PII, hallucinations, and harmful content.
 - **Challenge 3 — Glass Box (Audit Dashboard):** The admin panel provides full pipeline visibility: every extraction shows its LLM prediction, confidence score, Inhibitor status (passed/blocked with reason), and geocode result. Admins can filter to only map-published incidents, toggle visibility, delete, and re-run predictions.
@@ -54,12 +59,13 @@ Every pin on the map is labeled **UNVERIFIED**. PhillyPulse is a situational awa
 |-------|------|
 | Incident sources | Hamilton County 911, DataSF, Philadelphia/Montgomery/Chester County open data, Notify NYC |
 | Privacy processing | Source-specific suppression, block-level addresses, rounded public coordinates |
-| Backend API | Python, FastAPI, uvicorn |
+| Public API | Next.js route handlers on Vercel |
+| Legacy/admin API | Python, FastAPI, uvicorn (not required for the public map) |
 | Database | Firebase Firestore (prod) / SQLite (dev) |
 | Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS 4 |
 | UI components | shadcn/ui, Leaflet, Framer Motion, Lucide React |
-| Routing engine | OpenRouteService API |
-| Hosting | Vercel (frontend; set `BACKEND_URL` to the FastAPI origin so `/api/*` rewrites work), dedicated server (backend) |
+| Routing engine | TomTom when configured, with Valhalla/OpenStreetMap fallbacks |
+| Hosting | Vercel (app + public API), Firebase Firestore |
 | Domain | phlpulse.com (GoDaddy) |
 
 ## Run Instructions
@@ -67,11 +73,11 @@ Every pin on the map is labeled **UNVERIFIED**. PhillyPulse is a situational awa
 ### Prerequisites
 
 - Python 3.10+
-- Node.js 18+
+- Node.js 20+
 - Firebase service-account credentials
 - API keys for the optional AI features and OpenRouteService
 
-### Backend
+### Legacy/admin backend (optional)
 
 ```bash
 git clone https://github.com/EYoung21/PhillyPulse.git
@@ -81,9 +87,9 @@ python -m venv venv
 source venv/bin/activate
 
 pip install -r requirements-philly-pulse.txt
-# Configure environment
-cp .env.example .env
-# Edit .env with Firebase and optional feature credentials
+# Configure Firebase and optional legacy/admin credentials in your shell.
+# Copy the checked-in non-secret tuning template only if you need it:
+cp config.yaml.example config.yaml
 
 # Start the API server
 python -m uvicorn philly_pulse.server:app --host 0.0.0.0 --port 8000
@@ -101,7 +107,7 @@ cd frontend
 npm install
 
 # Configure environment
-cp .env.local.example .env.local
+cp .env.example .env.local
 # Edit .env.local with your Firebase config and API URL
 
 npm run dev
@@ -109,83 +115,53 @@ npm run dev
 
 The frontend will be available at `http://localhost:3000`.
 
-### Web Push (optional)
+### Web Push
 
-Closed-tab notifications use VAPID Web Push. The backend signs every
-push with a keypair you generate once per deployment.
-
-```bash
-# 1. Generate a VAPID keypair (writes three KEY=value lines to stdout)
-python scripts/generate_vapid_keys.py
-
-# 2. Paste them into your env file and edit the SUBJECT email
-# 3. Restart the backend
-```
-
-When the env vars are missing the `/api/push/*` endpoints stay live
-but report `configured: false`, and the in-app push toggle surfaces a
-"server isn't configured yet" hint instead of crashing. Browsers can
-still subscribe in that state — they just won't receive anything
-until the server side comes online.
-
-The frontend service worker only registers in production builds, so
-local push testing requires `npm run build && npm start` rather than
-`npm run dev`.
-
-#### Closed-tab commute predictions (optional)
-
-When a signed-in user with push enabled has a recurring commute
-pattern, the client uploads a tiny `commuteSchedules` document to
-Firestore. To fire the actual notification when the tab is closed,
-point an external scheduler at `POST /api/push/tick-commutes` every
-1–2 minutes:
-
-```bash
-# Set a long random secret on the backend
-PHILLY_PULSE_COMMUTE_TICK_SECRET="<long random string>"
-
-# Then call from cron / GH Actions / Cloud Scheduler:
-curl -X POST https://api.phlpulse.com/api/push/tick-commutes \
-  -H "Authorization: Bearer $PHILLY_PULSE_COMMUTE_TICK_SECRET"
-```
-
-The endpoint is a no-op (`503`) when the secret env var isn't set,
-so leaving it unconfigured in dev is safe. The same scheduler can
-drive future server-fired triggers; the response includes `scanned`
-/ `fired` / `skipped` counts for monitoring.
+Closed-tab Web Push, keyword watches, and commute pushes are temporarily
+paused while the retired Python/audio backend is replaced. The same-origin
+`/api/push/public-key` capability probe deliberately reports
+`configured: false`; the settings UI keeps in-app alerts available and does
+not attempt to create a server subscription.
 
 ### Production
 
 - **Frontend** is deployed on Vercel at [phlpulse.com](https://phlpulse.com)
-- **Vercel env:** set `BACKEND_URL=https://api.phlpulse.com` (no trailing slash) in the Vercel project so Next.js rewrites `https://www.phlpulse.com/api/*` to the Python API. Without it, `/api/incidents` and similar paths return 404. See `docs/MULTI_CITY_VERCEL_SETUP.md` for multi-city projects.
-- **Backend API** runs on a dedicated server at `api.phlpulse.com` — if you see 502, fix the process/reverse proxy there; CORS console noise on `api.*` is often a side effect of error responses, not a separate CORS bug.
-- **Transcriber** runs continuously on the same server, ingesting live scanner audio 24/7
+- **Public APIs** run as same-origin Next.js routes on Vercel and read
+  entitlement-aware data from Firestore.
+- **Ingestion** polls structured public sources under Firestore leases; no
+  Broadcastify, scanner transcriber, or Lambda GPU instance is required.
+- `BACKEND_URL` remains only as a fallback rewrite for dormant legacy/admin
+  routes and must not be treated as a dependency of the public map.
 
 ## Key Features
 
-- **Real-time incident mapping** — Live police scanner → AI pipeline → map pins in seconds
+- **Recent incident mapping** — Structured public sources → privacy reduction → map pins
 - **Safe routing** — Walk, bike, or drive routes that avoid active incident zones with clear time tradeoff
 - **Safety scoring** — Tap anywhere for a 0–100 safety score based on nearby activity
-- **Inhibitor guardrails** — Every extraction validated; PII, hallucinations, and harmful content blocked
-- **Transparency dashboard** — Full visibility into Inhibitor pass/block stats
-- **Admin panel** — Pipeline audit trail, re-transcription, prediction re-runs, visibility toggles, "On Map" filter
+- **Privacy guardrails** — Sensitive calls suppressed, exact addresses reduced, and public coordinates rounded
+- **Transparency dashboard** — Aggregate public-source and community-moderation health
+- **Moderation panel** — Admin review tools for user-submitted reports
+- **Legacy admin source** — Historical audio/transcript pipeline UI retained in source but hidden while that backend is retired
 - **Cluster list view** — Overlapping incidents at the same location expand into a scrollable list
 - **Heatmap overlay** — Density visualization with vivid gradients
 - **District breakdown** — Neighborhood-level incident analysis
 - **Time decay** — Older incidents fade; configurable time filters (1h to 30d)
 - **Category filters** — Filter by violent, medical, fire, vehicle, property, disorder
-- **AI neighborhood summaries** — GPT-generated plain-English safety briefings
+- **City activity summaries** — Deterministic recent-activity briefings
 - **Dark/light theme** — Full theme support
 - **Mobile responsive** — Works on phone, tablet, and desktop
 
 ## Assumptions and Limitations
 
-- Scanner audio quality varies; transcription accuracy depends on signal clarity and dispatcher speaking patterns
-- Geocoding relies on location text extracted by the LLM, which may be incomplete or ambiguous — the LLM fallback helps but is not perfect
+- Public-source timeliness and detail vary by city; NYC coverage can be quiet
+  when Notify NYC has no active alert.
+- Source coordinates and location text may be incomplete, and are intentionally
+  reduced further before publication.
 - All incidents are labeled **UNVERIFIED** — this is a situational awareness tool, not a verified crime database
 - The Inhibitor API blocks content that could cause harm, which means some real incidents may be filtered out (this is by design)
 - Safe routing adds avoid zones around incidents but cannot guarantee safety — it reduces exposure to known reported activity
-- Currently covers the **Greater Philadelphia metro** — Philadelphia plus **Delaware County, Chester County, Montgomery County, and Bucks County** (including citywide + sector feeds, plus Fire/EMS and transit where available).
+- Covers **Philadelphia**, **San Francisco**, **New York City**, and
+  **Chattanooga**, with source availability varying by city.
 
 ## License and Copyright
 

@@ -20,32 +20,32 @@ import { Terminal, Code2, Lock, ArrowRight } from "lucide-react";
 import type { PulseCity } from "@/lib/pulse-cities";
 
 const REQ_LINES = [
-  "curl -s https://api.citypulse.live/v1/incidents \\",
-  "  -H 'authorization: Bearer $PULSE_API_KEY' \\",
+  "curl -s https://www.phlpulse.com/api/incidents/page \\",
   "  -G \\",
   "  --data-urlencode 'city=%CITY%' \\",
-  "  --data-urlencode 'since=15m' \\",
-  "  --data-urlencode 'category=violent,fire'",
+  "  --data-urlencode 'limit=3' \\",
+  "  --data-urlencode 'category=violent_weapon'",
 ];
 
 const RESPONSE = (city: string, accentRgb: string) =>
   ({
     body: [
       "{",
-      `  "city": "${city}",`,
-      `  "window_min": 15,`,
-      `  "count": 3,`,
       `  "incidents": [`,
       `    {`,
-      `      "id": "inc_018f9a2c…",`,
-      `      "category": "violent",`,
-      `      "transcript": "Shots fired, witnesses…",`,
-      `      "location": { "lat": 39.952, "lng": -75.165 },`,
-      `      "fired_at": "2026-05-10T14:32:11Z"`,
+      `      "id": "public-a13f9c…",`,
+      `      "severity_category": "violent_weapon",`,
+      `      "description": "Weapons incident",`,
+      `      "location_text": "1200 block Market St",`,
+      `      "lat": 39.952, "lng": -75.165,`,
+      `      "reported_at": "2026-07-27T05:32:11Z"`,
       `    },`,
-      `    { "id": "inc_018f9a2d…", "category": "fire", … },`,
-      `    { "id": "inc_018f9a2e…", "category": "violent", … }`,
+      `    { "id": "public-a13f9d…", "severity_category": "violent_weapon", … },`,
+      `    { "id": "public-a13f9e…", "severity_category": "violent_weapon", … }`,
       `  ]`,
+      `  "next_cursor": "2026-07-27T05:20:00Z…",`,
+      `  "mode": "recent",`,
+      `  "meta": { "city": "${city}", "tier": "free", "clamped": false }`,
       "}",
     ],
     accentRgb,
@@ -157,10 +157,10 @@ export function ApiSection({ city }: Props) {
             Structured incidents, straight into your stack.
           </h2>
           <p className="lp-route-section-sub">
-            Authenticated reads for the same normalized schema you see in
-            the feed. Filter by city, window, and category &mdash; pull
-            JSON, drop it into your pipeline. Limited pilot; talk to us
-            before production loads.
+            Read the same privacy-reduced schema you see in the feed. Filter
+            by city, time, category, or cursor &mdash; pull JSON and drop it
+            into your pipeline. Anonymous reads cover 3 days; signed-in Pro
+            access can request deeper history.
           </p>
         </header>
 
@@ -239,23 +239,23 @@ export function ApiSection({ city }: Props) {
                 <div className="lp-api-card-field">
                   <dt>since</dt>
                   <dd>
-                    <code>15m</code>
+                    <code>3-day default</code>
                   </dd>
                 </div>
                 <div className="lp-api-card-field">
                   <dt>category</dt>
                   <dd>
-                    <code>violent, fire</code>
+                    <code>violent_weapon</code>
                   </dd>
                 </div>
               </dl>
               <div className="lp-api-card-meta">
                 <span className="lp-api-card-pro">
                   <Lock className="w-3 h-3" />
-                  Bearer auth · pilot only
+                  Public recent reads · Pro history
                 </span>
               </div>
-              <Link href="/use-cases/api" className="lp-api-card-cta">
+              <Link href="/api-docs" className="lp-api-card-cta">
                 Open developer docs
                 <ArrowRight className="w-3.5 h-3.5" />
               </Link>

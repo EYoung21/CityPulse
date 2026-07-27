@@ -349,7 +349,7 @@ export async function subscribePush(area?: AlertArea | null): Promise<SubscribeR
     return {
       ok: false,
       reason:
-        "The PhillyPulse service worker isn't active yet. Try reloading the page after a few seconds.",
+        "The CityPulse service worker isn't active yet. Try reloading the page after a few seconds.",
       status: { ...status, reason: "no-service-worker" },
     };
   }

@@ -30,6 +30,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { buildListShareUrl } from "@/lib/share-list";
 import { requestUndoableAction } from "@/lib/undo-toast";
 import { preferredSpeedUnit } from "@/hooks/useGpsSpeed";
+import { citySiteName, getCurrentCity } from "@/lib/pulse-cities";
 
 function activateSavedPlace(
   event: ReactKeyboardEvent<HTMLButtonElement>,
@@ -115,6 +116,7 @@ function listColor(list: SavedList): string {
 }
 
 export default function SavedPlaces({ onFlyTo, onDirections, userPos }: Props) {
+  const brand = citySiteName(getCurrentCity());
   const distanceUnit = preferredSpeedUnit();
   const {
     destinations,
@@ -160,8 +162,8 @@ export default function SavedPlaces({ onFlyTo, onDirections, userPos }: Props) {
       const navAny = navigator as Navigator & { share?: (data: ShareData) => Promise<void> };
       if (typeof navAny.share === "function") {
         await navAny.share({
-          title: `${list.name} · PhillyPulse`,
-          text: `${items.length} saved ${items.length === 1 ? "place" : "places"} on PhillyPulse`,
+          title: `${list.name} · ${brand}`,
+          text: `${items.length} saved ${items.length === 1 ? "place" : "places"} on ${brand}`,
           url,
         });
         setShareToast({ id: list.id, msg: "Shared" });

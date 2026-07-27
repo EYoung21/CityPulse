@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import "@/app/landing/landing.css";
 import MarketingHeaderActions from "@/components/MarketingHeaderActions";
+import { citySiteName, getCityForRequestHost } from "@/lib/pulse-cities";
 
 interface Props {
   children: React.ReactNode;
@@ -11,7 +13,9 @@ interface Props {
  * The right-side CTA flips between "Create Account / Sign In" (signed-out)
  * and the user's name + "Open app" (signed-in) — see [[MarketingHeaderActions]].
  */
-export default function MarketingPageShell({ children }: Props) {
+export default async function MarketingPageShell({ children }: Props) {
+  const h = await headers();
+  const brand = citySiteName(getCityForRequestHost(h.get("host")));
   return (
     <div className="landing-page min-h-screen flex flex-col">
       <header className="lp-header">
@@ -40,7 +44,7 @@ export default function MarketingPageShell({ children }: Props) {
           <Link href="/" style={{ color: "inherit", textDecoration: "underline", textUnderlineOffset: 3 }}>
             Map
           </Link>
-          {" · "}© {new Date().getFullYear()} {process.env.NEXT_PUBLIC_SITE_NAME || "CityPulse"}
+          {" · "}© {new Date().getFullYear()} {brand}
         </p>
       </footer>
     </div>

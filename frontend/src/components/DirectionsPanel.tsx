@@ -39,7 +39,7 @@ import {
   type AvoidancePrefs,
   type RouteOption,
 } from "@/lib/routing";
-import { getCurrentCity } from "@/lib/pulse-cities";
+import { citySiteName, getCurrentCity } from "@/lib/pulse-cities";
 import type { Incident } from "@/lib/api";
 import { userAvoidZonesForRouting } from "@/lib/avoid-areas";
 import type { RouteData } from "@/components/RoutePanel";
@@ -262,6 +262,8 @@ export default function DirectionsPanel({
   onAvoidPrefsChange,
   timeFilterHours,
 }: Props) {
+  const city = getCurrentCity();
+  const brand = citySiteName(city);
   /** Compact label for a duration in hours, used by the long-window
    *  note ("3mo", "1w", "12h", etc.). Mirrors the TIME_FILTERS labels
    *  in page.tsx but avoids needing to thread that constant down. */
@@ -364,7 +366,7 @@ export default function DirectionsPanel({
   // Hide Train/Subway in cities with no rail/subway network (e.g.
   // Chattanooga) — offering transit routing where it doesn't exist is
   // misleading and also fired pointless transit ETA fetches.
-  const cityHasTransit = useMemo(() => getCurrentCity().transit === true, []);
+  const cityHasTransit = city.transit === true;
   const visibleModes = useMemo(
     () => MODES.filter((m) => cityHasTransit || !isTransitMode(m.id)),
     [cityHasTransit]
@@ -1253,17 +1255,17 @@ export default function DirectionsPanel({
           const depart = new Date(departTs);
           const handleAddToCalendar = () => {
             downloadIcs({
-              uid: `pp-trip-${departTs}@phillypulse.app`,
+              uid: `pp-trip-${departTs}@${city.domain}`,
               title: `Trip to ${destLoc.display_name.split(",")[0]}`,
               location: destLoc.display_name,
               description:
-                `Planned via PhillyPulse.\n` +
+                `Planned via ${brand}.\n` +
                 `From: ${originLoc.display_name}\n` +
                 `To: ${destLoc.display_name}\n` +
                 `Mode: ${activeMode}\n` +
                 `Distance: ${previewRoute.distanceKm.toFixed(1)} km\n` +
                 (typeof window !== "undefined"
-                  ? `Open in PhillyPulse: ${window.location.origin}/?dest_lat=${destLoc.lat}&dest_lng=${destLoc.lng}\n`
+                  ? `Open in ${brand}: ${window.location.origin}/?dest_lat=${destLoc.lat}&dest_lng=${destLoc.lng}\n`
                   : ""),
               startUtc: depart,
               endUtc: arrive,
@@ -1272,7 +1274,7 @@ export default function DirectionsPanel({
               url: typeof window !== "undefined"
                 ? `${window.location.origin}/?dest_lat=${destLoc.lat}&dest_lng=${destLoc.lng}`
                 : undefined,
-            }, `phillypulse-${destLoc.display_name.split(",")[0].replace(/\s+/g, "-").toLowerCase()}.ics`);
+            }, `${brand.toLowerCase()}-${destLoc.display_name.split(",")[0].replace(/\s+/g, "-").toLowerCase()}.ics`);
           };
           return (
             <div className="mt-3 space-y-2">

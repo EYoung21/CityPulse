@@ -285,7 +285,7 @@ export default function FeedbackForm() {
               >
                 Form acting up? Email{" "}
                 <a
-                  href="mailto:eliyoung4now@gmail.com?subject=PhillyPulse%20feedback"
+                  href="mailto:eliyoung4now@gmail.com?subject=CityPulse%20feedback"
                   className="underline"
                   style={{ color: "var(--panel-text)" }}
                 >

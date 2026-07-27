@@ -32,7 +32,7 @@ export interface UseCaseCampaign {
   footnote?: string;
 }
 
-const site = process.env.NEXT_PUBLIC_SITE_NAME || "CityPulse";
+const site = "CityPulse";
 
 export const USE_CASE_CAMPAIGNS: Record<UseCaseSlug, UseCaseCampaign> = {
   logistics: {
