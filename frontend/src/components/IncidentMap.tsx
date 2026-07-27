@@ -359,7 +359,7 @@ interface Props {
    *  non-null, forms a closed polygon on the map. */
   perimeterPoints?: [number, number][] | null;
   /** Read-only polyline rendered when the user opens a shared-trip link
-   *  (`?trip=<token>`). Visually distinct from `tripRouteGeometry` to
+   *  (`#trip=<token>`). Visually distinct from `tripRouteGeometry` to
    *  signal that it's someone *else's* route, not the viewer's. */
   sharedTripGeometry?: [number, number][] | null;
   /** Optional destination marker for the shared trip. Rendered with the

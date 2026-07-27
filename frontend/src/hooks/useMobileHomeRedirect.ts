@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { shareValueFromUrl } from "@/lib/share-fragment";
 
 /**
  * Decides whether the home route (`/`) should redirect to `/feed`.
@@ -67,7 +68,8 @@ export function decideHomeRedirect(isMobileViewport?: boolean): HomeRedirectDeci
     if (
       url.searchParams.has("incident") ||
       (url.searchParams.has("lat") && url.searchParams.has("lng")) ||
-      url.searchParams.has("inbox")
+      url.searchParams.has("inbox") ||
+      shareValueFromUrl(url, "trip", 64_000) !== null
     ) {
       return "stay";
     }

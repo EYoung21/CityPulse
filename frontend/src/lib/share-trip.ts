@@ -25,6 +25,7 @@
  */
 
 import type { TransportMode } from "./routing";
+import { buildFragmentShareUrl } from "./share-fragment";
 
 export const TRIP_TOKEN_VERSION = 1;
 const MAX_TRIP_TOKEN_CHARS = 64_000;
@@ -259,11 +260,8 @@ export function decodeTripToken(token: string): DecodedTripToken | null {
   }
 }
 
-/** Build a shareable URL pointing at the unfurl-friendly /share/trip page,
- *  which renders rich OG metadata and bounces the recipient into the main
- *  app at `/?trip=<token>`. */
+/** Build a shareable URL whose location-bearing token stays browser-side. */
 export function buildTripShareUrl(snap: TripShareSnapshot, base?: string): string {
   const token = encodeTripToken(snap);
-  const origin = base || (typeof window !== "undefined" ? window.location.origin : "");
-  return `${origin}/share/trip?t=${token}`;
+  return buildFragmentShareUrl("/share/trip", "t", token, base);
 }

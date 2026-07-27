@@ -1,20 +1,86 @@
 import { describe, expect, it } from "vitest";
-import { liveShareMovedEnough } from "@/lib/live-share";
+import {
+  buildLiveShareUrl,
+  liveShareMovedEnough,
+} from "@/lib/live-share";
 import {
   isLiveShareId,
   parseLiveTripDoc,
 } from "@/lib/live-share-validation";
-import { decodeListToken, encodeListToken } from "@/lib/share-list";
 import {
+  buildListShareUrl,
+  decodeListToken,
+  encodeListToken,
+} from "@/lib/share-list";
+import {
+  buildTripShareUrl,
   decodeTripToken,
   encodeTripToken,
 } from "@/lib/share-trip";
+import {
+  shareValueFromUrl,
+  urlWithCanonicalShareFragment,
+} from "@/lib/share-fragment";
 
 function tokenFor(value: unknown): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
 }
 
 describe("shared-link validation", () => {
+  it("keeps list, trip, and live bearer values out of query strings", () => {
+    const listUrl = new URL(buildListShareUrl({
+      listName: "Favorites",
+      items: [{ name: "Home", lat: 39.95, lng: -75.16 }],
+    }, "https://example.com"));
+    const tripUrl = new URL(buildTripShareUrl({
+      destination: [39.9526, -75.1652],
+      mode: "foot-walking",
+      etaEpochMs: Date.now() + 60_000,
+      sentAtEpochMs: Date.now(),
+      geometry: [[39.95, -75.17], [39.9526, -75.1652]],
+    }, "https://example.com"));
+    const liveUrl = new URL(buildLiveShareUrl(
+      "0ABCDEFGHJKM",
+      "https://example.com"
+    ));
+
+    expect(listUrl.search).toBe("");
+    expect(listUrl.hash).toMatch(/^#t=/);
+    expect(tripUrl.search).toBe("");
+    expect(tripUrl.hash).toMatch(/^#t=/);
+    expect(liveUrl.search).toBe("");
+    expect(liveUrl.hash).toBe("#id=0ABCDEFGHJKM");
+  });
+
+  it("reads fragments and canonicalizes legacy query-string links", () => {
+    const fragment = new URL("https://example.com/share/trip#t=private-token");
+    expect(shareValueFromUrl(fragment, "t", 100)).toEqual({
+      value: "private-token",
+      source: "fragment",
+    });
+
+    const legacy = new URL("https://example.com/share/trip?utm=x&t=old-token");
+    expect(shareValueFromUrl(legacy, "t", 100)).toEqual({
+      value: "old-token",
+      source: "legacy-query",
+    });
+    expect(urlWithCanonicalShareFragment(legacy, "t", "old-token"))
+      .toBe("/share/trip?utm=x#t=old-token");
+  });
+
+  it("rejects duplicate or oversized share bearer parameters", () => {
+    expect(shareValueFromUrl(
+      new URL("https://example.com/share/trip#t=one&t=two"),
+      "t",
+      100
+    )).toBeNull();
+    expect(shareValueFromUrl(
+      new URL("https://example.com/share/trip#t=toolong"),
+      "t",
+      3
+    )).toBeNull();
+  });
+
   it("round-trips Unicode trip sender names", () => {
     const token = encodeTripToken({
       name: "Zoë 🚲",
