@@ -46,7 +46,7 @@ export type IncidentRow = Record<string, unknown> & {
   w_eff?: number;
 };
 
-function ensureAdmin() {
+export function ensureAdmin() {
   if (getApps().length === 0) {
     const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
     if (process.env.FIREBASE_ADMIN_KEY) {

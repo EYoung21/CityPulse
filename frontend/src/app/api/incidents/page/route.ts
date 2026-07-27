@@ -10,8 +10,10 @@ import {
   readIncidentWindow,
   resolveEntitlement,
 } from "@/lib/server-incidents";
+import { refreshPublicSources } from "@/lib/server-public-sources";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 function finiteCoordinate(value: string | null, min: number, max: number): number | null {
   if (value === null || value.trim() === "") return null;
@@ -52,6 +54,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const entitlement = await resolveEntitlement(request);
+    await refreshPublicSources(city);
     const { since, clamped } = effectiveSince(requestedSince, entitlement.isPro);
     const parsedCursor = parseCursor(cursorRaw);
     const cursorClamped =
