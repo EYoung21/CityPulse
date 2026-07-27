@@ -9,7 +9,9 @@ recent hazards while walking, biking, or driving.
 
 The former Broadcastify audio and Lambda GPU pipeline is retired. The old
 transcriber and archive utilities remain in the repository only as historical
-reference and are not started by the production deployment.
+reference and are not started by the production deployment. Any future audio
+relaunch is blocked by the versioned
+[transcript relaunch policy](docs/TRANSCRIPT-RELAUNCH-POLICY.md).
 
 **Live demo:** [https://phlpulse.com](https://phlpulse.com)
 

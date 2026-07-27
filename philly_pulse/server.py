@@ -88,6 +88,29 @@ def _ttl_put(bucket: str, key: Any, value: Any, ttl: float) -> None:
 # Flip to True (or set env PHILLY_PULSE_LLM_AUTO=1) to resume automatic processing.
 LLM_AUTO_ENABLED = os.environ.get("PHILLY_PULSE_LLM_AUTO", "0").strip().lower() in ("1", "true", "yes")
 
+# The retired audio/transcript endpoints require two independent launch gates:
+# an explicit runtime enable and acknowledgement of the currently approved
+# public-safety policy. This prevents a stale deployment secret or an old
+# service definition from silently bringing the scanner pipeline back.
+TRANSCRIPT_POLICY_VERSION = "2026-07-27"
+LEGACY_AUDIO_INGEST_ENABLED = (
+    os.environ.get("PHILLY_PULSE_AUDIO_INGEST_ENABLED", "0").strip().lower()
+    in ("1", "true", "yes")
+)
+TRANSCRIPT_POLICY_ACCEPTED_VERSION = (
+    os.environ.get("PHILLY_PULSE_TRANSCRIPT_POLICY_ACCEPTED_VERSION", "").strip()
+)
+
+
+def _require_legacy_audio_launch_gate() -> None:
+    if not LEGACY_AUDIO_INGEST_ENABLED:
+        raise HTTPException(status_code=503, detail="Legacy audio ingest is retired")
+    if TRANSCRIPT_POLICY_ACCEPTED_VERSION != TRANSCRIPT_POLICY_VERSION:
+        raise HTTPException(
+            status_code=503,
+            detail="Transcript safety policy has not been acknowledged",
+        )
+
 # Ask Pulse (Pro): incident RAG + Lambda chat. `PULSE_CHAT_MODEL` overrides
 # `LAMBDA_MODEL` for this endpoint only.
 PULSE_CHAT_STORE_FETCH = int(os.environ.get("PULSE_CHAT_STORE_FETCH", "450"))
@@ -969,6 +992,7 @@ async def upload_audio(
 ):
     """Receive and save audio clip WAV files. Used by the transcriber bridge."""
     _verify_ingest_secret(authorization)
+    _require_legacy_audio_launch_gate()
     # Cap per-request fan-out: reject oversized batches outright (413) and skip
     # any single decoded clip larger than 5 MiB so a malicious caller can't fill
     # the disk with one POST.
@@ -992,6 +1016,7 @@ async def ingest(
     When True, run the full pipeline.
     """
     _verify_ingest_secret(authorization)
+    _require_legacy_audio_launch_gate()
 
     if not req.text.strip() or len(req.text) > 20_000:
         raise HTTPException(status_code=400, detail="Transcript must be 1-20000 characters")

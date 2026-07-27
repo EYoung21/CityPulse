@@ -27,8 +27,8 @@ const nextConfig: NextConfig = {
             key: "Cross-Origin-Opener-Policy",
             value: "same-origin-allow-popups",
           },
-          // Anti-clickjacking: the app must never be framed. X-Frame-Options
-          // is the enforcing control here (CSP frame-ancestors below is Report-Only).
+          // Anti-clickjacking: the app must never be framed. The proxy also
+          // enforces CSP frame-ancestors for modern browsers.
           {
             key: "X-Frame-Options",
             value: "DENY",
@@ -48,25 +48,6 @@ const nextConfig: NextConfig = {
           {
             key: "Permissions-Policy",
             value: "geolocation=(self), microphone=(), camera=()",
-          },
-          // CSP is intentionally Report-Only pending an allowlist review so it
-          // cannot break map/leaflet/maplibre/firebase/stripe/analytics resource
-          // loads. Anti-clickjacking is already enforced by X-Frame-Options above.
-          {
-            key: "Content-Security-Policy-Report-Only",
-            value: [
-              "default-src 'self'",
-              "img-src 'self' data: blob: https:",
-              "style-src 'self' 'unsafe-inline' https://unpkg.com",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebaseio.com https://*.googleapis.com https://js.stripe.com",
-              "connect-src 'self' https: wss:",
-              "font-src 'self' data: https:",
-              "frame-src https://js.stripe.com https://*.firebaseapp.com",
-              "worker-src 'self' blob:",
-              "frame-ancestors 'none'",
-              "base-uri 'self'",
-              "form-action 'self'",
-            ].join("; "),
           },
         ],
       },

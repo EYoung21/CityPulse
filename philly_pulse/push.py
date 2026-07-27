@@ -56,6 +56,33 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 logger = logging.getLogger(__name__)
 
 
+# Browser vendors choose the push service behind a PushSubscription endpoint.
+# Keep this list deliberately small: accepting arbitrary public HTTPS hosts
+# would still let an attacker use our sender as a blind outbound request
+# primitive. Exact entries cover Chrome/Android, Firefox, and Safari; Edge on
+# Windows uses regional hosts below the official notify.windows.com suffix.
+_PUSH_PROVIDER_EXACT_HOSTS = frozenset(
+    {
+        "fcm.googleapis.com",
+        "updates.push.services.mozilla.com",
+        "web.push.apple.com",
+    }
+)
+_PUSH_PROVIDER_HOST_SUFFIXES = (
+    ".notify.windows.com",
+)
+
+
+def _is_approved_push_provider(hostname: str) -> bool:
+    """Return whether ``hostname`` belongs to a supported browser push service."""
+    normalized = hostname.rstrip(".").lower()
+    return normalized in _PUSH_PROVIDER_EXACT_HOSTS or any(
+        normalized.endswith(suffix)
+        and len(normalized) > len(suffix)
+        for suffix in _PUSH_PROVIDER_HOST_SUFFIXES
+    )
+
+
 # ── VAPID config ────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -169,10 +196,11 @@ def derive_subscription_hash(endpoint: str) -> str:
 
 
 def is_safe_push_endpoint(endpoint: str, *, resolve_dns: bool = True) -> bool:
-    """Accept HTTPS push-service URLs that cannot resolve to local networks.
+    """Accept approved HTTPS browser-push URLs that resolve only to public IPs.
 
     Rechecking at send time matters because stored endpoints are long-lived and
-    DNS can change after registration. This keeps Web Push from becoming SSRF.
+    DNS can change after registration. The provider allowlist fails closed for
+    unknown services; the DNS check provides a second defense against rebinding.
     """
     if not isinstance(endpoint, str) or not endpoint or len(endpoint) > 2048:
         return False
@@ -188,6 +216,8 @@ def is_safe_push_endpoint(endpoint: str, *, resolve_dns: bool = True) -> bool:
             return False
         hostname = parsed.hostname.rstrip(".").lower()
         if hostname == "localhost" or hostname.endswith((".localhost", ".local", ".internal")):
+            return False
+        if not _is_approved_push_provider(hostname):
             return False
 
         try:
