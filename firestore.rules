@@ -218,7 +218,9 @@ service cloud.firestore {
     // Writes are owner-only. Set a TTL policy on `expiresAt` in the
     // Firebase console so stale shares auto-purge after 4h.
     match /liveTrips/{shareId} {
-      allow read: if true;
+      allow read: if shareId.matches('^[0-9A-HJKMNP-TV-Z]{12}$')
+        && resource.data.expiresAt is timestamp
+        && resource.data.expiresAt > request.time;
       allow create: if request.auth != null
         && request.auth.uid == request.resource.data.ownerUid
         && shareId.matches('^[0-9A-HJKMNP-TV-Z]{12}$')

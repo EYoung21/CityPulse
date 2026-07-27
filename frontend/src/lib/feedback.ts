@@ -42,7 +42,7 @@ export type FeedbackKind = "bug" | "feature" | "praise" | "other";
 
 export const FEEDBACK_KINDS: { kind: FeedbackKind; label: string; hint: string }[] = [
   { kind: "bug",     label: "Something's broken",  hint: "Crashes, wrong data, layout bugs"     },
-  { kind: "feature", label: "Feature request",     hint: "What would make PhillyPulse better?" },
+  { kind: "feature", label: "Feature request",     hint: "What would make CityPulse better?" },
   { kind: "praise",  label: "Good vibes",          hint: "Tell us what you love (we read it!)"  },
   { kind: "other",   label: "General feedback",    hint: "Anything else"                         },
 ];

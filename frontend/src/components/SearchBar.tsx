@@ -42,6 +42,7 @@ import type { RouteData } from "@/components/RoutePanel";
 import type { WaypointPin } from "@/components/IncidentMap";
 import { getSeverity } from "@/lib/severity";
 import { pointAtDistanceMeters, routeLengthMeters } from "@/lib/route-geometry";
+import { getCurrentCity } from "@/lib/pulse-cities";
 
 const ORS_API_KEY =
   process.env.NEXT_PUBLIC_ORS_KEY || "5b3ce3597851110001cf6248a1b2c3d4e5f6a7b8";
@@ -56,6 +57,15 @@ function haversineM(aLat: number, aLng: number, bLat: number, bLng: number): num
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
+function currentCityFallback(): StopLoc {
+  const city = getCurrentCity();
+  return {
+    display_name: `${city.name} Center`,
+    lat: city.lat,
+    lng: city.lng,
+  };
 }
 
 const MODES: { id: TransportMode; label: string; icon: typeof Footprints }[] = [
@@ -253,9 +263,9 @@ export default function SearchBar({
   useEffect(() => {
     if (!navigator.geolocation) {
       setGpsStatus("denied");
-      const fb = { lat: 39.9526, lng: -75.1652 };
-      setOriginLoc({ display_name: "Philadelphia Center", ...fb });
-      setOriginQuery("Philadelphia Center");
+      const fb = currentCityFallback();
+      setOriginLoc(fb);
+      setOriginQuery(fb.display_name);
       onPreviewPinsRef.current?.(fb, null);
       onUserLocationRef.current?.(fb.lat, fb.lng);
       return;
@@ -306,9 +316,9 @@ export default function SearchBar({
       () => {
         navigator.geolocation.clearWatch(watchId);
         setGpsStatus("denied");
-        const fb = { lat: 39.9526, lng: -75.1652 };
-        setOriginLoc({ display_name: "Philadelphia Center", ...fb });
-        setOriginQuery("Philadelphia Center");
+        const fb = currentCityFallback();
+        setOriginLoc(fb);
+        setOriginQuery(fb.display_name);
         onPreviewPinsRef.current?.(fb, null);
         onUserLocationRef.current?.(fb.lat, fb.lng);
       },

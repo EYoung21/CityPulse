@@ -5,11 +5,12 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { Mail, Eye, EyeOff, AlertCircle, CheckCircle2 } from "lucide-react";
-import { getCurrentCity, getLaunchedCities } from "@/lib/pulse-cities";
+import {
+  citySiteName,
+  getCurrentCity,
+  getLaunchedCities,
+} from "@/lib/pulse-cities";
 import "./login.css";
-
-const siteName = process.env.NEXT_PUBLIC_SITE_NAME || "PHLPulse";
-const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
 
 type Mode = "login" | "signup";
 
@@ -34,6 +35,8 @@ export default function LoginScreen() {
   const [verificationSent, setVerificationSent] = useState(false);
 
   const city = getCurrentCity();
+  const siteName = citySiteName(city);
+  const cityName = city.name;
   const accentRgb = city.accentRgb ?? "171, 255, 2";
   const accentRgb2 = city.accentRgb2 ?? "224, 255, 160";
 

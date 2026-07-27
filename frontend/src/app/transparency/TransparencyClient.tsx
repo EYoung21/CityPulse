@@ -40,9 +40,6 @@ import {
   type TransparencyStats,
 } from "@/lib/transparency-stats";
 
-const cityName =
-  process.env.NEXT_PUBLIC_CITY_NAME?.trim() || "Philadelphia";
-
 const WINDOW_DAYS = 30;
 
 function fmtRelative(ms: number): string {
@@ -57,7 +54,11 @@ function fmtRelative(ms: number): string {
   return `${days} d ago`;
 }
 
-export default function TransparencyClient() {
+export default function TransparencyClient({
+  brand,
+}: {
+  brand: string;
+}) {
   const [stats, setStats] = useState<TransparencyStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +96,7 @@ export default function TransparencyClient() {
           style={{ color: "var(--panel-text-secondary)" }}
         >
           <ArrowLeft className="w-3.5 h-3.5" />
-          Back to {cityName} Pulse
+          Back to {brand}
         </Link>
 
         <header className="mt-4 mb-8">
@@ -106,7 +107,7 @@ export default function TransparencyClient() {
             className="mt-2 text-sm leading-relaxed"
             style={{ color: "var(--panel-text-secondary)" }}
           >
-            {cityName} Pulse imports structured public incident reports,
+            {brand} imports structured public incident reports,
             reduces their location precision, and suppresses sensitive calls
             before publication. These numbers cover the trailing{" "}
             <strong>{WINDOW_DAYS} days</strong>.

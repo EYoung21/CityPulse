@@ -17,16 +17,17 @@
  *  Branding:
  *    The snapshot includes a small bottom-right watermark drawn by
  *    composing the rendered Leaflet PNG onto a slightly taller canvas
- *    with a "PhillyPulse · phillypulse.app" caption. Keeps shared
+ *    with the current city brand caption. Keeps shared
  *    screenshots attributable without anyone having to add it manually.
  */
 
 import { toPng } from "html-to-image";
+import { citySiteName, getCurrentCity } from "@/lib/pulse-cities";
 
 export interface SnapshotOptions {
   /** DOM element to rasterize. Typically the Leaflet `.leaflet-container`. */
   element: HTMLElement;
-  /** Optional override caption — defaults to "PhillyPulse · safe routes". */
+  /** Optional override caption — defaults to the current city brand. */
   caption?: string;
   /** Pixel ratio for the output canvas. Defaults to 2 for crisp
    *  retina output. Higher values blow out memory on large viewports. */
@@ -43,7 +44,6 @@ export interface SnapshotResult {
   tilesMissing: boolean;
 }
 
-const DEFAULT_CAPTION = "PhillyPulse · safe routes";
 const WATERMARK_HEIGHT = 36;
 
 /** Quick heuristic: load the data-URL into a small offscreen canvas
@@ -129,7 +129,8 @@ async function addWatermark(
 }
 
 export async function captureMapSnapshot(opts: SnapshotOptions): Promise<SnapshotResult> {
-  const { element, caption = DEFAULT_CAPTION, pixelRatio = 2, noWatermark } = opts;
+  const { element, pixelRatio = 2, noWatermark } = opts;
+  const caption = opts.caption ?? `${citySiteName(getCurrentCity())} · safe routes`;
 
   // html-to-image fetches every image referenced inside the tree
   // (tile <img> tags and CSS background-image URLs). For Leaflet's
@@ -161,6 +162,7 @@ export async function captureMapSnapshot(opts: SnapshotOptions): Promise<Snapsho
  *  *some* action — we treat dismissals as success because the user
  *  saw the snapshot regardless. */
 export async function shareSnapshot(blob: Blob, suggestedName: string): Promise<boolean> {
+  const brand = citySiteName(getCurrentCity());
   const file = new File([blob], suggestedName, { type: "image/png" });
   // The MDN-recommended capability check pattern: only attempt
   // navigator.share when canShare confirms file payloads work, which
@@ -174,8 +176,8 @@ export async function shareSnapshot(blob: Blob, suggestedName: string): Promise<
   ) {
     try {
       await navigator.share({
-        title: "PhillyPulse",
-        text: "Map snapshot from PhillyPulse",
+        title: brand,
+        text: `Map snapshot from ${brand}`,
         files: [file],
       });
       return true;

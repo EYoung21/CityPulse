@@ -11,6 +11,7 @@ import AdminPanel from "@/app/admin/AdminPanel";
 import ModerationPanel from "@/app/admin/ModerationPanel";
 import type { ReactNode } from "react";
 import type { User } from "firebase/auth";
+import { LEGACY_ADMIN_PIPELINE_AVAILABLE } from "@/lib/feature-availability";
 
 /** Exact paths that skip the auth gate entirely. Marketing / campaign URLs
  *  must be reachable from ads, decks, and partner email without a login wall. */
@@ -171,17 +172,21 @@ function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (isAdmin) {
-    if (adminMode === "launcher") {
+    const effectiveAdminMode =
+      adminMode === "admin" && !LEGACY_ADMIN_PIPELINE_AVAILABLE
+        ? "launcher"
+        : adminMode;
+    if (effectiveAdminMode === "launcher") {
       return (
         <AdminLauncher
           onChoose={(mode) => changeAdminMode(mode)}
         />
       );
     }
-    if (adminMode === "admin") {
+    if (effectiveAdminMode === "admin") {
       return <AdminPanel onBack={() => changeAdminMode("launcher")} />;
     }
-    if (adminMode === "moderation") {
+    if (effectiveAdminMode === "moderation") {
       return <ModerationPanel onBack={() => changeAdminMode("launcher")} />;
     }
   }

@@ -5,3 +5,4 @@
  */
 export const ASK_PULSE_AVAILABLE = false;
 export const KEYWORD_PUSH_AVAILABLE = false;
+export const LEGACY_ADMIN_PIPELINE_AVAILABLE = false;

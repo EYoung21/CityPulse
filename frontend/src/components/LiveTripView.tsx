@@ -31,6 +31,7 @@ const SimpleLiveMap = dynamic(() => import("./SimpleLiveMap"), { ssr: false });
 
 interface Props {
   shareId: string;
+  brand: string;
 }
 
 type FetchState =
@@ -52,7 +53,7 @@ function formatEta(etaAt: number | null, now: number): { line1: string; line2: s
   return { line1: `${h}h ${m}m`, line2: `Arrives ${arriveTime}` };
 }
 
-export default function LiveTripView({ shareId }: Props) {
+export default function LiveTripView({ shareId, brand }: Props) {
   const [state, setState] = useState<FetchState>(() =>
     !isLiveShareId(shareId)
       ? { kind: "error", message: "This share link is invalid or has expired." }
@@ -123,13 +124,13 @@ export default function LiveTripView({ shareId }: Props) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-100 p-6">
         <div className="max-w-md text-center">
-          <p className="text-xs uppercase tracking-widest text-slate-500">PhillyPulse</p>
+          <p className="text-xs uppercase tracking-widest text-slate-500">{brand}</p>
           <h1 className="text-2xl font-bold mt-2">{state.message}</h1>
           <p className="text-sm text-slate-400 mt-3">
             Live shares auto-expire after 4 hours. Ask the sender for a fresh link.
           </p>
           <Link href="/" className="inline-block mt-6 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold">
-            Open PhillyPulse
+            Open {brand}
           </Link>
         </div>
       </main>
@@ -199,7 +200,7 @@ export default function LiveTripView({ shareId }: Props) {
               color: "#cbd5e1",
             }}
           >
-            Open PhillyPulse
+            Open {brand}
           </Link>
         </div>
       </div>

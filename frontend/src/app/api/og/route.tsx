@@ -1,6 +1,7 @@
 import { ImageResponse } from "next/og";
 import { NextRequest } from "next/server";
 import { trustedRequestOrigin } from "@/lib/request-origin";
+import { citySiteName, getCityForRequestHost } from "@/lib/pulse-cities";
 
 export const runtime = "edge";
 
@@ -52,7 +53,9 @@ export async function GET(req: NextRequest) {
   const category = searchParams.get("category")?.slice(0, 64) || "";
   const location = searchParams.get("location")?.slice(0, 80) || "";
   const time = searchParams.get("time")?.slice(0, 64) || "";
-  const cityName = (process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia").slice(0, 100);
+  const city = getCityForRequestHost(req.headers.get("host"));
+  const cityName = city.name.slice(0, 100);
+  const brand = citySiteName(city).slice(0, 100);
 
   const accent = SEVERITY_COLOR[category] || "#3b82f6";
   const catLabel = category ? categoryLabel(category) : "CityPulse";
@@ -99,7 +102,7 @@ export async function GET(req: NextRequest) {
           />
           <div style={{ display: "flex", flexDirection: "column" }}>
             <span style={{ fontSize: 22, fontWeight: 700, letterSpacing: 1 }}>
-              CityPulse
+              {brand}
             </span>
             <span style={{ fontSize: 14, color: "#94a3b8", letterSpacing: 2, textTransform: "uppercase" }}>
               {cityName}
@@ -177,7 +180,7 @@ export async function GET(req: NextRequest) {
             marginTop: 24,
           }}
         >
-          <span>Real-time AI-powered community safety</span>
+          <span>Live community safety information</span>
           <span style={{ color: accent, fontWeight: 600 }}>→ Open CityPulse</span>
         </div>
       </div>

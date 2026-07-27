@@ -63,7 +63,7 @@ export function tripToGpx(entry: TripHistoryEntry): string | null {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx
   version="1.1"
-  creator="PhillyPulse"
+  creator="CityPulse"
   xmlns="http://www.topografix.com/GPX/1/1"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">

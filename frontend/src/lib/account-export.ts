@@ -143,15 +143,15 @@ export function parseAccountExport(raw: string): AccountExport {
   try { obj = JSON.parse(raw); }
   catch { throw new Error("File isn't valid JSON."); }
   if (typeof obj !== "object" || obj === null) {
-    throw new Error("File doesn't look like a PhillyPulse export.");
+    throw new Error("File doesn't look like a CityPulse export.");
   }
   const o = obj as Record<string, unknown>;
   if (typeof o.version !== "number") {
-    throw new Error("Missing version field. Not a PhillyPulse export.");
+    throw new Error("Missing version field. Not a CityPulse export.");
   }
   if (o.version > EXPORT_VERSION) {
     throw new Error(
-      `This export is from a newer version (${o.version}) than this app supports (${EXPORT_VERSION}). Update PhillyPulse and try again.`
+      `This export is from a newer version (${o.version}) than this app supports (${EXPORT_VERSION}). Update CityPulse and try again.`
     );
   }
   if (typeof o.data !== "object" || o.data === null) {

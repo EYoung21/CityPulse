@@ -3,6 +3,11 @@ import { headers } from "next/headers";
 import ShareRedirect from "@/components/ShareRedirect";
 import { trustedRequestOrigin } from "@/lib/request-origin";
 import {
+  citySiteName,
+  getCityForRequestHost,
+  type PulseCity,
+} from "@/lib/pulse-cities";
+import {
   normalizeIncidentShareParams,
   type NormalizedIncidentShareParams,
   type SearchParamValue,
@@ -27,9 +32,13 @@ interface Props {
   searchParams: Promise<SearchParams>;
 }
 
-async function originFromHeaders(): Promise<string> {
+async function requestContext(): Promise<{ origin: string; city: PulseCity }> {
   const h = await headers();
-  return trustedRequestOrigin(h.get("host"));
+  const host = h.get("host");
+  return {
+    origin: trustedRequestOrigin(host),
+    city: getCityForRequestHost(host),
+  };
 }
 
 function buildOgUrl(origin: string, sp: NormalizedIncidentShareParams): string {
@@ -52,14 +61,15 @@ function buildAppUrl(sp: NormalizedIncidentShareParams): string {
 
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
   const sp = normalizeIncidentShareParams(await searchParams);
-  const origin = await originFromHeaders();
-  const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
+  const { origin, city } = await requestContext();
+  const cityName = city.name;
+  const brand = citySiteName(city);
   const title = sp.t
-    ? `${sp.t} · ${cityName} Pulse`
-    : `${cityName} Pulse · Real-time Safety Map`;
+    ? `${sp.t} · ${brand}`
+    : `${brand} · Real-time Safety Map`;
   const description = sp.c
     ? `${sp.c.replace(/_/g, " ")} reported${sp.loc ? ` near ${sp.loc}` : ""}. Tap to open the live community-safety map.`
-    : `Real-time AI-powered community safety map for ${cityName}.`;
+    : `Real-time community-safety map for ${cityName}.`;
 
   const ogUrl = origin ? buildOgUrl(origin, sp) : `/api/og?title=${encodeURIComponent(sp.t ?? "")}`;
 
@@ -71,7 +81,7 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
       description,
       images: [{ url: ogUrl, width: 1200, height: 630, alt: title }],
       type: "website",
-      siteName: "PhillyPulse",
+      siteName: brand,
     },
     twitter: {
       card: "summary_large_image",
@@ -87,8 +97,10 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
  *  redirect to the full app at `/?incident=<id>` (or `?lat=&lng=`). */
 export default async function SharePage({ searchParams }: Props) {
   const sp = normalizeIncidentShareParams(await searchParams);
+  const { city } = await requestContext();
+  const brand = citySiteName(city);
   const appUrl = buildAppUrl(sp);
-  const title = sp.t || "PhillyPulse";
+  const title = sp.t || brand;
 
   return (
     <main
@@ -105,7 +117,7 @@ export default async function SharePage({ searchParams }: Props) {
       <ShareRedirect appUrl={appUrl} />
       <div style={{ textAlign: "center", padding: 24, maxWidth: 480 }}>
         <p style={{ fontSize: 14, color: "#94a3b8", letterSpacing: 2, textTransform: "uppercase", margin: 0 }}>
-          PhillyPulse
+          {brand}
         </p>
         <h1 style={{ fontSize: 28, marginTop: 8, marginBottom: 0 }}>{title}</h1>
         <p style={{ color: "#94a3b8", marginTop: 16 }}>Opening the live map…</p>

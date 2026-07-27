@@ -5,6 +5,11 @@ import SharedListPreview from "@/components/SharedListPreview";
 import { decodeListToken } from "@/lib/share-list";
 import { trustedRequestOrigin } from "@/lib/request-origin";
 import { strictSingleSearchParam, type SearchParamValue } from "@/lib/share-params";
+import {
+  citySiteName,
+  getCityForRequestHost,
+  type PulseCity,
+} from "@/lib/pulse-cities";
 
 interface SearchParams {
   /** Encoded list-share token. */
@@ -15,28 +20,33 @@ interface Props {
   searchParams: Promise<SearchParams>;
 }
 
-async function originFromHeaders(): Promise<string> {
+async function requestContext(): Promise<{ origin: string; city: PulseCity }> {
   const h = await headers();
-  return trustedRequestOrigin(h.get("host"));
+  const host = h.get("host");
+  return {
+    origin: trustedRequestOrigin(host),
+    city: getCityForRequestHost(host),
+  };
 }
 
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
   const sp = await searchParams;
   const token = strictSingleSearchParam(sp.t, 32_000);
-  const origin = await originFromHeaders();
+  const { origin, city } = await requestContext();
   const decoded = token ? decodeListToken(token) : null;
 
-  const cityName = process.env.NEXT_PUBLIC_CITY_NAME || "Philadelphia";
+  const cityName = city.name;
+  const brand = citySiteName(city);
   const senderLabel = decoded?.senderName?.trim() || "Someone";
   const itemCount = decoded?.items.length ?? 0;
   const listName = decoded?.listName || "Saved places";
 
   const title = decoded
     ? `${senderLabel} shared "${listName}" · ${itemCount} ${itemCount === 1 ? "place" : "places"}`
-    : `Shared list · ${cityName} Pulse`;
+    : `Shared list · ${brand}`;
   const description = decoded
-    ? `View ${itemCount} saved ${itemCount === 1 ? "place" : "places"} on the ${cityName} Pulse safety map.`
-    : `Real-time AI-powered community safety map for ${cityName}.`;
+    ? `View ${itemCount} saved ${itemCount === 1 ? "place" : "places"} on the ${brand} safety map.`
+    : `Real-time community-safety map for ${cityName}.`;
 
   // Reuse the generic OG card route. Accent stays in the brand-blue
   // family — these are friendly shares, not safety alerts.
@@ -55,7 +65,7 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
       description,
       images: [{ url: ogUrl, width: 1200, height: 630, alt: title }],
       type: "website",
-      siteName: "PhillyPulse",
+      siteName: brand,
     },
     twitter: {
       card: "summary_large_image",
@@ -73,6 +83,8 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
  *  client component since it needs Firebase + auth context. */
 export default async function SharedListPage({ searchParams }: Props) {
   const sp = await searchParams;
+  const { city } = await requestContext();
+  const brand = citySiteName(city);
   const token = strictSingleSearchParam(sp.t, 32_000);
   const decoded = token ? decodeListToken(token) : null;
 
@@ -80,19 +92,19 @@ export default async function SharedListPage({ searchParams }: Props) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-100 p-6">
         <div className="max-w-md text-center">
-          <p className="text-xs uppercase tracking-widest text-slate-500">PhillyPulse</p>
+          <p className="text-xs uppercase tracking-widest text-slate-500">{brand}</p>
           <h1 className="text-2xl font-bold mt-2">This share link is invalid</h1>
           <p className="text-sm text-slate-400 mt-3">
             The link may be incomplete, corrupted, or from a newer version of the app.
             Ask the sender for a fresh link.
           </p>
           <Link href="/" className="inline-block mt-6 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold">
-            Open PhillyPulse
+            Open {brand}
           </Link>
         </div>
       </main>
     );
   }
 
-  return <SharedListPreview snapshot={decoded} />;
+  return <SharedListPreview snapshot={decoded} brand={brand} />;
 }

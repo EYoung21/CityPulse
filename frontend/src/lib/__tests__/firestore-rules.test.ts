@@ -13,6 +13,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  Timestamp,
   updateDoc,
 } from "firebase/firestore";
 import { afterAll, beforeAll, beforeEach, describe, it } from "vitest";
@@ -144,6 +145,26 @@ rulesSuite("Firestore security rules", () => {
     );
     await assertSucceeds(
       deleteDoc(doc(owner, "commuteSchedules", "owner-server"))
+    );
+  });
+
+  it("expires live-trip bearer-token reads at the rules boundary", async () => {
+    const now = Date.now();
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), "liveTrips", "23456789ABCD"), {
+        expiresAt: Timestamp.fromMillis(now + 60 * 60 * 1_000),
+      });
+      await setDoc(doc(context.firestore(), "liveTrips", "BCDEFGHJKMNP"), {
+        expiresAt: Timestamp.fromMillis(now - 60 * 1_000),
+      });
+    });
+
+    const recipient = environment.unauthenticatedContext().firestore();
+    await assertSucceeds(
+      getDoc(doc(recipient, "liveTrips", "23456789ABCD"))
+    );
+    await assertFails(
+      getDoc(doc(recipient, "liveTrips", "BCDEFGHJKMNP"))
     );
   });
 
