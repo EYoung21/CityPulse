@@ -23,17 +23,29 @@ type PublicIncident = {
   lng: number | null;
   status: string | null;
   category: string;
+  /** True when coordinates were resolved by our server-side geocoder
+   *  rather than provided by the source. */
+  geocoded?: boolean;
 };
 
 type SourceDefinition = {
   city: string;
   intervalMs: number;
   fetch: () => Promise<PublicIncident[]>;
+  /** Region suffix appended to `locationText` when server-side geocoding a
+   *  coordinate-less row (e.g. ", Montgomery County, PA"). Sources whose
+   *  rows always carry coordinates omit this and are never geocoded. */
+  geocodeSuffix?: string;
 };
 
 const MAX_AGE_MS = 72 * 60 * 60 * 1_000;
 const MAX_SEEN_IDS = 1_500;
 const USER_AGENT = "CityPulse/2.0 (+https://phlpulse.com)";
+/** Per-refresh cap on TomTom geocode lookups, so a burst of coordinate-less
+ *  CAD rows can't blow the request budget of a single serverless
+ *  invocation. Un-geocoded rows simply retry on a later poll (they stay in
+ *  `seenIds`-pending until created, so nothing is lost). */
+const MAX_GEOCODES_PER_REFRESH = 20;
 
 const SENSITIVE_RE =
   /\b(?:amber alert|silver alert|missing (?:child|minor|juvenile|person|vulnerable|student)|child abduction|juvenile|minor|sexual|rape|domestic|suicid(?:e|al)|mental health|emotionally disturbed|well[- ]?being check|welfare check|overdose|5150)\b/i;
@@ -68,6 +80,9 @@ export function classifyPublicEvent(value: string): string | null {
   if (text.includes("robbery")) return "robbery";
   if (/burglary|breaking and entering/.test(text)) return "burglary_in_progress";
   if (/assault|fight/.test(text)) return "violent_no_weapon";
+  // Fireworks complaints are disorder, not structure fires — must be tested
+  // before the /fire/ substring match below would misfile them.
+  if (/firework/.test(text)) return "disorder";
   if (/fire|hazmat|gas leak|explosion|smoke/.test(text)) return "fire_hazmat";
   if (/vehicle accident|collision|traffic crash|mva/.test(text)) {
     return text.includes("injur")
@@ -79,7 +94,11 @@ export function classifyPublicEvent(value: string): string | null {
       ? "medical_priority"
       : "medical_other";
   }
-  if (/police activity|disorder|theft|vandal|trespass|disturbance|suspicious/.test(text)) {
+  if (
+    /police activity|disorder|theft|vandal|trespass|disturbance|suspicious|drug activity|disorderly|noise - street/.test(
+      text,
+    )
+  ) {
     return "disorder";
   }
   if (/structural incident|building collapse/.test(text)) return "fire_hazmat";
@@ -436,14 +455,83 @@ async function notifyNyc(): Promise<PublicIncident[]> {
   });
 }
 
+async function nyc311(): Promise<PublicIncident[]> {
+  // NYC 311 service requests (Socrata erm2-nwe9) are the only NYC feed that
+  // updates continuously — NYPD CFS / FDNY / EMS dispatch datasets publish
+  // with roughly a month of lag, and Notify NYC's RSS is empty most days.
+  // We take only public-safety complaint types (quality-of-life/disorder
+  // and street hazards) and deliberately exclude vulnerable-population
+  // types (Homeless Person Assistance, Encampment) — mapping those pins
+  // would target people, not protect them.
+  const url = new URL("https://data.cityofnewyork.us/resource/erm2-nwe9.json");
+  const sinceIso = new Date(Date.now() - MAX_AGE_MS)
+    .toISOString()
+    .slice(0, 19);
+  url.searchParams.set("$limit", "500");
+  url.searchParams.set("$order", "created_date DESC");
+  url.searchParams.set(
+    "$select",
+    "unique_key,created_date,complaint_type,descriptor,latitude,longitude,incident_address,borough",
+  );
+  url.searchParams.set(
+    "$where",
+    `created_date > '${sinceIso}' AND complaint_type in(` +
+      "'Drug Activity','Illegal Fireworks','Disorderly Youth'," +
+      "'Noise - Street/Sidewalk','Non-Emergency Police Matter'," +
+      "'Traffic','Illegal Parking')",
+  );
+  return objects(await fetchJson(url.toString())).flatMap((row) => {
+    const complaint = String(row.complaint_type || "");
+    const descriptor = String(row.descriptor || "");
+    // Traffic/parking rows are only interesting when the descriptor says
+    // something is actively dangerous, not routine enforcement.
+    if (/^(Traffic|Illegal Parking)$/i.test(complaint)) {
+      if (!/drag racing|reckless|blocked hydrant|crash|collision/i.test(descriptor)) {
+        return [];
+      }
+    }
+    const eventType = descriptor && descriptor !== complaint
+      ? `${complaint}: ${descriptor}`
+      : complaint;
+    const parsed = incident({
+      sourceId: "nyc-311",
+      sourceKey: row.unique_key,
+      city: "nyc",
+      reportedAt: zonedLocalIso(
+        String(row.created_date || ""),
+        "America/New_York",
+      ),
+      eventType,
+      classificationText: `${complaint} ${descriptor}`,
+      locationText: row.incident_address
+        ? `${row.incident_address}${row.borough ? `, ${row.borough}` : ""}`
+        : row.borough,
+      lat: row.latitude,
+      lng: row.longitude,
+    });
+    return parsed ? [parsed] : [];
+  });
+}
+
 const SOURCES: Record<string, SourceDefinition> = {
   hc911: { city: "chattanooga", intervalMs: 60_000, fetch: chattanooga },
   "datasf-police": { city: "sf", intervalMs: 10 * 60_000, fetch: dataSfPolice },
   "datasf-fire": { city: "sf", intervalMs: 10 * 60_000, fetch: dataSfFire },
   "phl-police": { city: "philly", intervalMs: 15 * 60_000, fetch: phillyPolice },
-  "montco-cad": { city: "philly", intervalMs: 2 * 60_000, fetch: montcoCad },
-  "chesco-cad": { city: "philly", intervalMs: 2 * 60_000, fetch: chescoCad },
+  "montco-cad": {
+    city: "philly",
+    intervalMs: 2 * 60_000,
+    fetch: montcoCad,
+    geocodeSuffix: ", Montgomery County, PA",
+  },
+  "chesco-cad": {
+    city: "philly",
+    intervalMs: 2 * 60_000,
+    fetch: chescoCad,
+    geocodeSuffix: ", Chester County, PA",
+  },
   "notify-nyc": { city: "nyc", intervalMs: 2 * 60_000, fetch: notifyNyc },
+  "nyc-311": { city: "nyc", intervalMs: 5 * 60_000, fetch: nyc311 },
 };
 
 function incidentId(sourceId: string, sourceKey: string): string {
@@ -451,6 +539,56 @@ function incidentId(sourceId: string, sourceKey: string): string {
     .update(`${sourceId}\x1f${sourceKey}`)
     .digest("hex")
     .slice(0, 24)}`;
+}
+
+/** Server-side geocode for CAD rows that arrive without coordinates
+ *  (MontCo/ChesCo RSS give only "location, municipality" text). Uses the
+ *  same TomTom key the routing/search routes already depend on; returns
+ *  privacy-quantized coordinates or nulls. Never throws — a geocode
+ *  failure just leaves the row feed-only, as before. */
+async function geocodeLocation(
+  locationText: string,
+  regionSuffix: string,
+): Promise<[number | null, number | null]> {
+  const key = process.env.TOMTOM_API_KEY;
+  if (!key) return [null, null];
+  try {
+    const query = `${locationText}${regionSuffix}`;
+    const url = new URL(
+      `https://api.tomtom.com/search/2/geocode/${encodeURIComponent(query)}.json`,
+    );
+    url.searchParams.set("key", key);
+    url.searchParams.set("limit", "1");
+    url.searchParams.set("countrySet", "US");
+    const payload = await fetchJson(url.toString());
+    const results =
+      payload && typeof payload === "object" && !Array.isArray(payload)
+        ? objects((payload as Record<string, unknown>).results)
+        : [];
+    const first = results[0];
+    if (!first) return [null, null];
+    // Reject weak matches (country/state-level centroids) — a pin in the
+    // middle of Pennsylvania is worse than no pin.
+    const type = String(first.type || "");
+    if (!/Point Address|Street|Cross Street|Geography/i.test(type)) {
+      return [null, null];
+    }
+    if (/Geography/i.test(type)) {
+      const entityType = String(
+        (first as { entityType?: unknown }).entityType || "",
+      );
+      if (!/Municipality|Neighbourhood|PostalCodeArea/i.test(entityType)) {
+        return [null, null];
+      }
+    }
+    const position =
+      first.position && typeof first.position === "object"
+        ? (first.position as Record<string, unknown>)
+        : {};
+    return publicCoordinates(position.lat, position.lon);
+  } catch {
+    return [null, null];
+  }
 }
 
 function sourceBase(category: string): number {
@@ -515,6 +653,22 @@ async function refreshSource(sourceId: string): Promise<void> {
     const newRows = fresh
       .filter((row) => !seen.has(incidentId(row.sourceId, row.sourceKey)))
       .slice(0, 450);
+    // Fill in coordinates for text-only CAD rows (budgeted per refresh).
+    if (definition.geocodeSuffix) {
+      let geocoded = 0;
+      for (const row of newRows) {
+        if (row.lat !== null || !row.locationText) continue;
+        if (geocoded >= MAX_GEOCODES_PER_REFRESH) break;
+        geocoded += 1;
+        const [lat, lng] = await geocodeLocation(
+          row.locationText,
+          definition.geocodeSuffix,
+        );
+        row.lat = lat;
+        row.lng = lng;
+        if (lat !== null) row.geocoded = true;
+      }
+    }
     const batch = db.batch();
     const ingestedAt = new Date(now).toISOString().replace(/Z$/, "+00:00");
     for (const row of newRows) {
@@ -530,8 +684,10 @@ async function refreshSource(sourceId: string): Promise<void> {
         lat: row.lat,
         lng: row.lng,
         confidence: 1,
-        geocode_status: row.lat === null ? "failed" : "source",
-        location_confidence: row.lat === null ? "none" : "medium",
+        geocode_status:
+          row.lat === null ? "failed" : row.geocoded ? "success" : "source",
+        location_confidence:
+          row.lat === null ? "none" : row.geocoded ? "low" : "medium",
         inhibitor_status: "passed",
         inhibitor_reason: "structured public source; privacy reduced",
         audio_clip: null,
