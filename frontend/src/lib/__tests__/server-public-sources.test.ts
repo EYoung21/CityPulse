@@ -24,4 +24,14 @@ describe("server public-source privacy", () => {
     expect(classifyPublicEvent("FIGHT NO WEAPON")).toBe("violent_no_weapon");
     expect(classifyPublicEvent("structure fire")).toBe("fire_hazmat");
   });
+
+  it("classifies NYC 311 quality-of-life complaint types as disorder", () => {
+    // "Illegal Fireworks" must NOT match the /fire/ → fire_hazmat branch.
+    expect(classifyPublicEvent("Illegal Fireworks")).toBe("disorder");
+    expect(classifyPublicEvent("Drug Activity: Use Inside")).toBe("disorder");
+    expect(classifyPublicEvent("Disorderly Youth")).toBe("disorder");
+    expect(classifyPublicEvent("Noise - Street/Sidewalk: Loud Music/Party")).toBe(
+      "disorder",
+    );
+  });
 });
