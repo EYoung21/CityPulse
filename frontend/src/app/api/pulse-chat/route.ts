@@ -135,7 +135,13 @@ export async function POST(request: NextRequest) {
         model,
         messages: [{ role: "system", content: system }, ...messages],
         temperature: 0.2,
-        max_tokens: 1_200,
+        // DeepSeek v4 models are reasoning models: without disabling
+        // thinking they can spend the whole token budget on hidden
+        // reasoning and return EMPTY content (verified live). Grounded
+        // table lookups don't need chain-of-thought; disable it. The
+        // param is ignored by providers that don't know it.
+        thinking: { type: "disabled" },
+        max_tokens: 1_600,
         stream: false,
       }),
       signal: AbortSignal.timeout(50_000),
