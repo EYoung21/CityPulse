@@ -13,7 +13,24 @@ reference and are not started by the production deployment. Any future audio
 relaunch is blocked by the versioned
 [transcript relaunch policy](docs/TRANSCRIPT-RELAUNCH-POLICY.md).
 
-**Live demo:** [https://phlpulse.com](https://phlpulse.com)
+> **Status: archived (October 2026).** CityPulse is no longer running. The
+> hosted sites (phlpulse.com, 423pulse.com, sfopulse.com, newyorkcitypulse.com)
+> are offline and this repository is kept as a reference project. The rest of
+> this README describes the system as it ran in production.
+
+## Screenshots
+
+Captured from a local run against live Hamilton County 911 public data.
+
+| Incident map | Incident-aware routing |
+|---|---|
+| ![Chattanooga map with clustered incident pins over a severity-weighted heatmap](docs/screenshots/map.jpg) | ![Driving route with walk, bike, and drive ETAs and a warning about incidents near the route](docs/screenshots/safe-route.jpg) |
+| Clustered pins over a severity-weighted heatmap, with time-window and category filters. | Walk, bike, and drive ETAs; the router avoids the selected incident categories and flags what it could not route around. |
+
+| Incident detail | Mobile |
+|---|---|
+| ![Incident detail card showing the public source, block-level address, and unverified label](docs/screenshots/incident-detail.jpg) | <img src="docs/screenshots/mobile.jpg" alt="Mobile map layout" width="260"> |
+| Every pin names its public source and shows a block-level address, an approximate location, and an unverified label. | The same map on a phone-sized viewport. |
 
 ---
 
@@ -82,8 +99,8 @@ Every pin on the map is labeled **UNVERIFIED**. PhillyPulse is a situational awa
 ### Legacy/admin backend (optional)
 
 ```bash
-git clone https://github.com/EYoung21/PhillyPulse.git
-cd PhillyPulse
+git clone https://github.com/EYoung21/CityPulse.git
+cd CityPulse
 
 python -m venv venv
 source venv/bin/activate
@@ -125,9 +142,12 @@ paused while the retired Python/audio backend is replaced. The same-origin
 `configured: false`; the settings UI keeps in-app alerts available and does
 not attempt to create a server subscription.
 
-### Production
+### Production (offline since October 2026)
 
-- **Frontend** is deployed on Vercel at [phlpulse.com](https://phlpulse.com)
+How the hosted deployment was set up:
+
+- **Frontend** was deployed on Vercel at phlpulse.com and three sibling city
+  domains.
 - **Public APIs** run as same-origin Next.js routes on Vercel and read
   entitlement-aware data from Firestore.
 - **Ingestion** polls structured public sources under Firestore leases; no
@@ -167,8 +187,8 @@ not attempt to create a server subscription.
 
 ## License and Copyright
 
-Copyright (c) 2026 PhillyPulse Team (Eli Young, Kethan Umanarayanan, Harsh Mahani)
+Copyright (c) 2026 Eli Young and contributors
 
-This team's submission is provided under the MIT License.
+Provided under the MIT License; see [LICENSE](LICENSE).
 
 SPDX-License-Identifier: MIT
