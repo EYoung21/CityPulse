@@ -136,8 +136,9 @@ The frontend will be available at `http://localhost:3000`.
 
 ### Web Push
 
-Closed-tab Web Push, keyword watches, and commute pushes are temporarily
-paused while the retired Python/audio backend is replaced. The same-origin
+Closed-tab Web Push, keyword watches, and commute pushes were switched off
+when the Python/audio backend was retired, and were not rebuilt before the
+project was archived. The same-origin
 `/api/push/public-key` capability probe deliberately reports
 `configured: false`; the settings UI keeps in-app alerts available and does
 not attempt to create a server subscription.
